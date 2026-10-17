@@ -212,6 +212,14 @@ Rendering (null/missing/dialect semantics):
   `StoredOrdering.PreservesClrOrdering` and `PreservesClrOrderingForAggregateAndSort`; equality is never gated. Native
   aggregates stay on `HasDefaultKeySerialization`. The bridge walks the whole key/operand; an unclassifiable construct is
   refused if the query reads such a property.
+  - **Opt-in (EF-472)**: `HasOrderPreservingStorage()` / `HaveOrderPreservingStorage()` (annotation `Mongo:OrderPreservingStorage`) and EF's
+    `DateTimeToTicks`/`TimeSpanToTicks`/`BoolToZeroOne` converters count as order-preserving (`StoredOrdering.IsDeclaredOrderPreserving`,
+    folded into `PreservesClrOrdering`). It is an ordering claim only: `Sum`/`Average` (bridge use `SumOrAverage`), functions
+    (`PreservesClrValueForComputation`), the numeric reductions and every `HasDefaultKeySerialization` gate ignore it. The bridge honors it only
+    for a bare read: the walker counts enclosing computations (`_computed`: arithmetic, `??`, `?:`, a method, a type-changing convert) and a
+    relational comparison passes `allowDeclared` only against a value-only operand (`IsValueOnly`, no lambda parameter); anything else falls
+    back to `...ByConstruction`. Native member-vs-value comparisons and bare-field sort/Min/Max follow the shared predicate. A new gate that
+    reads a stored value must say whether a declaration is enough; default to no.
   - **A function computed from such a property is refused too** (EF-465): a string method, `Length`/date part, arithmetic
     or `Math` over it, in a filter, projection or group key. Predicate: `StoredOrdering.PreservesClrValueForComputation`
     (default storage, or a number the server holds exactly). The bridge runs it per node

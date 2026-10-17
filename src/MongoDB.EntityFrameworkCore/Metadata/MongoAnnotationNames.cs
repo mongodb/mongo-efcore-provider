@@ -110,4 +110,9 @@ public static class MongoAnnotationNames
     /// Annotation for the MongoDB Search index definitions for an entity type.
     /// </summary>
     public const string SearchIndexDefinitions = Prefix + nameof(SearchIndexDefinitions);
+
+    /// <summary>
+    /// The key for the annotation declaring that a property's stored form orders and compares like its .NET value.
+    /// </summary>
+    public const string OrderPreservingStorage = Prefix + nameof(OrderPreservingStorage);
 }

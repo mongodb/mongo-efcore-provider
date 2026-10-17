@@ -41,6 +41,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         Comparison,
         SortOrAggregate,
 
+        // Sum/Average (EF-472): the stored values are added, so a declared order-preserving converter doesn't qualify.
+        SumOrAverage,
+
         // A server-side function of the value (EF-465): a string method, Length, a date part, arithmetic.
         Computation
     }
@@ -69,28 +72,39 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             return;
         }
 
-        foreach (var operand in new[] { node.Left, node.Right })
+        foreach (var (operand, other) in new[] { (node.Left, node.Right), (node.Right, node.Left) })
         {
+            // EF-472: a model-declared order-preserving property compares by its own serializer only against a value; against another
+            // property or a computation the server would compare two stored forms.
+            var againstValue = IsValueOnly(other);
             if (StripConverts(operand) is MethodCallExpression
                 {
                     Method.Name: nameof(string.Compare) or nameof(IComparable.CompareTo)
                 } compare)
             {
-                if (compare.Object is { } receiver)
+                var operands = (compare.Object is { } receiver ? new[] { receiver } : []).Concat(compare.Arguments).ToList();
+                foreach (var part in operands)
                 {
-                    ThrowIfReadsStoredOrdering(receiver, StoredOrderingUse.Comparison, "comparison");
-                }
-
-                foreach (var argument in compare.Arguments)
-                {
-                    ThrowIfReadsStoredOrdering(argument, StoredOrderingUse.Comparison, "comparison");
+                    ThrowIfReadsStoredOrdering(
+                        part, StoredOrderingUse.Comparison, "comparison",
+                        againstValue && operands.All(o => ReferenceEquals(o, part) || IsValueOnly(o)));
                 }
             }
             else
             {
-                ThrowIfReadsStoredOrdering(operand, StoredOrderingUse.Comparison, "comparison");
+                ThrowIfReadsStoredOrdering(operand, StoredOrderingUse.Comparison, "comparison", againstValue);
             }
         }
+    }
+
+    // No lambda parameter (so no property of the queried entities): a constant, a captured variable or a query parameter (EF8 and EF9
+    // leave a captured variable as a `__name` ParameterExpression that no lambda binds).
+    private bool IsValueOnly(Expression expression)
+    {
+        var finder = new ParameterFinder();
+        finder.Visit(expression);
+        return finder.Parameters.All(p => p.Name?.StartsWith("__", StringComparison.Ordinal) == true
+                                           && !ParameterSources.ContainsKey(p));
     }
 
     // OrderBy/ThenBy keys, Sum/Min/Max/Average/MinBy/MaxBy selectors (Queryable or Enumerable, including the
@@ -112,7 +126,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                 when node.Arguments.Count >= 2:
                 if (UnwrapLambda(node.Arguments[1]) is { } selector)
                 {
-                    ThrowIfReadsStoredOrdering(selector.Body, StoredOrderingUse.SortOrAggregate, node.Method.Name);
+                    ThrowIfReadsStoredOrdering(selector.Body, AggregateUse(node.Method.Name), node.Method.Name);
                 }
 
                 break;
@@ -123,34 +137,54 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                 {
                     foreach (var element in elements)
                     {
-                        ThrowIfReadsStoredOrdering(element, StoredOrderingUse.SortOrAggregate, node.Method.Name);
+                        ThrowIfReadsStoredOrdering(element, AggregateUse(node.Method.Name), node.Method.Name);
                     }
                 }
                 else
                 {
-                    ThrowIfQueryReadsStoredOrdering(node.Arguments[0], StoredOrderingUse.SortOrAggregate, node.Method.Name);
+                    ThrowIfQueryReadsStoredOrdering(node.Arguments[0], AggregateUse(node.Method.Name), node.Method.Name);
                 }
 
                 break;
         }
     }
 
-    private void ThrowIfReadsStoredOrdering(Expression expression, StoredOrderingUse use, string operation)
-        => new StoredOrderingWalker(this, use, operation).Walk(expression);
+    private static StoredOrderingUse AggregateUse(string methodName)
+        => methodName is nameof(Queryable.Sum) or nameof(Queryable.Average)
+            ? StoredOrderingUse.SumOrAverage
+            : StoredOrderingUse.SortOrAggregate;
+
+    private void ThrowIfReadsStoredOrdering(Expression expression, StoredOrderingUse use, string operation, bool allowDeclared = true)
+        => new StoredOrderingWalker(this, use, operation, allowDeclared).Walk(expression);
 
     private void ThrowStoredOrdering(IProperty property, string operation, StoredOrderingUse use)
-        => throw new NotSupportedException(use == StoredOrderingUse.Computation
+        => throw new NotSupportedException(
+            use is StoredOrderingUse.Comparison or StoredOrderingUse.SortOrAggregate && StoredOrdering.IsDeclaredOrderPreserving(property)
+            ? $"'{operation}' over the property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be "
+              + "translated to a MongoDB query: the property is declared order-preserving, but only on its own, compared with a "
+              + "value or used as a sort, Min or Max key. Here its stored value is combined with another value (a computed key, a "
+              + "conversion, a projection that computes, or another property), which the server would compare in the stored form "
+              + "and return wrong results. Compare or sort by the property itself, or evaluate this operation on the client, for "
+              + "example after AsEnumerable()."
+            : use == StoredOrderingUse.Computation
             ? $"'{operation}' over the property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be "
               + "translated to a MongoDB query: the property is stored through a value converter or a BsonRepresentation, "
               + "so the server would compute it from the stored value rather than the .NET value and return wrong "
               + "results. Only reading the property and comparing it for equality are supported on such a property; "
               + "evaluate this operation on the client, for example after AsEnumerable()."
+            : use == StoredOrderingUse.SumOrAverage
+                ? $"'{operation}' over the property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be "
+                  + "translated to a MongoDB query: the property is stored through a value converter or a BsonRepresentation "
+                  + "whose stored values do not add up to the .NET values, so the server would return a wrong result. "
+                  + "Evaluate this operation on the client, for example after AsEnumerable()."
             :
             $"'{operation}' over the property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be "
             + "translated to a MongoDB query: the property is stored through a value converter or a BsonRepresentation "
             + "whose stored values do not compare, sort or aggregate like the .NET values, so the server would return "
-            + "wrong results. Only equality comparisons are supported on such a property; evaluate this operation on "
-            + "the client, for example after AsEnumerable().");
+            + "wrong results. Only equality comparisons are supported on such a property. If the stored form does order "
+            + "like the .NET value, declare it with HasOrderPreservingStorage() on the property (or "
+            + "HaveOrderPreservingStorage() in ConfigureConventions); otherwise evaluate this operation on the client, "
+            + "for example after AsEnumerable().");
 
     // The walk couldn't classify `scope`: refuse if any property that can reach it has a differing stored ordering.
     // Reachable = read inside `scope`, or inside the source sequence(s) of a lambda parameter used in it (recursively).
@@ -165,12 +199,20 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         }
     }
 
-    private bool PreservesStoredOrdering(IProperty property, StoredOrderingUse use)
+    // allowDeclared (EF-472): the model's HasOrderPreservingStorage() counts, but only for a bare read of the property compared with a
+    // value or used as a sort/Min/Max key; mixed with another value (a computed key, a conversion, another property) the server would
+    // compare stored forms, so the walker passes false.
+    private bool PreservesStoredOrdering(IProperty property, StoredOrderingUse use, bool allowDeclared)
         => use switch
         {
-            StoredOrderingUse.Comparison => StoredOrdering.PreservesClrOrdering(property),
+            StoredOrderingUse.Comparison => allowDeclared
+                ? StoredOrdering.PreservesClrOrdering(property)
+                : StoredOrdering.PreservesClrOrderingByConstruction(property),
             StoredOrderingUse.Computation => StoredOrdering.PreservesClrValueForComputation(property),
-            _ => StoredOrdering.PreservesClrOrderingForAggregateAndSort(property)
+            StoredOrderingUse.SumOrAverage => StoredOrdering.PreservesClrOrderingForAggregateAndSortByConstruction(property),
+            _ => allowDeclared
+                ? StoredOrdering.PreservesClrOrderingForAggregateAndSort(property)
+                : StoredOrdering.PreservesClrOrderingForAggregateAndSortByConstruction(property)
         };
 
     // EF-465: a member, method or operator the server computes from a property's stored value (x.Name.Length, x.Name.Contains("x"),
@@ -591,9 +633,26 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     /// when its own call is visited) aren't descended into.
     /// </summary>
     private sealed class StoredOrderingWalker(
-        MongoEFToLinqTranslatingExpressionVisitor owner, StoredOrderingUse use, string operation)
+        MongoEFToLinqTranslatingExpressionVisitor owner, StoredOrderingUse use, string operation, bool allowDeclared = true)
     {
         private readonly HashSet<Expression> _visiting = new(ReferenceEqualityComparer.Instance);
+
+        // > 0 while walking an operand of a computation (arithmetic, ??, ?:, a method, a type-changing conversion): the property is then
+        // combined with another value and a model declaration (EF-472) no longer applies.
+        private int _computed = allowDeclared ? 0 : 1;
+
+        private void WalkComputed(Expression? expression)
+        {
+            _computed++;
+            try
+            {
+                Walk(expression);
+            }
+            finally
+            {
+                _computed--;
+            }
+        }
 
         public void Walk(Expression? expression)
         {
@@ -626,7 +685,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                     {
                         // The collection's own storage decides its elements' (element-level converters aren't
                         // supported by the provider: the model fails validation).
-                        if (!owner.PreservesStoredOrdering(collection, use))
+                        if (!owner.PreservesStoredOrdering(collection, use, _computed == 0))
                         {
                             owner.ThrowStoredOrdering(collection, operation, use);
                         }
@@ -641,7 +700,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                 case UnaryExpression unary:
                     if (!isBool || unary.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked)
                     {
-                        Walk(unary.Operand);
+                        // A nullable wrap keeps the stored value; any other conversion or unary operator computes from it.
+                        if (unary.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked
+                            && (Nullable.GetUnderlyingType(unary.Type) ?? unary.Type)
+                            == (Nullable.GetUnderlyingType(unary.Operand.Type) ?? unary.Operand.Type))
+                        {
+                            Walk(unary.Operand);
+                        }
+                        else
+                        {
+                            WalkComputed(unary.Operand);
+                        }
                     }
 
                     return;
@@ -702,30 +771,38 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                     return; // relational parts are checked by VisitBinary; equality is exact
 
                 case BinaryExpression binary:
-                    Walk(binary.Left);
-                    Walk(binary.Right);
+                    WalkComputed(binary.Left);
+                    WalkComputed(binary.Right);
                     return;
 
                 case ConditionalExpression conditional:
                     WalkTruth(conditional.Test);
-                    Walk(conditional.IfTrue);
-                    Walk(conditional.IfFalse);
+                    WalkComputed(conditional.IfTrue);
+                    WalkComputed(conditional.IfFalse);
                     return;
 
                 case MethodCallExpression call:
                     // Any other method (string/DateTime/Math members, bool-valued or not) computes on the stored form.
-                    Walk(call.Object);
+                    WalkComputed(call.Object);
                     foreach (var argument in call.Arguments)
                     {
-                        Walk(argument);
+                        WalkComputed(argument);
                     }
 
                     return;
 
                 case NewExpression newExpression:
+                    // An anonymous projection only carries its members; any other constructor computes from its arguments.
                     foreach (var argument in newExpression.Arguments)
                     {
-                        Walk(argument);
+                        if (newExpression.Members is null)
+                        {
+                            WalkComputed(argument);
+                        }
+                        else
+                        {
+                            Walk(argument);
+                        }
                     }
 
                     return;
@@ -850,7 +927,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             // server computes it on the stored form, so the value it is read from must itself pass.
             if (value is not ParameterExpression && !IsProjectionChain(value))
             {
-                Walk(value);
+                WalkComputed(value);
                 return;
             }
 
@@ -953,7 +1030,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         {
             foreach (var property in properties)
             {
-                if (!owner.PreservesStoredOrdering(property, use))
+                if (!owner.PreservesStoredOrdering(property, use, _computed == 0))
                 {
                     owner.ThrowStoredOrdering(property, operation, use);
                 }
@@ -991,11 +1068,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
     private sealed class ParameterFinder : System.Linq.Expressions.ExpressionVisitor
     {
-        public bool Found { get; private set; }
+        public List<ParameterExpression> Parameters { get; } = [];
+
+        public bool Found => Parameters.Count > 0;
 
         protected override Expression VisitParameter(ParameterExpression node)
         {
-            Found = true;
+            Parameters.Add(node);
             return node;
         }
 
@@ -1086,7 +1165,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             => node.CanReduce ? base.VisitExtension(node) : node;
 
         private void Check(Type ownerType, string name)
-            => Found ??= owner.FindMappedProperties(ownerType, name).FirstOrDefault(p => !owner.PreservesStoredOrdering(p, use));
+            => Found ??= owner.FindMappedProperties(ownerType, name).FirstOrDefault(p => !owner.PreservesStoredOrdering(p, use, allowDeclared: false));
     }
 
     // Records, for each lambda parameter of a Queryable/Enumerable operator, the sequence(s) it ranges over.

@@ -276,4 +276,52 @@ public static class MongoPropertyBuilderExtensions
         DateTimeKind dateTimeKind,
         bool fromDataAnnotation = false)
         => propertyBuilder.CanSetAnnotation(MongoAnnotationNames.DateTimeKind, dateTimeKind, fromDataAnnotation);
+
+    /// <summary>
+    /// Declares that the property's stored form (its value converter or <c>BsonRepresentation</c>) orders and compares like its .NET value,
+    /// so relational comparisons (<c>&lt;</c>, <c>&gt;</c>), <c>OrderBy</c> and <c>Min</c>/<c>Max</c> over it run on the server.
+    /// </summary>
+    /// <remarks>
+    /// By default these operations throw for a property with a custom value converter, because the server would order the stored value,
+    /// which can differ from the .NET order. Call this only if <c>a &lt; b</c> in .NET always implies <c>Convert(a) &lt; Convert(b)</c> in
+    /// BSON order (a strongly-typed id over a number, for example). The provider cannot verify the claim; a wrong one gives wrong results.
+    /// It does not affect string, member or arithmetic functions over the property, or <c>Sum</c>/<c>Average</c>.
+    /// </remarks>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="orderPreserving"><see langword="true"/> to declare the stored form order-preserving, <see langword="false"/> to remove the declaration.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder HasOrderPreservingStorage(
+        this PropertyBuilder propertyBuilder,
+        bool orderPreserving = true)
+    {
+        propertyBuilder.Metadata.SetOrderPreservingStorage(orderPreserving);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Declares that the property's stored form (its value converter or <c>BsonRepresentation</c>) orders and compares like its .NET value.
+    /// See <see cref="HasOrderPreservingStorage(PropertyBuilder, bool)"/>.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="orderPreserving"><see langword="true"/> to declare the stored form order-preserving, <see langword="false"/> to remove the declaration.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static PropertyBuilder<TProperty> HasOrderPreservingStorage<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        bool orderPreserving = true)
+        => (PropertyBuilder<TProperty>)HasOrderPreservingStorage((PropertyBuilder)propertyBuilder, orderPreserving);
+
+    /// <summary>
+    /// Declares that the property's stored form (its value converter or <c>BsonRepresentation</c>) orders and compares like its .NET value.
+    /// See <see cref="HasOrderPreservingStorage(PropertyBuilder, bool)"/>.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="orderPreserving"><see langword="true"/> to declare the stored form order-preserving, <see langword="false"/> to remove the declaration.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
+    public static IConventionPropertyBuilder HasOrderPreservingStorage(
+        this IConventionPropertyBuilder propertyBuilder,
+        bool orderPreserving = true)
+    {
+        propertyBuilder.Metadata.SetOrderPreservingStorage(orderPreserving);
+        return propertyBuilder;
+    }
 }
