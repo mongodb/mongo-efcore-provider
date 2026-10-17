@@ -316,12 +316,33 @@ public static class MongoPropertyBuilderExtensions
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="orderPreserving"><see langword="true"/> to declare the stored form order-preserving, <see langword="false"/> to remove the declaration.</param>
-    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
-    public static IConventionPropertyBuilder HasOrderPreservingStorage(
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns>The same builder instance if the configuration was applied, <see langword="null" /> otherwise.</returns>
+    public static IConventionPropertyBuilder? HasOrderPreservingStorage(
         this IConventionPropertyBuilder propertyBuilder,
-        bool orderPreserving = true)
+        bool orderPreserving = true,
+        bool fromDataAnnotation = false)
     {
-        propertyBuilder.Metadata.SetOrderPreservingStorage(orderPreserving);
+        if (!CanSetOrderPreservingStorage(propertyBuilder, orderPreserving, fromDataAnnotation))
+        {
+            return null;
+        }
+
+        propertyBuilder.Metadata.SetOrderPreservingStorage(orderPreserving, fromDataAnnotation);
         return propertyBuilder;
     }
+
+    /// <summary>
+    /// Returns a value indicating whether the order-preserving storage declaration can be set.
+    /// </summary>
+    /// <param name="propertyBuilder">The builder for the property being configured.</param>
+    /// <param name="orderPreserving"><see langword="true"/> to declare the stored form order-preserving, <see langword="false"/> to remove the declaration.</param>
+    /// <param name="fromDataAnnotation">Indicates whether the configuration was specified using a data annotation.</param>
+    /// <returns><see langword="true" /> if the declaration can be set, <see langword="false"/> if not.</returns>
+    public static bool CanSetOrderPreservingStorage(
+        this IConventionPropertyBuilder propertyBuilder,
+        bool orderPreserving = true,
+        bool fromDataAnnotation = false)
+        => propertyBuilder.CanSetAnnotation(
+            MongoAnnotationNames.OrderPreservingStorage, orderPreserving ? true : null, fromDataAnnotation);
 }

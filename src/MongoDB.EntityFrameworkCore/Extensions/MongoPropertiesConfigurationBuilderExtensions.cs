@@ -83,11 +83,13 @@ public static class MongoPropertiesConfigurationBuilderExtensions
     /// <see cref="MongoPropertyBuilderExtensions.HasOrderPreservingStorage(PropertyBuilder, bool)"/>.
     /// </summary>
     /// <param name="propertiesConfigurationBuilder">The builder for the properties being configured.</param>
+    /// <param name="orderPreserving"><see langword="true"/> to declare the stored form order-preserving, <see langword="false"/> to leave it undeclared.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertiesConfigurationBuilder HaveOrderPreservingStorage(
-        this PropertiesConfigurationBuilder propertiesConfigurationBuilder)
+        this PropertiesConfigurationBuilder propertiesConfigurationBuilder,
+        bool orderPreserving = true)
     {
-        propertiesConfigurationBuilder.HaveAnnotation(MongoAnnotationNames.OrderPreservingStorage, true);
+        propertiesConfigurationBuilder.HaveAnnotation(MongoAnnotationNames.OrderPreservingStorage, orderPreserving);
 
         return propertiesConfigurationBuilder;
     }
@@ -98,8 +100,10 @@ public static class MongoPropertiesConfigurationBuilderExtensions
     /// </summary>
     /// <typeparam name="TProperty">The type of the properties being configured.</typeparam>
     /// <param name="propertiesConfigurationBuilder">The builder for the properties being configured.</param>
+    /// <param name="orderPreserving"><see langword="true"/> to declare the stored form order-preserving, <see langword="false"/> to leave it undeclared.</param>
     /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertiesConfigurationBuilder<TProperty> HaveOrderPreservingStorage<TProperty>(
-        this PropertiesConfigurationBuilder<TProperty> propertiesConfigurationBuilder)
-        => (PropertiesConfigurationBuilder<TProperty>)HaveOrderPreservingStorage((PropertiesConfigurationBuilder)propertiesConfigurationBuilder);
+        this PropertiesConfigurationBuilder<TProperty> propertiesConfigurationBuilder,
+        bool orderPreserving = true)
+        => (PropertiesConfigurationBuilder<TProperty>)HaveOrderPreservingStorage((PropertiesConfigurationBuilder)propertiesConfigurationBuilder, orderPreserving);
 }

@@ -700,14 +700,14 @@ public static class MongoPropertyExtensions
         this IConventionProperty property,
         bool orderPreserving,
         bool fromDataAnnotation = false)
-    {
-        if (orderPreserving)
-        {
-            property.SetAnnotation(MongoAnnotationNames.OrderPreservingStorage, true, fromDataAnnotation);
-        }
-        else
-        {
-            property.RemoveAnnotation(MongoAnnotationNames.OrderPreservingStorage);
-        }
-    }
+        => property.SetOrRemoveAnnotation(
+            MongoAnnotationNames.OrderPreservingStorage, orderPreserving ? true : null, fromDataAnnotation);
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the order-preserving storage declaration for the property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the declaration's source for.</param>
+    /// <returns>The <see cref="ConfigurationSource" /> the declaration was specified by, or <see langword="null"/> if there is none.</returns>
+    public static ConfigurationSource? GetOrderPreservingStorageConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.OrderPreservingStorage)?.GetConfigurationSource();
 }
