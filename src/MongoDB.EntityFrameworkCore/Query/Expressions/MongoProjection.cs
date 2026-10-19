@@ -33,8 +33,21 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// on null rather than reading <c>default(T)</c>. Set by the emit side from the same predicate call that admitted the
 /// leaf, and read by <c>MongoSelectDefinition.FindThrowOnNullProjection</c>; never re-derived.
 /// </param>
+/// <param name="ThrowsOnMalformedNull">
+/// Read-side only: the value is a reference to an upstream computed leaf that classified
+/// <c>NonNullableValueRead.ThrowOnMalformedNull</c> (a projected Distinct's flattened key over <c>x.Rank + 1</c>), so
+/// the read side reads it strictly, as it would the leaf itself. Unlike <paramref name="ThrowsOnNull"/>, no emit-side consumer looks at it, so no later operator declines over it.
+/// </param>
+/// <param name="DefaultsOnMalformedMissing">
+/// Read-side only: a projected Distinct's flattened key over an upstream leaf that classified
+/// <c>NonNullableValueRead.DefaultOnMalformedMissing</c> (<c>x.Rank > 1 ? -1 : x.Rank</c>), whose key part
+/// <c>MongoGroupingKeyPart.MarksMissing</c> and whose flatten restores MISSING from the marker. The read side reads a
+/// missing value as <c>default(T)</c> and a null as a throw, as it would the leaf itself.
+/// </param>
 internal readonly record struct MongoProjection(
     string Alias,
     MongoExpression Expression,
     System.Linq.Expressions.Expression? Source = null,
-    bool ThrowsOnNull = false);
+    bool ThrowsOnNull = false,
+    bool ThrowsOnMalformedNull = false,
+    bool DefaultsOnMalformedMissing = false);

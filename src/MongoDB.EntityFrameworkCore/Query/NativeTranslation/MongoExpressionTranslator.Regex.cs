@@ -15,6 +15,9 @@
 
 using System.Linq.Expressions;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -53,6 +56,18 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
+    /// <summary>
+    /// Whether a string property can be searched by a regex (<c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>/
+    /// <c>Like</c>/<c>Regex.IsMatch</c>/case-folded equality). A regex runs on the STORED value, so only a string stored
+    /// as a BSON string (no <c>BsonRepresentation</c>, or an explicit <see cref="BsonType.String"/>) qualifies; with
+    /// an <c>ObjectId</c> representation the stored value is not a string and a regex silently matches nothing.
+    /// A value converter is deliberately NOT gated: converted-but-string-stored properties already behave identically
+    /// on every path, and gating them would turn those results into NativeOnly failures.
+    /// </summary>
+    internal static bool IsRegexSearchableString(IReadOnlyProperty property)
+        => property.ClrType == typeof(string)
+           && (property.GetBsonRepresentation() is null or { BsonType: BsonType.String });
+
     private bool TryTranslateRegexIsMatch(MethodCallExpression call, out MongoExpression? result)
     {
         result = null;

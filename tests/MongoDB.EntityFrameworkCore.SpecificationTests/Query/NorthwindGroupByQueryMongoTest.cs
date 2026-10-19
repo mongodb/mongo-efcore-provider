@@ -1836,11 +1836,11 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Max" : { "$addToSet" : { "$cond" :
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$group" : { "_id" : null, "v" : { "$min" : "$_v" } } }
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_v" } } } }
 """,
             //
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$group" : { "_id" : null, "v" : { "$max" : "$_v" } } }
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_v" } } } }
 """);
     }
 

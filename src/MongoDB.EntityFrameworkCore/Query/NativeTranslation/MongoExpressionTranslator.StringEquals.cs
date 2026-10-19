@@ -61,7 +61,7 @@ internal sealed partial class MongoExpressionTranslator
                         return false;
                 }
 
-                if (isOuter || property.ClrType != typeof(string))
+                if (isOuter || !IsRegexSearchableString(property))
                     return false;
 
                 if (TranslateValue(Unwrap(right), property) is not MongoConstantExpression { Value: string } term)

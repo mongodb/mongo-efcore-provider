@@ -67,6 +67,16 @@ public class MongoValueRendererTests
     }
 
     [Fact]
+    public void RenderValue_property_less_constant_with_unmappable_type_throws_native_not_supported()
+    {
+        // BsonValue.Create throws ArgumentException for a Guid; it must surface as a decline so Native falls back.
+        var node = new MongoConstantExpression(System.Guid.NewGuid(), forSerialization: null);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => MongoValueRenderer.RenderValue(node, new PlaceholderTable()));
+    }
+
+    [Fact]
     public void RenderValue_unsupported_node_throws_native_not_supported()
     {
         var placeholders = new PlaceholderTable();
