@@ -66,6 +66,22 @@ public sealed class BsonSerializerFactory
     internal IBsonSerializer CreateEntitySerializer(IReadOnlyEntityType entityType) =>
         CreateGenericSerializer(typeof(EntitySerializer<>), [entityType.ClrType], entityType, this);
 
+    /// <summary>
+    /// Reads a native <c>DateTime.TimeOfDay</c> projection leaf, which the server computes as a whole number of
+    /// milliseconds since midnight (<c>$dateDiff</c> in <c>millisecond</c> units), the representation the driver-LINQ
+    /// translation also emits. The generic <see cref="TimeSpan"/> serializer would read that number as ticks.
+    /// </summary>
+    internal static readonly TimeSpanSerializer TimeOfDayMillisecondsSerializer = new(BsonType.Int64, TimeSpanUnits.Milliseconds);
+
+    /// <summary>
+    /// <see cref="TimeOfDayMillisecondsSerializer"/> for a <paramref name="readType"/> of <see cref="TimeSpan"/> or
+    /// <see cref="Nullable{TimeSpan}"/>.
+    /// </summary>
+    internal static IBsonSerializer CreateTimeOfDaySerializer(Type readType)
+        => readType == typeof(TimeSpan) ? TimeOfDayMillisecondsSerializer
+            : readType == typeof(TimeSpan?) ? new NullableSerializer<TimeSpan>(TimeOfDayMillisecondsSerializer)
+            : throw new ArgumentException($"A TimeOfDay value can't be read as '{readType.ShortDisplayName()}'.", nameof(readType));
+
     internal static IBsonSerializer CreateTypeSerializer(Type type, IReadOnlyProperty? property = null)
         => type switch
         {
@@ -111,6 +127,58 @@ public sealed class BsonSerializerFactory
                 => CreateClassMapSerializer(type),
             _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'.")
         };
+
+    /// <summary>
+    /// Whether reading a sub-document whose elements are named after <paramref name="memberNames"/> as
+    /// <paramref name="type"/> (through <see cref="CreateTypeSerializer(Type, IReadOnlyProperty?)"/>, as an alias read
+    /// does) reads each member back from the element of its own name.
+    /// </summary>
+    /// <remarks>
+    /// False when the type's class map names a member's element differently (by convention <c>Id</c> maps to
+    /// <c>_id</c>; <c>[BsonElement]</c> renames), doesn't map it at all, or the type isn't read through a document
+    /// serializer. A native projection that builds such a sub-document from member names must not be read back
+    /// whole: the read throws <c>FormatException</c> ("Element 'Id' does not match any field or property") or loses
+    /// the value.
+    /// </remarks>
+    internal static bool ReadsMembersFromElementsOfTheirOwnNames(Type type, IEnumerable<string> memberNames)
+    {
+        var readType = Nullable.GetUnderlyingType(type) ?? type;
+        if (readType is not ({ IsValueType: true, IsPrimitive: false } or { IsClass: true, IsAbstract: false })
+            || readType == typeof(string)
+            || readType.IsArray
+            || readType.IsEnum)
+        {
+            return false;
+        }
+
+        IBsonSerializer serializer;
+        try
+        {
+            serializer = CreateTypeSerializer(readType);
+        }
+        catch (Exception e) when (e is BsonException or NotSupportedException or ArgumentException
+                                       or InvalidOperationException or TargetInvocationException)
+        {
+            // The type can't be class-mapped: the whole-value read would fail the same way.
+            return false;
+        }
+
+        if (serializer is not IBsonDocumentSerializer documentSerializer)
+        {
+            return false;
+        }
+
+        foreach (var memberName in memberNames)
+        {
+            if (!documentSerializer.TryGetMemberSerializationInfo(memberName, out var serializationInfo)
+                || serializationInfo.ElementName != memberName)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     // Adapted from BsonClassMapSerializationProvider in the C# driver
     private static IBsonSerializer CreateClassMapSerializer(Type type)

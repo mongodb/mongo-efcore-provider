@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -32,6 +33,7 @@ using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
+using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -167,7 +169,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             case NativeComputedLeafExpression computedLeaf:
                 {
                     var computedProjection = GetProjection(computedLeaf.Binding);
-                    return BsonBinding.CreateGetElementValue(DocParameter, computedProjection.Alias!, computedLeaf.Type);
+                    return TryCreateThrowOnNullAliasRead(computedProjection.Alias!, computedLeaf.Type, out var throwingComputedRead)
+                        ? throwingComputedRead
+                        : BsonBinding.CreateGetElementValue(DocParameter, computedProjection.Alias!, computedLeaf.Type);
                 }
 
             case ProjectionBindingExpression projectionBindingExpression:
@@ -187,6 +191,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     if (projection.Expression is MongoDocumentConstructionExpression construction)
                     {
                         return BuildDocumentConstructionExpression(construction, projection.Alias);
+                    }
+
+                    // A null-propagated scalar behind a non-nullable type (`x.S.Length`, `(long)x.S.Length`,
+                    // `x.S.Length + 5`, possibly over an unmatched left-outer side): read as T? and throw EF's
+                    // "Nullable object must have a value." on null. Precedes every other arm, since a Convert or
+                    // arithmetic leaf would otherwise read the null as 0.
+                    if (TryCreateThrowOnNullAliasRead(projection.Alias, projectionBindingExpression.Type, out var throwingRead))
+                    {
+                        return throwingRead;
                     }
 
                     // FirstOrDefault over a non-nullable value-type member: with no related row the alias is missing
@@ -901,19 +914,56 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     /// <summary>
+    /// When the native emit side flagged the output under <paramref name="alias"/>
+    /// <see cref="MongoProjection.ThrowsOnNull"/> (<see cref="MongoSelectDefinition.FindThrowOnNullProjection"/>), reads
+    /// it as a nullable and takes <see cref="Nullable{T}.Value"/>, so a null (or missing) value throws EF's
+    /// "Nullable object must have a value." instead of reading as <c>default(T)</c>.
+    /// </summary>
+    /// <remarks>
+    /// The value type is <paramref name="type"/> when that is a non-nullable value type (a widened
+    /// <c>(long)x.S.Length</c> reads the server's int as long); otherwise (a boxed <see cref="object"/> read) it is the
+    /// staged expression's own type, and the value is converted back to <paramref name="type"/>.
+    /// </remarks>
+    private bool TryCreateThrowOnNullAliasRead(string alias, Type type, [NotNullWhen(true)] out Expression? read)
+    {
+        // A nullable read of the alias wants the null itself (never produced for a flagged leaf today: the flag is set
+        // only for a non-nullable read, and a Distinct or set op keeps the leaf's type).
+        if (Nullable.GetUnderlyingType(type) is not null
+            || _queryExpression.Select.FindThrowOnNullProjection(alias) is not { } flagged)
+        {
+            read = null;
+            return false;
+        }
+
+        var valueType = type.IsValueType && Nullable.GetUnderlyingType(type) is null
+            ? type
+            : flagged.Expression.Type.UnwrapNullableType();
+        Expression value = Expression.Property(
+            CreateAliasRead(alias, valueType.MakeNullable()), valueType.MakeNullable().GetProperty(nameof(Nullable<int>.Value))!);
+        read = value.Type == type ? value : Expression.Convert(value, type);
+        return true;
+    }
+
+    /// <summary>
     /// Reads a projection output by alias through the generic serializer for <paramref name="type"/>. When the alias
     /// holds the unchanged value of a Local-kind DateTime property (a GroupBy key, a <c>$min</c>/<c>$max</c>, a cast or
     /// join-scope leaf), the value reads back with that kind, as the property's own serializer would; see
     /// <see cref="NativeDateTimeKindReadBack"/>.
     /// </summary>
+    /// <remarks>
+    /// A native <c>DateTime.TimeOfDay</c> leaf (<see cref="MongoSelectDefinition.IsTimeOfDayProjection"/>) holds
+    /// milliseconds since midnight, read through <see cref="BsonSerializerFactory.TimeOfDayMillisecondsSerializer"/>.
+    /// </remarks>
     private Expression CreateAliasRead(string alias, Type type)
-        => BsonBinding.CreateGetElementValue(
-            DocParameter,
-            alias,
-            type,
-            type.UnwrapNullableType() == typeof(DateTime)
-                ? NativeDateTimeKindReadBack.FindForProjectionAlias(_queryExpression.Select, alias)
-                : null);
+        => type.UnwrapNullableType() == typeof(TimeSpan) && _queryExpression.Select.IsTimeOfDayProjection(alias)
+            ? BsonBinding.CreateGetElementValue(DocParameter, alias, type, BsonSerializerFactory.CreateTimeOfDaySerializer(type))
+            : BsonBinding.CreateGetElementValue(
+                DocParameter,
+                alias,
+                type,
+                type.UnwrapNullableType() == typeof(DateTime)
+                    ? NativeDateTimeKindReadBack.FindForProjectionAlias(_queryExpression.Select, alias)
+                    : null);
 
     /// <summary>
     /// Reads one member of a <see cref="MongoDocumentConstructionExpression"/> leaf. The native implementation

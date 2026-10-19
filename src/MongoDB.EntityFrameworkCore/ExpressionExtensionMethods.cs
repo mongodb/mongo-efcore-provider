@@ -117,12 +117,49 @@ internal static class ExpressionExtensionMethods
     /// <c>NativeProjectionBinder</c>/<c>NativeJoinScopeProjectionBinder</c> must not, since they resolve aliases
     /// by real <c>MemberInfo</c> and would never find a synthetic name.
     /// </param>
+    /// <param name="rowIndependentConstructorArgumentsOver">
+    /// When non-null, also admit a <see cref="MemberInitExpression"/> whose constructor arguments are all
+    /// row-independent over this selector parameter (<c>NativeProjectionBinder.IsRowIndependentLeaf</c>):
+    /// <c>new Dto(param) { A = x.A }</c>. Only the bindings are returned; the constructor arguments stay on the
+    /// shaper, which evaluates them client-side. Only for <c>NativeProjectionBinder</c>, whose read side evaluates
+    /// row-independent subtrees in place.
+    /// </param>
+    /// <param name="allowContainerElements">
+    /// Also admit a positional container, a non-empty <c>new[] { a, b }</c> (<see cref="ExpressionType.NewArrayInit"/>),
+    /// naming element <c>i</c> <see cref="PositionalConstructorArgumentAliasPrefix"/> + <c>i</c> like a positional
+    /// constructor argument. Only for the plain-<c>Select</c> container callers, which bind every element by index
+    /// (<c>NativeProjectionBinder</c>'s container arm and its <c>BuildPositionalCtorProjectionShaper</c> reader;
+    /// <c>NativeJoinScopeProjectionBinder</c> and its <c>BuildSelectManyResultShaper</c> reader). Deliberately separate
+    /// from <paramref name="allowPositionalConstructorArguments"/>, which the <c>GroupBy</c>/<c>SelectMany</c> result
+    /// selectors share: widening that flag would widen their gates.
+    /// <para>
+    /// A <see cref="ListInitExpression"/> (<c>new List&lt;object&gt; { a, b }</c>) is not admitted: the index-based
+    /// shaper can only be read off the native <c>$project</c>, and unlike an array the driver cannot push a list
+    /// initializer down (ExpressionNotSupportedException), so explicit <c>DriverLinq</c> or a late fallback would read the
+    /// synthetic aliases off whole documents and fail where the generic shaper works today.
+    /// </para>
+    /// </param>
     internal static bool TryGetProjectionMembers(
         this Expression body, out IReadOnlyList<(string MemberName, Expression Value)> members,
-        bool allowPositionalConstructorArguments = false)
+        bool allowPositionalConstructorArguments = false,
+        ParameterExpression? rowIndependentConstructorArgumentsOver = null,
+        bool allowContainerElements = false)
     {
         switch (body)
         {
+            case NewArrayExpression { NodeType: ExpressionType.NewArrayInit, Expressions: { Count: > 0 } elements }
+                when allowContainerElements:
+            {
+                var pairs = new List<(string, Expression)>(elements.Count);
+                for (var i = 0; i < elements.Count; i++)
+                {
+                    pairs.Add((PositionalConstructorArgumentAlias(i), elements[i]));
+                }
+
+                members = pairs;
+                return true;
+            }
+
             case NewExpression
             {
                 Members: { } newMembers, Arguments: { Count: > 0 } arguments
@@ -154,8 +191,14 @@ internal static class ExpressionExtensionMethods
                 return true;
             }
 
-            case MemberInitExpression { NewExpression.Arguments.Count: 0, Bindings.Count: > 0 } memberInit:
+            case MemberInitExpression { NewExpression.Arguments.Count: 0, Bindings.Count: > 0 }:
+            case MemberInitExpression { NewExpression.Arguments.Count: > 0, Bindings.Count: > 0 } memberInitWithArguments
+                when rowIndependentConstructorArgumentsOver is not null
+                     && memberInitWithArguments.NewExpression.Arguments.All(
+                         a => Query.NativeTranslation.NativeProjectionBinder.IsRowIndependentLeaf(
+                             a, rowIndependentConstructorArgumentsOver)):
             {
+                var memberInit = (MemberInitExpression)body;
                 var pairs = new List<(string, Expression)>(memberInit.Bindings.Count);
                 foreach (var binding in memberInit.Bindings)
                 {
@@ -199,6 +242,7 @@ internal static class ExpressionExtensionMethods
         => body switch
         {
             NewExpression newExpression => newExpression.Update(values),
+            NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray => newArray.Update(values),
             MemberInitExpression memberInit => memberInit.Update(
                 memberInit.NewExpression,
                 memberInit.Bindings.Select(

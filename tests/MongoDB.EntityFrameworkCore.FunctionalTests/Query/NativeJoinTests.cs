@@ -2301,6 +2301,78 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         }
     }
 
+    // A parameter-free Select body (`Select(e => "Foo")`) over a single inner join must keep the $lookup/$unwind, so
+    // the order-less owners are dropped (3 joined rows, not 5 owners) and paging applies to the joined rows.
+    [Theory]
+    [InlineData("Constant", 3)]
+    [InlineData("PagedConstant", 2)]
+    [InlineData("PagedConstantOuterOrder", 2)]
+    [InlineData("Int", 3)]
+    [InlineData("CapturedParameter", 3)]
+    public void Parameter_free_projection_over_a_join_keeps_the_join_rows(string shape, int expectedCount)
+    {
+        var seed = SeedOwnersWithOrderlessOwnersFirst();
+        Assert.Equal(5, seed.Owners.Length);
+
+        var expected = RunParameterFreeProjectionOverJoin(seed.Owners.AsQueryable(), seed.Orders.AsQueryable(), shape);
+        Assert.Equal(expectedCount, expected.Count);
+
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Parameter_free_projection_over_a_join_keeps_the_join_rows) + mode + shape);
+            return RunParameterFreeProjectionOverJoin(db.Owners, db.Orders, shape);
+        });
+
+        Assert.Equal(expected, result);
+    }
+
+    private static List<string> RunParameterFreeProjectionOverJoin(
+        IQueryable<Owner> owners, IQueryable<Order> orders, string shape)
+    {
+        var joined = from c in owners
+                     join o in orders on c.Id equals o.OwnerId
+                     orderby o.Id
+                     select new { c.Name, o.Id };
+
+        var captured = "Bar";
+
+        return shape switch
+        {
+            "Constant" => joined.Select(e => "Foo").ToList(),
+            "CapturedParameter" => joined.Select(e => captured).ToList(),
+            "PagedConstant" => joined.Skip(1).Take(2).Select(e => "Foo").ToList(),
+            // Outer-only sort: the sort and paging record ahead of the $lookup and must be deferred past the $unwind
+            // (the Inner sort above instead routes them to PostJoinOps).
+            "PagedConstantOuterOrder" => (from c in owners
+                                          join o in orders on c.Id equals o.OwnerId
+                                          orderby c.Name
+                                          select new { c.Name, o.Id }).Skip(1).Take(2).Select(e => "Foo").ToList(),
+            "Int" => joined.Select(e => 42).AsEnumerable().Select(i => i.ToString()).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+    }
+
+    // Order-less owners first (by insertion and by Name) and in the majority: a pre-$lookup Skip(1).Take(2) would page
+    // owners (Alice, Bob) and unwind to 3 rows; a dropped $lookup would return one row per owner (5).
+    private static Seed SeedOwnersWithOrderlessOwnersFirst()
+    {
+        var aaron = new Owner { Id = ObjectId.GenerateNewId(), Name = "Aaron", Region = "North" };
+        var alice = new Owner { Id = ObjectId.GenerateNewId(), Name = "Alice", Region = "North" };
+        var bob = new Owner { Id = ObjectId.GenerateNewId(), Name = "Bob", Region = "South" };
+        var carol = new Owner { Id = ObjectId.GenerateNewId(), Name = "Carol", Region = "West" };
+        var dave = new Owner { Id = ObjectId.GenerateNewId(), Name = "Dave", Region = "East" };
+
+        var orders = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), OwnerId = alice.Id, Total = 10m, Region = "North" },
+            new Order { Id = ObjectId.GenerateNewId(), OwnerId = alice.Id, Total = 20m, Region = "North" },
+            new Order { Id = ObjectId.GenerateNewId(), OwnerId = bob.Id, Total = 30m, Region = "South" },
+        };
+
+        return new Seed([aaron, alice, bob, carol, dave], orders, []);
+    }
+
     private sealed record Seed(Owner[] Owners, Order[] Orders, OrderLine[] OrderLines = default!);
 
     private static Seed SeedOwnersAndOrders()

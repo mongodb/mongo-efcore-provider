@@ -178,6 +178,19 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Translates a computed string receiver for <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>, or returns
+    /// <see langword="null"/>. The result is never a bare field or element ref (those resolve earlier), so the
+    /// regex it feeds always renders via <c>$expr</c>/<c>$regexMatch</c> (see
+    /// <see cref="MongoQueryLanguageRenderer.IsQueryDialectRegex"/>). Pure: nothing is recorded on a decline.
+    /// </summary>
+    private MongoExpression? TryTranslateComputedRegexReceiver(Expression receiver)
+        => TryTranslateValue(receiver, out var computed)
+           && computed.Type == typeof(string)
+           && MongoAggregationExpressionRenderer.CanRender(computed)
+            ? computed
+            : null;
+
+    /// <summary>
     /// Resolves a <c>DateTime</c>/<c>DateTimeOffset</c> member-access chain (<c>.Year</c>, <c>.Date</c>,
     /// <c>.DateTime</c>, <c>.UtcDateTime</c>, ...) to a native date expression, recursing into the receiver so
     /// multi-hop chains such as <c>x.Dto.Value.DateTime.Date</c> compose.
@@ -249,6 +262,41 @@ internal sealed partial class MongoExpressionTranslator
             return false;
 
         result = new MongoDatePartExpression(receiverExpr, plainPart);
+        return true;
+    }
+
+    /// <summary>
+    /// Translates a projection leaf that is exactly <c>&lt;DateTime field&gt;.TimeOfDay</c> (<c>x.When.TimeOfDay</c>,
+    /// <c>x.MaybeWhen.Value.TimeOfDay</c>) to a <see cref="MongoDatePart.TimeOfDay"/> date part, or returns
+    /// <see langword="false"/>.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not reachable from <see cref="TranslateOperand"/> (so not from <see cref="TryTranslateValue"/>,
+    /// filters, group keys or accumulators): the value is milliseconds since midnight, not a <see cref="TimeSpan"/>'s
+    /// default stored form. The projection reader reads it through
+    /// <c>BsonSerializerFactory.TimeOfDayMillisecondsSerializer</c>, and every operator that reads the projected alias
+    /// afterwards must recognise it (<see cref="MongoDatePartExpression.IsTimeOfDay"/>: <see cref="AllFieldsDefaultSerialized"/>,
+    /// the projected Distinct, set-op operand matching) or decline (see <see cref="MongoDatePart"/>). Declines a <c>DateTimeOffset</c> receiver, a computed receiver, a
+    /// non-default-serialized field, and a <c>HasDateTimeKind(Local)</c> field, whose server-side time of day is the
+    /// UTC one where C# answers the local one (EF-459).
+    /// </remarks>
+    public bool TryTranslateTimeOfDayLeaf(Expression leaf, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+        if (leaf is not MemberExpression { Member.Name: nameof(DateTime.TimeOfDay), Expression: { } receiver }
+            || receiver.Type != typeof(DateTime)
+            || !TryResolveMember(receiver, out var property, out var fieldPath, out var isOuter)
+            || isOuter
+            || property.GetDateTimeKind() == DateTimeKind.Local)
+        {
+            return false;
+        }
+
+        var field = new MongoFieldExpression(property, fieldPath);
+        if (!AllFieldsDefaultSerialized(field))
+            return false;
+
+        result = new MongoDatePartExpression(field, MongoDatePart.TimeOfDay);
         return true;
     }
 
@@ -397,8 +445,8 @@ internal sealed partial class MongoExpressionTranslator
         [nameof(DateTime.AddMilliseconds)] = MongoDateAddUnit.Millisecond
     };
 
-    // Mirrors MongoEFToLinqTranslatingExpressionVisitor.DateTimeOffsetComponentMembers minus TimeOfDay (see
-    // MongoDatePart); also applies to plain DateTime receivers.
+    // Mirrors MongoEFToLinqTranslatingExpressionVisitor.DateTimeOffsetComponentMembers minus TimeOfDay, which is only
+    // a projection leaf (TryTranslateTimeOfDayLeaf; see MongoDatePart); also applies to plain DateTime receivers.
     private static readonly Dictionary<string, MongoDatePart> DatePartsByMemberName = new()
     {
         [nameof(DateTime.Year)] = MongoDatePart.Year,
@@ -435,7 +483,7 @@ internal sealed partial class MongoExpressionTranslator
         (typeof(float), typeof(double))
     ];
 
-    private static bool IsWideningNumericConvert(Type from, Type to)
+    internal static bool IsWideningNumericConvert(Type from, Type to)
         => WideningNumericConversions.Contains((from, to));
 
     private static bool IsIntegerType(Type type)
@@ -510,6 +558,9 @@ internal sealed partial class MongoExpressionTranslator
                 => AllFieldsDefaultSerialized(coalesce.Left) && AllFieldsDefaultSerialized(coalesce.Right),
             // Date operators run against the operand's raw BSON; a converted field would be a server type error or
             // wrong values.
+            // TimeOfDay is milliseconds, not a TimeSpan's default (string) form: a later operator reducing or comparing
+            // it (a terminal Max over the bare Select, a set op against a TimeSpan property) would read it wrongly.
+            _ when MongoDatePartExpression.IsTimeOfDay(expr) => false,
             MongoDatePartExpression datePart => AllFieldsDefaultSerialized(datePart.Operand),
             MongoDateTimeOffsetLocalExpression local => AllFieldsDefaultSerialized(local.Operand),
             MongoDateAddExpression dateAdd
@@ -574,6 +625,20 @@ internal sealed partial class MongoExpressionTranslator
         return e;
     }
 
+    // `&` / `|` over two non-nullable bools is the logical and/or with both sides evaluated; server-side evaluation has
+    // no side effects, so it is exact. bool? operands (three-valued `&`/`|`) are excluded and decline.
+    private static bool IsNonNullableBoolLogical(BinaryExpression node)
+        => node is { NodeType: ExpressionType.And or ExpressionType.Or }
+           && node.Type == typeof(bool) && node.Left.Type == typeof(bool) && node.Right.Type == typeof(bool);
+
+    private static bool IsLogicalAnd(BinaryExpression node)
+        => node.NodeType == ExpressionType.AndAlso
+           || (node.NodeType == ExpressionType.And && IsNonNullableBoolLogical(node));
+
+    private static bool IsLogicalOr(BinaryExpression node)
+        => node.NodeType == ExpressionType.OrElse
+           || (node.NodeType == ExpressionType.Or && IsNonNullableBoolLogical(node));
+
     // Returns null for any unsupported node (the caller propagates null → false return).
     private MongoExpression? TranslateNode(Expression node)
     {
@@ -581,7 +646,7 @@ internal sealed partial class MongoExpressionTranslator
         {
             // --- Logical binary operators ---
 
-            case BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso:
+            case BinaryExpression andAlso when IsLogicalAnd(andAlso):
             {
                 var left = TranslateNode(Unwrap(andAlso.Left));
                 if (left is null) return null;
@@ -590,7 +655,7 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoBinaryExpression(MongoBinaryOperator.AndAlso, left, right);
             }
 
-            case BinaryExpression { NodeType: ExpressionType.OrElse } orElse:
+            case BinaryExpression orElse when IsLogicalOr(orElse):
             {
                 var left = TranslateNode(Unwrap(orElse.Left));
                 if (left is null) return null;
@@ -907,9 +972,17 @@ internal sealed partial class MongoExpressionTranslator
                     // TryResolveFlattenedAlias.
                     fieldNode = aliasFieldRef;
                 }
+                else if (TryTranslateComputedRegexReceiver(Unwrap(receiver)) is { } computedReceiver)
+                {
+                    // A computed string receiver (`(c.A + "").Contains("1")`, `(c.S ?? "z").StartsWith("a")`,
+                    // `c.U.ToString().Contains("7")`). Aggregation dialect only: MongoQueryLanguageRenderer's
+                    // IsQueryDialectRegex keeps it out of the { path: /re/ } form, so it renders via
+                    // $expr/$regexMatch. The field-to-field term arm below requires `property`, so it declines here.
+                    fieldNode = computedReceiver;
+                }
                 else
                 {
-                    return null; // receiver must resolve to a bare string field or a computed Distinct alias
+                    return null; // receiver must be a bare string field, a computed Distinct alias, or a computed string
                 }
 
                 var termNode = termExpr.Type == typeof(char)
@@ -1757,6 +1830,9 @@ internal sealed partial class MongoExpressionTranslator
             or BinaryExpression { NodeType: ExpressionType.AndAlso or ExpressionType.OrElse })
             return TranslateNode(node);
 
+        if (node is BinaryExpression bitwiseLogical && IsNonNullableBoolLogical(bitwiseLogical))
+            return TranslateNode(node);
+
         // A comparison used as a value (`p.Discontinued == ((p.ProductID > 50) != prm)`); same hand-off.
         if (node is BinaryExpression comparisonOperand && IsComparison(comparisonOperand.NodeType))
             return TranslateNode(node);
@@ -1862,10 +1938,10 @@ internal sealed partial class MongoExpressionTranslator
             return new MongoConstantExpression(constant.Value, forSerialization);
 
         if (NativeQueryParameter.TryGetQueryParameterName(node, out var parameterName))
-            return new MongoParameterExpression(parameterName, forSerialization);
+            return new MongoParameterExpression(parameterName, forSerialization, valueType: node.Type);
 
         if (NativeQueryParameter.TryGetParameterArrayElementIndex(node, out var arrayParameterName, out var index))
-            return new MongoParameterExpression(arrayParameterName, forSerialization, arrayElementIndex: index);
+            return new MongoParameterExpression(arrayParameterName, forSerialization, arrayElementIndex: index, valueType: node.Type);
 
         return null;
     }

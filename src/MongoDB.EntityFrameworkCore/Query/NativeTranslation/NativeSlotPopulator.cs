@@ -470,18 +470,17 @@ internal static class NativeSlotPopulator
                 continue;
             }
 
-            if (NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, rootParam, node, out var nullCheckIndex, out var isNotNull))
+            if (NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, rootParam, node, out _, out _))
             {
-                // An inner join drops unmatched rows, so the check would be constant. Same guard as
-                // NativeJoinScopeProjectionBinder.TryTranslateScopeNullCheckConditional (left-outer level plus a
-                // ForceUnwind lookup, whose missing field $ifNull reads as null).
-                var level = scope.Levels[nullCheckIndex - 1];
-                if (!level.IsLeftOuter || mongoQ.Joins[nullCheckIndex - 1].Lookup is not { ForceUnwind: true })
+                // An inner join drops unmatched rows, so the check would be constant: the shared gate
+                // (NativeJoinScopeProjectionBinder.TryTranslateScopeNullCheck) admits only a left-outer level with a
+                // ForceUnwind lookup, whose missing field $ifNull reads as null. A matched but rejected check declines.
+                if (!NativeJoinScopeProjectionBinder.TryTranslateScopeNullCheck(mongoQ, scope, rootParam, node, out var nullCheck))
                 {
                     return false;
                 }
 
-                translated.Add(new MongoLookupNullCheckExpression(level.InnerPrefix, isNotNull));
+                translated.Add(nullCheck);
                 readsNonRootScope = true;
             }
             else if (NativeJoinScopeTranslator.TryTranslateSingleScopePredicate(

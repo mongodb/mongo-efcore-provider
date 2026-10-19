@@ -70,8 +70,8 @@ internal sealed class MongoSelectLowerer
             // see MongoSelectDefinition.PostJoinOps.
             AppendSelectOpStages(select.PostJoinOps, stages, sortFields);
             // Paging deferred past a join whose $unwind may change row count; see
-            // MongoSelectDefinition.PostLookupPagingOps. Can't co-occur with a set op: set-op operand gates
-            // exclude join queries.
+            // MongoSelectDefinition.PostLookupPagingOps. With a set op, only a projected source1 over a confirmed
+            // join scope can carry either list; the OperandsProjected branch below emits them.
             AppendSelectOpStages(select.PostLookupPagingOps, stages, sortFields);
         }
 
@@ -86,6 +86,12 @@ internal sealed class MongoSelectLowerer
                 // source1's own pre-combine lookup (projected collection-nav Count) must precede its $project
                 // and must not apply to the other operand's rows, so it's emitted here rather than deferred.
                 AppendLookupStages(query, stages);
+
+                // A join-scope source1 (MQTEV.IsPreCombineJoinScope): its inner-side filter/sort/paging and its paging
+                // deferred past the $lookup run here, as on the non-set-op path above, ahead of its $project.
+                // Dropping these would silently return source1's unfiltered joined rows.
+                AppendSelectOpStages(select.PostJoinOps, stages, sortFields);
+                AppendSelectOpStages(select.PostLookupPagingOps, stages, sortFields);
 
                 // A GroupBy composed after this set op over a Grouping-bearing source1 (projected Distinct or
                 // GroupBy.Select(aggregate)) had SnapshotPriorGroupingForNestedGroupBy move source1's own

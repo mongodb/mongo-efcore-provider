@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
@@ -124,6 +125,35 @@ public class ExpressionExtensionMethodsTests
         Assert.Empty(members);
     }
 
+    [Fact]
+    public void Array_container_is_read_positionally_only_with_allowContainerElements()
+    {
+        Expression<System.Func<int, string, object[]>> lambda = (a, b) => new object[] { a, b };
+
+        Assert.False(lambda.Body.TryGetProjectionMembers(out _));
+        Assert.False(lambda.Body.TryGetProjectionMembers(out _, allowPositionalConstructorArguments: true));
+
+        Assert.True(lambda.Body.TryGetProjectionMembers(out var members, allowContainerElements: true));
+        Assert.Equal(["_ctorArg0", "_ctorArg1"], members.Select(m => m.MemberName));
+        Assert.Same(((NewArrayExpression)lambda.Body).Expressions[1], members[1].Value);
+
+        var rebuilt = lambda.Body.RebuildProjectionMembers(
+            [Expression.Convert(Expression.Constant(7), typeof(object)), Expression.Constant("x")]);
+        Assert.Equal(new object[] { 7, "x" }, Expression.Lambda<System.Func<object[]>>(rebuilt).Compile()());
+    }
+
+    [Fact]
+    public void List_initializer_and_empty_array_are_never_containers()
+    {
+        Expression<System.Func<int, List<object>>> list = a => new List<object> { a };
+        Expression<System.Func<int, object[]>> empty = a => new object[] { };
+        Expression<System.Func<int, object[]>> bounds = a => new object[a];
+
+        Assert.False(list.Body.TryGetProjectionMembers(out _, allowContainerElements: true));
+        Assert.False(empty.Body.TryGetProjectionMembers(out _, allowContainerElements: true));
+        Assert.False(bounds.Body.TryGetProjectionMembers(out _, allowContainerElements: true));
+    }
+
     // Family-A call sites (ordinary Select/Join projections) must never pass allowPositionalConstructorArguments:
     // true: the synthetic "_ctorArg0"-style aliases can't be resolved by EF Core's ProjectionMember/MemberInfo-keyed
     // read side, silently breaking projection reads. Otherwise enforced only by TryGetProjectionMembers' doc, so pin
@@ -135,14 +165,20 @@ public class ExpressionExtensionMethodsTests
 
         // Expected call counts per file, so an added or removed call site is noticed. The one opted-in (family-B)
         // site in NativeProjectionBinder.cs is the multi-argument positional-ctor-DTO arm, which is read back by
-        // index (see MongoSelectDefinition.HasPositionalCtorProjectionShaper), not via ProjectionMember.
-        var familyASources = new (string RelativePath, int ExpectedCallCount, int ExpectedOptedInCallCount)[]
+        // index (see MongoSelectDefinition.HasPositionalCtorProjectionShaper), not via ProjectionMember. The
+        // allowContainerElements opt-ins are the positional-container arms (NativeProjectionBinder's container arm,
+        // NativeJoinScopeProjectionBinder.TryBindProjection), also read back by index; that flag is deliberately separate
+        // so the GroupBy/SelectMany result selectors sharing allowPositionalConstructorArguments are not widened.
+        var sources = new (string RelativePath, int ExpectedCallCount, int ExpectedOptedInCallCount, int ExpectedContainerOptInCount)[]
         {
-            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeProjectionBinder.cs", 3, 1),
-            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeJoinScopeProjectionBinder.cs", 3, 0),
+            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeProjectionBinder.cs", 4, 1, 1),
+            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeJoinScopeProjectionBinder.cs", 3, 0, 1),
+            // Family B (read by index), pinned here only so neither widens to containers.
+            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeGroupByBinder.cs", 2, 1, 0),
+            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeSelectManyBinder.cs", 2, 2, 0),
         };
 
-        foreach (var (relativePath, expectedCallCount, expectedOptedInCallCount) in familyASources)
+        foreach (var (relativePath, expectedCallCount, expectedOptedInCallCount, expectedContainerOptInCount) in sources)
         {
             var fullPath = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
             Assert.True(File.Exists(fullPath), $"Expected source file not found: {fullPath}");
@@ -168,6 +204,16 @@ public class ExpressionExtensionMethodsTests
                 + "must NOT pass allowPositionalConstructorArguments: true — doing so lets a wrapped member "
                 + "resolve to a synthetic positional alias that this call site's ProjectionMember/MemberInfo-"
                 + "keyed read cannot find — see TryGetProjectionMembers' parameter doc for who may pass true.");
+
+            var containerOptedInLines = callSiteLines
+                .Where(line => Regex.IsMatch(line, @"allowContainerElements\s*:\s*true"))
+                .ToList();
+
+            Assert.True(
+                containerOptedInLines.Count == expectedContainerOptInCount,
+                $"{relativePath}: expected {expectedContainerOptInCount} call site(s) opting in to "
+                + $"allowContainerElements: true, found {containerOptedInLines.Count}. Only the plain-Select container "
+                + "arms may; see TryGetProjectionMembers' parameter doc.");
         }
     }
 

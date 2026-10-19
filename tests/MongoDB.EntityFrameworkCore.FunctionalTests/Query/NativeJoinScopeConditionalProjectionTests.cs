@@ -252,6 +252,155 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         Assert.Equal([2, 3, 1], actual);
     }
 
+    // A bare entity null check (`o.Customer == null`, EF Core's Select_entity_compared_to_null) over an optional
+    // reference navigation, which nav-expansion leaves as `ti.Inner == null` over a left-outer join. Both unmatched
+    // shapes must answer "null": a null FK and a dangling FK whose customer document is absent. The hand oracle pins
+    // the values; NativeAndParity pins that the query went native and that driver-LINQ agrees.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Bare_entity_null_check_over_a_reference_join_goes_native(bool isNotNull)
+    {
+        var (ordersName, customersName, regionsName) = SeedNullCheckRows(
+            nameof(Bare_entity_null_check_over_a_reference_join_goes_native) + isNotNull);
+
+        var actual = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
+            var query = db.Set<Order>().OrderBy(o => o.OrderNo);
+            return isNotNull
+                ? query.Select(o => o.Customer != null).ToList()
+                : query.Select(o => o.Customer == null).ToList();
+        });
+
+        // OrderNo 1 matched, 2 null FK, 3 dangling FK.
+        Assert.Equal(isNotNull ? new[] { true, false, false } : new[] { false, true, true }, actual);
+    }
+
+    // The same check as one member of a wrapped projection, beside an outer-side scalar.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Wrapped_entity_null_check_over_a_reference_join_goes_native(bool isNotNull)
+    {
+        var (ordersName, customersName, regionsName) = SeedNullCheckRows(
+            nameof(Wrapped_entity_null_check_over_a_reference_join_goes_native) + isNotNull);
+
+        var actual = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
+            var query = db.Set<Order>().OrderBy(o => o.OrderNo);
+            return isNotNull
+                ? query.Select(o => new { o.OrderNo, Check = o.Customer != null }).AsEnumerable()
+                    .Select(x => x.OrderNo + ":" + x.Check).ToList()
+                : query.Select(o => new { o.OrderNo, Check = o.Customer == null }).AsEnumerable()
+                    .Select(x => x.OrderNo + ":" + x.Check).ToList();
+        });
+
+        Assert.Equal(
+            isNotNull ? new[] { "1:True", "2:False", "3:False" } : new[] { "1:False", "2:True", "3:True" },
+            actual);
+    }
+
+    // A two-hop optional navigation (`o.Customer.Region == null`) checks the SECOND level's Inner side. Every order
+    // whose customer is unmatched (null or dangling FK) has no region either.
+    [Fact]
+    public void Bare_entity_null_check_over_a_two_level_chain_goes_native()
+    {
+        var (ordersName, customersName, regionsName) = SeedNullCheckRows(
+            nameof(Bare_entity_null_check_over_a_two_level_chain_goes_native));
+
+        var actual = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
+            return db.Set<Order>().OrderBy(o => o.OrderNo).Select(o => o.Customer!.Region == null).ToList();
+        });
+
+        // OrderNo 1's customer has a matched region; 2 and 3 have no customer, hence no region.
+        Assert.Equal(new[] { false, true, true }, actual);
+    }
+
+    [Fact]
+    public void Wrapped_entity_null_check_over_a_two_level_chain_goes_native()
+    {
+        var (ordersName, customersName, regionsName) = SeedNullCheckRows(
+            nameof(Wrapped_entity_null_check_over_a_two_level_chain_goes_native));
+
+        var actual = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
+            return db.Set<Order>().OrderBy(o => o.OrderNo)
+                .Select(o => new { o.OrderNo, NoCustomer = o.Customer == null, NoRegion = o.Customer!.Region == null })
+                .AsEnumerable().Select(x => x.OrderNo + ":" + x.NoCustomer + ":" + x.NoRegion).ToList();
+        });
+
+        Assert.Equal(new[] { "1:False:False", "2:True:True", "3:True:True" }, actual);
+    }
+
+    // Beside a whole-entity member the projection must be read from whole documents, which a computed null-check leaf
+    // is not; the binder declines the whole projection and the fallback answers.
+    [Fact]
+    public void Wrapped_entity_null_check_beside_a_whole_entity_declines()
+    {
+        var (ordersName, customersName, regionsName) = SeedNullCheckRows(
+            nameof(Wrapped_entity_null_check_beside_a_whole_entity_declines));
+
+        var actual = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
+            return db.Set<Order>().OrderBy(o => o.OrderNo)
+                .Select(o => new { Order = o, NoCustomer = o.Customer == null })
+                .AsEnumerable().Select(x => x.Order.OrderNo + ":" + x.NoCustomer).ToList();
+        });
+
+        Assert.Equal(new[] { "1:False", "2:True", "3:True" }, actual);
+    }
+
+    // An INNER join's Inner side is never null, so the check is constant; the shared gate declines it (as for the
+    // ternary and Where arms) rather than render a constant. The single matched row answers `false` for `== null`.
+    // The decline is conservative: with the left-outer guard removed the native query still answers correctly (the
+    // inner $unwind drops unmatched rows first), so this test, not a wrong result, is what pins that guard.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Bare_entity_null_check_over_an_inner_join_declines(bool isNotNull)
+    {
+        var (ordersName, customersName, regionsName) = SeedNullCheckRows(
+            nameof(Bare_entity_null_check_over_an_inner_join_declines) + isNotNull);
+
+        var actual = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
+            var joined = db.Set<Order>()
+                .Join(db.Set<Customer>(), o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .OrderBy(x => x.o.OrderNo);
+            return isNotNull
+                ? joined.Select(x => x.c != null).ToList()
+                : joined.Select(x => x.c == null).ToList();
+        });
+
+        Assert.Equal(new[] { isNotNull }, actual);
+    }
+
+    // Seeds OrderNo 1 (customer matched, region matched), 2 (null CustomerId) and 3 (dangling CustomerId: the customer
+    // document is never inserted).
+    private (string Orders, string Customers, string Regions) SeedNullCheckRows(string testName)
+    {
+        var names = CreateCollectionNames(testName);
+        var regionId = ObjectId.GenerateNewId();
+        var customerId = ObjectId.GenerateNewId();
+
+        using var seed = new JoinScopeDbContext(database, names.Orders, names.Customers, names.Regions, MongoQueryMode.DriverLinq);
+        seed.Set<Region>().Add(new Region { Id = regionId, Name = "Western Europe" });
+        seed.Set<Customer>().Add(new Customer { Id = customerId, Name = "Alfreds", RegionId = regionId });
+        seed.Set<Order>().AddRange(
+            new Order { Id = ObjectId.GenerateNewId(), OrderNo = 1, CustomerId = customerId },
+            new Order { Id = ObjectId.GenerateNewId(), OrderNo = 2, CustomerId = null },
+            new Order { Id = ObjectId.GenerateNewId(), OrderNo = 3, CustomerId = ObjectId.GenerateNewId() });
+        seed.SaveChanges();
+        return names;
+    }
+
 #if !EF8 && !EF9
     // Two-level chains spelled with EF10's LeftJoin operator (the GroupJoin/SelectMany/DefaultIfEmpty spelling is
     // above). Seed rows exercise every unmatched shape: a matched region, a dangling RegionId, a null RegionId,

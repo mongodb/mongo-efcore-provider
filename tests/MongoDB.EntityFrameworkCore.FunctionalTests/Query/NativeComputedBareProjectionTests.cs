@@ -1080,4 +1080,167 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
 
         Assert.Equal(ExpectedCounts, oracle);
     }
+
+    // ── Negate and widening-cast numeric leaves ──────────────────────────────────────────────────────────
+    //
+    // `-x` renders as {$subtract: [0, x]} and a widening cast is dropped by TryTranslateValue, so the server computes
+    // the whole leaf. The read side must then read `_v` (or the member alias) once: re-applying Negate client-side
+    // over the already-negated value answers +Rank. Every assertion pins the sign, not just the row count.
+
+    private static readonly int[] ExpectedNegatedRanks = [-1, -2, -3, -4, -5];
+    private static readonly long[] ExpectedNegatedRanksAsLong = [-1L, -2L, -3L, -4L, -5L];
+
+    [Fact]
+    public void Negate_leaf_goes_native_bare_and_wrapped()
+    {
+        var (collection, _) = Seed(nameof(Negate_leaf_goes_native_bare_and_wrapped));
+
+        var bare = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => -b.Rank).ToList();
+        });
+        Assert.Equal(ExpectedNegatedRanks, bare);
+
+        var wrapped = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => new { N = -b.Rank }).ToList();
+        });
+        Assert.Equal(ExpectedNegatedRanks, wrapped.Select(r => r.N).ToArray());
+
+        // A double operand, beside a plain member so the wrapped read is not the only leaf.
+        var doubles = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title)
+                .Select(b => new { b.Title, W = -b.Weight }).ToList();
+        });
+        Assert.Equal([-1.5, -2.5, -3.5, -4.5, -5.5], doubles.Select(r => r.W).ToArray());
+        Assert.Equal(["p1_two", "p2_empty", "p3_missing", "p4_null", "p5_one"], doubles.Select(r => r.Title).ToArray());
+    }
+
+    [Fact]
+    public void Widening_cast_over_negate_goes_native()
+    {
+        var (collection, _) = Seed(nameof(Widening_cast_over_negate_goes_native));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => (long)-b.Rank).ToList();
+        });
+        Assert.Equal(ExpectedNegatedRanksAsLong, results);
+    }
+
+    [Fact]
+    public void Negate_over_widening_cast_reads_the_server_value_once()
+    {
+        var (collection, _) = Seed(nameof(Negate_over_widening_cast_reads_the_server_value_once));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => -(long)b.Rank).ToList();
+        });
+        Assert.All(results, r => Assert.True(r < 0)); // double negation would make these positive
+        Assert.Equal(ExpectedNegatedRanksAsLong, results);
+
+        var wrapped = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => new { N = -(long)b.Rank }).ToList();
+        });
+        Assert.Equal(ExpectedNegatedRanksAsLong, wrapped.Select(r => r.N).ToArray());
+    }
+
+    [Fact]
+    public void Widening_cast_over_arithmetic_goes_native()
+    {
+        var (collection, _) = Seed(nameof(Widening_cast_over_arithmetic_goes_native));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => (long)(b.Rank + b.Rank * 10)).ToList();
+        });
+        Assert.Equal([11L, 22L, 33L, 44L, 55L], results);
+    }
+
+    [Fact]
+    public void Narrowing_cast_over_arithmetic_stays_declined()
+    {
+        // A narrowing cast is outside IsNumericComputedLeafShape, and `(short)` has no $toX ($toInt semantics differ
+        // from C#'s unchecked truncation), so it must stay declined. DeclinesCleanly can't be used: the driver has no
+        // oracle either (it throws "conversion to System.Int16 is not supported"), so every mode must fail loudly
+        // rather than return a value.
+        var (collection, _) = Seed(nameof(Narrowing_cast_over_arithmetic_stays_declined));
+
+        List<short> Run(MongoQueryMode mode)
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title)
+                .Select(b => (short)(b.Rank + (long)b.Rank)).ToList();
+        }
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
+        Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => Run(MongoQueryMode.Native));
+        Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => Run(MongoQueryMode.DriverLinq));
+    }
+
+    [Fact]
+    public void Negate_over_a_collection_count_goes_native_wrapped_and_declines_bare()
+    {
+        // The read side keys on structural equality with the staged leaf, not on the operand's shape: an earlier
+        // operand-shape heuristic mis-bound `new { N = -b.Posts.Count }`. Wrapped, the count renders as $size over
+        // $ifNull, so missing/null arrays read 0.
+        var (collection, _) = Seed(nameof(Negate_over_a_collection_count_goes_native_wrapped_and_declines_bare));
+
+        var wrapped = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title)
+                .Select(b => new { b.Title, N = -b.Posts.Count }).ToList();
+        });
+        Assert.Equal([-2, 0, 0, 0, -1], wrapped.Select(r => r.N).ToArray());
+
+        // Bare, the Synthetic `_v` tier's IsArrayFreeComputedSubtree declines the nested $size (its un-stripped
+        // fallback would render a bare $size that aborts on a missing array); the fallback answers correctly.
+        var bare = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => -b.Posts.Count).ToList();
+        });
+        Assert.Equal([-2, 0, 0, 0, -1], bare);
+    }
+
+    [Fact]
+    public void Negate_leaf_answers_correctly_beside_a_whole_entity_and_on_the_LATE_decline_route()
+    {
+        var (collection, _) =
+            Seed(nameof(Negate_leaf_answers_correctly_beside_a_whole_entity_and_on_the_LATE_decline_route));
+        var prefix = "p";
+
+        // Beside a whole entity: the mixed shaper evaluates the client form over whole documents.
+        var mixed = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => new { b, N = -b.Rank }).ToList()
+                .Select(r => (r.b.Title, r.N)).ToList();
+        });
+        Assert.Equal(ExpectedNegatedRanks, mixed.Select(r => r.N).ToArray());
+
+        // Late decline: the captured local in StartsWith declines after the shaper is committed, so the driver renders
+        // the projection and the shaper must still read it once.
+        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = CreateContext(collection, mode);
+            Assert.Equal(ExpectedNegatedRanks,
+                db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
+                    .Select(b => -b.Rank).ToList());
+            Assert.Equal(ExpectedNegatedRanksAsLong,
+                db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
+                    .Select(b => new { N = -(long)b.Rank }).ToList().Select(r => r.N).ToArray());
+        }
+    }
 }

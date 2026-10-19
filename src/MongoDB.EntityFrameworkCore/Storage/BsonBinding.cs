@@ -240,6 +240,16 @@ internal static class BsonBinding
                 Expression.Constant(BsonSerializerFactory.CreateTypeSerializer(type, dateTimeKindSource), typeof(IBsonSerializer)));
 
     /// <summary>
+    /// As <see cref="CreateGetElementValue(Expression, string, Type)"/>, reading the element through
+    /// <paramref name="serializer"/> (built once, at shaper compile time) instead of the generic serializer for
+    /// <paramref name="type"/>.
+    /// </summary>
+    internal static MethodCallExpression CreateGetElementValue(
+        Expression bsonDocExpression, string name, Type type, IBsonSerializer serializer)
+        => Expression.Call(null, GetKindAwareElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression,
+            Expression.Constant(name), Expression.Constant(serializer, typeof(IBsonSerializer)));
+
+    /// <summary>
     /// Create the expression which reads an element nested under one or more parent documents, walking
     /// <paramref name="path"/> segment by segment.
     /// </summary>
@@ -459,7 +469,8 @@ internal static class BsonBinding
     internal static T? GetElementValue<T>(BsonDocument document, string elementName)
         => ReadElementValue<T>(document, elementName, BsonSerializerFactory.CreateTypeSerializer(typeof(T)));
 
-    // `serializer` is BsonSerializerFactory.CreateTypeSerializer(typeof(T), dateTimeKindSource), built at compile time.
+    // `serializer` is built at compile time: BsonSerializerFactory.CreateTypeSerializer(typeof(T), dateTimeKindSource),
+    // or BsonSerializerFactory.CreateTimeOfDaySerializer for a native TimeOfDay leaf.
     internal static T? GetKindAwareElementValue<T>(BsonDocument document, string elementName, IBsonSerializer serializer)
         => ReadElementValue<T>(document, elementName, serializer);
 

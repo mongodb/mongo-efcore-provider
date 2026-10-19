@@ -220,6 +220,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             var methodDefinition = method.IsGenericMethod ? method.GetGenericMethodDefinition() : method;
             var sourceHasCaseMappingLeaf =
                 ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.HasClientCaseMappingProjectionLeaf;
+            var sourceHasClientEvaluatedLeaf =
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.HasClientEvaluatedProjectionLeaf;
+            var sourceHasClientConditionalLeaf =
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.HasClientConditionalProjectionLeaf;
             switch (method.Name)
             {
                 // Operations that need tweaks
@@ -285,6 +289,21 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.MarkNotNativelyRepresentable();
             }
 
+            // A client-evaluated leaf (HasClientEvaluatedProjectionLeaf) is never projected, so an operator that reads
+            // projected values would read a missing field. Distinct is exempt: the leaf's value is the same for every
+            // row of one execution, so deduplicating by the projected leaves alone is exact. Set ops are exempt here
+            // only because their own gate declines the flag (IsPlainProjectedSelect/IsPlainDistinctSelect), which
+            // also covers a flagged source2. A client-evaluated ternary (HasClientConditionalProjectionLeaf) is not
+            // exempt from Distinct: its value differs between rows, and deduplicating by the projected test and
+            // branch reads is not proven equal to deduplicating the constructed values.
+            if (sourceHasClientEvaluatedLeaf
+                && !IsProjectedValueFreeOperator(methodDefinition)
+                && (methodDefinition != QueryableMethods.Distinct || sourceHasClientConditionalLeaf)
+                && !IsSetOperation(methodDefinition))
+            {
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.MarkNotNativelyRepresentable();
+            }
+
             // Operates on the already-visited source; never re-traverse.
             NativeSlotPopulator.PopulateNativeSlots(shapedQueryExpression, methodDefinition, methodCallExpression);
 
@@ -320,6 +339,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            || methodDefinition == QueryableMethods.CountWithoutPredicate
            || methodDefinition == QueryableMethods.LongCountWithoutPredicate
            || methodDefinition == QueryableMethods.AnyWithoutPredicate;
+
+    private static bool IsSetOperation(MethodInfo methodDefinition)
+        => methodDefinition == QueryableMethods.Union
+           || methodDefinition == QueryableMethods.Concat
+           || methodDefinition == QueryableMethods.Intersect
+           || methodDefinition == QueryableMethods.Except;
 
     protected override ShapedQueryExpression TranslateSelect(ShapedQueryExpression source, LambdaExpression selector)
     {
@@ -511,7 +536,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 selector.Parameters.Single(), source.ShaperExpression, selector.Body);
 
             return source.UpdateShaperExpression(
-                BuildSelectManyResultShaper(mongoQueryExpression, selector.Body, _projectionBindingExpressionVisitor, foldedJoinBody));
+                BuildSelectManyResultShaper(
+                    mongoQueryExpression, selector.Body, _projectionBindingExpressionVisitor, foldedJoinBody,
+                    allowContainerElements: true));
         }
         // A bare ternary null-checking a join scope's Inner side, e.g.
         // `ti => ti.Inner != null ? ti.Inner.City : null`. Bound as a single leaf under the synthetic "_v" alias
@@ -523,6 +550,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
             return source.UpdateShaperExpression(boundBareLeaf);
         }
+        // A bare join scope null check, e.g. `ti => ti.Inner == null` (what nav-expansion leaves of
+        // `o => o.Customer == null`), at any chain depth. A bool leaf under "_v", bound like the conditional arm above;
+        // an inner join's degenerate check declines inside TryBindNullCheckProjection.
+        else if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var nullCheckLeafJoin)
+                 && NativeJoinScopeProjectionBinder.TryBindNullCheckProjection(mongoQueryExpression, selector, nullCheckLeafJoin))
+        {
+            var boundNullCheckLeaf = BindSelectManyMember(
+                mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
+            return source.UpdateShaperExpression(boundNullCheckLeaf);
+        }
         // A bare scalar/computed body over a single-level join scope, e.g. `ti => ti.Inner.City` (what EF's null-check
         // removal leaves of `nav != null ? nav.Member : null`). Tried after the whole-entity and conditional arms.
         //
@@ -533,15 +570,42 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                  && selector.Body is not ConditionalExpression
                  && !selector.Body.TryGetProjectionMembers(out _)
                  && NativeJoinScopeTranslator.TryTranslateValue(
-                     mongoQueryExpression.Select.JoinScope, selector.Parameters[0], selector.Body, out var bareValueLeaf))
+                     mongoQueryExpression.Select.JoinScope, selector.Parameters[0], selector.Body, out var bareValueLeaf)
+                 // Read back whole by alias; see NativeProjectionBinder.IsMisreadWholeValueLeaf.
+                 && !NativeProjectionBinder.IsMisreadWholeValueLeaf(bareValueLeaf!)
+                 // A non-nullable Length/IndexOf over an unmatched (or null) inner string: throw on null, or decline
+                 // where an operator may absorb the null; the same single classification as the wrapped arm.
+                 && MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+                     NativeSlotPopulator.UnwrapBoxingToObjectType(selector.Body), bareValueLeaf!) is var bareValueRead
+                 && bareValueRead != NonNullableValueRead.Decline)
         {
             mongoQueryExpression.Select.AddProjection(
-                new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, bareValueLeaf!));
+                new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, bareValueLeaf!,
+                    ThrowsOnNull: bareValueRead == NonNullableValueRead.ThrowOnNull));
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, mongoQueryExpression.Select.JoinScope!);
 
             var boundBareValueLeaf = BindSelectManyMember(
                 mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
             return source.UpdateShaperExpression(boundBareValueLeaf);
+        }
+        // A parameter-free body over a single-level join scope, e.g. `Select(ti => "Foo")` after `Skip`/`Take`. The
+        // bare-value arm above can't take it: NativeJoinScopeTranslator requires an Outer/Inner access. Staged as a
+        // `$literal` `_v` projection; confirming the chain keeps the $lookup/$unwind, so inner-join-dropped rows stay
+        // dropped and paging deferred by IsSingleEligibleNativeJoinScope lowers after the $unwind. Pure checks run
+        // before that predicate (which may defer ops) so nothing is mutated on a decline.
+        else if (mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 } parameterFreeScope
+                 && mongoQueryExpression.Select.Projection.Count == 0
+                 && !selector.Body.ReferencesParameter(selector.Parameters[0])
+                 && TryTranslateParameterFreeJoinProjection(parameterFreeScope, selector.Body, out var parameterFreeLeaf)
+                 && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
+        {
+            mongoQueryExpression.Select.AddProjection(
+                new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, parameterFreeLeaf));
+            NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, parameterFreeScope);
+
+            var boundParameterFreeLeaf = BindSelectManyMember(
+                mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
+            return source.UpdateShaperExpression(boundParameterFreeLeaf);
         }
         else if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector)
                  && !IsTransparentIdentifierMemberAccessSelector(selector)
@@ -757,16 +821,23 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     {
         // TryPopulateNativeProjection already validated this shape with the same reader; throw rather than
         // silently mis-shape if that ever stops holding.
-        if (!projectionBody.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true))
+        if (!projectionBody.TryGetProjectionMembers(
+                out var members, allowPositionalConstructorArguments: true, allowContainerElements: true))
         {
             throw new InvalidOperationException(
                 $"Unexpected positional-ctor projection shape '{projectionBody.GetType().Name}' after successful native binding.");
         }
 
+        // A container element was staged without its boxing Convert (NativeProjectionBinder's container arm), so bind
+        // the operand with its own type and re-box it. A constructor argument has no such layer to peel.
+        var isContainer = projectionBody is NewArrayExpression;
         var boundValues = new Expression[members.Count];
         for (var i = 0; i < boundValues.Length; i++)
         {
-            boundValues[i] = BindPositionalCtorProjectionMember(mongoQueryExpression, members[i].MemberName, members[i].Value);
+            var value = members[i].Value;
+            var operand = isContainer ? NativeProjectionBinder.UnwrapContainerElementBoxing(value) : value;
+            var bound = BindPositionalCtorProjectionMember(mongoQueryExpression, members[i].MemberName, operand);
+            boundValues[i] = ReferenceEquals(operand, value) ? bound : Expression.Convert(bound, value.Type);
         }
 
         return projectionBody.RebuildProjectionMembers(boundValues);
@@ -966,6 +1037,27 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
 
         joinInfo = candidate;
+        return true;
+    }
+
+    /// <summary>
+    /// Translates a <c>Select</c> body that doesn't reference its parameter to a bare constant or query parameter,
+    /// which <c>RenderProject</c> <c>$literal</c>-wraps. Anything else declines, as does a value that would throw at
+    /// pipeline-build time (<see cref="NativeSlotPopulator.TryProbeBareValueRenders"/>). Pure.
+    /// </summary>
+    private static bool TryTranslateParameterFreeJoinProjection(
+        MongoJoinScope scope, Expression body, [NotNullWhen(true)] out MongoExpression? leaf)
+    {
+        leaf = null;
+
+        if (!new MongoExpressionTranslator(scope.OuterEntityType).TryTranslateValue(body, out var translated)
+            || translated is not (MongoConstantExpression or MongoParameterExpression)
+            || !NativeSlotPopulator.TryProbeBareValueRenders(translated, NativeSlotPopulator.UnwrapBoxingToObjectType(body)))
+        {
+            return false;
+        }
+
+        leaf = translated;
         return true;
     }
 
@@ -2808,12 +2900,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return source.UpdateShaperExpression(wrappedShaper);
     }
 
+    // allowContainerElements: only the join-scope Select arm, whose binder (NativeJoinScopeProjectionBinder
+    // .TryBindProjection) admits a positional container; the SelectMany callers keep rejecting one.
     private static Expression BuildSelectManyResultShaper(
         MongoQueryExpression mongoQueryExpression, Expression projectionBody,
-        MongoProjectionBindingExpressionVisitor projectionBindingExpressionVisitor, Expression? foldedBody = null)
+        MongoProjectionBindingExpressionVisitor projectionBindingExpressionVisitor, Expression? foldedBody = null,
+        bool allowContainerElements = false)
     {
         // TryBind already validated this shape with the same reader; throw rather than silently mis-shape.
-        if (!projectionBody.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true))
+        if (!projectionBody.TryGetProjectionMembers(
+                out var members, allowPositionalConstructorArguments: true, allowContainerElements: allowContainerElements))
         {
             throw new InvalidOperationException(
                 $"Unexpected SelectMany projection shape '{projectionBody.GetType().Name}' after successful native binding.");
@@ -2822,17 +2918,31 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // The folded body (the join's shaper substituted in, EF-444) goes through the same reader, so members
         // pair up by index.
         IReadOnlyList<(string MemberName, Expression Value)>? foldedMembers = null;
-        if (foldedBody is not null && foldedBody.TryGetProjectionMembers(out var readFolded, allowPositionalConstructorArguments: true))
+        if (foldedBody is not null
+            && foldedBody.TryGetProjectionMembers(
+                out var readFolded, allowPositionalConstructorArguments: true, allowContainerElements: allowContainerElements))
         {
             foldedMembers = readFolded;
         }
 
+        // A container element was staged without its boxing Convert (NativeJoinScopeProjectionBinder), so bind the
+        // operand (a whole-entity element then arrives as the join's entity shaper and is rebound by index) and re-box it.
+        var isContainer = projectionBody is NewArrayExpression;
         var boundValues = new Expression[members.Count];
         for (var i = 0; i < boundValues.Length; i++)
         {
-            boundValues[i] = BindResultMember(
-                mongoQueryExpression, members[i].MemberName, members[i].Value, projectionBindingExpressionVisitor,
-                foldedMembers is not null && i < foldedMembers.Count ? foldedMembers[i].Value : null);
+            var value = members[i].Value;
+            var folded = foldedMembers is not null && i < foldedMembers.Count ? foldedMembers[i].Value : null;
+            var operand = value;
+            if (isContainer)
+            {
+                operand = NativeProjectionBinder.UnwrapContainerElementBoxing(value);
+                folded = folded is null ? null : NativeProjectionBinder.UnwrapContainerElementBoxing(folded);
+            }
+
+            var bound = BindResultMember(
+                mongoQueryExpression, members[i].MemberName, operand, projectionBindingExpressionVisitor, folded);
+            boundValues[i] = ReferenceEquals(operand, value) ? bound : Expression.Convert(bound, value.Type);
         }
 
         return projectionBody.RebuildProjectionMembers(boundValues);
@@ -3012,7 +3122,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Projected operands: each side may be a plain projected Select, a projected Distinct, or a
         // GroupBy(key).Select(aggregate); the combine compares flattened values by alias regardless. Different
         // collections are fine; ProjectionShapesMatch is a correctness guard, since dedup/source-tagging compare
-        // whole projected documents.
+        // whole projected documents, and OperandSerializationsMatch requires each alias to be stored the same way
+        // on both sides (a value converter on one side only would compare/read mismatched BSON).
         //
         // source1's own pending lookups (e.g. a projected Orders.Select(o => o.OrderDetails.Count())) are
         // admitted because the lowerer emits them ahead of source1's $project. source2's operand select carries
@@ -3020,13 +3131,41 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         //
         // source1's shaper is reused for every combined row, so a constant/parameter leaf in its projection
         // (baked into the shaper, not read per document) would show source1's value on source2's rows.
-        // HasShaperUnsafeConstantLeaf rejects that; the server-side pipeline is fine either way.
+        // HasShaperUnsafeConstantLeaf rejects that; the server-side pipeline is fine either way. The exception is a
+        // bare `$literal`-rendered constant/parameter of a round-trip-safe type (CanRebindConstantLeafToDocument): its
+        // shaper is rebound to read the projected value per document, after every check has passed.
+        //
+        // Bare scalar operands may differ in alias (a column reads by its document path, e.g. `_id`; a computed value,
+        // constant or grouped aggregate by `_v`). CanAlignBareScalarAliases admits those, and only then is mongo2's
+        // single projection re-aliased to mongo1's, after every check has passed.
+        var rebindConstantLeaf = false;
+        var alignBareScalarAliases = false;
         if ((IsPlainProjectedSelect(mongo1, allowPreCombineLookups: true) || IsPlainDistinctSelect(mongo1, allowPreCombineLookups: true)
                 || IsPlainGroupBySelect(mongo1, allowPreCombineLookups: true))
-            && !HasShaperUnsafeConstantLeaf(mongo1)
+            && (!HasShaperUnsafeConstantLeaf(mongo1)
+                || (rebindConstantLeaf = CanRebindConstantLeafToDocument(source1, mongo1)))
             && (IsPlainProjectedSelect(mongo2) || IsPlainDistinctSelect(mongo2) || IsPlainGroupBySelect(mongo2))
-            && ProjectionShapesMatch(mongo1.Select.Projection, mongo2.Select.Projection))
+            && ((ProjectionShapesMatch(mongo1.Select.Projection, mongo2.Select.Projection)
+                 && OperandSerializationsMatch(mongo1.Select, mongo2.Select))
+                // Aligned bare scalars already require default serialization on both sides (ReadsOnlyDefaultSerializedFields).
+                || (alignBareScalarAliases = CanAlignBareScalarAliases(source1, mongo1, source2, mongo2))))
         {
+            if (rebindConstantLeaf)
+            {
+                // Admitted through CanRebindConstantLeafToDocument. Read the `$literal`-projected value by alias, so
+                // source2's rows read their own value instead of source1's baked-in one.
+                source1 = source1.UpdateShaperExpression(
+                    BindSelectManyMember(mongo1, mongo1.Select.Projection[0].Alias, source1.ShaperExpression));
+            }
+
+            if (alignBareScalarAliases)
+            {
+                // Admitted through CanAlignBareScalarAliases. The combined rows are read through source1's shaper, which
+                // reads source1's alias; the kind-shape check (NativeDateTimeKindReadBack.HasKindMismatch, at compile
+                // time) pairs operand leaves by alias, so it now sees this pair too.
+                mongo2.Select.ReplaceSingleProjectionAlias(mongo1.Select.Projection[0].Alias);
+            }
+
             mongo1.Select.AppendSetOperation(new MongoSetOperation(
                 kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, mongo2.CollectionExpression.EntityType,
                 operandsProjected: true));
@@ -3109,21 +3248,47 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // projected document is exactly the compared value. Pinned by NativeBareProjectionTests.
     //
     // allowPreCombineLookups is passed only for source1, whose InjectAfterRoot projected-Count lookups the
-    // lowerer emits ahead of its $project. Other lookups still decline.
+    // lowerer emits ahead of its $project. So is a confirmed single-level join's $lookup (IsPreCombineJoinScope).
+    // Other lookups still decline.
     private static bool IsPlainProjectedSelect(MongoQueryExpression mongo, bool allowPreCombineLookups = false)
         => mongo.Select.Route == NativeRoute.Projection
            && mongo.Select.Projection.Count > 0
            && !mongo.Select.HasArrayProjectionLeaf
            // The raw case-mapping receiver would be what the combine dedups/compares.
            && !mongo.Select.HasClientCaseMappingProjectionLeaf
+           // A client-evaluated leaf is never projected: the combine would dedup without it, and source1's shaper
+           // would show source1's value on source2's rows.
+           && !mongo.Select.HasClientEvaluatedProjectionLeaf
            && mongo.Select.SetOperation == null
            && !mongo.Select.IsSetOp
            && mongo.Select.Grouping == null
            && mongo.Select.Cardinality == null
            && mongo.Select.UnwindSource == null
-           && !mongo.IsJoinQuery
-           && (allowPreCombineLookups ? mongo.Lookups.All(l => l.InjectAfterRoot) : mongo.Lookups.Count == 0)
+           && (allowPreCombineLookups
+               ? (!mongo.IsJoinQuery || IsPreCombineJoinScope(mongo))
+                 && mongo.Lookups.All(l => l.InjectAfterRoot || mongo.Joins.Any(j => ReferenceEquals(j.Lookup, l)))
+               : !mongo.IsJoinQuery && mongo.Lookups.Count == 0)
            && !mongo.CapturedExpression.ContainsVectorSearch();
+
+    // A projected source1 over a single-level join scope whose confirming Select registered the join's $lookup
+    // (e.g. Orders.Where(o => o.Customer.City == "London").Select(o => new { o.OrderDate }), which nav-expands to a
+    // join). HasConfirmedJoinLookup is set on a projected, ungrouped, unreduced select only by TranslateSelect's
+    // join-scope arms, each gated by IsSingleEligibleNativeJoinScope, so this reuses that decision rather than
+    // re-running it (it may defer PipelineOps). MongoSelectLowerer's OperandsProjected branch emits the join the way
+    // the non-set-op path does: $lookup/$unwind, then PostJoinOps (the inner-side Where) and PostLookupPagingOps,
+    // all ahead of source1's $project. The gate and that emission must move together: without the emission the
+    // inner-side $match would be silently dropped.
+    //
+    // Single-level only (JoinScope.Levels.Count == 1): a join chain is unvalidated here.
+    //
+    // The HasConfirmedJoinLookup conjunct is defence in depth and can't be killed by mutation: an unconfirmed candidate
+    // join already makes Route Fallback, so IsPlainProjectedSelect's Route check declines first.
+    //
+    // Serves every set-op kind: Intersect/Except over such a source1 lower to MongoSetDifferenceStage over the same
+    // pre-combine stages (NativeGroupByOverJoinTests.Intersect_/Except_of_a_join_scope_operand_...).
+    private static bool IsPreCombineJoinScope(MongoQueryExpression mongo)
+        => mongo.Select.HasConfirmedJoinLookup
+           && mongo.Select.JoinScope is { Levels.Count: 1 };
 
     // A projected Distinct (Select(new {...}).Distinct(), Route == GroupBy via TryBindDistinctFromProjection) as
     // a set-op operand; its $group + flattening $project become its pre-combine pipeline. IsDistinct and
@@ -3133,6 +3298,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => mongo.Select.Route == NativeRoute.GroupBy
            && mongo.Select.IsDistinct
            && !mongo.Select.IsGroupBy
+           // Same reason as IsPlainProjectedSelect: the Distinct keeps the flag of the Select it deduplicates.
+           && !mongo.Select.HasClientEvaluatedProjectionLeaf
            && mongo.Select.Grouping != null
            && mongo.Select.PriorGrouping == null
            && mongo.Select.Cardinality == null
@@ -3163,9 +3330,89 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     // mongo1's shaper is reused for every combined row, so a constant/parameter leaf (never read from the
     // document) would repeat mongo1's value. Only unsafe in that context; standalone this shape is fine (see
-    // NativeComputedBareProjectionTests), so it isn't folded into IsPlainProjectedSelect.
+    // NativeComputedBareProjectionTests), so it isn't folded into IsPlainProjectedSelect. The one exception, a bare
+    // round-trip-safe leaf on an ungrouped select, is CanRebindConstantLeafToDocument.
+    //
+    // A projected Distinct (TryBindDistinctFromProjection) moves the projected values into its key parts and projects
+    // element refs to them, but leaves the Select's shaper as built, constant baked in; so its key parts are checked
+    // too. Scoped to IsDistinct: a real GroupBy's constant key (GroupBy(x => 8).Select(g => new { A = g.Key, ... }))
+    // is read back from `_id` by the grouped shaper.
     private static bool HasShaperUnsafeConstantLeaf(MongoQueryExpression mongo)
-        => mongo.Select.Projection.Any(p => p.Expression is MongoConstantExpression or MongoParameterExpression);
+        => mongo.Select.Projection.Any(p => IsConstantOrParameterLeaf(p.Expression))
+           || mongo.Select is { IsDistinct: true, Grouping: { } grouping }
+           && grouping.Key.Any(k => IsConstantOrParameterLeaf(k.FieldRef));
+
+    private static bool IsConstantOrParameterLeaf(MongoExpression expression)
+        => expression is MongoConstantExpression or MongoParameterExpression;
+
+    // Whether source1's constant/parameter leaf can be read from the document instead of the shaper: a bare scalar
+    // whose single projection is a server-rendered (`$literal`) constant or parameter of a type whose BSON round-trip
+    // returns the C# value. The gate and the shaper rebind in TryTranslateSetOperation both go through this predicate
+    // (internal for NativeSetOperationConstantLeafRebindTests).
+    //
+    // - Bare scalar only: a construction's members are read by name from its own shaper.
+    // - Constant/parameter leaf, trial-rendered by TryProbeBareValueRenders: the rebind reads a server-rendered value,
+    //   never a client-evaluated one. (Both are defence in depth: HasShaperUnsafeConstantLeaf already found such a
+    //   leaf, and NativeProjectionBinder probed it when binding.)
+    // - Round-trip-safe CLR type: the value is read back by the default serializer for the shaper's type. A DateTime
+    //   reads back UTC-kind, a Guid depends on the representation, an enum on its storage type; those decline.
+    // - Ungrouped select only: the rebind binds a plain projection member, which a grouped shaper
+    //   (GroupBy(x => x.N).Select(g => 8)) doesn't read (it throws "Document element '_v0' is missing"). A projected
+    //   Distinct is grouped too and its projection is an element ref, never a constant.
+    // - Nothing already bound under the leaf's alias in the read-side projection list: the rebind registers the value
+    //   through AddToProjection, which renames a colliding alias (`_v` -> `_v0`), a field the pipeline never emits. An
+    //   arm that already bound the leaf there (the grouped shaper; the join-scope bare-value arm, if it ever admits a
+    //   constant) would make this a double-bind. It overlaps the ungrouped conjunct: the grouped constant result is
+    //   rejected by each alone, so neither is killable by mutation on its own (removing both fails
+    //   Union_of_grouped_constant_result_and_column_declines and Grouped_constant_result_does_not_rebind). Beyond that
+    //   it is defence in depth: no other reachable shape carries such an entry.
+    internal static bool CanRebindConstantLeafToDocument(ShapedQueryExpression source1, MongoQueryExpression mongo1)
+        => IsBareScalarOperand(source1, mongo1)
+           && mongo1.Select.Grouping == null
+           && !mongo1.Projection.Any(
+               pe => string.Equals(pe.Alias, mongo1.Select.Projection[0].Alias, StringComparison.OrdinalIgnoreCase))
+           && mongo1.Select.Projection[0].Expression is MongoConstantExpression or MongoParameterExpression
+           && NativeSlotPopulator.TryProbeBareValueRenders(mongo1.Select.Projection[0].Expression, source1.ShaperExpression.Type)
+           && IsRoundTripSafeConstantLeafType(source1.ShaperExpression.Type);
+
+    private static bool IsRoundTripSafeConstantLeafType(Type type)
+        => type == typeof(int) || type == typeof(long) || type == typeof(double) || type == typeof(bool)
+           || type == typeof(string);
+
+    // A bare scalar operand (Select(x => x.Id), Select(x => x.N + 1), GroupBy(..).Select(g => g.Count())): a single
+    // projected value whose shaper isn't a construction. Detected by shape; IsBareProjection isn't set for a grouped
+    // g => g.Count().
+    private static bool IsBareScalarOperand(ShapedQueryExpression source, MongoQueryExpression mongo)
+        => mongo.Select.Projection is [{ Expression: not MongoDocumentConstructionExpression }]
+           && source.ShaperExpression.RemoveConvert() is not (NewExpression or MemberInitExpression);
+
+    // Whether two bare scalar operands with different aliases can be combined by re-aliasing source2's single
+    // projection to source1's. The gate and the rewrite in TryTranslateSetOperation both go through this predicate
+    // (internal for NativeSetOperationAliasAlignmentTests).
+    //
+    // - Only a bare scalar: a construction's members are read by name, so its aliases must match (ProjectionShapesMatch).
+    // - No post-group ops on source2: its post-Distinct/post-GroupBy ops (a filter/sort/page after a Distinct, or a
+    //   Where after a GroupBy recorded via MongoProjectedAliasScope) read its own flattened alias, which the re-alias
+    //   would orphan (such a Where would silently match nothing, dropping every source2 row).
+    // - Default serialization on both sides: every combined row is read through source1's shaper, so a value-converted or
+    //   non-default-representation column on either side would be read with the other side's serializer.
+    internal static bool CanAlignBareScalarAliases(
+        ShapedQueryExpression source1, MongoQueryExpression mongo1, ShapedQueryExpression source2, MongoQueryExpression mongo2)
+        => IsBareScalarOperand(source1, mongo1)
+           && IsBareScalarOperand(source2, mongo2)
+           && mongo2.Select.PostGroupOps.Count == 0
+           && ReadsOnlyDefaultSerializedFields(mongo1.Select)
+           && ReadsOnlyDefaultSerializedFields(mongo2.Select);
+
+    // A grouped operand's flattening projection reads the $group output, so its key parts and accumulator operands are
+    // what reach the stored fields. The key-part conjunct is defence in depth: a grouping key over a converted or
+    // non-default-representation field already declines (NativeGroupByBinder.HasDefaultKeySerialization).
+    private static bool ReadsOnlyDefaultSerializedFields(MongoSelectDefinition select)
+        => select.Projection.All(p => MongoExpressionTranslator.AllFieldsDefaultSerialized(p.Expression))
+           && (select.Grouping is not { } grouping
+               || (grouping.Key.All(k => MongoExpressionTranslator.AllFieldsDefaultSerialized(k.FieldRef))
+                   && grouping.Accumulators.All(
+                       a => a.Operand is null || MongoExpressionTranslator.AllFieldsDefaultSerialized(a.Operand))));
 
     // Operands must have the same top-level alias set: dedup and source-tagging compare whole projected
     // documents. Field refs may differ (new {N = a.Name} vs new {N = b.Title}). EF already requires a common
@@ -3194,6 +3441,92 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return true;
     }
+
+    // Each alias's values must be stored the same way on both operands: dedup and Intersect/Except compare stored
+    // BSON, and source1's shaper reads every combined row through source1's property serializer. Without this,
+    // Converted.Select(o => o.Status) (stored "Shipped") against Other.Select(o => o.Status) (stored 1) dedups
+    // nothing, intersects to empty, or throws reading 1 as a string. Covers bare and wrapped projected operands and
+    // projected Distinct operands (whose key part is read back from "_id.<alias>"); a real GroupBy key is already
+    // default-serialized (HasDefaultKeySerialization gates it). DateTimeKind is checked separately
+    // (NativeDateTimeKindReadBack).
+    private static bool OperandSerializationsMatch(MongoSelectDefinition select1, MongoSelectDefinition select2)
+    {
+        foreach (var projection1 in select1.Projection)
+        {
+            // MongoProjection is a struct: an absent alias is default, with a null Expression.
+            var expression2 = select2.Projection.FirstOrDefault(p => p.Alias == projection1.Alias).Expression as MongoExpression;
+
+            // A DateTime.TimeOfDay leaf stores milliseconds (a long), unlike any other TimeSpan (a TimeSpan property's
+            // default string form): the combine would dedup/intersect a long against a string, and the alias would be
+            // read through only source1's reader (MongoSelectDefinition.IsTimeOfDayProjection). Both sides TimeOfDay
+            // store and read the same way.
+            if (MongoDatePartExpression.IsTimeOfDay(projection1.Expression)
+                != (expression2 is not null && MongoDatePartExpression.IsTimeOfDay(expression2)))
+            {
+                return false;
+            }
+
+            var field1 = StoredField(select1, projection1.Expression);
+            var field2 = expression2 is not null ? StoredField(select2, expression2) : null;
+
+            if (!StoredSerializationsMatch(field1, field2))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Both sides default-serialized (a computed value, null here, has no property and so no converter); or the same
+    // property; or two properties with no BsonRepresentation whose type-mapping converters (the ones
+    // BsonSerializerFactory wraps) are the same converter type with the same provider type and structurally equal
+    // conversion expressions, e.g. two HasConversion<string>() enums. Anything else (a converter against none, two
+    // different converters, a BsonRepresentation) declines; EF value converters have no equality of their own.
+    private static bool StoredSerializationsMatch(MongoFieldExpression? field1, MongoFieldExpression? field2)
+    {
+        var default1 = field1 == null || NativeGroupByBinder.HasDefaultKeySerialization(field1.Property);
+        var default2 = field2 == null || NativeGroupByBinder.HasDefaultKeySerialization(field2.Property);
+        if (default1 && default2)
+        {
+            return true;
+        }
+
+        if (field1 == null || field2 == null)
+        {
+            return false;
+        }
+
+        if (field1.Property == field2.Property)
+        {
+            return true;
+        }
+
+        return field1.Property.GetBsonRepresentation() == null
+               && field2.Property.GetBsonRepresentation() == null
+               && field1.Property.GetTypeMapping().Converter is { } converter1
+               && field2.Property.GetTypeMapping().Converter is { } converter2
+               && converter1.GetType() == converter2.GetType()
+               && converter1.ProviderClrType == converter2.ProviderClrType
+               && ExpressionEqualityComparer.Instance.Equals(
+                   converter1.ConvertToProviderExpression, converter2.ConvertToProviderExpression)
+               && ExpressionEqualityComparer.Instance.Equals(
+                   converter1.ConvertFromProviderExpression, converter2.ConvertFromProviderExpression);
+    }
+
+    // The entity field whose stored value a projected operand's alias carries: the projected field itself, or, for a
+    // projected Distinct/GroupBy operand, the key part its flattened "_id.<alias>" (or single-key "_id") reads.
+    private static MongoFieldExpression? StoredField(MongoSelectDefinition select, MongoExpression value)
+        => value switch
+        {
+            MongoFieldExpression field => field,
+            MongoElementRefExpression { Path: var path } when select.Grouping is { } grouping
+                => (path == "_id" && grouping.Key.Count == 1
+                        ? grouping.Key[0]
+                        : grouping.Key.FirstOrDefault(k => k.Name != null && path == "_id." + k.Name))
+                    ?.FieldRef as MongoFieldExpression,
+            _ => null
+        };
 
     protected override ShapedQueryExpression? TranslateWhere(ShapedQueryExpression source, LambdaExpression predicate)
         => null;

@@ -73,6 +73,19 @@ public class MongoFieldPrefixRewriterTests
         Assert.Equal("_lookup_Refs.Name", ((MongoFieldExpression)right.Left).ElementName);
     }
 
+    // A computed regex receiver ((o.Name + "x").StartsWith("A")) is recursed into, not cast to a field.
+    [Fact]
+    public void Rewrites_fields_inside_a_computed_regex_receiver()
+    {
+        var expr = new MongoRegexExpression(
+            new MongoConcatExpression([Field("Name"), new MongoConstantExpression("x", forSerialization: null)]),
+            MongoRegexKind.StartsWith, new MongoConstantExpression("A", forSerialization: null), negated: false);
+
+        var rewritten = (MongoRegexExpression)Rewrite(expr, "_lookup_Refs");
+        var concat = Assert.IsType<MongoConcatExpression>(rewritten.Field);
+        Assert.Equal("_lookup_Refs.Name", ((MongoFieldExpression)concat.Operands[0]).ElementName);
+    }
+
     [Fact]
     public void Prefixes_the_array_path_of_a_size_node()
     {
