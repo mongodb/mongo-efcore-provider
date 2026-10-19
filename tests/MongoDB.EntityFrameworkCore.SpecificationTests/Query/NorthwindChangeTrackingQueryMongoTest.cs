@@ -227,11 +227,11 @@ Employees.
 
         AssertMql(
             """
-Customers.{ "$project" : { "_v" : "$PostalCode", "_id" : 0 } }
+Customers.{ "$project" : { "PostalCode" : "$PostalCode", "_id" : 0 } }
 """,
             //
             """
-Customers.{ "$project" : { "_v" : "$Region", "_id" : 0 } }
+Customers.{ "$project" : { "Region" : "$Region", "_id" : 0 } }
 """,
             //
             """
@@ -247,11 +247,11 @@ Customers.{ "$limit" : 1 }
 """,
             //
             """
-Customers.{ "$project" : { "_v" : "$PostalCode", "_id" : 0 } }
+Customers.{ "$project" : { "PostalCode" : "$PostalCode", "_id" : 0 } }
 """,
             //
             """
-Customers.{ "$project" : { "_v" : "$Region", "_id" : 0 } }
+Customers.{ "$project" : { "Region" : "$Region", "_id" : 0 } }
 """);
     }
 
