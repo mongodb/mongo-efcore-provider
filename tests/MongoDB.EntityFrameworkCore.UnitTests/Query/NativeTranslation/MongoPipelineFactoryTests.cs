@@ -967,4 +967,47 @@ public class MongoPipelineFactoryTests
         var lookupDoc = result[0]["$lookup"].AsBsonDocument;
         Assert.False(lookupDoc.Contains("pipeline"));
     }
+
+    // ------------------------------------------------------------------
+    // EF-322 SP1 fix-pass: a $-prefixed string constant/parameter GROUP KEY must render $literal-wrapped,
+    // exactly like every other constant/parameter rendering site in this file (RenderAddFields, the
+    // accumulator-operand branch inside RenderKeyedGroup itself) already does — otherwise the server
+    // silently reinterprets it as a field path, giving a WRONG grouping rather than a decline.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Scalar_constant_group_key_that_looks_like_a_field_path_is_literal_wrapped()
+    {
+        var grouping = new MongoGrouping(
+            [new MongoGroupingKeyPart(null, new MongoConstantExpression("$Country", forSerialization: null))],
+            [new MongoGroupAccumulator("Count", "$sum", null)]);
+
+        var stages = new List<MongoPipelineStage> { new MongoGroupStage(grouping) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        var expectedId = new BsonDocument("$literal", "$Country");
+        Assert.Equal(expectedId, result[0]["$group"]["_id"]);
+    }
+
+    [Fact]
+    public void Composite_constant_group_key_part_that_looks_like_a_field_path_is_literal_wrapped()
+    {
+        var grouping = new MongoGrouping(
+            [
+                new MongoGroupingKeyPart("A", new MongoConstantExpression("$Country", forSerialization: null)),
+                new MongoGroupingKeyPart("B", new MongoParameterExpression("p0", forSerialization: null))
+            ],
+            [new MongoGroupAccumulator("Count", "$sum", null)]);
+
+        var stages = new List<MongoPipelineStage> { new MongoGroupStage(grouping) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["p0"] = "$Region" });
+
+        var idDoc = result[0]["$group"]["_id"].AsBsonDocument;
+        Assert.Equal(new BsonDocument("$literal", "$Country"), idDoc["A"]);
+        Assert.Equal(new BsonDocument("$literal", "$Region"), idDoc["B"]);
+    }
 }

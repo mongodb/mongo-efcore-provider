@@ -255,9 +255,20 @@ internal static class NativeSelectManyBinder
         var lookup = new LookupExpression(navigation, forceUnwind: true) { PreserveNullAndEmptyArrays = false };
         // AddLookup dedupes on the alias (As) — if a same-nav Include-registered lookup were already pending,
         // this call would be a no-op and UnwindSource.Lookup below would point at an instance not actually in
-        // the pending list. That collision can't happen here: a reference SelectMany is always projected-only
-        // (a bare-entity trailing selector hard-declines earlier), and EF Core drops any Include not applied to
-        // the query's final materialized entity, so no same-nav Include lookup can be pending to collide with.
+        // the pending list. A same-nav Include lookup genuinely can't be pending here: a reference SelectMany
+        // is always projected-only (a bare-entity trailing selector hard-declines earlier), and EF Core drops
+        // any Include not applied to the query's final materialized entity.
+        //
+        // EF-322 final review (round 2): a same-nav collision is NOT categorically impossible here anymore —
+        // NativeReferenceCollectionCountPredicateBinder's Count/LongCount predicate over this SAME navigation
+        // CAN have a bare lookup already pending at this alias when a correlated SelectMany over it runs (e.g.
+        // `Where(o => o.Orders.Count > 1)` followed by `from r in Orders.Where(r => r.OwnerId == o.Id) ...`).
+        // That combination is kept safe today NOT by this method declining to register — it still calls
+        // AddLookup unconditionally, same as before — but by MongoSelectDefinition.Route's retroactive
+        // decline (the `_referenceCollectionCountPredicateConfirmed && _unwindSources.Count > 0` conjunct)
+        // forcing the whole query to Fallback before this potentially-colliding pipeline is ever lowered, plus
+        // driver-LINQ's own separate, pre-existing decline for this general shape. See
+        // NativeReferenceCollectionCountPredicateTests.Count_predicate_before_correlated_SelectMany_declines_cleanly_in_every_mode.
         mongoQ.AddLookup(lookup);
         var unwind = MongoUnwindSource.Reference(scope, navigation.TargetEntityType, lookup);
         unwind.Filter = filter;

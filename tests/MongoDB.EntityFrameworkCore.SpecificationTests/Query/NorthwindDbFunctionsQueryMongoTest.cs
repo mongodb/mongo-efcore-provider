@@ -39,21 +39,12 @@ public class NorthwindDbFunctionsQueryMongoTest
 
     public override async Task Like_literal(bool async)
     {
-        // Fails: translation of Like issue EF-222
-        await AssertTranslationFailed(() =>
-            base.Like_literal(async));
+        await base.Like_literal(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-Customers.
+        AssertMql(
+            """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^.*M.*$", "options" : "is" } } } }, { "$count" : "v" }
 """);
-        }
     }
 
     public override async Task Like_identity(bool async)
@@ -96,21 +87,12 @@ Customers.
 
     public override async Task Like_all_literals(bool async)
     {
-        // Fails: translation of Like issue EF-222
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.Like_all_literals(async), typeof(TargetInvocationException));
+        await base.Like_all_literals(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-Customers.
+        AssertMql(
+            """
+Customers.{ "$match" : { } }, { "$count" : "v" }
 """);
-        }
     }
 
     public override async Task Like_all_literals_with_escape(bool async)

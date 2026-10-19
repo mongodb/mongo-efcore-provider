@@ -33,6 +33,9 @@ internal static class MongoRegexPatternBuilder
     /// </summary>
     public static string BuildPattern(string term, MongoRegexKind kind)
     {
+        if (kind == MongoRegexKind.Like)
+            return BuildLikePattern(term);
+
         var escaped = Regex.Escape(term);
         return kind switch
         {
@@ -41,5 +44,30 @@ internal static class MongoRegexPatternBuilder
             MongoRegexKind.Contains => escaped,
             _ => throw new NativeTranslationNotSupportedException($"Unsupported regex kind '{kind}'.")
         };
+    }
+
+    /// <summary>
+    /// Converts a SQL LIKE pattern (<c>%</c> = any run of characters, <c>_</c> = any single character, every
+    /// other character literal) into a whole-string-anchored regex. No escape-character support — a LIKE call
+    /// using the 3-argument (escape-character) overload declines before reaching here (see
+    /// <c>MongoExpressionTranslator.Like.cs</c>); <c>[</c>/<c>]</c>/<c>^</c> character-class wildcards (SQL
+    /// Server-specific, not part of the pattern used by any currently-supported shape) are treated as literal
+    /// characters, matching ANSI LIKE rather than T-SQL's extended syntax.
+    /// </summary>
+    private static string BuildLikePattern(string term)
+    {
+        var pattern = new System.Text.StringBuilder("^");
+        foreach (var ch in term)
+        {
+            pattern.Append(ch switch
+            {
+                '%' => ".*",
+                '_' => ".",
+                _ => Regex.Escape(ch.ToString())
+            });
+        }
+
+        pattern.Append('$');
+        return pattern.ToString();
     }
 }
