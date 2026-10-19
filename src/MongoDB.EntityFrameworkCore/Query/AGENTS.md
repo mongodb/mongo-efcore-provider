@@ -218,10 +218,21 @@ Shapers and projections:
 
 ## Testing
 
-- **MQL shape cannot prove a query went native**; use `MongoQueryMode.NativeOnly` (`MONGODB_EF_NATIVE_ONLY=1`
-  flips every spec context).
+- **MQL shape cannot prove a query went native**; use `MongoQueryMode.NativeOnly` (`MONGODB_EF_QUERY_MODE=NativeOnly`
+  flips every spec and functional context; `MONGODB_EF_NATIVE_ONLY=1` is an alias).
 - For result-affecting native shapes, write a `[Theory]` comparing native results to an in-memory LINQ oracle
   over ragged/missing/null/empty data (`NativeOwnedCollectionAllTests`, `NativeModeAssert`).
 - MQL baselines are regenerated (see SpecificationTests `AGENTS.md`).
 - Tests: `tests/…UnitTests/Query/` (native in `NativeTranslation/`), `tests/…FunctionalTests/Query/`; filter
   `FullyQualifiedName~Query`.
+- **Three-mode rule.** A parity test runs one query under `NativeOnly` (proves it goes native), `Native` (same
+  results) and `DriverLinq` (the oracle).
+- **Ragged-seed rule.** Seed missing / explicit-null / empty-array / populated rows with raw `BsonDocument`
+  inserts, never via the context: materialization normalizes missing owned collections to empty, so a
+  context-seeded fixture can't express the ragged states.
+- **Which helper** (`NativeModeAssert`): `NativeAndParity` when driver-LINQ is trustworthy;
+  `NativeAndExpected(..., driverKnownWrong: true)` with a hand-written expected list when driver-LINQ is wrong
+  (name the bug ID; the test breaks when the driver is fixed); `TwiceWithDifferentValues` for parameterized
+  queries, called once per mode (three-mode rule), using one lambda shape so the second run hits the compiled-query cache. Both runs must share one `DbContext` instance:
+  `SingleEntityDbContext`/`IgnoreCacheKeyFactory` gives each instance its own model, so separate instances never
+  share compiled queries.
