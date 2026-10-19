@@ -14,7 +14,10 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Extensions;
 
@@ -109,6 +112,41 @@ public class MongoPropertyBuilderExtensionsTests
         });
     }
 
+    [Fact]
+    public void HasOrderPreservingStorage_sets_and_removes_the_declaration()
+    {
+        var model = new ModelBuilder();
+        var entity = model.Entity<TestEntity>();
+        var builder = entity.Property(e => e.DateTimeProperty);
+        var property = entity.Metadata.GetProperty(nameof(TestEntity.DateTimeProperty));
+        Assert.False(property.IsOrderPreservingStorage());
+
+        builder.HasOrderPreservingStorage();
+        Assert.True(property.IsOrderPreservingStorage());
+
+        entity.Property(e => e.DateTimeProperty).HasOrderPreservingStorage(false);
+        Assert.False(property.IsOrderPreservingStorage());
+        Assert.Null(property.FindAnnotation(MongoAnnotationNames.OrderPreservingStorage));
+    }
+
+    [Fact]
+    public void HasOrderPreservingStorage_is_available_on_the_untyped_and_convention_builders()
+    {
+        var model = new ModelBuilder();
+        var entity = model.Entity<TestEntity>();
+        var builder = entity.Property(e => e.StringProperty);
+        var property = entity.Metadata.GetProperty(nameof(TestEntity.StringProperty));
+
+        ((PropertyBuilder)builder).HasOrderPreservingStorage();
+        Assert.True(property.IsOrderPreservingStorage());
+
+        var conventionProperty = (IConventionProperty)property;
+        conventionProperty.SetOrderPreservingStorage(false);
+        Assert.False(property.IsOrderPreservingStorage());
+
+        conventionProperty.SetOrderPreservingStorage(true, fromDataAnnotation: true);
+        Assert.True(property.IsOrderPreservingStorage());
+    }
 
     private class TestEntity
     {
