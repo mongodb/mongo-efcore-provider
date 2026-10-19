@@ -310,4 +310,135 @@ public class NativeGroupByBinderTests
         Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
         Assert.Null(mongoQ.Select.Grouping);
     }
+
+    // ── TryBindGroupTerminalAggregate ──────────────────────────────────────────────
+    // GroupBy(key).{Count()|LongCount()|Any()|Any(pred)|All(pred)|Count(pred)|LongCount(pred)} with NO
+    // intervening Select — the "GroupBy_without_aggregate" family (EF-449).
+
+    [Fact]
+    public void Bare_Count_with_no_predicate_binds_zero_accumulator_grouping()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+
+        Assert.True(NativeGroupByBinder.TryBindGroupTerminalAggregate(
+            mongoQ, MongoAggregateOperator.Count, null, typeof(int)));
+
+        Assert.NotNull(mongoQ.Select.Grouping);
+        Assert.Empty(mongoQ.Select.Grouping!.Accumulators);
+        Assert.Null(mongoQ.Select.PostGroupPredicate);
+        Assert.Equal(MongoAggregateOperator.Count, mongoQ.Select.Cardinality!.Aggregate);
+    }
+
+    [Fact]
+    public void Bare_Any_with_no_predicate_binds_zero_accumulator_grouping()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+
+        Assert.True(NativeGroupByBinder.TryBindGroupTerminalAggregate(
+            mongoQ, MongoAggregateOperator.Any, null, typeof(bool)));
+
+        Assert.NotNull(mongoQ.Select.Grouping);
+        Assert.Empty(mongoQ.Select.Grouping!.Accumulators);
+        Assert.Null(mongoQ.Select.PostGroupPredicate);
+        Assert.True(mongoQ.Select.Cardinality!.PresenceOnly);
+    }
+
+    [Fact]
+    public void Count_with_count_predicate_binds_accumulator_and_match()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, bool>> pred = g => g.Count() > 1;
+
+        Assert.True(NativeGroupByBinder.TryBindGroupTerminalAggregate(
+            mongoQ, MongoAggregateOperator.Count, pred, typeof(int)));
+
+        var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
+        Assert.Equal("$sum", acc.Operator);
+        Assert.Null(acc.Operand);
+
+        var match = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.PostGroupPredicate);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, match.Operator);
+        var left = Assert.IsType<MongoElementRefExpression>(match.Left);
+        Assert.Equal(acc.OutputField, left.Path);
+        var right = Assert.IsType<MongoConstantExpression>(match.Right);
+        Assert.Equal(1, right.Value);
+    }
+
+    [Fact]
+    public void Any_with_count_predicate_binds_direct_comparison()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, bool>> pred = g => g.Count() > 1;
+
+        Assert.True(NativeGroupByBinder.TryBindGroupTerminalAggregate(
+            mongoQ, MongoAggregateOperator.Any, pred, typeof(bool)));
+
+        var match = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.PostGroupPredicate);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, match.Operator);
+    }
+
+    [Fact]
+    public void All_with_count_predicate_negates_comparison()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, bool>> pred = g => g.Count() > 1;
+
+        Assert.True(NativeGroupByBinder.TryBindGroupTerminalAggregate(
+            mongoQ, MongoAggregateOperator.All, pred, typeof(bool)));
+
+        // All(pred) matches the COMPLEMENT: presence of a group failing pred means All is false. Relational
+        // operators are $not-wrapped, never inverted (mirrors MongoExpressionNegator's own rule).
+        var wrapped = Assert.IsType<MongoUnaryExpression>(mongoQ.Select.PostGroupPredicate);
+        Assert.Equal(MongoUnaryOperator.Not, wrapped.Operator);
+        var inner = Assert.IsType<MongoBinaryExpression>(wrapped.Operand);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, inner.Operator);
+        Assert.False(mongoQ.Select.Cardinality!.PresentValue as bool?);
+    }
+
+    [Fact]
+    public void Reversed_operand_order_binds_flipped_operator()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, bool>> pred = g => 1 < g.Count();
+
+        Assert.True(NativeGroupByBinder.TryBindGroupTerminalAggregate(
+            mongoQ, MongoAggregateOperator.Any, pred, typeof(bool)));
+
+        var match = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.PostGroupPredicate);
+        Assert.Equal(MongoBinaryOperator.GreaterThan, match.Operator); // flipped from < to >
+        Assert.IsType<MongoElementRefExpression>(match.Left);
+        Assert.IsType<MongoConstantExpression>(match.Right);
+    }
+
+    [Fact]
+    public void Compound_predicate_returns_false()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, bool>> pred = g => g.Count() > 1 && g.Count() < 10;
+
+        Assert.False(NativeGroupByBinder.TryBindGroupTerminalAggregate(
+            mongoQ, MongoAggregateOperator.Any, pred, typeof(bool)));
+        Assert.Null(mongoQ.Select.Grouping);
+    }
+
+    [Fact]
+    public void Non_bare_group_declines()
+    {
+        var mongoQ = TestQuery(); // no PendingGroupKey at all
+
+        Assert.False(NativeGroupByBinder.TryBindGroupTerminalAggregate(
+            mongoQ, MongoAggregateOperator.Count, null, typeof(int)));
+    }
+
+    [Fact]
+    public void Already_finalized_grouping_declines()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new { Count = g.Count() };
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+
+        Assert.False(NativeGroupByBinder.TryBindGroupTerminalAggregate(
+            mongoQ, MongoAggregateOperator.Count, null, typeof(int)));
+    }
 }

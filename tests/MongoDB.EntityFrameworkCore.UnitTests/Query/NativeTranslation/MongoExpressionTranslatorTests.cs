@@ -125,6 +125,11 @@ public class MongoExpressionTranslatorTests
         // is genuinely type-changing regardless of allowNumericWidening, so it always builds a
         // MongoConvertExpression wrapping the converted field — the shape the guard must inspect.
         public double EncWeight { get; set; }
+
+        // Fixtures for the bool/DateTime string-concat decline pins (MEASURED $toString divergence — see
+        // MongoExpressionTranslator.TranslateConcatOperand's remarks).
+        public bool Flag { get; set; }
+        public DateTime When { get; set; }
     }
 
     // Fixtures for owned single-reference dotted-path resolution (EF-322 Task 2).
@@ -511,6 +516,112 @@ public class MongoExpressionTranslatorTests
     }
 
     // ------------------------------------------------------------------
+    // Test 11b-11d (EF-322): instance Equals(...) method calls (e.g. `e.EmployeeID.Equals(x)`) translate to
+    // the same MongoBinaryExpression(Equal, ...) an equivalent `==` comparison would — but ONLY for the
+    // type's own IEquatable<T>.Equals(T) overload, never Equals(object).
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Equals_method_call_translates_to_equal_binary()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => c.Age.Equals(21);
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+        var field = Assert.IsType<MongoFieldExpression>(binary.Left);
+        Assert.Equal("Age", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(binary.Right);
+        Assert.Equal(21, constant.Value);
+    }
+
+    // The exact shape of Where_equals_using_int_overload_on_mismatched_types (EF spec suite): the argument's
+    // static type (ushort) differs from the receiver's (int), so the compiler picks int's own Equals(int)
+    // overload (via IEquatable<int>) and inserts a WIDENING numeric Convert on the argument — a
+    // MethodCallExpression, not a BinaryExpression, but semantically identical to `c.Age == (int)shortPrm`.
+    [Fact]
+    public void Equals_method_call_with_widening_convert_translates_to_equal_binary()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => c.Age.Equals((ushort)21);
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+        var field = Assert.IsType<MongoFieldExpression>(binary.Left);
+        Assert.Equal("Age", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(binary.Right);
+        Assert.Equal(21, constant.Value);
+    }
+
+    // The exact shape of Where_equals_using_object_overload_on_mismatched_types (EF spec suite): ulong has NO
+    // implicit conversion to int, so the compiler can only satisfy the call via Equals(object), BOXING the
+    // ulong argument. This is a genuinely different overload with different semantics — Int32.Equals(object)
+    // returns false whenever the boxed argument isn't itself a boxed int, regardless of numeric value — so it
+    // must NOT be admitted here: doing so would mean unwrapping the boxing Convert down to a raw ulong
+    // constant and emitting a native $eq that MongoDB WOULD match (BSON compares numeric subtypes by value),
+    // silently returning the OPPOSITE of what plain C# returns. This shape has no native form yet and must
+    // keep falling back to the driver-LINQ bridge, which already special-cases it correctly.
+    [Fact]
+    public void Equals_method_call_using_object_overload_reports_not_translatable()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => c.Age.Equals((ulong)21);
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.False(translated);
+        Assert.Null(result);
+    }
+
+    // ------------------------------------------------------------------
+    // Test 11e-11f (EF-322 follow-up): the STATIC two-argument object.Equals(a, b) form. Both parameters are
+    // always object (there is only one static overload), so both arguments are ALWAYS boxed regardless of
+    // their own static types — unlike the instance-call case, the "is this the object overload" gate can't
+    // be a parameter-type check. Instead this mirrors the driver-LINQ bridge's own rule
+    // (MongoEFToLinqTranslatingExpressionVisitor's static-Equals case): peel exactly one boxing layer off
+    // each argument (RemoveObjectConvert) and require the UNBOXED types to match before treating it as an
+    // ordinary equality comparison.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Static_object_equals_translates_to_equal_binary()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => object.Equals(c.Age, 21);
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+        var field = Assert.IsType<MongoFieldExpression>(binary.Left);
+        Assert.Equal("Age", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(binary.Right);
+        Assert.Equal(21, constant.Value);
+    }
+
+    // The mismatched-type guard: c.Age is boxed from Int32, the second argument from Int64 — genuinely
+    // different unboxed types, exactly like Equals_method_call_using_object_overload_reports_not_translatable
+    // above but reached via the static two-arg overload instead of the instance one.
+    [Fact]
+    public void Static_object_equals_with_mismatched_types_reports_not_translatable()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => object.Equals(c.Age, (long)21);
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.False(translated);
+        Assert.Null(result);
+    }
+
+    // ------------------------------------------------------------------
     // Test 12: bare nullable-bool member access reports not translatable
     // (three-valued semantics the query dialect does not match — stays
     // out of scope for this task; must keep falling back to driver-LINQ).
@@ -716,6 +827,65 @@ public class MongoExpressionTranslatorTests
         var constant = Assert.IsType<MongoConstantExpression>(inExpr.Values);
         var values = Assert.IsType<int[]>(constant.Value);
         Assert.Equal([10, 30], values);
+    }
+
+    // ------------------------------------------------------------------
+    // Test 18g: Contains over a COMPUTED (string concatenation) item → MongoComputedInExpression, not a
+    // decline. The needle has no bare field to key a query-dialect { field: { $in: [...] } } on, so it must
+    // be a $expr array-form $in instead — the sibling of Test 18b/18c's plain-field MongoInExpression.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Contains_over_string_concat_item_translates_to_computed_in()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+
+        // data.Contains(c.Name + "Suffix") — the collection is a ConstantExpression (see Test 14's own
+        // remarks on why this is built by hand rather than relying on the compiler's closure capture).
+        var data = new[] { "AliceSuffix", "BobSuffix" };
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var nameMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Name))!);
+        var concatItem = Expression.Add(
+            nameMember, Expression.Constant("Suffix"),
+            typeof(string).GetMethod(nameof(string.Concat), [typeof(string), typeof(string)])!);
+        var containsMethod = typeof(Enumerable).GetMethods()
+            .First(m => m.Name == nameof(Enumerable.Contains) && m.GetParameters().Length == 2)
+            .MakeGenericMethod(typeof(string));
+        var body = Expression.Call(containsMethod, Expression.Constant(data), concatItem);
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var computedIn = Assert.IsType<MongoComputedInExpression>(result);
+        Assert.False(computedIn.Negated);
+        var concat = Assert.IsType<MongoConcatExpression>(computedIn.Needle);
+        Assert.Equal(2, concat.Operands.Count);
+        Assert.IsType<MongoFieldExpression>(concat.Operands[0]);
+        var constant = Assert.IsType<MongoConstantExpression>(computedIn.Values);
+        var values = Assert.IsType<string[]>(constant.Value);
+        Assert.Equal(["AliceSuffix", "BobSuffix"], values);
+    }
+
+    [Fact]
+    public void Not_over_string_concat_contains_flips_negated()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+
+        var data = new[] { "AliceSuffix", "BobSuffix" };
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var nameMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Name))!);
+        var concatItem = Expression.Add(
+            nameMember, Expression.Constant("Suffix"),
+            typeof(string).GetMethod(nameof(string.Concat), [typeof(string), typeof(string)])!);
+        var containsMethod = typeof(Enumerable).GetMethods()
+            .First(m => m.Name == nameof(Enumerable.Contains) && m.GetParameters().Length == 2)
+            .MakeGenericMethod(typeof(string));
+        var containsCall = Expression.Call(containsMethod, Expression.Constant(data), concatItem);
+        var body = Expression.Not(containsCall);
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var computedIn = Assert.IsType<MongoComputedInExpression>(result);
+        Assert.True(computedIn.Negated);
     }
 
     // ------------------------------------------------------------------
@@ -1010,19 +1180,23 @@ public class MongoExpressionTranslatorTests
 
     // Compiler-generated string.Concat (ExpressionType.Add on string operands) must NOT be treated as
     // arithmetic $add — the IsNumericType guard on the arithmetic operand branch of TranslateOperand
-    // excludes it, so the whole predicate falls back to driver-LINQ rather than emitting an incorrect
-    // $add over strings.
+    // excludes it. It now translates via a dedicated MongoConcatExpression ($concat) branch instead of
+    // declining, matching the arithmetic-operand comparison shapes elsewhere in this file (e.g.
+    // Translates_modulo_operand).
 
     [Fact]
-    public void String_concatenation_operand_is_not_translated()
+    public void String_concatenation_operand_translates_to_concat_in_comparison_position()
     {
         var translator = NewTranslator(GetEntityType<Customer>());
         Expression<Func<Customer, bool>> predicate = c => c.Name + "y" == "Zed";
 
         var translated = translator.TryTranslate(predicate.Body, out var result);
 
-        Assert.False(translated);
-        Assert.Null(result);
+        Assert.True(translated);
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, cmp.Operator);
+        var concat = Assert.IsType<MongoConcatExpression>(cmp.Left);
+        Assert.Equal(2, concat.Operands.Count);
     }
 
     // EF-322 slice A1, Task 3: a numeric cast inside a field-to-field/arithmetic-operand comparison NOW
@@ -1559,7 +1733,7 @@ public class MongoExpressionTranslatorTests
         var bin = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
         Assert.Equal("_lookup_Refs.Tag", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     [Fact]
@@ -1578,7 +1752,7 @@ public class MongoExpressionTranslatorTests
         Assert.True(translator.TryTranslate(body, out var result));
         var bin = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal("_lookup_Refs.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     [Fact]
@@ -1617,7 +1791,7 @@ public class MongoExpressionTranslatorTests
         var bin = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal(MongoBinaryOperator.GreaterThanOrEqual, bin.Operator);
         Assert.Equal("_lookup_Refs.Score", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Threshold", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Threshold", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     // ------------------------------------------------------------------
@@ -1658,10 +1832,77 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void TryTranslateValue_string_concat_is_rejected() // Add on strings is not numeric
+    public void TryTranslateValue_string_concat_translates_to_MongoConcatExpression()
     {
         var (translator, body) = BuildValueBody<Order>(o => o.Tag + "!");
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        Assert.Equal(2, concat.Operands.Count);
+        Assert.IsType<MongoFieldExpression>(concat.Operands[0]);
+        Assert.IsType<MongoConstantExpression>(concat.Operands[1]);
+    }
+
+    [Fact]
+    public void TryTranslateValue_int_string_concat_wraps_the_int_operand_in_ToString()
+    {
+        // o.Tag + o.Price compiles to string.Concat(o.Tag, (object)o.Price) — the int operand arrives
+        // boxed (Convert to object), matching C#'s string operator +(string, object) overload.
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + o.Price);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        Assert.Equal(2, concat.Operands.Count);
+        Assert.IsType<MongoFieldExpression>(concat.Operands[0]);
+        var converted = Assert.IsType<MongoConvertExpression>(concat.Operands[1]);
+        Assert.Equal(typeof(string), converted.Type);
+        Assert.IsType<MongoFieldExpression>(converted.Operand);
+    }
+
+    [Fact]
+    public void TryTranslateValue_string_int_concat_reversed_order_wraps_the_int_operand_in_ToString()
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Price + o.Tag);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        Assert.Equal(2, concat.Operands.Count);
+        var converted = Assert.IsType<MongoConvertExpression>(concat.Operands[0]);
+        Assert.Equal(typeof(string), converted.Type);
+        Assert.IsType<MongoFieldExpression>(concat.Operands[1]);
+    }
+
+    [Fact]
+    public void TryTranslateValue_three_way_string_concat_flattens_into_one_MongoConcatExpression()
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + o.Price + o.Qty);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        Assert.Equal(3, concat.Operands.Count);
+    }
+
+    [Fact]
+    public void TryTranslateValue_string_concat_with_value_converted_operand_is_rejected() // guard B
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + o.EncStatus);
         Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    [Fact]
+    public void TryTranslateValue_string_concat_with_bool_operand_translates() // accepted divergence, matches driver-LINQ — see NativeStringConcatTests
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + o.Flag);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        var converted = Assert.IsType<MongoConvertExpression>(concat.Operands[1]);
+        Assert.Equal(typeof(string), converted.Type);
+    }
+
+    [Fact]
+    public void TryTranslateValue_string_concat_with_DateTime_operand_translates() // accepted divergence, matches driver-LINQ — see NativeStringConcatTests
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + o.When);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        var converted = Assert.IsType<MongoConvertExpression>(concat.Operands[1]);
+        Assert.Equal(typeof(string), converted.Type);
     }
 
     [Fact]
@@ -2318,6 +2559,88 @@ public class MongoExpressionTranslatorTests
         // TryResolveOwnedCollectionPath requires an embedded collection NAVIGATION; Tags is a property.
         => Assert.Null(TryTranslateBlogPredicate(b => b.Tags.Count > 2));
 
+    [Fact]
+    public void An_outer_scoped_owned_navigation_null_equality_declines_in_a_two_scope_element_translator()
+    {
+        // REGRESSION: this shape used to translate, and translate WRONG. `b.Address == null` inside a
+        // correlated element predicate (`b.Posts.Any(p => b.Address == null)`) resolved the OUTER entity's
+        // owned-nav path and wrapped it in a MongoElementRefExpression, which renders ELEMENT-relative when
+        // an elementVariable is in scope. The emitted aggregation expression was
+        //     { "$eq": [ { "$ifNull": [ "$$this.Address", null ] }, null ] }
+        // where $$this is the ELEMENT (an OwnedPost, which has no Address at all), so the NullSafe $ifNull read
+        // the always-missing element as null and the predicate answered TRUE for every row regardless of the
+        // stored Address. MongoOuterFieldExpression is the root-anchored node that would be correct here, but
+        // it requires a backing IProperty that a navigation path does not have — so the correct disposition is
+        // a clean decline to driver-LINQ, which is what this pins.
+        var blog = GetOwnedBlogEntityType();
+        var postType = blog.FindNavigation(nameof(OwnedBlog.Posts))!.TargetEntityType;
+        var addressType = blog.FindNavigation(nameof(OwnedBlog.Address))!.TargetEntityType;
+
+        var bParam = Expression.Parameter(blog.ClrType, "b");
+        var body = Expression.Equal(
+            Expression.Property(bParam, nameof(OwnedBlog.Address)),
+            Expression.Constant(null, addressType.ClrType));
+
+        // The element-scoped two-scope translator the correlated-quantifier / Count(pred) arms build:
+        // outerParam set, innerPrefix null.
+        var translator = new MongoExpressionTranslator(postType, bParam, blog, innerPrefix: null);
+
+        Assert.False(translator.TryTranslate(body, out var result));
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void Correlated_Count_element_predicate_with_two_distinct_free_parameters_declines()
+    {
+        // Task-3 review fix (EF-421, Finding 1): the Count(pred) two-scope arm accepts a correlation only
+        // when ReferencesEnclosingScope reports EXACTLY ONE free parameter and it ReferenceEquals SelfParam.
+        // FreeParameterVisitor used to report only the FIRST free parameter found — so a predicate body with
+        // TWO distinct free parameters, where the first one happened to match SelfParam, would pass the
+        // identity check and build a two-scope child translator; that child would then resolve the SECOND
+        // free parameter's members by NAME against the element entity type (neither the outer param nor
+        // bound), silently retargeting the condition — the exact wrong-rows hazard this file's own constraint
+        // forbids. FreeParameterVisitor.FoundParameter now reports null whenever two-or-more DISTINCT free
+        // parameters are found, so the call site's ordinary ReferenceEquals check already declines this shape
+        // with no extra condition.
+        //
+        // No known EF LINQ query-authoring path produces a Count(pred) body with two distinct FREE
+        // ParameterExpressions today — a captured local surfaces as a closure-field MemberExpression, not an
+        // extra free parameter — so this shape is built by hand (rather than compiled from a C# lambda) as a
+        // defense-in-depth regression pin, mirroring how Query_parameter_becomes_MongoParameterExpression_
+        // not_constant above hand-builds a shape no ordinary lambda produces either.
+        var entityType = GetOwnedBlogEntityType();
+        var translator = NewTranslator(entityType);
+
+        var bParam = Expression.Parameter(typeof(OwnedBlog), "b");
+        var pParam = Expression.Parameter(typeof(OwnedPost), "p");
+        // An unrelated free parameter: neither the element parameter (p), nor a query parameter (plain name,
+        // no EF query-parameter prefix), nor the enclosing translator's own SelfParam (set to bParam below).
+        var xParam = Expression.Parameter(typeof(int), "x");
+
+        var postsMember = Expression.Property(bParam, nameof(OwnedBlog.Posts));
+
+        // Post.Title deliberately collides with Blog.Title (see the OwnedPost class comment) — if the guard
+        // were weakened, b.Title would be silently resolved as the ELEMENT's own Title instead of declining.
+        var titleEqualsOuter = Expression.Equal(
+            Expression.Property(pParam, nameof(OwnedPost.Title)),
+            Expression.Property(bParam, nameof(OwnedBlog.Title)));
+        var rankEqualsX = Expression.Equal(Expression.Property(pParam, nameof(OwnedPost.Rank)), xParam);
+        var predicateBody = Expression.AndAlso(titleEqualsOuter, rankEqualsX);
+        var predicateLambda = Expression.Lambda(predicateBody, pParam);
+
+        var countCall = Expression.Call(
+            typeof(Enumerable), nameof(Enumerable.Count), [typeof(OwnedPost)], postsMember, predicateLambda);
+        var comparisonBody = Expression.GreaterThan(countCall, Expression.Constant(0));
+
+        // Mirrors NativeSlotPopulator.PopulateNativeSlots: SelfParam is set to the enclosing predicate's own
+        // root parameter, which here is bParam — the FIRST free parameter FreeParameterVisitor would
+        // encounter under the pre-fix behavior, making this shape a false accept without the fix.
+        translator.SelfParam = bParam;
+
+        Assert.False(translator.TryTranslate(comparisonBody, out var result));
+        Assert.Null(result);
+    }
+
     // ------------------------------------------------------------------
     // EF-322 stream 1, slice A2: a top-level EF.Property leaf resolves in
     // all three positions (predicate / sort key / projection value).
@@ -2399,7 +2722,7 @@ public class MongoExpressionTranslatorTests
         Assert.True(translator.TryTranslate(body, out var result));
         var bin = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal("_lookup_Refs.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     [Fact]

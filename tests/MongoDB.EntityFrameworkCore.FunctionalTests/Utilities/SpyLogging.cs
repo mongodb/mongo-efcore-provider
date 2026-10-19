@@ -14,7 +14,10 @@
  */
 
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Extensions.Logging;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
@@ -42,6 +45,34 @@ internal class SpyLoggerProvider : ILoggerProvider
         var key = eventId.Name[..eventId.Name.LastIndexOf('.')];
         var logger = Assert.Single(Loggers, s => s.Key == key).Value;
         return Assert.Single(logger.Records, log => log.EventId == eventId && log.Exception == null).Message;
+    }
+
+    /// <summary>
+    /// Asserts the executed MQL contains <paramref name="expected"/>, reporting the ACTUAL pipeline on failure.
+    /// </summary>
+    /// <remarks>
+    /// Nine test classes each held a private <c>AssertMql</c> doing this; eight were a bare
+    /// <c>Assert.Contains</c>, whose failure message shows only the needle and not the pipeline that was
+    /// actually emitted. This is the one copy that reported both, promoted so every caller gets it.
+    /// </remarks>
+    public void AssertExecutedMqlContains(string expected)
+    {
+        var actual = GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.True(actual.Contains(expected), $"Expected to find '{expected}' in:\n{actual}");
+    }
+
+    /// <summary>
+    /// The plural of <see cref="GetLogMessageByEventId"/>, in source order, for a test that runs more than one
+    /// query on the same context and needs to assert something of EVERY one of them.
+    /// </summary>
+    public IReadOnlyList<string> GetLogMessagesByEventId(EventId eventId)
+    {
+        var key = eventId.Name[..eventId.Name.LastIndexOf('.')];
+        var logger = Assert.Single(Loggers, s => s.Key == key).Value;
+        return logger.Records
+            .Where(log => log.EventId == eventId && log.Exception == null)
+            .Select(log => log.Message)
+            .ToList();
     }
 }
 

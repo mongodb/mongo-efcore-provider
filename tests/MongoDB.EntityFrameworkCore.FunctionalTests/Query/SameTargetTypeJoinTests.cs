@@ -66,9 +66,6 @@ public class SameTargetTypeJoinTests(TemporaryDatabaseFixture database)
         Assert.Equal("M2", results[0].Second.Id);
     }
 
-    // Cross-collection Include is not translated at all on EF8/EF9 (EF-X020), so this shape can only be
-    // exercised on EF10. The explicit-Join cases above cover the same defect on every version.
-#if !EF8 && !EF9
     [Fact]
     public void Self_referencing_entity_with_two_same_typed_navigations_includes_both()
     {
@@ -87,7 +84,6 @@ public class SameTargetTypeJoinTests(TemporaryDatabaseFixture database)
         Assert.NotNull(employee.Mentor);
         Assert.Equal("E3", employee.Mentor!.Id);
     }
-#endif
 
     [Fact]
     public void Control_chained_join_onto_different_target_types_still_flattens()

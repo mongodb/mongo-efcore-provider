@@ -28,8 +28,8 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// an entity that has its own <see cref="DbSet{TEntity}"/> and is reached by a navigation into a
 /// SEPARATE collection via a foreign key (not embedded). These tests cover the write/lifecycle path
 /// (Group A — version-agnostic where it does not execute an Include query) and serialization /
-/// change-tracking behavior through the <c>$lookup</c>-based Include (Groups B and C — EF10-only,
-/// because cross-collection Include QUERY translation only works on EF10; see EF-X020).
+/// change-tracking behavior through the <c>$lookup</c>-based Include (Groups B and C — run on all
+/// three EF majors; EF8/EF9's own optional-reference-nav Include gap, EF-X020, is fixed).
 /// C# property names intentionally differ from BSON element names to verify element-name mapping.
 /// </summary>
 [XUnitCollection("QueryTests")]
@@ -196,10 +196,9 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.Equal(1, database.MongoDatabase.GetCollection<BsonDocument>(ordersName).CountDocuments(FilterDefinition<BsonDocument>.Empty));
     }
 
-#if !EF8 && !EF9
     // ---------------------------------------------------------------------------------------------
-    // Group B — Serialization through Include. EF10-only (these execute cross-collection Includes,
-    // which only translate on EF10; EF8/EF9 fail to translate — see EF-X020).
+    // Group B — Serialization through Include. Runs on all three EF majors (EF8/EF9's own
+    // optional-reference-nav Include gap, EF-X020, is fixed).
     // ---------------------------------------------------------------------------------------------
 
     [Fact]
@@ -371,7 +370,7 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Group C — Change tracking through Include. EF10-only.
+    // Group C — Change tracking through Include. Runs on all three EF majors.
     // ---------------------------------------------------------------------------------------------
 
     [Fact]
@@ -639,7 +638,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.Equal("PrimaryLeaf", root.PrimaryMid.Leaf.Value);
         Assert.Equal("SecondaryLeaf", root.SecondaryMid.Leaf.Value);
     }
-#endif
 
     // ---------------------------------------------------------------------------------------------
     // Helpers / seeding (raw-BSON, mirroring CrossCollectionIncludeTests conventions).
@@ -849,7 +847,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         }
     }
 
-#if !EF8 && !EF9
     enum CustomerTier
     {
         None,
@@ -1421,5 +1418,4 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             });
         }
     }
-#endif
 }

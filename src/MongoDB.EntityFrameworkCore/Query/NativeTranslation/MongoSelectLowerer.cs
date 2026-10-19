@@ -210,12 +210,30 @@ internal sealed class MongoSelectLowerer
         if (select.Grouping is { } grouping)
         {
             stages.Add(new MongoGroupStage(grouping));
+
+            // EF-449: a scalar aggregate (Count/LongCount/Any/All) terminating directly on a BARE
+            // GroupBy(key) — no Select — also finalizes Cardinality (NativeGroupByBinder.
+            // TryBindGroupTerminalAggregate, via MongoSelectDefinition.SetGroupedTerminalAggregate). Its own
+            // post-group predicate (referencing the $group's accumulator OUTPUT field, e.g. "__agg0") emits
+            // here as a $match, then control falls through past the ordinary flatten-$project below (Select
+            // .Projection is empty for this shape — there was no Select) to the aggregate-terminal switch
+            // further down, which appends the ordinary $count/$limit stage exactly as it does for the
+            // non-grouped scalar-aggregate case. Every OTHER Grouping shape (GroupBy(key).Select(aggregate),
+            // Cardinality == null) still returns immediately below, unchanged.
+            if (select.PostGroupPredicate is { } postGroupPredicate)
+            {
+                stages.Add(new MongoMatchStage(postGroupPredicate));
+            }
+
             if (select.Projection.Count > 0)
             {
                 stages.Add(new MongoProjectStage(select.Projection));
             }
 
-            return stages;
+            if (select.Cardinality?.Aggregate is null)
+            {
+                return stages;
+            }
         }
 
         // 6. $project — server-side projection (terminal member-access anonymous/DTO Select). Emitted last
@@ -223,8 +241,12 @@ internal sealed class MongoSelectLowerer
         // $lookup.
         // A projected-operand set op already emitted source1's $project above, ahead of the set-op stage —
         // don't re-emit it here. A trailing projection after a set op (OperandsProjected false) and a plain
-        // projected Select (no set op) both still emit here.
-        if (select.Projection.Count > 0 && !(select.SetOperation?.OperandsProjected ?? false))
+        // projected Select (no set op) both still emit here. Grouping == null: a grouped query's own
+        // Projection (if any) was already emitted inside the Grouping block above — never re-emit it here
+        // for the EF-449 grouped-terminal-aggregate fall-through (Projection is empty for that shape anyway,
+        // but this keeps the invariant explicit rather than relying on that being incidentally true).
+        if (select.Grouping == null
+            && select.Projection.Count > 0 && !(select.SetOperation?.OperandsProjected ?? false))
         {
             stages.Add(new MongoProjectStage(select.Projection));
         }
@@ -353,7 +375,7 @@ internal sealed class MongoSelectLowerer
 
         foreach (var lookup in lookups)
         {
-            if (lookup.IsStreamableReference)
+            if (lookup.IsReference && !lookup.HasPipeline)
             {
                 // The $unwind must follow the navigation's own requiredness (inner for a required nav so a
                 // dangling FK drops the row; left-outer for an optional one so it survives with a null
@@ -361,14 +383,43 @@ internal sealed class MongoSelectLowerer
                 // decision on PreserveNullAndEmptyArrays (set at confirmation time); it must be threaded
                 // through here explicitly, or every reference Include would silently unwind left-outer
                 // regardless of requiredness.
+                //
+                // Deliberately broader than IsStreamableReference (EF-392): a $lookup + $unwind pair is
+                // identical whether localField is a plain root field or one prefixed with a prior lookup's
+                // alias (a TRANSITIVE hop, e.g. a reference ThenInclude chain) — MongoDB doesn't care, and
+                // TranslateJoinCore/RebindInnerShaperToOuterQuery already computed that prefix correctly at
+                // join-registration time (see Ef372DeepReferenceIncludeTests). IsStreamableReference itself
+                // is UNCHANGED and still excludes the transitive case — it's also used by
+                // AllPendingLookupsAreStreamable to keep a transitive-lookup query on the DOM shaper rather
+                // than the one-pass streaming materializer, which hasn't been verified safe for this shape.
                 stages.Add(new MongoLookupStage(lookup));
                 stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays));
             }
-            else if (lookup.IsNativeCollectionLookup)
+            else if (lookup.IsNativeCollectionLookup
+                     || (lookup.Navigation is { IsCollection: true } pipelinedNav
+                         && lookup.PipelineKind == LookupPipelineKind.NestedInclude
+                         && !lookup.ForceUnwind
+                         && lookup.As == LookupExpression.GetLookupAlias(pipelinedNav)))
             {
                 // Collection Include: keep the joined documents as an array under _lookup_<Nav>
                 // (no $unwind). The DOM collection materializer reads the array back and runs the
                 // IncludeCollection fixup, exactly as on the driver-LINQ path.
+                //
+                // The second disjunct widens this beyond IsNativeCollectionLookup's plain (no-pipeline)
+                // form to also admit a collection-then-collection/reference ThenInclude (EF-450): its
+                // nested $lookup(s) are staged into PipelineStages by
+                // MongoProjectionBindingExpressionVisitor's ExtractNestedIncludePipeline/
+                // ExtractThenIncludesFromSubquery/AddReferenceLookupStages — the SAME registration path the
+                // driver-LINQ fallback bridge already used — which also stamp PipelineKind.NestedInclude
+                // (guarded: never overwriting an already-FallbackOnly kind, e.g. a TPH discriminator-narrowed
+                // target or a sibling filtered-Include stage — both stay fallback-only, unaffected).
+                // MongoLookupStage/RenderLookup render this via LookupExpression.ToLookupStageDocument()'s
+                // let+pipeline form, the SAME shape the fallback bridge already emitted for this kind — this
+                // check is keyed on PipelineKind rather than bare HasPipeline specifically so it does NOT
+                // also swallow a PipelineKind.CorrelatedReducer lookup (EF-449, also a collection nav): that
+                // kind needs its own dedicated branch below (a mandatory left-outer $unwind + a DIFFERENT
+                // localField/foreignField+pipeline BSON shape), and would otherwise be silently
+                // mis-rendered here with no $unwind at all.
                 stages.Add(new MongoLookupStage(lookup));
             }
             else if (lookup.Navigation is { IsCollection: true } && lookup.ForceUnwind)
@@ -379,6 +430,16 @@ internal sealed class MongoSelectLowerer
                 // is the opposite.)
                 stages.Add(new MongoLookupStage(lookup));
                 stages.Add(new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: false));
+            }
+            else if (lookup.PipelineKind == LookupPipelineKind.CorrelatedReducer)
+            {
+                // A reference-collection-nav First/FirstOrDefault projection leaf (EF-449). The $lookup's own
+                // sub-pipeline has already narrowed to 0-or-1 matched documents (optional $match for a constant
+                // predicate, optional $sort, then $limit:1) — $unwind here just flattens that 0-or-1-element array
+                // to null-or-object. Always left-outer: the empty-vs-throw distinction between First and
+                // FirstOrDefault is a READ-side concern (see MongoCorrelatedReducerLeaf), not a join-shape one.
+                stages.Add(new MongoLookupStage(lookup));
+                stages.Add(new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: true));
             }
             else
             {

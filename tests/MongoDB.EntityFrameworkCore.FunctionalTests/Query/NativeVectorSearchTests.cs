@@ -205,6 +205,62 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         AssertScoreOrdered(rows.Select(r => (r.Label, r.Score)));
     }
 
+    // ---------------------------------------------------------------------------------------------------
+    // EF-412: the entity-and-score projection.
+    //
+    // `new { Doc = e, Score = ... }` mixes a WHOLE-ROOT-ENTITY leaf with the synthetic __score leaf. EF-412
+    // made that shape go native ({"Doc": "$$ROOT", "Score": "$__score"}); before it, an entity-bearing
+    // projection was never push-downable (ProjectionAnalyzer.CanPushDown was false) and this only ever ran
+    // through the mixed-strip path.
+    //
+    // This test originally used a captured-local StartsWith as a trigger to force a LATE, mid-compile decline
+    // (translate-time routes native, then MongoQueryLanguageRenderer.RenderRegex declines at render time) so
+    // it could prove the driver-LINQ bridge re-emits both the $addFields{__score} companion and the
+    // "Doc": "$$ROOT" alias the native shaper depends on. That trigger no longer declines — a parameterized
+    // StartsWith term is now natively representable — so this shape goes fully native under both Native and
+    // NativeOnly. It still proves both leaves read correctly with a genuine (non-baked) query parameter.
+    // ---------------------------------------------------------------------------------------------------
+
+    [AtlasFact]
+    public void Entity_and_score_projection_behind_a_parameterized_filter_reads_correct_values()
+    {
+        var prefix = "A"; // a captured local, not a constant — a genuine query parameter
+
+        using (var nativeOnly = CreateContext(MongoQueryMode.NativeOnly))
+        {
+            var nativeOnlyRows = nativeOnly.Docs
+                .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
+                .Where(e => e.Label.StartsWith(prefix))
+                .Select(e => new { Doc = e, Score = EF.Property<double>(e, "__score") })
+                .ToList();
+            Assert.Single(nativeOnlyRows);
+        }
+
+        using var db = CreateContext(MongoQueryMode.Native, out var spyLogger);
+
+        var rows = db.Docs
+            .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
+            .Where(e => e.Label.StartsWith(prefix))
+            .Select(e => new { Doc = e, Score = EF.Property<double>(e, "__score") })
+            .ToList();
+
+        // VALUES on both leaves, because both can fail silently and independently. A lost entity leaf presents
+        // as a null/default Doc; a lost $addFields{__score} companion presents as Score == 0, not an exception.
+        var row = Assert.Single(rows);
+        Assert.Equal("A", row.Doc.Label);
+        Assert.Equal(1.0, row.Doc.Weight);
+        Assert.Equal("note-A", row.Doc.Meta.Note); // the owned hop inside the entity leaf survives too
+        Assert.Equal(1.0, row.Score, 3);           // "A" IS the query vector, so its cosine score is exactly 1
+
+        // Asserted on the MQL because the two halves fail independently and both fail SILENTLY (a lost
+        // $addFields gives Score == 0, a renamed/missing alias gives a null entity) — this pins the native
+        // $project/$addFields shape directly, now that the query goes fully native.
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("{ \"$addFields\" : { \"__score\" : { \"$meta\" : \"vectorSearchScore\" } } }", mql);
+        Assert.Contains("\"Doc\" : \"$$ROOT\"", mql);
+        Assert.Contains("\"Score\" : \"$__score\"", mql);
+    }
+
     // Pins SCORE and ORDER, never a row count. A dropped $vectorSearch stage returns the right number of rows
     // in insertion order; a dropped $addFields companion (or a mis-read alias) returns rows whose scores are
     // not strictly descending — and, on this seed, whose top row is not "A".

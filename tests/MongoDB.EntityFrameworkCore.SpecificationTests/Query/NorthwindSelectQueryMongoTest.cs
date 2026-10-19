@@ -208,17 +208,11 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Projection_of_multiple_entity_types_into_object_array(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Projection_of_multiple_entity_types_into_object_array(async));
-        AssertMql();
-#else
         await base.Projection_of_multiple_entity_types_into_object_array(async);
         AssertMql(
             """
 Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Projection_of_entity_type_into_object_list(bool async)
@@ -408,10 +402,12 @@ Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "City" : "$City
 
     public override async Task Select_nested_collection_multi_level2(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Select_nested_collection_multi_level2(async));
+        await base.Select_nested_collection_multi_level2(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$lt" : 10500 } } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 1 }], "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "OrderDates" : "$_lookup_Orders.OrderDate", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_nested_collection_multi_level3(bool async)
@@ -910,7 +906,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
+            Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI"] }, "then" : true, "else" : false } }, "_id" : 0 } }
             """);
     }
 
@@ -937,14 +933,16 @@ Orders.{ "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }
     public override async Task Anonymous_projection_with_repeated_property_being_ordered_2(bool async)
     {
 #if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Anonymous_projection_with_repeated_property_being_ordered_2(async));
-        AssertMql();
-#else
         await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
         AssertMql(
             """
 Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "A" : "$_v._inner._id", "B" : "$_v._outer.CustomerID", "_id" : 0 } }
+""");
+    #else
+        await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
+        AssertMql(
+            """
+Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "A" : "$_lookup_Customer._id", "B" : "$CustomerID", "_id" : 0 } }
 """);
 #endif
     }
@@ -970,12 +968,10 @@ Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$project" : { "_outer" : "$$ROOT",
 
     public override async Task Select_GetValueOrDefault_on_DateTime_with_null_values(bool async)
     {
-#if EF8 || EF9
-        // Fails: Unsupported by driver EF-X003
-        await AssertTranslationFailed(() => base.Select_GetValueOrDefault_on_DateTime_with_null_values(async));
-
-        AssertMql();
-#else
+        // Fails: Unsupported by driver EF-X003. EF-436: this shape reaches the driver identically on
+        // EF8/EF9/EF10 (the stale EF8/EF9 "declines before reaching our translator at all" gate was a
+        // symptom of the same LeftJoin-recognition gap fixed for NorthwindJoinQueryMongoTest
+        // .GroupJoin_DefaultIfEmpty_multiple), so all three versions share this same partial capture.
         await AssertTranslationFailed(() =>
             base.Select_GetValueOrDefault_on_DateTime_with_null_values(async));
 
@@ -990,7 +986,6 @@ Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$project" : { "_outer" : "$$ROOT",
 Customers.
 """);
         }
-#endif
     }
 
     public override async Task Cast_on_top_level_projection_brings_explicit_Cast(bool async)
@@ -1110,10 +1105,19 @@ Customers.
 
     public override async Task FirstOrDefault_over_empty_collection_of_value_type_returns_correct_results(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.FirstOrDefault_over_empty_collection_of_value_type_returns_correct_results(async));
+        // EF-322: previously failed here (Where clause used c.CustomerID.Equals(...), which the native
+        // translator didn't recognize, forcing the whole query onto the driver-LINQ fallback bridge — which
+        // has no oracle at all for the OrderBy/Select/FirstOrDefault reference-collection-nav reduction in
+        // the projection). Now that Equals(...) method calls translate natively, the Where clause goes
+        // native and the whole query reaches the correlated-reducer projection leaf machinery (EF-449),
+        // which already supports this exact shape — so it now succeeds end-to-end, natively, with correct
+        // results (verified by AssertQuery's own data comparison below; also passes under NativeOnly).
+        await base.FirstOrDefault_over_empty_collection_of_value_type_returns_correct_results(async);
 
-        AssertMql();
+        AssertMql(
+            """
+            Customers.{ "$match" : { "_id" : "FISSA" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }], "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "CustomerID" : "$_id", "OrderId" : "$_lookup_Orders._id", "_id" : 0 } }
+            """);
     }
 
     public override async Task Project_non_nullable_value_after_FirstOrDefault_on_empty_collection(bool async)
@@ -1205,17 +1209,11 @@ Customers.
 
     public override async Task Select_entity_compared_to_null(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Select_entity_compared_to_null(async));
-        AssertMql();
-#else
         await base.Select_entity_compared_to_null(async);
         AssertMql(
             """
 Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Explicit_cast_in_arithmetic_operation_is_preserved(bool async)
@@ -1254,12 +1252,15 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_outer" : "$
 
     public override async Task ToList_Count_in_projection_works(bool async)
     {
-        // Fails: mixed entity-and-count projection (new { c, c.Orders.ToList().Count() }) is the mixed path
-        // (the entity `c` is projected too), which does not route through the scalar collection-navigation
-        // count push-down, and is not supported. EF-X001
-        await AssertTranslationFailed(() => base.ToList_Count_in_projection_works(async));
+        // NEWLY PASSING as of EF-412: the mixed entity-and-count projection
+        // (new { c, c.Orders.ToList().Count() }) now goes native — the whole-root-entity leaf emits as
+        // {"c": "$$ROOT"} and the $lookup-backed count is its sibling — so this no longer fails translation.
+        await base.ToList_Count_in_projection_works(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "c" : "$$ROOT", "Count" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
+""");
     }
 
     public override async Task LastOrDefault_member_access_in_projection_translates_to_server(bool async)
@@ -1466,12 +1467,10 @@ Customers.
 
     public override async Task Reverse_in_join_inner(bool async)
     {
-#if EF8 || EF9
-        // Fails: Reverse not supported CSHARP-5836
-        await AssertTranslationFailed(() => base.Reverse_in_join_inner(async));
-
-        AssertMql();
-#else
+        // Fails: Reverse not supported CSHARP-5836. EF-436: this shape reaches the driver identically on
+        // EF8/EF9/EF10 (the stale EF8/EF9 "declines before reaching our translator at all" gate was a
+        // symptom of the same LeftJoin-recognition gap fixed for NorthwindJoinQueryMongoTest
+        // .GroupJoin_DefaultIfEmpty_multiple), so all three versions share this same partial capture.
         await AssertTranslationFailed(() =>
             base.Reverse_in_join_inner(async));
 
@@ -1486,24 +1485,20 @@ Customers.
 Customers.
 """);
         }
-#endif
     }
 
     public override async Task Reverse_in_join_inner_with_skip(bool async)
     {
-#if EF8 || EF9
-        // Fails: Reverse not supported CSHARP-5836
-        await AssertTranslationFailed(() => base.Reverse_in_join_inner_with_skip(async));
-
-        AssertMql();
-#else
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The join's inner is
         // Orders.OrderByDescending(OrderID).Skip(2).Reverse() — a sorted+paged sub-query, which driver 3.11
         // rejects with ExpressionNotSupportedException ("expression must be a MongoDB IQueryable against a
         // collection"); see docs/failing-spec-tests.md § EF-X022. This query never returned wrong rows on any
         // driver version: the driver's LINQ provider ALSO separately rejects Reverse inside a join
-        // (CSHARP-5836, the same reason the EF8/EF9 arm above throws), so this has always been a clean throw.
-        // The rejection happens after the outer collection is logged, so a partial pipeline is captured.
+        // (CSHARP-5836), so this has always been a clean throw. EF-436: EF8/EF9 previously declined even
+        // earlier (before reaching our translator at all) due to the same stale LeftJoin-recognition gap
+        // fixed for NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty_multiple - now all three versions
+        // reach the driver identically, and the rejection happens after the outer collection is logged, so a
+        // partial pipeline is captured on all three.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Reverse_in_join_inner_with_skip(async));
 
@@ -1518,7 +1513,6 @@ Customers.
             Customers.
             """);
         }
-#endif
     }
 
     public override async Task Reverse_in_SelectMany(bool async)
@@ -1894,8 +1888,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "local
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$project" : { "City" : "$City", "c" : "$$ROOT", "_id" : 0 } }
+""");
     }
 
     public override async Task Client_method_in_projection_requiring_materialization_1(bool async)
@@ -1914,7 +1908,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "local
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$subtract" : [{ "$dayOfWeek" : "$OrderDate" }, 1] }, "_id" : 0 } }
+            Orders.{ "$project" : { "_v" : { "$toInt" : { "$subtract" : [{ "$dayOfWeek" : "$OrderDate" }, 1] } }, "_id" : 0 } }
             """);
     }
 

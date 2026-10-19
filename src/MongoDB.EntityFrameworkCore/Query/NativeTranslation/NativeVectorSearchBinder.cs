@@ -67,7 +67,7 @@ internal static class NativeVectorSearchBinder
         if (call.Arguments[2] is UnaryExpression)
         {
             var preFilterLambda = call.Arguments[2].UnwrapLambdaFromQuote();
-            if (!new MongoExpressionTranslator(entityType).TryTranslate(preFilterLambda.Body, out preFilter))
+            if (!new MongoExpressionTranslator(entityType, preFilterLambda.Parameters[0]).TryTranslate(preFilterLambda.Body, out preFilter))
             {
                 // The native predicate set is narrower than the bridge's. A pre-filter outside it declines
                 // gracefully: driver-LINQ runs the whole query, correctly, and only NativeOnly throws.

@@ -1415,36 +1415,29 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver), actual);
     }
 
-    // ---- Final-review finding 3: a PRIMARY-KEY sibling can never satisfy the sibling-readability rule ----
+    // ---- Final-review finding 3 (RESOLVED): a PRIMARY-KEY sibling now goes native ----
     //
-    // IsWholeDocumentReadableLeaf compares `alias == field.ElementName`. A document ROOT's primary key always has
-    // element name "_id" (PrimaryKeyDiscoveryConvention rewrites it), while its alias is the CLR member name
-    // ("Id") — so Select(b => new { b.Id, b.Title, b.Posts }) can NEVER satisfy the rule and the whole projection
-    // declines, falling back. This is materially DIFFERENT from the renamed-alias declines it sits alongside:
-    // those are a naming choice the user could make differently, whereas here no ORDINARY naming choice fixes it.
+    // IsWholeDocumentReadableLeaf used to require `alias == field.ElementName`. A document ROOT's primary key
+    // always has element name "_id" (PrimaryKeyDiscoveryConvention rewrites it), while its alias is the CLR
+    // member name ("Id") — so Select(b => new { b.Id, b.Title, b.Posts }) could never satisfy that rule and the
+    // whole projection declined, falling back (correct values, just not native).
     //
-    // CORRECTED (final residuals pass, EF-322 slice 8): the "NO naming choice fixes it" phrasing above was
-    // overstated. Select(b => new { _id = b.Id, b.Title, b.Posts }) aliases the member "_id" directly, which
-    // DOES satisfy `alias == field.ElementName` and is therefore admitted — NativeProjectionBinder.cs's
-    // `hasArrayLeaf && seenAliases.Add("_id")` check (around line 144) prevents a duplicate owner-key projection
-    // for this case, so nothing collides. This was derived by READING the code, not executed as a test — it is
-    // an untested admitted case, worth covering in whichever future slice takes the principled sibling-rule fix
-    // described below. The substantive point this test defends is unaffected: no ORDINARY spelling of a PK
-    // sibling satisfies the rule, which is what makes it materially unlike the renamed-alias cases it sits
-    // alongside.
+    // TAKEN: the principled fix described below. IsWholeDocumentReadableLeaf now admits any property-backed
+    // leaf (a MongoFieldExpression) regardless of alias, because such a leaf is resolved on the mixed/fallback
+    // path through its own IProperty (MongoMixedProjectionBindingRemovingExpressionVisitor.VisitExtension's
+    // TryResolveFieldAccess/CreateGetValueExpression), never by matching the alias string to the stored element
+    // name — so the alias-agreement requirement was never load-bearing for a property-backed leaf in the first
+    // place. Only a computed leaf (no backing IProperty — a count or arithmetic expression) still needs the
+    // rule, and still correctly declines; see Computed_sibling_still_declines_alongside_an_array_leaf below.
     //
-    // Deliberately NOT widened here, and this test is the tripwire for that decision. A decline returns correct
-    // values via fallback, and this branch found silent-wrong-data bugs TWICE while widening admissibility in
-    // exactly this area, so widening it in a final fix wave with a single re-review is the wrong risk.
-    //
-    // The principled fix, when it is taken: narrow the sibling rule to reject only a leaf resolving to NO property
-    // (a computed leaf — a count or arithmetic expression), because a PROPERTY-BACKED leaf is resolved by the
-    // mixed shaper through its IProperty rather than by alias, so the alias never has to match the element name
-    // for it. That is deferred, not overlooked.
+    // This was previously deferred rather than overlooked: two prior widenings of this exact rule caused silent
+    // wrong-data bugs, so this fix was scoped to exactly the narrowing the prior review's own comments had
+    // already validated as safe (reject only a leaf with no backing property), leaving the dotted-field
+    // exclusion and every other conjunct unchanged.
     [Fact]
-    public void Primary_key_sibling_declines_and_returns_correct_data_in_every_mode()
+    public void Primary_key_sibling_now_goes_native_and_returns_correct_data_in_every_mode()
     {
-        var collection = SeedKeyed(nameof(Primary_key_sibling_declines_and_returns_correct_data_in_every_mode));
+        var collection = SeedKeyed(nameof(Primary_key_sibling_now_goes_native_and_returns_correct_data_in_every_mode));
 
         static List<(string Title, int Count)> Run(SingleEntityDbContext<Blog> db)
             => db.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -1461,15 +1454,43 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal("_id", key.GetElementName());
         }
 
+        var expected = new List<(string, int)> {("a_empty", 0), ("b_one", 1), ("c_two", 2)};
+
         using (var native = CreateContext(collection, KeyedModel, MongoQueryMode.Native))
         using (var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq))
         {
-            var expected = new List<(string, int)> {("a_empty", 0), ("b_one", 1), ("c_two", 2)};
             Assert.Equal(expected, Run(native));
             Assert.Equal(expected, Run(driver));
         }
 
-        // The decline itself. Flipping this to a success is a deliberate act, not a quiet one.
+        // The fix itself: this now SUCCEEDS under NativeOnly instead of throwing.
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        Assert.Equal(expected, Run(nativeOnly));
+    }
+
+    [Fact]
+    public void Computed_sibling_still_declines_alongside_an_array_leaf()
+    {
+        var collection = SeedKeyed(nameof(Computed_sibling_still_declines_alongside_an_array_leaf));
+
+        static List<(string Title, int PostCountPlusOne)> Run(SingleEntityDbContext<Blog> db)
+            => db.Entities.AsNoTracking().OrderBy(b => b.Title)
+                .Select(b => new {b.Title, b.Posts, PostCountPlusOne = b.Posts.Count + 1})
+                .ToList()
+                .Select(r => (r.Title, r.PostCountPlusOne))
+                .ToList();
+
+        var expected = new List<(string, int)> {("a_empty", 1), ("b_one", 2), ("c_two", 3)};
+
+        using (var native = CreateContext(collection, KeyedModel, MongoQueryMode.Native))
+        using (var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq))
+        {
+            Assert.Equal(expected, Run(native));
+            Assert.Equal(expected, Run(driver));
+        }
+
+        // The residual protected case: a COMPUTED sibling (no backing IProperty) still correctly declines —
+        // this must NOT flip alongside the primary-key case above, or the narrowing went too far.
         using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
