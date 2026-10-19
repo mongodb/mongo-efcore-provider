@@ -136,7 +136,7 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         var mql = Assert.Single(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains("_lookup_Customer", mql);   // native $lookup alias for the confirmed reference Include
         Assert.Contains(
-            "{ \"$unwind\" : { \"path\" : \"$_lookup_Customer\", \"preserveNullAndEmptyArrays\" : false } }",
+            "{ \"$match\" : { \"_lookup_Customer.0\" : { \"$exists\" : true } } }, { \"$set\" : { \"_lookup_Customer\" : { \"$arrayElemAt\" : [\"$_lookup_Customer\", 0] } } }",
             mql); // required nav (non-nullable CustomerId) -> inner unwind
         Assert.DoesNotContain("$$ROOT", mql);   // not the driver's LeftJoin shape
         Assert.DoesNotContain("_outer", mql);
