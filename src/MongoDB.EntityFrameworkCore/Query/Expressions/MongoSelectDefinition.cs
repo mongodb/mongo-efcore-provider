@@ -222,7 +222,7 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal void AppendPostJoinDistinct(MongoDistinctOp op) => _postJoinOps.Add(op);
 
-    // HasPaging/HasOrdering/HasLimit scan _pipelineOps only: they gate a pre-terminal GroupBy, which is unreachable
+    // HasPaging/HasOrdering scan _pipelineOps only: they gate a pre-terminal GroupBy, which is unreachable
     // after a set op, so they must not see _trailingOps.
     /// <summary><see langword="true"/> when any $skip or $limit op is present.</summary>
     internal bool HasPaging => _pipelineOps.Exists(o => o is MongoSkipOp or MongoLimitOp);
@@ -235,11 +235,8 @@ internal sealed class MongoSelectDefinition
     internal bool HasNonCommutingPostJoinOp
         => _postJoinOps.Exists(o => o is MongoSkipOp or MongoLimitOp or MongoDistinctOp);
 
-    /// <summary>Currently unused: a pre-<c>GroupBy</c> sort is a no-op or defines the row set for a following Skip/Take, so it is not a reason to decline.</summary>
+    /// <summary><see langword="true"/> when any <c>$sort</c> op is present (declines the bare-value shape over a chained join in the queryable translator; the select lowerer relies on pre-group ops being safe ahead of a keyed $group).</summary>
     internal bool HasOrdering => _pipelineOps.Exists(o => o is MongoSortOp);
-
-    /// <summary>Currently unused: consecutive <c>$limit</c> stages narrow monotonically, so an existing limit is not a reason for a reducer to decline.</summary>
-    internal bool HasLimit => _pipelineOps.Exists(o => o is MongoLimitOp);
 
     /// <summary>
     /// Flips every ordering in the tail <see cref="MongoSortOp"/> of <see cref="ActiveOps"/> (MQL has no "reverse"

@@ -40,17 +40,4 @@ internal sealed class MongoUnaryExpression : MongoExpression
         => Operator == MongoUnaryOperator.BitNot ? _resultType ?? typeof(int) : typeof(bool);
 
     private readonly Type? _resultType;
-
-    /// <summary>Returns a new expression if the operand changed, otherwise <see langword="this"/>.</summary>
-    public MongoUnaryExpression Update(MongoExpression operand)
-        => ReferenceEquals(operand, Operand)
-            ? this
-            : new MongoUnaryExpression(Operator, operand, _resultType);
-
-    /// <inheritdoc />
-    protected override Expression VisitChildren(ExpressionVisitor visitor)
-    {
-        var newOperand = (MongoExpression)visitor.Visit(Operand);
-        return Update(newOperand);
-    }
 }
