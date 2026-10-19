@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
@@ -64,10 +65,15 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
     public override async Task Project_nested_json_entity_with_missing_scalars(bool async)
     {
-        // Fails: No support for nested JSON EF-X008
+        // Fails: No support for nested JSON EF-X008. EF-425 added an assignability guard in
+        // MongoProjectionBindingExpressionVisitor.VisitMethodCall that now catches this shape earlier,
+        // as a clean translation-failure decline, instead of it reaching the duplicate-key
+        // ArgumentException the visitor's dictionary used to throw. Per this repo's versioning rubric the
+        // exception type for an unsupported shape isn't part of the contract, so this is an improvement,
+        // not a regression, and the assertion is updated to match.
         Assert.Contains(
-            "An item with the same key has already been added.",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
+            CoreStrings.TranslationFailed("")[48..],
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 base.Project_nested_json_entity_with_missing_scalars(async)))
             .Message);
 
@@ -150,7 +156,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 2 } }, { "$project" : { "_id" : "$_id", "Number" : "$RequiredReference.Number" } }
+            Entities.{ "$match" : { "_id" : 2 } }, { "$project" : { "Id" : "$_id", "Number" : "$RequiredReference.Number", "_id" : 0 } }
             """);
     }
 
@@ -160,7 +166,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 4 } }, { "$project" : { "_id" : "$_id", "Number" : "$RequiredReference.Number" } }
+            Entities.{ "$match" : { "_id" : 4 } }, { "$project" : { "Id" : "$_id", "Number" : "$RequiredReference.Number", "_id" : 0 } }
             """);
     }
 

@@ -13,9 +13,12 @@
  * limitations under the License.
  */
 
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 
@@ -39,4 +42,21 @@ public record MongoExecutableQuery(
 {
     internal const string VectorQueryProperty = nameof(VectorQueryProperty);
     internal const string VectorQueryIndexName = nameof(VectorQueryIndexName);
+
+    /// <summary>When set, the query is executed as this native aggregation pipeline instead of via the LINQ <see cref="Provider"/>.</summary>
+    internal IReadOnlyList<BsonDocument>? NativePipeline { get; init; }
+
+    /// <summary>The session for native pipeline execution (the ambient transaction's session, if any).</summary>
+    internal IClientSessionHandle? Session { get; init; }
+
+    /// <summary>When true, native rows are RawBsonDocument and materialized by the forward-only streaming reader.</summary>
+    internal bool Streaming { get; init; }
+
+    /// <summary>
+    /// The per-execution one-pass output serializer. When set (and <see cref="Streaming"/> is true),
+    /// <c>MongoClientWrapper.Execute</c> supplies it to <c>Aggregate</c> as the pipeline output serializer, so
+    /// each cursor row deserializes directly into the finished entity in a single forward pass. Null for the
+    /// RawBsonDocument streaming fallback and for all non-streaming paths.
+    /// </summary>
+    internal IBsonSerializer? OutputSerializer { get; init; }
 }

@@ -79,9 +79,7 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
     }
 
     private static void AssertTranslationFailed(Action query)
-        => Assert.Contains(
-            CoreStrings.TranslationFailed("")[48..],
-            Assert.Throws<InvalidOperationException>(query).Message);
+        => MongoSpecTestHelpers.AssertNativeTranslationFailed(query);
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

@@ -138,15 +138,49 @@ internal static class BsonBinding
 
     private static BsonArray? GetBsonArray(BsonDocument document, string name)
     {
-        if (!document.TryGetValue(name, out var bsonValue)) return null;
+        if (!TryGetValueAtPath(document, name, out var bsonValue)) return null;
 
         return bsonValue switch
         {
             {IsBsonArray: true} => bsonValue.AsBsonArray,
             {IsBsonNull: true} => null,
             _ => throw new InvalidOperationException(
-                $"Document element '{name}' is {bsonValue.BsonType} when {nameof(BsonArray)} is required.")
+                $"Document element '{name}' is {bsonValue?.BsonType} when {nameof(BsonArray)} is required.")
         };
+    }
+
+    /// <summary>
+    /// Resolves <paramref name="name"/> against <paramref name="document"/>, walking a DOTTED name segment by
+    /// segment instead of looking it up as a single literal key.
+    /// </summary>
+    /// <remarks>
+    /// A dotted name reaches here only from an alias that is a leaf's root-relative document path, so a
+    /// dotted-path read and a nested-document read are the same read — MongoDB itself renders
+    /// <c>$project: {"Home.Notes": "$Home.Notes"}</c> as a nested output document, not a flat dotted key. An
+    /// absent segment anywhere along the path yields <see langword="false"/>, same as a missing top-level
+    /// element; an intermediate segment that is present but not a document also yields
+    /// <see langword="false"/> rather than throwing, so this never turns a readable document into a cast
+    /// failure.
+    /// </remarks>
+    private static bool TryGetValueAtPath(BsonDocument document, string name, out BsonValue? value)
+    {
+        if (!name.Contains('.'))
+        {
+            return document.TryGetValue(name, out value);
+        }
+
+        BsonValue current = document;
+        foreach (var segment in name.Split('.'))
+        {
+            if (current is not BsonDocument segmentDocument || !segmentDocument.TryGetValue(segment, out current!))
+            {
+                value = null;
+                return false;
+            }
+        }
+
+        value = current;
+        return true;
     }
 
     private static MethodCallExpression CreateGetBsonDocument(
@@ -190,6 +224,21 @@ internal static class BsonBinding
     internal static MethodCallExpression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>
         Expression.Call(null, GetElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
 
+    /// <summary>
+    /// Create the expression which reads an element nested under one or more parent documents, walking
+    /// <paramref name="path"/> segment by segment.
+    /// </summary>
+    /// <remarks>
+    /// This is deliberately a SEPARATE entry point from <see cref="CreateGetElementValue"/> rather than a
+    /// dotted-name overload of it: <see cref="GetElementValue{T}"/> looks its name up as a single LITERAL
+    /// document key (a dotted name there finds nothing), and several existing callers pass aliases that may
+    /// legitimately contain dots, so widening that method's semantics would change their reads. Callers that
+    /// genuinely mean "walk into a sub-document" say so explicitly here.
+    /// </remarks>
+    internal static MethodCallExpression CreateGetElementValueAtPath(Expression bsonDocExpression, string[] path, Type type) =>
+        Expression.Call(null, GetElementValueAtPathMethodInfo.MakeGenericMethod(type), bsonDocExpression,
+            Expression.Constant(path));
+
     private static readonly MethodInfo GetPropertyValueMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetPropertyValue));
@@ -201,6 +250,10 @@ internal static class BsonBinding
     private static readonly MethodInfo GetElementValueMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetElementValue));
+
+    private static readonly MethodInfo GetElementValueAtPathMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetElementValueAtPath));
 
     internal static T? GetPropertyValue<T>(BsonDocument? document, IReadOnlyProperty property)
     {
@@ -255,6 +308,19 @@ internal static class BsonBinding
         if (property.IsNullable) return default;
 
         throw new InvalidOperationException($"Document element '{elementName}' is missing for required non-nullable property '{property.Name}'.");
+    }
+
+    internal static T? GetElementValueAtPath<T>(BsonDocument document, string[] path)
+    {
+        var type = typeof(T);
+        var serializationInfo =
+            BsonSerializationInfo.CreateWithPath(path, BsonSerializerFactory.CreateTypeSerializer(type), type);
+        if (TryReadElementValue(document, serializationInfo, out T? value) || type.IsNullableType())
+        {
+            return value;
+        }
+
+        throw new InvalidOperationException($"Document element '{string.Join(".", path)}' is missing but required.");
     }
 
     internal static T? GetElementValue<T>(BsonDocument document, string elementName)

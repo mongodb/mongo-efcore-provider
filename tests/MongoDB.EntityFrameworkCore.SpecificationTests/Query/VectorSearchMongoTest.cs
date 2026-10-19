@@ -197,7 +197,7 @@ Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "numCandidates" : 40
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsIndex", "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }, { "$project" : { "_v" : "$Author", "_id" : 0 } }
+Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsIndex", "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "$or" : [{ "Title" : { "$regularExpression" : { "pattern" : "Action", "options" : "s" } } }, { "Title" : { "$regularExpression" : { "pattern" : "DbContext", "options" : "s" } } }] } }, { "$project" : { "Author" : "$Author", "_id" : 0 } }
 """);
     }
 
