@@ -55,8 +55,6 @@ public class MongoSelectDefinitionTests
         Assert.Equal(MongoBinaryOperator.AndAlso, binary.Operator);
     }
 
-    // ── Ordered select-op pipeline merge rules ──────────────────────
-
     private static MongoConstantExpression Const(int v) => new(v, forSerialization: null);
     private static MongoOrdering Asc() => new(Const(1), Ascending: true);
 
@@ -119,8 +117,6 @@ public class MongoSelectDefinitionTests
         Assert.True(s.HasPaging);
         Assert.True(s.HasLimit);
     }
-
-    // ── DeferPipelineOpsPastConfirmedJoin ──────
 
     [Fact]
     public void DeferPipelineOpsPastConfirmedJoin_moves_ops_in_order_and_clears_the_source_list()
@@ -261,8 +257,6 @@ public class MongoSelectDefinitionTests
         Assert.Equal(NativeRoute.Fallback, select.Route);
     }
 
-    // ── UnwindSources chain ─────────────────────────
-
     [Fact]
     public void New_select_has_no_unwind_sources_and_null_UnwindSource_shim()
     {
@@ -329,8 +323,6 @@ public class MongoSelectDefinitionTests
         Assert.False(select.IsSingleReferenceUnwindTerminalOnly);
     }
 
-    // ── Reference-Include candidate join counting ────────────
-    //
     // Pins the candidate/confirmation counter arithmetic directly, which no single end-to-end query shape
     // isolates. End-to-end coverage is in NativeReferenceIncludeTests.
 

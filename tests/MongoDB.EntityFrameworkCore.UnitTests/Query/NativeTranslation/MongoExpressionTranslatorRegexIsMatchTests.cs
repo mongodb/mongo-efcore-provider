@@ -115,9 +115,7 @@ public class MongoExpressionTranslatorRegexIsMatchTests
         Assert.Null(result);
     }
 
-    // ------------------------------------------------------------------
     // Forward shape: Regex.IsMatch(field, constantPattern[, options]) → MongoRegexKind.Pattern.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Forward_IsMatch_with_constant_pattern_translates_to_Pattern_kind()

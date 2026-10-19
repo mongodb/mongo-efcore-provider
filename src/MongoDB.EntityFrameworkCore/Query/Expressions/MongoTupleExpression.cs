@@ -24,9 +24,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// element-by-element.
 /// </summary>
 /// <remarks>
-/// Not a reuse of <see cref="MongoValueListExpression"/>: that type is only renderable as an <c>$in</c> haystack
-/// via <c>RenderInValues</c>, whereas this is only a top-level <c>$eq</c>/<c>$ne</c> operand and its elements
-/// may be field references.
+/// Not <see cref="MongoValueListExpression"/>, which is only renderable as an <c>$in</c> haystack; this is only a
+/// top-level <c>$eq</c>/<c>$ne</c> operand and its elements may be field references.
 /// </remarks>
 internal sealed class MongoTupleExpression : MongoExpression
 {
@@ -35,7 +34,6 @@ internal sealed class MongoTupleExpression : MongoExpression
         Elements = elements;
     }
 
-    /// <summary>The per-member value nodes, in constructor-argument order.</summary>
     public IReadOnlyList<MongoExpression> Elements { get; }
 
     /// <inheritdoc />

@@ -51,7 +51,6 @@ public static class MongoServiceCollectionExtensions
     /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <param name="optionsAction">An optional action to configure the <see cref="DbContextOptions" /> for the context.</param>
     /// <typeparam name="TContext">The type of context to be registered.</typeparam>
-    /// <returns>The same service collection so that multiple calls can be chained.</returns>
     public static IServiceCollection AddMongoDB<TContext>(
         this IServiceCollection serviceCollection,
         string connectionString,
@@ -75,7 +74,6 @@ public static class MongoServiceCollectionExtensions
     /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <param name="optionsAction">An optional action to configure the <see cref="DbContextOptions" /> for the context.</param>
     /// <typeparam name="TContext">The type of context to be registered.</typeparam>
-    /// <returns>The same service collection so that multiple calls can be chained.</returns>
     public static IServiceCollection AddMongoDB<TContext>(
         this IServiceCollection serviceCollection,
         string connectionString,
@@ -99,7 +97,6 @@ public static class MongoServiceCollectionExtensions
     /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <param name="optionsAction">An optional action to configure the <see cref="DbContextOptions" /> for the context.</param>
     /// <typeparam name="TContext">The type of context to be registered.</typeparam>
-    /// <returns>The same service collection so that multiple calls can be chained.</returns>
     /// <remarks>
     /// It is recommended that you use alternative UseMongoDB overloads that take either a connection string
     /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Core Provider can correctly configure and
@@ -129,7 +126,6 @@ public static class MongoServiceCollectionExtensions
     /// <param name="mongoOptionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <param name="optionsAction">An optional action to configure the <see cref="DbContextOptions" /> for the context.</param>
     /// <typeparam name="TContext">The type of context to be registered.</typeparam>
-    /// <returns>The same service collection so that multiple calls can be chained.</returns>
     public static IServiceCollection AddMongoDB<TContext>(
         this IServiceCollection serviceCollection,
         MongoClientSettings mongoClientSettings,
@@ -149,7 +145,6 @@ public static class MongoServiceCollectionExtensions
     /// </summary>
     /// <remarks>You probably meant to use <see cref="AddMongoDB{TContext}(Microsoft.Extensions.DependencyInjection.IServiceCollection,string,string,System.Action{MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder}?,System.Action{Microsoft.EntityFrameworkCore.DbContextOptionsBuilder}?)" /> instead.</remarks>
     /// <param name="serviceCollection">The <see cref="IServiceCollection" /> to add services to.</param>
-    /// <returns>The same service collection so that multiple calls can be chained.</returns>
     public static IServiceCollection AddEntityFrameworkMongoDB(this IServiceCollection serviceCollection)
     {
         ArgumentNullException.ThrowIfNull(serviceCollection);

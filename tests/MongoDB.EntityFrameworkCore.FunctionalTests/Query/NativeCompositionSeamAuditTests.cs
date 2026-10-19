@@ -143,7 +143,6 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
     [Fact]
     public void Plain_SelectMany_without_a_preceding_terminal_still_goes_native()
     {
-        // Guards against over-gating: a first SelectMany must still bind natively (NativeOnly succeeds).
         var seed = SeedOwners();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Plain_SelectMany_without_a_preceding_terminal_still_goes_native));

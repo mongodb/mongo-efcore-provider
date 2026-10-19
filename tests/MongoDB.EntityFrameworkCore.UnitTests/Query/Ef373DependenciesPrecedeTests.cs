@@ -95,8 +95,6 @@ public class Ef373DependenciesPrecedeTests
         Assert.True(MongoEFToLinqTranslatingExpressionVisitor.DependenciesPrecede([Lookup("_lookup_A", "mid_id")]));
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────────
-    //
     // The check reads only As and LocalField, so one real navigation suffices for any number of lookups.
     private static LookupExpression Lookup(string @as, string localField)
     {

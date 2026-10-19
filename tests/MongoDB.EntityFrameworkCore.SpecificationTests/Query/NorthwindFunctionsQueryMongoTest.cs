@@ -33,7 +33,6 @@ public class NorthwindFunctionsQueryMongoTest : NorthwindFunctionsQueryTestBase<
         : base(fixture)
     {
         ClearLog();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -200,6 +199,20 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
         await AssertTranslationFailed(() =>
             AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCultureIgnoreCase))));
 
+        // The two Invariant refusals log MQL only when driver-LINQ attempts them (not under NativeOnly).
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql(
+                """
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^Qu", "options" : "s" } } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^m", "options" : "is" } } } }
+""");
+            return;
+        }
+
         AssertMql(
             """
 Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^Qu", "options" : "s" } } } }
@@ -304,6 +317,20 @@ Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
         await AssertTranslationFailed(() =>
             AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCultureIgnoreCase))));
+
+        // The two Invariant refusals log MQL only when driver-LINQ attempts them (not under NativeOnly).
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql(
+                """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "e$", "options" : "s" } } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "m$", "options" : "is" } } } }
+""");
+            return;
+        }
 
         AssertMql(
             """
@@ -417,7 +444,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         // Fails: String.Join issue EF-245
         await AssertTranslationFailed(() => base.String_Join_over_non_nullable_column(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Customers.
             """);
@@ -428,7 +455,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         // Fails: String.Join issue EF-245
         await AssertTranslationFailed(() => base.String_Join_over_nullable_column(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Customers.
             """);
@@ -439,7 +466,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         // Fails: String.Join issue EF-245
         await AssertTranslationFailed(() => base.String_Join_with_predicate(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Customers.
             """);
@@ -450,7 +477,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         // Fails: String.Join issue EF-245
         await AssertTranslationFailed(() => base.String_Join_with_ordering(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Customers.
             """);
@@ -474,7 +501,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$Co
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.String_Concat(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Customers.
             """);
@@ -590,6 +617,21 @@ Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : [{ "$ifNull" : ["$_id",
 
     public override async Task String_Compare_nested(bool async)
     {
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            // string.Compare(x, x.ToUpper()) needs $toUpper, which is never emitted natively (ASCII-only; D-TOUPPER), so those two
+            // sub-queries are refused; the others run natively.
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => string.Compare(c.CustomerID, "M" + c.CustomerID) == 0), assertEmpty: true);
+            await AssertTranslationFailed(() => AssertQuery(
+                async, ss => ss.Set<Customer>().Where(c => 0 != string.Compare(c.CustomerID, c.CustomerID.ToUpper()))));
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => string.Compare(c.CustomerID, "ALFKI".Replace("ALF", c.CustomerID)) > 0), assertEmpty: true);
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => string.Compare(c.CustomerID, "M" + c.CustomerID) <= 0));
+            await AssertTranslationFailed(() => AssertQuery(
+                async, ss => ss.Set<Customer>().Where(c => 1 == string.Compare(c.CustomerID, c.CustomerID.ToUpper()))));
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => string.Compare(c.CustomerID, "ALFKI".Replace("ALF", c.CustomerID)) == -1));
+            return;
+        }
+
         await base.String_Compare_nested(async);
 
         AssertMql(
@@ -742,6 +784,20 @@ Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : [{ "$ifNull" : ["$_id",
 
     public override async Task String_Compare_to_nested(bool async)
     {
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            // See String_Compare_nested: the two ToUpper sub-queries are refused (D-TOUPPER).
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.CustomerID.CompareTo("M" + c.CustomerID) != 0));
+            await AssertTranslationFailed(() => AssertQuery(
+                async, ss => ss.Set<Customer>().Where(c => 0 == c.CustomerID.CompareTo(c.CustomerID.ToUpper()))));
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.CustomerID.CompareTo("AROUT".Replace("OUT", c.CustomerID)) > 0));
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.CustomerID.CompareTo("M" + c.CustomerID) <= 0));
+            await AssertTranslationFailed(() => AssertQuery(
+                async, ss => ss.Set<Customer>().Where(c => 1 == c.CustomerID.CompareTo(c.CustomerID.ToUpper()))));
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.CustomerID.CompareTo("AROUT".Replace("OUT", c.CustomerID)) == -1));
+            return;
+        }
+
         await base.String_Compare_to_nested(async);
 
         AssertMql(
@@ -1331,7 +1387,7 @@ OrderDetails.{ "$match" : { "$and" : [{ "UnitPrice" : { "$lt" : { "$numberDecima
         await AssertTranslationFailed(() =>
             base.Where_mathf_floor(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             OrderDetails.
             """);
@@ -1363,7 +1419,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }
         await AssertTranslationFailed(() =>
             base.Where_mathf_round2(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             OrderDetails.
             """);
@@ -1385,7 +1441,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }
         await AssertTranslationFailed(() =>
             base.Select_mathf_round2(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             OrderDetails.
             """);
@@ -1397,7 +1453,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }
         await AssertTranslationFailed(() =>
             base.Where_mathf_truncate(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             OrderDetails.
             """);
@@ -1409,7 +1465,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }
         await AssertTranslationFailed(() =>
             base.Select_mathf_truncate(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             OrderDetails.
             """);
@@ -1623,7 +1679,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToBoolean(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1635,7 +1691,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToByte(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1647,7 +1703,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToDecimal(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1659,7 +1715,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToDouble(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1671,7 +1727,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToInt16(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1683,7 +1739,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToInt32(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1695,7 +1751,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToInt64(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1707,7 +1763,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToString(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2088,7 +2144,7 @@ Customers.{ "$set" : { "__sort0" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" :
         await AssertTranslationFailed(() =>
             base.Where_DateOnly_FromDateTime(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2150,7 +2206,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$set" : { "__sort0" : { 
         await AssertTranslationFailed(() =>
             base.Datetime_subtraction_TotalDays(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2241,6 +2297,20 @@ Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : 
         await AssertTranslationFailed(() =>
             AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCultureIgnoreCase))));
 
+        // The two Invariant refusals log MQL only when driver-LINQ attempts them (not under NativeOnly).
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql(
+                """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "M", "options" : "s" } } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "m", "options" : "is" } } } }
+""");
+            return;
+        }
+
         AssertMql(
             """
 Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "M", "options" : "s" } } } }
@@ -2260,6 +2330,10 @@ Customers.
     }
 
 #endif
+
+    // A translation refusal logs MQL only when the driver-LINQ fallback attempts the query first; NativeOnly refuses before that.
+    private void AssertMqlLoggedByFallback(params string[] expected)
+        => AssertMql(MongoSpecTestHelpers.IsNativeOnly ? [] : expected);
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

@@ -42,14 +42,14 @@ public class LookupExpressionTests
     }
 
     [Fact]
-    public void Lookup_for_navigation_targeting_collection_in_separate_entity_is_marked_FallbackOnly()
+    public void Lookup_for_navigation_targeting_collection_in_separate_entity_is_marked_DiscriminatorNarrowed()
     {
-        // A collection navigation to a TPH-derived type is FallbackOnly: the native translator can't narrow the
-        // collection scope to the derived discriminator value.
+        // A collection navigation to a TPH-derived type is DiscriminatorNarrowed: the lookup sub-pipeline narrows the
+        // collection scope to the derived type's discriminator values.
         var dogsNavigation = GetOwnerDogsNavigation();
         var lookup = new LookupExpression(dogsNavigation);
 
-        Assert.Equal(LookupPipelineKind.FallbackOnly, lookup.PipelineKind);
+        Assert.Equal(LookupPipelineKind.DiscriminatorNarrowed, lookup.PipelineKind);
         Assert.True(lookup.HasPipeline);
         Assert.Single(lookup.PipelineStages);
         Assert.NotNull(lookup.PipelineStages[0]);

@@ -59,10 +59,6 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Root entity vs. itself — `c == c` / `c != c`, trivially true/false regardless of content
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-
     private class Customer
     {
         public ObjectId Id { get; set; }
@@ -106,10 +102,6 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         Assert.Empty(results);
         spyLogger.AssertExecutedMqlContains("\"$ne\" : [\"$$ROOT\", \"$$ROOT\"]");
     }
-
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Owned single-reference navigation vs. null — `b.Address == null` / `b.Address != null`
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class Blog
     {
@@ -169,11 +161,6 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         spyLogger.AssertExecutedMqlContains("\"$ne\" : [{ \"$ifNull\" : [\"$Address\", null] }, null]");
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Entity vs. a different, non-null captured entity (`Entity_equality_local`'s shape) — native via a
-    //  primary-key comparison (MongoExpressionTranslator.EntityEquality.cs), EF's key-based semantics
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-
     [Fact]
     public void Entity_equality_against_a_captured_local_goes_native()
     {
@@ -206,11 +193,6 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
 
         Assert.Empty(results);
     }
-
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Entity-list Contains — `customers.Contains(c)`, including a null entry — native via a primary-key
-    //  $in (see TryTranslateEntityListContains for why not an OR-chain)
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     [Fact]
     public void Entity_list_contains_with_null_and_other_goes_native()

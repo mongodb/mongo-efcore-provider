@@ -27,10 +27,10 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// F7: a null parameter / list element compared with a non-nullable value-type property used to reach the property's
+/// A null parameter / list element compared with a non-nullable value-type property used to reach the property's
 /// serializer as null and throw <see cref="NullReferenceException"/> natively. Native now serializes it as BSON null,
-/// matching driver-LINQ (<c>{field: null}</c> matches a missing/null field). Expected values are main's (driver-LINQ)
-/// results, not C# semantics (see main-issues M8). The seed's row "c" is deliberately ill-formed for the non-nullable
+/// matching driver-LINQ (<c>{field: null}</c> matches a missing/null field). Expected values are driver-LINQ's
+/// results, not C# semantics. The seed's row "c" is deliberately ill-formed for the non-nullable
 /// Rank/Gid/When/Flag properties (they are missing).
 /// </summary>
 [XUnitCollection("QueryTests")]

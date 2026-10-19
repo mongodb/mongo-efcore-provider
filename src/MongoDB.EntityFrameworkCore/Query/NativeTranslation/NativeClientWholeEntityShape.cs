@@ -20,9 +20,6 @@ using Microsoft.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
-/// <summary>
-/// How <see cref="NativeClientWholeEntityShape"/> sees one node, as answered by the caller's classifier.
-/// </summary>
 internal enum ClientWholeEntityOperand
 {
     /// <summary>Walk the node structurally.</summary>
@@ -42,30 +39,15 @@ internal enum ClientWholeEntityOperand
 /// (<c>new object[] { x }</c>, <c>new List&lt;object&gt; { x }</c>, <c>new Wrapper(x) { City = x.City }</c>).
 /// </summary>
 /// <remarks>
-/// <para>
-/// Called by both the emit side (<c>NativeProjectionBinder</c>, over the selector, where the entity is the selector
-/// parameter) and the read side (<c>MongoShapedQueryCompilingExpressionVisitor.IsCtorWrappedEntityShaper</c>, over
-/// the bound shaper, where it is a structural-type shaper). Only the classifier differs; the walk is this one method,
-/// so the two sides cannot disagree about which shapes are admitted.
-/// </para>
-/// <para>
-/// At least one client-only operand is required: an opaque call on the whole entity, or a whole entity as a direct
-/// construction operand. Without it a translatable tree (<c>Ternary_Null_Equals_Non_Numeric_First_Part</c>) or a
-/// scalar-only container (<c>new[] { x.Id }</c>) would switch to whole-document fetching.
-/// </para>
-/// <para>
-/// A whole-entity operand is never row-independent, so this is disjoint from
-/// <c>NativeProjectionBinder.IsRowIndependentLeaf</c>: a construction whose operands are all row-independent is
-/// that predicate's, one with a whole-entity operand is this one's.
-/// </para>
+/// Called by both the emit side (<c>NativeProjectionBinder</c>) and the read side
+/// (<c>MongoShapedQueryCompilingExpressionVisitor.IsCtorWrappedEntityShaper</c>); only the classifier differs, so the two
+/// cannot disagree about which shapes are admitted. At least one client-only operand is required, else a translatable tree
+/// (<c>Ternary_Null_Equals_Non_Numeric_First_Part</c>) or scalar-only container (<c>new[] { x.Id }</c>) would switch to
+/// whole-document fetching. A whole-entity operand is never row-independent, so this is disjoint from
+/// <c>NativeProjectionBinder.IsRowIndependentLeaf</c>.
 /// </remarks>
 internal static class NativeClientWholeEntityShape
 {
-    /// <summary>
-    /// True when <paramref name="node"/> is admitted: only conditional, binary, unary, member-access, opaque-call,
-    /// array-init, single-argument list-init, member-less <c>new</c> and member-init nodes are walked; anything else
-    /// declines.
-    /// </summary>
     internal static bool IsClientOnlyTree(Expression node, Func<Expression, ClientWholeEntityOperand> classify)
     {
         var sawClientOnlyOperand = false;
@@ -73,14 +55,10 @@ internal static class NativeClientWholeEntityShape
     }
 
     /// <summary>
-    /// True when exactly one operand of <paramref name="methodCall"/> (receiver plus arguments) is the whole entity
-    /// and every other operand is entity-free. <c>EF.Property</c> is excluded: it is a field accessor, not a client
-    /// call.
+    /// True when exactly one operand of <paramref name="methodCall"/> is the whole entity and every other is entity-free
+    /// (<c>EF.Property</c> excluded). A second entity-referencing operand declines: the shaper fold would have to recurse through
+    /// the opaque call's other operands, which is untested.
     /// </summary>
-    /// <remarks>
-    /// A second entity-referencing operand (<c>context.ClientMethod(x, x.CustomerID)</c>) declines: supporting it
-    /// would need the shaper fold to recurse through the opaque call's other operands, which is untested.
-    /// </remarks>
     internal static bool HasSoleWholeEntityOperand(
         MethodCallExpression methodCall, Func<Expression, ClientWholeEntityOperand> classify)
     {
@@ -123,10 +101,8 @@ internal static class NativeClientWholeEntityShape
     private static bool Walk(
         Expression node, Func<Expression, ClientWholeEntityOperand> classify, ref bool sawClientOnlyOperand)
     {
-        // Fails closed: only an entity-free node or the whole entity is an accepted leaf. Any other row read the walk
-        // can't see into (a shaper-side ProjectionBindingExpression, an unknown extension node) classifies as Walk and
-        // reaches the default arm: such a leaf would be resolved by its projection member off the raw whole document,
-        // not off a narrowed $project, and read as null.
+        // Fails closed: any other row read the walk can't see into (a shaper-side ProjectionBindingExpression, an unknown
+        // extension node) would be resolved off the raw whole document, not a narrowed $project, and read as null.
         switch (classify(node))
         {
             case ClientWholeEntityOperand.EntityFree or ClientWholeEntityOperand.WholeEntity:
@@ -209,8 +185,7 @@ internal static class NativeClientWholeEntityShape
         }
     }
 
-    // Member-less only: an anonymous/member-bearing `new` is bound member by member by the projection binding
-    // visitor, which would register its arguments as projected members.
+    // Member-less only: a member-bearing `new` is bound member by member by the projection binding visitor.
     private static bool WalkConstructorArguments(
         NewExpression newExpression, Func<Expression, ClientWholeEntityOperand> classify, ref bool sawClientOnlyOperand)
     {
@@ -230,8 +205,7 @@ internal static class NativeClientWholeEntityShape
         return true;
     }
 
-    // A whole entity as a direct construction operand (through the boxing/upcast Convert `new object[] { x }` adds) is
-    // itself client-only: the construction runs over the materialized entity.
+    // A whole entity as a direct construction operand (through the boxing Convert `new object[] { x }` adds) is client-only.
     private static bool WalkConstructionOperand(
         Expression operand, Func<Expression, ClientWholeEntityOperand> classify, ref bool sawClientOnlyOperand)
     {

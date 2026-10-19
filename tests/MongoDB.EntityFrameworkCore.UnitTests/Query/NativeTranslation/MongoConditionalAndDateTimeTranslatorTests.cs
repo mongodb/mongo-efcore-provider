@@ -210,11 +210,16 @@ public class MongoConditionalAndDateTimeTranslatorTests
     }
 
     [Fact]
-    public void TimeOfDay_leaf_over_a_DateTimeOffset_declines()
+    public void TimeOfDay_leaf_over_a_DateTimeOffset_translates_over_its_local_time()
     {
         var (translator, body) = BuildValueBody(r => (object)r.OccurredOffset!.Value.TimeOfDay);
 
-        Assert.False(translator.TryTranslateTimeOfDayLeaf(body, out _));
+        Assert.True(translator.TryTranslateTimeOfDayLeaf(body, out var result));
+
+        var datePart = Assert.IsType<MongoDatePartExpression>(result);
+        Assert.Equal(MongoDatePart.TimeOfDay, datePart.Part);
+        var local = Assert.IsType<MongoDateTimeOffsetLocalExpression>(datePart.Operand);
+        Assert.Equal("OccurredOffset", local.Operand.ElementName);
     }
 
     [Fact]

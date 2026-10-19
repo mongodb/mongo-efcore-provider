@@ -31,19 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// (<c>GroupBy(x =&gt; x.S).Select(g =&gt; new { K = g.Key.ToUpper(), C = g.Count() })</c>) is applied to the grouped
 /// value client-side, never by the server's <c>$toUpper</c>/<c>$toLower</c> (ASCII-only, null as <c>""</c>).
 /// </summary>
-/// <remarks>
-/// <para>
-/// Hand oracle: C# over the stored values, except that a case mapping over a null key answers null rather than
-/// throwing (EF's null propagation, as for <c>new { U = x.S.ToUpper() }</c>), and a null and a missing S share one
-/// group. Rows: value (S = "Abc", N = 1), null (S null, N = 2), missing (no S, N = 2), accent (S = "école", N = 1).
-/// Groups are compared as sorted "key:value" strings.
-/// </para>
-/// <para>
-/// The native <c>$group</c> projects the raw grouped value and the shaper re-applies the call. Driver-LINQ (explicit,
-/// or a Native fallback) would compute it with <c>$toUpper</c>/<c>$toLower</c>, so it throws instead; NativeOnly throws
-/// its own decline for a shape that isn't native.
-/// </para>
-/// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeGroupByKeyCaseMappingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>

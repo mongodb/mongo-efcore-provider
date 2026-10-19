@@ -43,10 +43,9 @@ internal enum MongoBulkStrategy
 }
 
 /// <summary>
-/// Compile-time plan describing a bulk <c>ExecuteDelete</c>/<c>ExecuteUpdate</c> operation, produced by the query
-/// pipeline and consumed by <see cref="MongoBulkOperationExecutor"/> at execution time. The delegates defer the
-/// (runtime, parameter-dependent) translation of the filter / update / target-id query to the Query area while the
-/// executor owns the driver writes, transaction orchestration, and diagnostics.
+/// Compile-time plan for a bulk <c>ExecuteDelete</c>/<c>ExecuteUpdate</c>, produced by the query pipeline and consumed
+/// by <see cref="MongoBulkOperationExecutor"/>. The delegates defer the runtime, parameter-dependent translation to the
+/// Query area; the executor owns the driver writes, transactions, and diagnostics.
 /// <para>
 /// Exactly one delegate set is populated per (<see cref="Strategy"/>, <see cref="Kind"/>) combination:
 /// <list type="bullet">

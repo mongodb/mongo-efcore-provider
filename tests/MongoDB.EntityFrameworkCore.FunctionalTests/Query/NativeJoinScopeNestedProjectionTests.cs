@@ -128,14 +128,8 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
         Assert.Null((string?)unmatchedRow.CustomerInfo.Name);
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // End-to-end coverage of the nested arm's accept set; each shape it can see runs against a real database:
-    //   * Inner-sourced plain field        -> ACCEPTED, Nested_projection_over_reference_include_matches_oracle
-    //   * computed (MongoBinaryExpression) -> DECLINES, Nested_projection_with_computed_member_falls_back
-    //   * Outer-sourced (MongoOuterField)  -> DECLINES, Nested_projection_with_outer_sourced_member_falls_back
-    //   * value-converted field            -> DECLINES, Nested_projection_with_value_converted_member_falls_back
-    //                                         (upstream of the arm entirely — see that test)
-    // ---------------------------------------------------------------------------------------------------
+    // Accept set of the nested arm: an inner-sourced plain field is accepted; computed, outer-sourced and value-converted
+    // members decline (the last upstream of the arm, see its test).
 
     /// <summary>
     /// A nested member over a value-converted property (<c>Tier</c>, stored as its enum name) declines upstream of
@@ -212,16 +206,13 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
 
         var actual = db.Set<Order>().Include(o => o.Customer).Select(selector).ToList();
 
-        // Structural equality: right values, not just right row count.
         Assert.Equal([expected], actual);
     }
 
-    // ---------------------------------------------------------------------------------------------------
     // Positional containers over the reference-navigation join scope (`new object[] { o, o.Customer }`, what
     // nav-expansion lowers to `ti => new object[] { ti.Outer, ti.Inner }` over a LeftJoin). Each element is one
     // `_ctorArg<N>` member: a whole-entity element is rebound to the join's entity shaper, so the unmatched row's
     // Inner element is null (not a default entity) and the matched one is the real, tracked customer.
-    // ---------------------------------------------------------------------------------------------------
 
     private (string Orders, string Customers) SeedMatchedAndDangling(string testName)
     {
@@ -231,7 +222,6 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
         seed.Set<Customer>().Add(new Customer { Id = customerId, Name = "Alfreds", Rank = 7 });
         seed.Set<Order>().AddRange(
             new Order { Id = ObjectId.GenerateNewId(), OrderNo = 1, CustomerId = customerId },
-            // A dangling FK: never inserted, so the $lookup runs and finds no match.
             new Order { Id = ObjectId.GenerateNewId(), OrderNo = 2, CustomerId = ObjectId.GenerateNewId() },
             new Order { Id = ObjectId.GenerateNewId(), OrderNo = 3, CustomerId = null });
         seed.SaveChanges();

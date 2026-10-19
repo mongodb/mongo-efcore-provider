@@ -38,7 +38,6 @@ public class CharacterFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition def
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/character-filters/#htmlstrip"/>.
     /// </remarks>
     /// <param name="ignoredTags">The list of HTML tags to exclude from filtering.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public CharacterFilterSearchIndexBuilder AddHtmlStripFilter(IEnumerable<string>? ignoredTags = null)
     {
         var filterDefinition = definition.GetOrAddCharacterFilterDefinition<HtmlStripFilterDefinition>("htmlStrip");
@@ -54,7 +53,6 @@ public class CharacterFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition def
     /// For more information about the "icuNormalize" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/character-filters/#icunormalize"/>.
     /// </remarks>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public CharacterFilterSearchIndexBuilder AddIcuNormalizeFilter()
     {
         definition.GetOrAddCharacterFilterDefinition<EmptySearchIndexFilterDefinition>("icuNormalize");
@@ -71,7 +69,6 @@ public class CharacterFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition def
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/character-filters/#std-label-mapping-ref"/>.
     /// </remarks>
     /// <param name="mappings">A list of mappings from original string to replacement string.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public CharacterFilterSearchIndexBuilder AddMappingFilter(IEnumerable<(string Original, string Replacement)> mappings)
     {
         var filterDefinition = definition.GetOrAddCharacterFilterDefinition<MappingsFilterDefinition>("mapping");
@@ -87,7 +84,6 @@ public class CharacterFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition def
     /// For more information about the "persian" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/character-filters/#std-label-persian-ref"/>.
     /// </remarks>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public CharacterFilterSearchIndexBuilder AddPersianFilter()
     {
         definition.GetOrAddCharacterFilterDefinition<EmptySearchIndexFilterDefinition>("persian");

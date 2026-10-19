@@ -28,12 +28,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// </remarks>
 internal sealed class MongoVectorSearchStage : MongoPipelineStage
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MongoVectorSearchStage"/> class.
-    /// </summary>
-    /// <param name="search">The native IR for the vector search.</param>
     public MongoVectorSearchStage(MongoVectorSearch search) => Search = search;
 
-    /// <summary>The native IR for the vector search this stage renders.</summary>
     public MongoVectorSearch Search { get; }
 }

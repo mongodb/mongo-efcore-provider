@@ -16,20 +16,13 @@
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// A <c>$replaceRoot</c> stage that promotes a field to the root document.
-/// <para>
-/// With <see cref="MergeOwnerKeySentinels"/> (owned bare-element SelectMany), the owner key and array ordinal
-/// are merged in so the owned element's shadow keys materialize:
-/// <c>{ $replaceRoot: { newRoot: { $mergeObjects: [ "$&lt;NewRoot&gt;",
-/// { __mongoef_shadow: { __ownerKey: "$_id", __ord: "$__ord" } } ] } } }</c>. Nesting under one reserved
-/// <see cref="ShadowField"/> limits collisions with stored fields (which <c>$mergeObjects</c> would silently
-/// overwrite) to that one name, which the translator declines
-/// (<c>MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable</c>).
-/// </para>
-/// <para>
-/// Otherwise (reference bare-entity SelectMany) a plain <c>{ $replaceRoot: { newRoot: "$&lt;NewRoot&gt;" } }</c>,
-/// since a reference entity has a stored key.
-/// </para>
+/// A <c>$replaceRoot</c> promoting a field to the root. With <see cref="MergeOwnerKeySentinels"/> (owned bare-element
+/// SelectMany) the owner key and array ordinal are merged in so the owned element's shadow keys materialize:
+/// <c>{ newRoot: { $mergeObjects: [ "$&lt;NewRoot&gt;", { __mongoef_shadow: { __ownerKey: "$_id", __ord: "$__ord" } } ] } }</c>.
+/// Nesting under one reserved <see cref="ShadowField"/> limits collisions with stored fields (which
+/// <c>$mergeObjects</c> would silently overwrite) to that name, which the translator declines
+/// (<c>MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable</c>). A reference bare-entity
+/// SelectMany has a stored key and gets the plain form.
 /// </summary>
 internal sealed class MongoReplaceRootStage : MongoPipelineStage
 {
@@ -41,16 +34,9 @@ internal sealed class MongoReplaceRootStage : MongoPipelineStage
 
     public string NewRoot { get; }
 
-    /// <summary>
-    /// <see langword="true"/> for the owned sentinel-merge form; <see langword="false"/> for a plain
-    /// <c>$replaceRoot</c>.
-    /// </summary>
     public bool MergeOwnerKeySentinels { get; }
 
-    /// <summary>
-    /// The single reserved top-level field the sentinel merge adds; <see cref="OwnerKeyField"/> and
-    /// <see cref="OrdinalField"/> are nested under it, so only this name can collide with a stored property.
-    /// </summary>
+    /// <summary>The reserved top-level field the sentinel merge adds; <see cref="OwnerKeyField"/> and <see cref="OrdinalField"/> nest under it.</summary>
     public const string ShadowField = "__mongoef_shadow";
 
     public const string OwnerKeyField = "__ownerKey";

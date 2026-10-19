@@ -109,7 +109,6 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
     public void Bare_collection_reducer_projection_leaf_no_longer_throws(string reducerName)
     {
         var collection = SeedForReducers(reducerName);
-        // Native, not NativeOnly: a client-side fold, like the Count/LongCount arms.
         using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
 
         var query = reducerName switch
@@ -154,7 +153,6 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
 
         var result = db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts.Any()).ToList();
 
-        // By Title: empty, multi, only. A hardcoded `true` fails on the "empty" row.
         Assert.Equal([false, true, true], result);
     }
 
@@ -171,7 +169,6 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
             Row("one", PostDoc(1, "a"), PostDoc(-1, "b")),
             Row("two", PostDoc(1, "a"), PostDoc(2, "b")));
 
-        // By Title: none, one, two.
         int[] expected = [0, 2, 4];
 
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
@@ -190,7 +187,6 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
             Assert.Equal(expected, results);
         }
 
-        // Pins that this shape is a client-side fold, not natively $project-representable.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(

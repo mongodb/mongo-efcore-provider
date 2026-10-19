@@ -25,16 +25,11 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </summary>
 /// <remarks>
 /// Driver LINQ has no <c>Like</c> translation, so case-sensitivity is this provider's own choice (see
-/// <c>MongoQueryLanguageRenderer.RenderRegex</c>). Only a constant <c>pattern</c> is handled:
-/// <list type="bullet">
-/// <item>Constant <c>matchExpression</c>: folded to a constant bool in C# via the same converted pattern. This
-/// must be handled here, because <c>DbFunctionsExtensions.Like</c>'s C# body always throws, so client
-/// evaluation can never succeed.</item>
-/// <item>Plain <see langword="string"/> field: a <see cref="MongoRegexExpression"/> with
-/// <see cref="MongoRegexKind.Like"/>.</item>
-/// </list>
-/// Declined: the escape-character overload, a non-constant pattern (per-document patterns can't be converted at
-/// translation time), and non-string receivers.
+/// <c>MongoQueryLanguageRenderer.RenderRegex</c>). Only a constant <c>pattern</c> is handled. A constant
+/// <c>matchExpression</c> is folded in C# via the same converted pattern (<c>DbFunctionsExtensions.Like</c> always
+/// throws, so client evaluation can never succeed); a plain string field becomes a <see cref="MongoRegexExpression"/>
+/// with <see cref="MongoRegexKind.Like"/>. Declined: the escape-character overload, non-constant patterns and
+/// non-string receivers.
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {

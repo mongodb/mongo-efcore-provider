@@ -54,6 +54,8 @@ internal sealed class ObjectArrayProjectionExpression
 
     public INavigation Navigation { get; }
 
+    IEntityType? IArrayProjectionExpression.OwnerEntityType => Navigation.DeclaringEntityType;
+
     public Expression AccessExpression { get; }
 
     public EntityProjectionExpression InnerProjection { get; }

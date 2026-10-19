@@ -48,7 +48,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // MQL capture via SpyLoggerProvider (TestMqlLoggerFactory/AssertMql exist only in SpecificationTests).
     private SingleEntityDbContext<T> CreateContextWithLogging<T>(
         IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
@@ -103,7 +102,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
     public class Post
     {
-        // Nullable so a missing or null stored field materializes rather than throws.
         public int? Rank { get; set; }
         public string? Heading { get; set; }
         public int? Other { get; set; }
@@ -279,7 +277,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     private IMongoCollection<Blog> SeedWellFormed(string name)
         => Seed(name, LenRow("len0", 0), LenRow("len1", 1), LenRow("len2", 2), LenRow("len3", 3));
 
-    // Runs `query` in one mode and reduces it to the Title list. Mode orchestration lives in NativeModeAssert.
     private List<string> RunTitles(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryMode mode)
     {
@@ -291,14 +288,10 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => NativeModeAssert.NativeAndParity(mode => RunTitles(collection, query, mode));
 
-    // Asserts a shape declines cleanly under NativeOnly and that the fallback is correct (Native == DriverLinq);
-    // returns the results for the caller to check against expected values.
     private List<string> AssertDeclinesCleanly(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => NativeModeAssert.DeclinesCleanly(mode => RunTitles(collection, query, mode));
 
-    // Proves a shape goes native (NativeOnly succeeds) without a DriverLinq oracle leg, for seeds whose missing/null
-    // Posts rows abort the driver's translation.
     private List<string> AssertNativeOnlyMatches(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => RunTitles(collection, query, MongoQueryMode.NativeOnly);
@@ -456,7 +449,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     [Fact]
     public void Owned_collection_count_projection_leaf_goes_native()
     {
-        // The plain sibling of Arithmetic_projection_leaf_containing_a_count_goes_native: Count on its own.
         var collection = SeedLengths(nameof(Owned_collection_count_projection_leaf_goes_native));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
@@ -535,7 +527,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
         var captured = 7;
 
-        // Each selector pairs a real member leaf with the constant/parameter leaf under test.
         Expression<Func<Blog, string>> render = leafKind switch
         {
             "constant-5" => b => b.Title + "=" + 5,
@@ -556,7 +547,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
                 .ToList().Select(r => r.Title + "=" + r.X).OrderBy(v => v).ToList()
         };
 
-        // The oracle is in-memory LINQ over the same rendering, so expected values cannot drift.
         List<string> expected;
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         {
@@ -564,7 +554,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             expected = db.Entities.AsNoTracking().ToList().Select(compiled).OrderBy(v => v).ToList();
         }
 
-        // Native: correct values, and no server abort from a bare 0/false.
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         {
             Assert.Equal(expected, run(db));
@@ -575,7 +564,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             Assert.Equal(expected, run(db));
         }
 
-        // NativeOnly: correct values with no fallback.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
             Assert.Equal(expected, run(db));
@@ -618,7 +606,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             nameof(Bare_embedded_collection_Count_projection_goes_native_for_present_arrays));
         var prefix = "len";
 
-        // Collect-then-assert: every leg runs before any is asserted. See LegOutcome.
         const string expected = "[0,1,2,3]";
         var legs = new List<(string Leg, string Outcome)>();
 
@@ -681,7 +668,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         var collection = SeedLengths(
             nameof(Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array));
 
-        // Collect-then-assert, so a regression in one mode cannot hide the others. See LegOutcome.
         var legs = new List<(string Leg, string Outcome)>();
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
@@ -823,14 +809,14 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     }
 
     [Fact]
-    public void A_primitive_collection_Count_declines_and_falls_back_to_correct_rows()
+    public void A_primitive_collection_Count_goes_native()
     {
-        // TryResolveOwnedCollectionPath requires an embedded collection navigation; Tags is a primitive-collection
-        // property. Deferred until primitive collections get Any/All/Count together.
-        var collection = Seed(nameof(A_primitive_collection_Count_declines_and_falls_back_to_correct_rows),
+        // Tags is a primitive-collection property, not an owned navigation: TryResolvePrimitiveCollectionPath sizes it
+        // like an owned collection (a missing array counts as empty).
+        var collection = Seed(nameof(A_primitive_collection_Count_goes_native),
             RowWithTags("notags"), RowWithTags("twotags", "a", "b"));
 
-        var titles = AssertDeclinesCleanly(collection, q => q.Where(b => b.Tags.Count > 1));
+        var titles = AssertNativeAndParity(collection, q => q.Where(b => b.Tags.Count > 1));
 
         Assert.Equal(new[] { "twotags" }, titles);
     }
@@ -866,9 +852,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         Assert.Equal(new[] { "len0", "len1" }, titles);
     }
 
-    // ------------------------------------------------------------------
     // Differential matrix — the primary correctness bar for the index arithmetic
-    // ------------------------------------------------------------------
     //
     // An off-by-one or wrong negation returns wrong rows rather than declining, and the DriverLinq oracle can't
     // cover missing/null arrays. So the same expression is sent to the server and compiled for an in-memory oracle.
@@ -877,7 +861,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     {
         var data = new TheoryData<string, Expression<Func<Blog, bool>>>();
 
-        // ---- CONSTANT tier: must be inline literals (a captured loop variable becomes a parameter and routes to
         // the $expr tier). 0/1/2 cover every boundary the arithmetic distinguishes. ----
         //
         // EF Core rewrites `Count() > 0` to `Any()` upstream, so these rows take the bare-Any() path, not
@@ -907,7 +890,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         data.Add("const-ne1", b => b.Posts.Count != 1);
         data.Add("const-ne2", b => b.Posts.Count != 2);
 
-        // ---- PARAMETERIZED tier: a captured local per iteration, exercising $expr + $ifNull ----
         for (var n = 0; n <= 3; n++)
         {
             var t = n;   // captured ⇒ an EF query parameter ⇒ the $expr tier
@@ -919,7 +901,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             data.Add($"param-ne{t}", b => b.Posts.Count != t);
         }
 
-        // Negations, the call forms, a nested count, and a reversed order.
         data.Add("not-gt1", b => !(b.Posts.Count > 1));
         data.Add("not-eq2", b => !(b.Posts.Count == 2));
         data.Add("call-gt1", b => b.Posts.Count() > 1);
@@ -929,7 +910,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         data.Add("and", b => b.Posts.Count > 0 && b.Posts.Count < 3);
         data.Add("or", b => b.Posts.Count == 0 || b.Posts.Count == 3);
 
-        // Any/All regression rows: must be unaffected.
         data.Add("any-bare", b => b.Posts.Any());
         data.Add("negated-any-bare", b => !b.Posts.Any());
         data.Add("any-pred", b => b.Posts.Any(p => p.Rank > 0));
@@ -945,7 +925,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     {
         var collection = Seed($"diff_{name}", DifferentialRows());
 
-        // Oracle: materialize every row, then evaluate the SAME predicate in memory.
         List<string> expected;
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         {
@@ -953,7 +932,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
                 .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t).ToList();
         }
 
-        // Server: must go native (NativeOnly) and agree exactly.
         List<string> actual;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
@@ -1028,7 +1006,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     [Fact]
     public void Count_projection_through_an_owned_reference_hop_goes_native()
     {
-        // b.Home.Notes.Count: TryResolveOwnedCollectionPath walks the owned reference hop.
         var collection = Seed(nameof(Count_projection_through_an_owned_reference_hop_goes_native),
             RowWithNotes("none", 0), RowWithNotes("one", 1), RowWithNotes("three", 3));
 
@@ -1042,8 +1019,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             [("none", 0), ("one", 1), ("three", 3)],
             rows.Select(r => (r.Title, r.N)).ToArray());
 
-        // Pin the resolved path "Home.Notes"; the values alone can't distinguish it from a coincidentally
-        // same-shaped wrong path.
         var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Home.Notes", mql);
     }
@@ -1083,7 +1058,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             nameof(Bare_and_wrapped_count_projections_both_go_native_from_the_same_model));
         var prefix = "c_";
 
-        // Collect-then-assert, so a wrapped-half regression can't hide the bare half. See LegOutcome.
         const string expected = "[0,1,2,3,0,0]";
         var legs = new List<(string Leg, string Outcome)>();
 
