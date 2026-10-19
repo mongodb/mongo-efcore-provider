@@ -783,8 +783,14 @@ internal sealed partial class MongoExpressionTranslator
         if (node is not MethodCallExpression { Method.Name: nameof(ToString), Object: { } obj, Arguments.Count: 0 })
             return false;
 
+        // Unsigned types are admitted because their default serializers store them exactly: uint/ushort as Int32,
+        // ulong as Int64, and a uint above int.MaxValue or a ulong above long.MaxValue is rejected at SaveChanges
+        // (overflow) rather than wrapped, so $toString never sees a wrapped negative (pinned by
+        // NativeComputedReceiverRegexTests). A non-default serialization declines at the call site
+        // (AllFieldsDefaultSerialized).
         var type = obj.Type;
-        if (type != typeof(int) && type != typeof(long) && type != typeof(short) && type != typeof(byte))
+        if (type != typeof(int) && type != typeof(long) && type != typeof(short) && type != typeof(byte)
+            && type != typeof(uint) && type != typeof(ulong) && type != typeof(ushort) && type != typeof(sbyte))
             return false;
 
         receiver = obj;

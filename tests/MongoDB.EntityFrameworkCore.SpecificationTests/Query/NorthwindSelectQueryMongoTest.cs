@@ -190,7 +190,7 @@ Customers.{ "$project" : { "Region" : "$Region", "_id" : 0 } }
 
         AssertMql(
             """
-Employees.{ "$match" : { "_id" : 1 } }, { "$project" : { "_v" : ["$_id", "$ReportsTo", "$Title"], "_id" : 0 } }
+Employees.{ "$match" : { "_id" : 1 } }, { "$project" : { "_ctorArg0" : "$_id", "_ctorArg1" : "$ReportsTo", "_ctorArg2" : "$Title", "_id" : 0 } }
 """);
     }
 
@@ -209,7 +209,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
         await base.Projection_of_multiple_entity_types_into_object_array(async);
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_ctorArg0" : "$$ROOT", "_lookup_Customer" : "$_lookup_Customer", "_id" : 0 } }
 """);
     }
 
@@ -229,8 +229,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
         AssertMql(
             """
-            Employees.{ "$match" : { "_id" : 1 } }, { "$project" : { "_v" : ["$_id", "$ReportsTo"], "_id" : 0 } }
-            """);
+Employees.{ "$match" : { "_id" : 1 } }, { "$project" : { "_ctorArg0" : "$_id", "_ctorArg1" : "$ReportsTo", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_bool_closure_with_order_parameter_with_cast_to_nullable(bool async)
@@ -301,7 +301,7 @@ Customers.{ "$project" : { "City" : "$City", "_id" : 0 } }
 
         AssertMql(
             """
-Customers.{ "$project" : { "CustomerID" : "$_id", "Expression" : { "$add" : [{ "$strLenCP" : "$_id" }, 5] }, "_id" : 0 } }
+Customers.{ "$project" : { "CustomerID" : "$_id", "Expression" : { "$add" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_id", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$_id" } } }, 5] }, "_id" : 0 } }
 """);
     }
 
@@ -449,7 +449,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_v" : { "$literal" : { "A" : { "$date" : { "$numberLong" : "-62135596800000" } } } }, "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_c" : { "$literal" : true }, "_id" : 0 } }
             """);
     }
 
@@ -499,8 +499,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$toLong" : { "$add" : ["$_id", "$_id"] } }, "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$add" : ["$_id", "$_id"] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_non_matching_value_types_from_binary_expression_nested_introduces_top_level_explicit_cast(
@@ -529,8 +529,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$toLong" : { "$subtract" : [0, "$_id"] } }, "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_non_matching_value_types_from_unary_expression_introduces_explicit_cast2(bool async)
@@ -539,8 +539,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$subtract" : [0, { "$toLong" : "$_id" }] }, "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_non_matching_value_types_from_length_introduces_explicit_cast(bool async)
@@ -549,7 +549,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$toLong" : { "$strLenCP" : "$CustomerID" } }, "_id" : 0 } }
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$CustomerID", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$CustomerID" } } }, "_id" : 0 } }
 """);
     }
 
@@ -1155,8 +1155,8 @@ Orders.{ "$project" : { "One" : "$CustomerID", "Two" : { "$cond" : { "if" : { "$
         // Test changed between EF8 and EF9
 #if EF8
         AssertMql(
-"""
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$ContactName", ""] }, "_id" : 0 } }
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$ContactName", { "$literal" : "" }] }, "_id" : 0 } }
 """);
 #else
         AssertMql(
@@ -1179,7 +1179,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
         await base.Select_entity_compared_to_null(async);
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$eq" : [{ "$ifNull" : ["$_lookup_Customer", null] }, null] }, "_id" : 0 } }
 """);
     }
 
@@ -1515,7 +1515,7 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$City", "Seattle"] }, "then" : { "_id" : "PAY", "Name" : "Pay" }, "else" : { "_id" : "REC", "Name" : "Receive" } } }, "_id" : 0 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$eq" : ["$City", { "$literal" : "Seattle" }] }, "_id" : 0 } }
             """);
     }
 
@@ -1881,7 +1881,7 @@ Employees.{ "$project" : { "_id" : "$_id" } }
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$literal" : { } }, "_id" : 0 } }
+            Customers.{ "$project" : { "_c" : { "$literal" : true }, "_id" : 0 } }
             """);
     }
 
@@ -1911,11 +1911,11 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_id" : "$_id" } 
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$literal" : { "f" : false } }, "_id" : 0 } }
+            Customers.{ "$project" : { "_c" : { "$literal" : true }, "_id" : 0 } }
             """,
             //
             """
-            Customers.{ "$project" : { "_v" : { "$literal" : { "f" : true } }, "_id" : 0 } }
+            Customers.{ "$project" : { "_c" : { "$literal" : true }, "_id" : 0 } }
             """);
     }
 
@@ -2015,7 +2015,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_id" : "$_id" } 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "CustomerID" : "$_id", "Orders" : [], "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "CustomerID" : "$_id", "_id" : 0 } }
             """);
     }
 

@@ -77,6 +77,7 @@ public class MongoConditionalAndDatePartExpressionTests
         yield return [MongoDatePart.DayOfYear, typeof(int)];
         yield return [MongoDatePart.Date, typeof(DateTime)];
         yield return [MongoDatePart.DayOfWeek, typeof(DayOfWeek)];
+        yield return [MongoDatePart.TimeOfDay, typeof(TimeSpan)];
     }
 
     [Fact]

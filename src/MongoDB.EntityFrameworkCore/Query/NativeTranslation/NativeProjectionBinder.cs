@@ -93,6 +93,9 @@ internal static class NativeProjectionBinder
         var hasStringSequenceLeaf = false;
         // Any leaf had a client-reapplied case mapping peeled off; committed to HasClientCaseMappingProjectionLeaf.
         var hasCaseMappingLeaf = false;
+        // Any leaf is row-independent and evaluated client-side instead of projected (IsRowIndependentLeaf); committed
+        // to HasClientEvaluatedProjectionLeaf.
+        var hasClientEvaluatedLeaf = false;
         // Alias a bare selector body was admitted under (null otherwise); registered in the commit block with
         // AddProjection.
         string? bareProjectionAlias = null;
@@ -104,23 +107,75 @@ internal static class NativeProjectionBinder
         // Set once the multi-argument ctor-only-DTO arm has translated every argument; committed to
         // HasPositionalCtorProjectionShaper in the commit block.
         var hasPositionalCtorProjection = false;
+        // Members (BareProjectionMemberKey for a bare body) whose leaf is a ternary over client-only constructions
+        // (TryCollectClientConditionalBranches): only the test is staged, under the member's alias. Committed via
+        // AddClientConditionalMember.
+        var clientConditionalMembers = new List<string>();
+        // The row reads inside those branches, keyed by binding-member name (to catch two different reads bound under
+        // one member), and every member name the read side looks up while walking the branches; staged and checked
+        // after the switch.
+        var clientConditionalReads =
+            new Dictionary<string, ClientConditionalRead>(StringComparer.OrdinalIgnoreCase);
+        var clientConditionalMemberNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // The synthetic aliases those reads were staged under (ClientConditionalReadAliasPrefix); committed via
+        // AddClientConditionalRead.
+        var clientConditionalReadAliases = new List<string>();
 
         switch (selector.Body)
         {
             // Wrapped body: anonymous type/DTO via NewExpression-with-Members or MemberInit. A construction that fails
             // TryGetProjectionMembers falls through to the bare-body case.
+            //
+            // A MemberInit whose constructor arguments are all row-independent (`new Dto(param) { A = x.A }`) is
+            // admitted too: only its bindings are members, and the arguments stay on the shaper, which evaluates them.
             case NewExpression or MemberInitExpression
-                when selector.Body.TryGetProjectionMembers(out var wrappedMembers):
+                when selector.Body.TryGetProjectionMembers(
+                    out var wrappedMembers, rowIndependentConstructorArgumentsOver: selector.Parameters[0]):
+                hasClientEvaluatedLeaf |= selector.Body is MemberInitExpression { NewExpression.Arguments.Count: > 0 };
                 foreach (var (memberName, member) in wrappedMembers)
                 {
                     var memberValue = PeelCaseMapping(member);
                     hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
+                    {
+                        // Last resort, only after the leaf arms (including the $literal path, which keeps a renderable
+                        // constant's MQL) declined: a row-independent leaf is evaluated by the shaper and never
+                        // projected.
+                        if (IsRowIndependentLeaf(member, selector.Parameters[0]))
+                        {
+                            hasClientEvaluatedLeaf = true;
+                            continue;
+                        }
+
+                        // A ternary over client-only constructions (`X = c.City == "Seattle" ? new P { ... } : new P
+                        // { ... }`): stage only the test, as this member's bool leaf, and let the shaper evaluate the
+                        // conditional. Reached only after TryTranslateLeaf declined the whole ternary, which it does
+                        // for construction branches its class map would misread
+                        // (HasMisreadDocumentConstructionBranch).
+                        if (memberValue is ConditionalExpression wrappedClientConditional
+                            && TryCollectClientConditionalBranches(
+                                translator, selector.Parameters[0], wrappedClientConditional, memberName,
+                                clientConditionalReads, clientConditionalMemberNames)
+                            && TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], wrappedClientConditional.Test,
+                                alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var testLeaf,
+                                out _, out _, out var testThrowsOnNull)
+                            && seenAliases.Add(alias))
+                        {
+                            projections.Add(new MongoProjection(alias, testLeaf, wrappedClientConditional.Test, testThrowsOnNull));
+                            leafIsArray.Add(false);
+                            leafIsOwnedNavEntity.Add(false);
+                            clientConditionalMembers.Add(memberName);
+                            hasClientEvaluatedLeaf = true;
+                            continue;
+                        }
+
                         return false;
+                    }
+
                     if (!seenAliases.Add(alias))
                         return false;
-                    projections.Add(new MongoProjection(alias, leaf, memberValue));
+                    projections.Add(new MongoProjection(alias, leaf, memberValue, throwsOnNull));
                     // The nav-entity leaf always registers a DocumentPath override, even though its alias equals the
                     // member name: the late-fallback strip it triggers is what supplies the retained _id.
                     if (alias != memberName || isOwnedNavEntityLeaf)
@@ -173,18 +228,24 @@ internal static class NativeProjectionBinder
             // wrapped arm, with member names taken positionally (TryGetProjectionMembers'
             // allowPositionalConstructorArguments). Committed via HasPositionalCtorProjectionShaper so TranslateSelect
             // avoids VisitNew's shared-ambient-member collision (see that flag's remarks).
+            //
+            // A whole-entity argument (`new KeyValuePair<Customer, string>(c, c.City)`) is never a scalar positional
+            // leaf: the `$$ROOT` read of it would be a driver class-map deserialization of the raw document, which
+            // throws FormatException ("Element '_id' does not match ...") or yields an untracked instance. Such a body
+            // falls through to the default arm's whole-entity client construction (IsScalarPositionalConstruction).
             case NewExpression { Members: null, Arguments: { Count: > 1 } } when
-                selector.Body.TryGetProjectionMembers(out var positionalMembers, allowPositionalConstructorArguments: true):
+                selector.Body.TryGetProjectionMembers(out var positionalMembers, allowPositionalConstructorArguments: true)
+                && IsScalarPositionalConstruction(mongoQ, selector.Body, positionalMembers, selector.Parameters[0]):
                 foreach (var (memberName, member) in positionalMembers)
                 {
                     var memberValue = PeelCaseMapping(member);
                     hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
-                    projections.Add(new MongoProjection(alias, leaf, memberValue));
+                    projections.Add(new MongoProjection(alias, leaf, memberValue, throwsOnNull));
                     if (alias != memberName || isOwnedNavEntityLeaf)
                         namedAliasOverrides.Add((memberName, alias));
                     leafIsArray.Add(isArrayLeaf);
@@ -193,6 +254,42 @@ internal static class NativeProjectionBinder
                     hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
                     hasStringSequenceLeaf |= memberValue is MethodCallExpression positionalStringSequenceCall
                                              && IsStringSequenceMaterializationCall(positionalStringSequenceCall);
+                }
+
+                hasPositionalCtorProjection = true;
+                break;
+
+            // Positional container of scalar elements — `new[] { x.I, x.NullableI }`, `new object[] { x.I, x.S }`
+            // (TryGetProjectionMembers' allowContainerElements; not `new List<object> { ... }`, see there). Each
+            // element is one `_ctorArg<N>` leaf, bound by index through the positional-ctor shaper
+            // (HasPositionalCtorProjectionShaper).
+            // A boxing Convert-to-object is peeled (UnwrapContainerElementBoxing) so the element is translated and read
+            // with its operand's own type; the read side re-boxes it, keeping each element's runtime type.
+            //
+            // Disjoint from the neighbouring shapes: a container whose elements are all row-independent is
+            // IsRowIndependentLeaf's (default arm), and one with a whole-entity element, or one the whole-entity
+            // client construction claims, is NativeClientWholeEntityShape's (IsScalarPositionalConstruction). Elements
+            // are bare scalar leaves only (allowWholeRootEntityLeaf: false): no `$$ROOT`, owned-nav entity, nested
+            // construction or collection-navigation leaf is read by a synthetic alias.
+            case NewArrayExpression when
+                !IsRowIndependentLeaf(selector.Body, selector.Parameters[0])
+                && selector.Body.TryGetProjectionMembers(out var containerElements, allowContainerElements: true)
+                && IsScalarPositionalConstruction(mongoQ, selector.Body, containerElements, selector.Parameters[0]):
+                foreach (var (elementName, element) in containerElements)
+                {
+                    var elementOperand = UnwrapContainerElementBoxing(element);
+                    var elementValue = PeelCaseMapping(elementOperand);
+                    hasCaseMappingLeaf |= !ReferenceEquals(elementValue, elementOperand);
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], elementValue, elementName, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out _, out var throwsOnNull))
+                        return false;
+                    if (!seenAliases.Add(elementName))
+                        return false;
+                    projections.Add(new MongoProjection(elementName, leaf, elementValue, throwsOnNull));
+                    leafIsArray.Add(isArrayLeaf);
+                    hasArrayLeaf |= isArrayLeaf;
+                    leafIsOwnedNavEntity.Add(false);
+                    hasStringSequenceLeaf |= elementValue is MethodCallExpression containerStringSequenceCall
+                                             && IsStringSequenceMaterializationCall(containerStringSequenceCall);
                 }
 
                 hasPositionalCtorProjection = true;
@@ -244,8 +341,34 @@ internal static class NativeProjectionBinder
                 // false keeps a true bare `b => b.Address` declining; the ctor-wrap arm passes true.
                 if (!TryBindAsBareProjection(selector.Body, provisionalAlias, allowWholeRootEntityLeafForThis: false))
                 {
-                    // Untranslatable (e.g. embeds a client method). If every entity reference is the whole entity,
-                    // fetch whole documents and evaluate the body client-side, as in the client-method arm above.
+                    // A row-independent body the $literal path can't render (`x => new { }`, or a captured value EF
+                    // folded the whole body into, as in `x => new { f = closure }`): the shaper evaluates it and
+                    // nothing is projected for it but the sentinel below. Tried only after the bare arms declined.
+                    if (IsRowIndependentLeaf(selector.Body, selector.Parameters[0]))
+                    {
+                        hasClientEvaluatedLeaf = true;
+                        break;
+                    }
+
+                    // A ternary over client-only constructions (`c.City == "Seattle" ? new P { ... } : new P { ... }`):
+                    // the test is staged as the bare bool leaf and the shaper evaluates the conditional, as in the
+                    // wrapped arm. Disjoint from the whole-entity client construction below: these branches read no
+                    // whole entity.
+                    if (selector.Body is ConditionalExpression bareClientConditional
+                        && TryCollectClientConditionalBranches(
+                            translator, selector.Parameters[0], bareClientConditional, MongoSelectDefinition.BareProjectionMemberKey,
+                            clientConditionalReads, clientConditionalMemberNames)
+                        && TryBindAsBareProjection(
+                            bareClientConditional.Test, BareLeafProvisionalAlias, allowWholeRootEntityLeafForThis: false))
+                    {
+                        clientConditionalMembers.Add(MongoSelectDefinition.BareProjectionMemberKey);
+                        hasClientEvaluatedLeaf = true;
+                        break;
+                    }
+
+                    // Untranslatable (e.g. embeds a client method, or constructs over the whole entity:
+                    // `new object[] { x }`, `new Wrapper(x) { City = x.City }`). If every entity reference is the whole
+                    // entity, fetch whole documents and evaluate the body client-side, as in the client-method arm above.
                     if (!IsClientOnlyWholeEntityExpression(mongoQ, selector.Body, selector.Parameters[0]))
                     {
                         return false;
@@ -268,7 +391,7 @@ internal static class NativeProjectionBinder
             bareLikeExpr = peeled;
             if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], bareLikeExpr, provisionalAlias,
                     pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var bareLeaf, out var bareIsArrayLeaf, out _,
-                    allowWholeRootEntityLeafForThis))
+                    out var bareThrowsOnNull, allowWholeRootEntityLeafForThis))
             {
                 return false;
             }
@@ -291,7 +414,7 @@ internal static class NativeProjectionBinder
 
             bareProjectionAlias = derivedAlias;
             seenAliases.Add(derivedAlias);
-            projections.Add(new MongoProjection(derivedAlias, bareLeaf, bareLikeExpr));
+            projections.Add(new MongoProjection(derivedAlias, bareLeaf, bareLikeExpr, bareThrowsOnNull));
             leafIsArray.Add(bareIsArrayLeaf);
             hasArrayLeaf |= bareIsArrayLeaf;
             hasStringSequenceLeaf |= bareLikeExpr is MethodCallExpression bareStringSequenceCall
@@ -300,6 +423,45 @@ internal static class NativeProjectionBinder
             // alias-equals-member-name path, never for a bare or ctor-wrap leaf.
             leafIsOwnedNavEntity.Add(false);
             return true;
+        }
+
+        // The row reads of client-evaluated ternaries. The read side binds each under the member path it walks
+        // (`X.Name`) and takes its alias from the staged read itself (MongoSelectDefinition
+        // .TryGetClientConditionalReadAlias), registered explicitly for that path. A name the walk enters must still be
+        // no other leaf's alias (a nested construction is looked up by name, and a duplicate alias would be renamed by
+        // AddToProjection's de-dup) and no member with an alias override. Kept away from the
+        // array/owned-nav leaves too: their whole-document fallback and _id retention aren't reasoned for it.
+        if (clientConditionalMembers.Count > 0)
+        {
+            if (hasArrayLeaf || hasOwnedNavEntityLeaf)
+                return false;
+
+            foreach (var memberName in clientConditionalMemberNames)
+            {
+                if (seenAliases.Contains(memberName)
+                    || namedAliasOverrides.Exists(o => string.Equals(o.MemberName, memberName, StringComparison.OrdinalIgnoreCase)))
+                    return false;
+            }
+
+            // One staged projection per DISTINCT read: the read side looks each read's alias up structurally
+            // (TryGetClientConditionalReadAlias), so two members reading the same field (`Id = x.Name, Name = x.Name`)
+            // must resolve to one alias, which ApplyProjection then shares between them.
+            var stagedReads = new List<Expression>();
+            foreach (var read in clientConditionalReads.Values)
+            {
+                if (stagedReads.Exists(r => ExpressionEqualityComparer.Instance.Equals(r, read.Value)))
+                    continue;
+
+                stagedReads.Add(read.Value);
+                var readAlias = ClientConditionalReadAliasPrefix + clientConditionalReadAliases.Count;
+                if (!seenAliases.Add(readAlias))
+                    return false;
+
+                clientConditionalReadAliases.Add(readAlias);
+                projections.Add(new MongoProjection(readAlias, read.Field, read.Value));
+                leafIsArray.Add(false);
+                leafIsOwnedNavEntity.Add(false);
+            }
         }
 
         // With an array or owned-nav-entity leaf present, a late fallback runs EF's client-side mixed shaper over whole
@@ -328,6 +490,14 @@ internal static class NativeProjectionBinder
             // reads it.
             var keyProperty = mongoQ.CollectionExpression.EntityType.FindPrimaryKey()!.Properties[0];
             projections.Add(new MongoProjection("_id", new MongoElementRefExpression("_id", keyProperty.ClrType)));
+        }
+
+        // Every leaf is client-evaluated: stage a constant so Route stays Projection (one row per document) instead of
+        // collapsing to WholeEntity. A constant rather than _id, so a Distinct over it dedups to the one row the
+        // (execution-wide) client value calls for. See ClientEvaluatedSentinelAlias.
+        if (hasClientEvaluatedLeaf && projections.Count == 0)
+        {
+            projections.Add(new MongoProjection(ClientEvaluatedSentinelAlias, new MongoConstantExpression(true, null)));
         }
 
         foreach (var lookup in pendingLookups)
@@ -362,8 +532,216 @@ internal static class NativeProjectionBinder
             mongoQ.Select.HasClientCaseMappingProjectionLeaf = true;
         if (hasPositionalCtorProjection)
             mongoQ.Select.HasPositionalCtorProjectionShaper = true;
+        if (hasClientEvaluatedLeaf)
+            mongoQ.Select.HasClientEvaluatedProjectionLeaf = true;
+        foreach (var clientConditionalMember in clientConditionalMembers)
+            mongoQ.Select.AddClientConditionalMember(clientConditionalMember);
+        foreach (var clientConditionalReadAlias in clientConditionalReadAliases)
+            mongoQ.Select.AddClientConditionalRead(clientConditionalReadAlias);
         return true;
     }
+
+    /// <summary>A row read inside a client-evaluated ternary's branch, staged under the binding member's name.</summary>
+    /// <param name="Path">The member path the read side binds it under, to tell two reads sharing a last name apart.</param>
+    /// <param name="Value">The read, as written (<c>x.Name</c>).</param>
+    /// <param name="Field">Its translation, a plain top-level field.</param>
+    private readonly record struct ClientConditionalRead(string Path, Expression Value, MongoFieldExpression Field);
+
+    /// <summary>
+    /// The shape rule for a ternary the shaper evaluates client-side over a projected test: each branch is a
+    /// row-independent tree (<see cref="IsRowIndependentLeaf"/>) or a construction (<see cref="MemberInitExpression"/>
+    /// over a row-independent <c>new</c>, or an anonymous <see cref="NewExpression"/>) whose members are such trees,
+    /// such constructions, or a plain top-level field read (<c>Name = x.Name</c>). Collects the reads (keyed by the
+    /// binding member's name) and every member name the read side will look up.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A read anywhere else (a constructor argument, an array element, under a <c>Convert</c>) declines: the read
+    /// side binds a read under the member it is visited at, so it needs a member of its own. Two reads under one
+    /// name must be the same read at the same path (<c>c ? new P { Name = x.A } : new P { Name = x.B }</c> would
+    /// bind both to one member and read one as the other), so that declines too. The caller checks the collected
+    /// names against the projection's other aliases.
+    /// </para>
+    /// <para>
+    /// The test itself is the caller's: it is staged as an ordinary bool leaf of the member, so both readers bind it
+    /// exactly as they bind <c>new { X = test }</c>. The read side admits the ternary only through
+    /// <c>MongoSelectDefinition.IsClientConditionalLeaf</c>, which matches that staged test.
+    /// </para>
+    /// </remarks>
+    private static bool TryCollectClientConditionalBranches(
+        MongoExpressionTranslator translator,
+        ParameterExpression selectorParameter,
+        ConditionalExpression conditional,
+        string path,
+        Dictionary<string, ClientConditionalRead> reads,
+        HashSet<string> memberNames)
+    {
+        return TryCollectBranch(conditional.IfTrue, path)
+               && TryCollectBranch(conditional.IfFalse, path);
+
+        bool TryCollectBranch(Expression node, string nodePath)
+        {
+            if (IsRowIndependentLeaf(node, selectorParameter))
+            {
+                CollectRowIndependentMemberNames(node);
+                return true;
+            }
+
+            switch (node)
+            {
+                case MemberInitExpression memberInit when IsRowIndependentLeaf(memberInit.NewExpression, selectorParameter):
+                    foreach (var binding in memberInit.Bindings)
+                    {
+                        if (binding is not MemberAssignment assignment
+                            || !TryCollectMember(assignment.Member.Name, assignment.Expression, nodePath))
+                            return false;
+                    }
+
+                    return true;
+
+                case NewExpression { Members: { } newMembers } anonymous when newMembers.Count == anonymous.Arguments.Count:
+                    for (var i = 0; i < newMembers.Count; i++)
+                    {
+                        if (!TryCollectMember(newMembers[i].Name, anonymous.Arguments[i], nodePath))
+                            return false;
+                    }
+
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        bool TryCollectMember(string memberName, Expression value, string ownerPath)
+        {
+            AddMemberNameUnlessScalar(memberName, value);
+            var memberPath = ownerPath + "." + memberName;
+            if (!IsPlainTopLevelFieldRead(translator, value, out var field))
+                return TryCollectBranch(value, memberPath);
+
+            memberNames.Add(memberName);
+
+            if (reads.TryGetValue(memberName, out var existing))
+                return string.Equals(existing.Path, memberPath, StringComparison.Ordinal)
+                       && ExpressionEqualityComparer.Instance.Equals(existing.Value, value);
+
+            reads[memberName] = new ClientConditionalRead(memberPath, value, field);
+            return true;
+        }
+
+        // The read side looks a member up by name only when its value is a row read (bound by name) or a construction
+        // (checked against the staged sub-document constructions by name); a row-independent scalar value (constant,
+        // parameter, member of a constant, under Converts) is evaluated in place without a lookup.
+        void AddMemberNameUnlessScalar(string memberName, Expression value)
+        {
+            if (value.RemoveConvert() is not (ConstantExpression or ParameterExpression or MemberExpression { Expression: ConstantExpression })
+#if !EF8 && !EF9
+                && value.RemoveConvert() is not QueryParameterExpression
+#endif
+               )
+                memberNames.Add(memberName);
+        }
+
+        // The read side still walks a row-independent construction's members (entering each), so their names count
+        // (see AddMemberNameUnlessScalar).
+        void CollectRowIndependentMemberNames(Expression node)
+        {
+            switch (node)
+            {
+                case MemberInitExpression memberInit:
+                    CollectRowIndependentMemberNames(memberInit.NewExpression);
+                    foreach (var binding in memberInit.Bindings)
+                    {
+                        if (binding is MemberAssignment assignment)
+                        {
+                            AddMemberNameUnlessScalar(binding.Member.Name, assignment.Expression);
+                            CollectRowIndependentMemberNames(assignment.Expression);
+                        }
+                    }
+
+                    break;
+                case NewExpression newExpression:
+                    for (var i = 0; i < newExpression.Arguments.Count; i++)
+                    {
+                        if (newExpression.Members is { } members && i < members.Count)
+                            AddMemberNameUnlessScalar(members[i].Name, newExpression.Arguments[i]);
+                        CollectRowIndependentMemberNames(newExpression.Arguments[i]);
+                    }
+
+                    break;
+                case NewArrayExpression newArray:
+                    foreach (var element in newArray.Expressions)
+                        CollectRowIndependentMemberNames(element);
+                    break;
+                case ListInitExpression listInit:
+                    CollectRowIndependentMemberNames(listInit.NewExpression);
+                    foreach (var initializer in listInit.Initializers)
+                    foreach (var argument in initializer.Arguments)
+                        CollectRowIndependentMemberNames(argument);
+                    break;
+                case UnaryExpression unary:
+                    CollectRowIndependentMemberNames(unary.Operand);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A plain top-level, default-serialized scalar field read (<c>x.Name</c> or <c>EF.Property</c>): the member rule
+    /// of a constructed sub-entity leaf (<see cref="TryGetDocumentConstructionLeaf"/>) and of a row read inside a
+    /// client-evaluated ternary's branch (<see cref="TryCollectClientConditionalBranches"/>). Such a read resolves off a
+    /// whole document by its property too, so a late fallback's mixed reader reads it correctly.
+    /// </summary>
+    private static bool IsPlainTopLevelFieldRead(
+        MongoExpressionTranslator translator, Expression value, [NotNullWhen(true)] out MongoFieldExpression? field)
+    {
+        field = null;
+        return (value is MemberExpression
+                || (value is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
+               && translator.TryTranslateField(value, out field)
+               && !field.ElementName.Contains('.')
+               && NativeGroupByBinder.HasDefaultKeySerialization(field.Property);
+    }
+
+    /// <summary>
+    /// Whether a translated value's result is (or may be, through a nested ternary or coalesce) a
+    /// <see cref="MongoDocumentConstructionExpression"/> that an alias read of the whole value would misread.
+    /// </summary>
+    /// <remarks>
+    /// Such a value is read back whole through the constructed type's serializer (a driver class map), while the
+    /// native sub-document is keyed by member names. When the class map names an element differently (by convention
+    /// <c>Id</c> maps to <c>_id</c>), the read throws <c>FormatException</c>
+    /// (<c>BsonSerializerFactory.ReadsMembersFromElementsOfTheirOwnNames</c> asks the serializer the reader uses). A
+    /// ternary over such constructions is then not projected whole; <see cref="TryCollectClientConditionalBranches"/>
+    /// evaluates it client-side instead. One whose class map agrees (<c>new MyStruct { X = ..., Y = ... }</c>) stays a
+    /// server-side <c>$cond</c>.
+    /// </remarks>
+    internal static bool HasMisreadDocumentConstructionBranch(MongoExpression value)
+        => value switch
+        {
+            MongoDocumentConstructionExpression construction
+                => !Serializers.BsonSerializerFactory.ReadsMembersFromElementsOfTheirOwnNames(
+                       construction.Type, construction.Members.Select(m => m.MemberName))
+                   || construction.Members.Any(m => HasMisreadDocumentConstructionBranch(m.Value)),
+            MongoConditionalExpression conditional
+                => HasMisreadDocumentConstructionBranch(conditional.IfTrue)
+                   || HasMisreadDocumentConstructionBranch(conditional.IfFalse),
+            MongoCoalesceExpression coalesce
+                => HasMisreadDocumentConstructionBranch(coalesce.Left) || HasMisreadDocumentConstructionBranch(coalesce.Right),
+            _ => false
+        };
+
+    /// <summary>
+    /// Whether a translated projection leaf that the read side reads back whole by its alias (a ternary or coalesce)
+    /// would be misread: <see cref="HasMisreadDocumentConstructionBranch"/> over a ternary/coalesce value. The single
+    /// gate every binder staging such a leaf calls (this binder, <c>NativeJoinScopeProjectionBinder</c>'s computed and
+    /// null-check-ternary leaves, the bare join-scope value leaf, <c>NativeGroupByBinder</c>'s computed members). A
+    /// bare <see cref="MongoDocumentConstructionExpression"/> leaf is not one: it is read member by member.
+    /// </summary>
+    internal static bool IsMisreadWholeValueLeaf(MongoExpression value)
+        => value is MongoConditionalExpression or MongoCoalesceExpression
+           && HasMisreadDocumentConstructionBranch(value);
 
     private static bool IsEnumType(Type type)
         => (Nullable.GetUnderlyingType(type) ?? type).IsEnum;
@@ -392,6 +770,87 @@ internal static class NativeProjectionBinder
 
         return leafExpression;
     }
+
+    /// <summary>
+    /// True for a numeric computed leaf the server evaluates whole: <c>-x</c> (<see cref="ExpressionType.Negate"/> or
+    /// <see cref="ExpressionType.NegateChecked"/> over a numeric operand), or a widening numeric cast over such a
+    /// negation or over an arithmetic (<c>+ - * / %</c>) <see cref="BinaryExpression"/>.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the emit side (<c>TryTranslateLeafCore</c>) and the read side
+    /// (<c>MongoProjectionBindingExpressionVisitor</c>), so one can't admit a shape the other reads differently. A
+    /// narrowing cast is excluded: it translates to <c>$toX</c>, whose semantics differ from C# truncation.
+    /// </remarks>
+    internal static bool IsNumericComputedLeafShape(Expression leaf)
+        => leaf switch
+        {
+            UnaryExpression { NodeType: ExpressionType.Negate or ExpressionType.NegateChecked } negate
+                => MongoExpressionTranslator.IsNumericType(negate.Type)
+                   && MongoExpressionTranslator.IsNumericType(negate.Operand.Type),
+            UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
+                => MongoExpressionTranslator.IsWideningNumericConvert(
+                       convert.Operand.Type.UnwrapNullableType(), convert.Type.UnwrapNullableType())
+                   && (convert.Operand is UnaryExpression { NodeType: ExpressionType.Negate or ExpressionType.NegateChecked }
+                           && IsNumericComputedLeafShape(convert.Operand)
+                       || convert.Operand is BinaryExpression
+                       {
+                           NodeType: ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
+                           or ExpressionType.Divide or ExpressionType.Modulo
+                       } arithmetic && MongoExpressionTranslator.IsNumericType(arithmetic.Type)),
+            _ => false
+        };
+
+    /// <summary>
+    /// True for a projection leaf whose value is the same for every row of one execution, so the shaper can evaluate it
+    /// client-side and nothing is projected for it: a tree of <see cref="ConstantExpression"/>, query parameters,
+    /// <see cref="NewExpression"/>, <see cref="MemberInitExpression"/> (assignment bindings only),
+    /// <see cref="ExpressionType.NewArrayInit"/>, <see cref="ListInitExpression"/>, <c>Convert</c>, and instance
+    /// member access on a constant (<c>new { A = new DateTime() }</c>, <c>new { }</c>, a captured anonymous-type or
+    /// <c>List&lt;T&gt;</c> value, <c>new Dto(param)</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Any other node (the selector parameter or any other lambda parameter, a method call, a query root, a subquery,
+    /// any other extension node such as a structural-type shaper) is row-dependent or unknown, so the answer is
+    /// <see langword="false"/>. A whole-entity operand is therefore never row-independent, which keeps this disjoint
+    /// from the whole-entity client constructions (<c>IsClientOnlyWholeEntityExpression</c>).
+    /// </para>
+    /// <para>
+    /// The emit side admits such a leaf only after <c>TryTranslateLeaf</c> declined it (the <c>$literal</c> path
+    /// keeps the MQL of a renderable constant or parameter). The read side
+    /// (<c>MongoProjectionBindingExpressionVisitor.Visit</c>) calls this same predicate, over the rebased selector,
+    /// where <paramref name="selectorParameter"/> is <see langword="null"/>; the parameter has been replaced by an
+    /// extension node there, which this rejects anyway.
+    /// </para>
+    /// </remarks>
+    internal static bool IsRowIndependentLeaf(Expression leaf, ParameterExpression? selectorParameter)
+        => leaf switch
+        {
+            ConstantExpression => true,
+#if EF8 || EF9
+            // EF8/EF9 funcletize a captured value into a ParameterExpression named with the query-parameter prefix.
+            ParameterExpression parameter
+                => !ReferenceEquals(parameter, selectorParameter)
+                   && parameter.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
+                   == true,
+#else
+            QueryParameterExpression => true,
+#endif
+            NewExpression newExpression => newExpression.Arguments.All(a => IsRowIndependentLeaf(a, selectorParameter)),
+            MemberInitExpression memberInit
+                => IsRowIndependentLeaf(memberInit.NewExpression, selectorParameter)
+                   && memberInit.Bindings.All(
+                       b => b is MemberAssignment assignment && IsRowIndependentLeaf(assignment.Expression, selectorParameter)),
+            NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray
+                => newArray.Expressions.All(e => IsRowIndependentLeaf(e, selectorParameter)),
+            ListInitExpression listInit
+                => IsRowIndependentLeaf(listInit.NewExpression, selectorParameter)
+                   && listInit.Initializers.All(i => i.Arguments.All(a => IsRowIndependentLeaf(a, selectorParameter))),
+            UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
+                => IsRowIndependentLeaf(convert.Operand, selectorParameter),
+            MemberExpression { Expression: ConstantExpression } => true,
+            _ => false
+        };
 
     /// <summary>
     /// True for <c>Enumerable.AsEnumerable</c>/<c>ToList</c>/<c>ToArray</c> over a <see langword="string"/>
@@ -480,11 +939,7 @@ internal static class NativeProjectionBinder
         var seenMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (memberName, value) in members)
         {
-            if ((value is MemberExpression
-                    || (value is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
-                && translator.TryTranslateField(value, out var field)
-                && !field.ElementName.Contains('.')
-                && NativeGroupByBinder.HasDefaultKeySerialization(field.Property)
+            if (IsPlainTopLevelFieldRead(translator, value, out var field)
                 && seenMembers.Add(memberName))
             {
                 translatedMembers.Add((memberName, field));
@@ -514,14 +969,36 @@ internal static class NativeProjectionBinder
         out MongoExpression result,
         out bool isArrayLeaf,
         out bool isOwnedNavEntityLeaf,
+        out bool throwsOnNull,
         bool allowWholeRootEntityLeaf = false)
-        // A non-nullable Length/IndexOf over a possibly-null string would read its null as 0; see
-        // MongoAggregationExpressionRenderer.MayBeNullBehindNonNullableType.
-        => TryTranslateLeafCore(
-               mongoQ, translator, outerParameter, leafExpression, alias, pendingLookups, pendingReducerLeaves,
-               pendingBareCountStamps, out result, out isArrayLeaf, out isOwnedNavEntityLeaf, allowWholeRootEntityLeaf)
-           && !MongoAggregationExpressionRenderer.ReadsNullAsDefault(
-               NativeSlotPopulator.UnwrapBoxingToObjectType(leafExpression), result);
+    {
+        if (!TryTranslateLeafCore(
+                mongoQ, translator, outerParameter, leafExpression, alias, pendingLookups, pendingReducerLeaves,
+                pendingBareCountStamps, out result, out isArrayLeaf, out isOwnedNavEntityLeaf, allowWholeRootEntityLeaf))
+        {
+            throwsOnNull = false;
+            return false;
+        }
+
+        // A non-nullable Length/IndexOf over a possibly-null string (MongoAggregationExpressionRenderer
+        // .MayBeNullBehindNonNullableType) is rendered null-safely, so the server answers null where EF throws. Flag the
+        // leaf (MongoProjection.ThrowsOnNull) so the read side reads it as T? and throws EF's "Nullable object must have
+        // a value." instead of reading the null as 0; decline where an operator ($max/$min, Sign) may absorb the null
+        // into a non-null answer. This call is the flag's only source.
+        switch (MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+                    NativeSlotPopulator.UnwrapBoxingToObjectType(leafExpression), result))
+        {
+            case NonNullableValueRead.Decline:
+                throwsOnNull = false;
+                return false;
+            case NonNullableValueRead.ThrowOnNull:
+                throwsOnNull = true;
+                return true;
+            default:
+                throwsOnNull = false;
+                return true;
+        }
+    }
 
     private static bool TryTranslateLeafCore(
         MongoQueryExpression mongoQ,
@@ -700,6 +1177,27 @@ internal static class NativeProjectionBinder
             return true;
         }
 
+        // Negate (`-x.A`) or a widening cast over Negate/arithmetic (`(long)-x.A`, `-(long)x.A`, `(long)(x.A + x.B)`).
+        // `-x` translates to {$subtract: [0, x]} and TryTranslateValue drops a widening Convert, so each arrives as an
+        // operator document (never a bare falsy value). The read side (MongoProjectionBindingExpressionVisitor) reads
+        // the server value whole for exactly these shapes via the same predicate; re-applying Negate client-side over
+        // the negated alias would answer +x.
+        if (IsNumericComputedLeafShape(leafExpression)
+            && translator.TryTranslateValue(leafExpression, out var numeric)
+            && numeric is MongoBinaryExpression or MongoUnaryExpression)
+        {
+            result = numeric;
+            return true;
+        }
+
+        // `x.When.TimeOfDay`: only ever a whole projection leaf (see MongoDatePart.TimeOfDay), read back through
+        // BsonSerializerFactory.TimeOfDayMillisecondsSerializer.
+        if (translator.TryTranslateTimeOfDayLeaf(leafExpression, out var timeOfDay))
+        {
+            result = timeOfDay;
+            return true;
+        }
+
         // Computed leaves are admitted by resulting node kind, not by "TryTranslateValue succeeded": a bare value in $project
         // is read as an inclusion/exclusion flag (0/false aborts with "Cannot do exclusion on field ... in inclusion
         // projection"), while these kinds all render as documents.
@@ -716,6 +1214,9 @@ internal static class NativeProjectionBinder
         // BsonValue.Create throws for a non-BSON-mappable value (captured anonymous type/POCO), so
         // TryProbeBareValueRenders trial-renders them first.
         if (translator.TryTranslateValue(leafExpression, out var value)
+            // A ternary over constructions its type's class map reads differently; see
+            // HasMisreadDocumentConstructionBranch.
+            && !IsMisreadWholeValueLeaf(value)
             && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression
                     or MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression
                     or MongoElementRefExpression or MongoDateAddExpression or MongoCoalesceExpression
@@ -859,108 +1360,78 @@ internal static class NativeProjectionBinder
     /// <summary>
     /// True when exactly one operand of <paramref name="methodCall"/> (receiver plus arguments) is the whole entity and
     /// no other operand references <paramref name="outerParameter"/>. The method then runs client-side over the fetched
-    /// entity.
+    /// entity. Delegates to the shape rule shared with the read side (<see cref="NativeClientWholeEntityShape"/>).
     /// </summary>
-    /// <remarks>
-    /// A second parameter-referencing operand (<c>context.ClientMethod(x, x.CustomerID)</c>) declines: supporting it
-    /// would need the shaper fold to recurse through the opaque call's other operands, which is untested.
-    /// </remarks>
     private static bool TryGetSoleWholeRootEntityOperand(
         MongoQueryExpression mongoQ, MethodCallExpression methodCall, ParameterExpression outerParameter)
-    {
-        var sawWholeRootEntityOperand = false;
-
-        if (methodCall.Object != null)
-        {
-            if (IsWholeRootEntityLeafOrJoinScopePassthrough(mongoQ, methodCall.Object, outerParameter))
-            {
-                sawWholeRootEntityOperand = true;
-            }
-            else if (methodCall.Object.ReferencesParameter(outerParameter))
-            {
-                return false;
-            }
-        }
-
-        foreach (var argument in methodCall.Arguments)
-        {
-            if (IsWholeRootEntityLeafOrJoinScopePassthrough(mongoQ, argument, outerParameter))
-            {
-                if (sawWholeRootEntityOperand)
-                {
-                    return false;
-                }
-
-                sawWholeRootEntityOperand = true;
-            }
-            else if (argument.ReferencesParameter(outerParameter))
-            {
-                return false;
-            }
-        }
-
-        return sawWholeRootEntityOperand;
-    }
+        => NativeClientWholeEntityShape.HasSoleWholeEntityOperand(
+            methodCall, node => ClassifyClientWholeEntityOperand(mongoQ, node, outerParameter));
 
     /// <summary>
     /// Generalizes <see cref="TryGetSoleWholeRootEntityOperand"/> to a whole client-only body <see
-    /// cref="TryTranslateLeaf"/> could not render (e.g. a conditional/concat around a client-method call): true when
-    /// the body contains at least one opaque call and references <paramref name="outerParameter"/> only through the
-    /// whole entity (or member chains off it). The whole document is then fetched and the entire body evaluated
-    /// client-side.
+    /// cref="TryTranslateLeaf"/> could not render: a conditional/concat around a client-method call, or a client
+    /// construction with a whole-entity operand (<c>new object[] { x }</c>, <c>new List&lt;object&gt; { x }</c>,
+    /// <c>new Wrapper(x) { City = x.City }</c>). The whole document is then fetched and the entire body evaluated
+    /// client-side over the materialized entity.
     /// </summary>
     /// <remarks>
-    /// The opaque-call requirement matters: a translatable tree with no client call (e.g.
-    /// Ternary_Null_Equals_Non_Numeric_First_Part) must keep declining so it still reaches the driver push-down. Only
-    /// conditional, binary, unary, member-access and nested-call nodes are walked; anything else declines. Each nested
-    /// call gets the same one-whole-entity-operand cap.
+    /// The shape rule, including the at-least-one-client-only-operand requirement, is <see
+    /// cref="NativeClientWholeEntityShape.IsClientOnlyTree"/>; the read side
+    /// (<c>MongoShapedQueryCompilingExpressionVisitor.IsCtorWrappedEntityShaper</c>) calls the same method.
     /// </remarks>
     private static bool IsClientOnlyWholeEntityExpression(
         MongoQueryExpression mongoQ, Expression node, ParameterExpression outerParameter)
+        => NativeClientWholeEntityShape.IsClientOnlyTree(
+            node, n => ClassifyClientWholeEntityOperand(mongoQ, n, outerParameter));
+
+    /// <summary>
+    /// True when a positional construction (a multi-argument member-less <c>new</c>, or a positional container) may take
+    /// the scalar positional path, which reads every argument/element by its synthetic <c>_ctorArg&lt;N&gt;</c> alias.
+    /// False when an argument is the whole entity (through a boxing/upcast <c>Convert</c>, as
+    /// <see cref="NativeClientWholeEntityShape"/> sees a construction operand), or when the whole-entity client
+    /// construction claims the body (<see cref="IsClientOnlyWholeEntityExpression"/>, e.g. an opaque client call on the
+    /// entity as an element): those fetch whole documents and construct client-side instead.
+    /// </summary>
+    /// <remarks>
+    /// The whole-entity test is the client-construction classifier itself (<see cref="ClassifyClientWholeEntityOperand"/>),
+    /// so the two paths cannot disagree about what a whole-entity operand is. Without it the positional arm admitted the
+    /// entity as a <c>$$ROOT</c> leaf, whose read throws FormatException for a key not named <c>Id</c>.
+    /// </remarks>
+    private static bool IsScalarPositionalConstruction(
+        MongoQueryExpression mongoQ, Expression body, IReadOnlyList<(string MemberName, Expression Value)> members,
+        ParameterExpression outerParameter)
+        => !members.Any(m => ClassifyClientWholeEntityOperand(mongoQ, m.Value.RemoveConvert(), outerParameter)
+                             == ClientWholeEntityOperand.WholeEntity)
+           && !IsClientOnlyWholeEntityExpression(mongoQ, body, outerParameter);
+
+    /// <summary>
+    /// Strips the boxing <c>Convert</c>-to-<see cref="object"/> layers a container adds around an element
+    /// (<c>new object[] { x.I }</c>), so the element is translated and read as its operand (with the operand's own type
+    /// and serializer) and re-boxed afterwards, keeping its runtime type. Shared by the emit sides
+    /// (<see cref="TryPopulateNativeProjection"/>'s container arm, <see cref="NativeJoinScopeProjectionBinder"/>) and the
+    /// read sides (<c>MongoQueryableMethodTranslatingExpressionVisitor.BuildPositionalCtorProjectionShaper</c> and
+    /// <c>BuildSelectManyResultShaper</c>), so they peel exactly the same layers.
+    /// </summary>
+    internal static Expression UnwrapContainerElementBoxing(Expression element)
     {
-        var sawOpaqueCall = false;
-        return IsClientOnlyWholeEntitySubtree(mongoQ, node, outerParameter, ref sawOpaqueCall) && sawOpaqueCall;
+        while (element is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
+               && convert.Type == typeof(object))
+        {
+            element = convert.Operand;
+        }
+
+        return element;
     }
 
-    private static bool IsClientOnlyWholeEntitySubtree(
-        MongoQueryExpression mongoQ, Expression node, ParameterExpression outerParameter, ref bool sawOpaqueCall)
-    {
-        if (!node.ReferencesParameter(outerParameter))
-        {
-            return true;
-        }
-
-        if (IsWholeRootEntityLeafOrJoinScopePassthrough(mongoQ, node, outerParameter))
-        {
-            return true;
-        }
-
-        switch (node)
-        {
-            case ConditionalExpression conditional:
-                return IsClientOnlyWholeEntitySubtree(mongoQ, conditional.Test, outerParameter, ref sawOpaqueCall)
-                    && IsClientOnlyWholeEntitySubtree(mongoQ, conditional.IfTrue, outerParameter, ref sawOpaqueCall)
-                    && IsClientOnlyWholeEntitySubtree(mongoQ, conditional.IfFalse, outerParameter, ref sawOpaqueCall);
-
-            case BinaryExpression binary:
-                return IsClientOnlyWholeEntitySubtree(mongoQ, binary.Left, outerParameter, ref sawOpaqueCall)
-                    && IsClientOnlyWholeEntitySubtree(mongoQ, binary.Right, outerParameter, ref sawOpaqueCall);
-
-            case UnaryExpression unary:
-                return IsClientOnlyWholeEntitySubtree(mongoQ, unary.Operand, outerParameter, ref sawOpaqueCall);
-
-            case MemberExpression { Expression: not null } member:
-                return IsClientOnlyWholeEntitySubtree(mongoQ, member.Expression, outerParameter, ref sawOpaqueCall);
-
-            case MethodCallExpression methodCall when !methodCall.Method.IsEFPropertyMethod()
-                                                       && TryGetSoleWholeRootEntityOperand(mongoQ, methodCall, outerParameter):
-                sawOpaqueCall = true;
-                return true;
-
-            default:
-                return false;
-        }
-    }
+    // The emit-side classifier: over the selector the entity is the selector parameter (or a one-hop join-scope
+    // passthrough to it), and a subtree not referencing the parameter reads nothing of the row.
+    private static ClientWholeEntityOperand ClassifyClientWholeEntityOperand(
+        MongoQueryExpression mongoQ, Expression node, ParameterExpression outerParameter)
+        => !node.ReferencesParameter(outerParameter)
+            ? ClientWholeEntityOperand.EntityFree
+            : IsWholeRootEntityLeafOrJoinScopePassthrough(mongoQ, node, outerParameter)
+                ? ClientWholeEntityOperand.WholeEntity
+                : ClientWholeEntityOperand.Walk;
 
     /// <summary>
     /// Open generic definition of <c>Mql.Field&lt;TDocument, TField&gt;(TDocument, string,
@@ -1391,6 +1862,21 @@ internal static class NativeProjectionBinder
     /// the driver-LINQ fallback ever goes away, this tier needs a different answer.
     /// </remarks>
     internal const string SyntheticBareProjectionAlias = "_v";
+
+    /// <summary>
+    /// <c>$project</c> element name of the constant sentinel staged when every leaf of a projection is client-evaluated
+    /// (<see cref="IsRowIndependentLeaf"/>), so <c>Route</c> stays <c>Projection</c> (one row per document) instead of
+    /// collapsing to a whole-entity fetch. Nothing reads it back. A constant, not <c>_id</c>, so a <c>Distinct</c> over
+    /// the projection dedups to one row (the client value is the same for every row of one execution).
+    /// </summary>
+    internal const string ClientEvaluatedSentinelAlias = "_c";
+
+    /// <summary>
+    /// <c>$project</c> element-name prefix (<c>_cr0</c>, <c>_cr1</c>, ...) of a client-evaluated ternary's branch row
+    /// reads. Synthetic, so the read side must take it from the staged read
+    /// (<c>MongoSelectDefinition.TryGetClientConditionalReadAlias</c>) and can't derive it from the member path.
+    /// </summary>
+    internal const string ClientConditionalReadAliasPrefix = "_cr";
 
     /// <summary>
     /// Derives a computed bare body's alias (<see cref="SyntheticBareProjectionAlias"/>), admitting only node kinds

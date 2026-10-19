@@ -1638,4 +1638,322 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         return (database.MongoDatabase.GetCollection<ConvBlog>(raw.CollectionNamespace.CollectionName),
             expectedRefA, expectedRefB);
     }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    //  Positional containers of scalar elements — `new[] { x.I, x.NullableI }`, `new object[] { ... }` — each
+    //  element projected under its own `_ctorArg<N>` alias and read with its operand's own type (so a boxed element
+    //  keeps its runtime type). A scalar `new List<object> { ... }` is not a native container and stays declined (see
+    //  below). Whole-entity elements/arguments are never admitted on this scalar path.
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+
+    public class ScalarRow
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public int I { get; set; }
+        public int? NullableI { get; set; }
+        public string? S { get; set; }
+        public long L { get; set; }
+
+        // Stored as Decimal128: an object-typed read of the raw value would answer Decimal128, not decimal.
+        public decimal D { get; set; }
+    }
+
+    // Three rows with non-default, pairwise-distinct values, so a swapped/shared alias or a default read shows up:
+    //   a: NullableI null, S "abc"; b: NullableI 5, S null; c: NullableI 7, S missing.
+    private IMongoCollection<ScalarRow> SeedScalarRows(string name)
+    {
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
+        coll.InsertMany(
+        [
+            new BsonDocument
+            {
+                {"_id", ObjectId.GenerateNewId()}, {"Label", "a"}, {"I", 1}, {"NullableI", BsonNull.Value},
+                {"S", "abc"}, {"L", 10L}, {"D", new Decimal128(1.5m)}
+            },
+            new BsonDocument
+            {
+                {"_id", ObjectId.GenerateNewId()}, {"Label", "b"}, {"I", 2}, {"NullableI", 5}, {"S", BsonNull.Value},
+                {"L", 20L}, {"D", new Decimal128(2.5m)}
+            },
+            new BsonDocument
+            {
+                {"_id", ObjectId.GenerateNewId()}, {"Label", "c"}, {"I", 3}, {"NullableI", 7}, {"L", 30L}, {"D", new Decimal128(3.5m)}
+            }
+        ]);
+        return database.MongoDatabase.GetCollection<ScalarRow>(coll.CollectionNamespace.CollectionName);
+    }
+
+    private static SingleEntityDbContext<ScalarRow> CreateScalarContext(IMongoCollection<ScalarRow> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    // Renders one element with its runtime type, so equal values of different CLR types (int vs long) differ.
+    private static string DescribeElement(object? element)
+        => element is null ? "<null>" : $"{element.GetType().Name}:{element}";
+
+    [Fact]
+    public void Scalar_array_container_goes_native_with_exact_values()
+    {
+        var collection = SeedScalarRows(nameof(Scalar_array_container_goes_native_with_exact_values));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateScalarContext(collection, mode);
+            return db.Entities.OrderBy(x => x.Label).Select(x => new[] { x.I, x.NullableI }).ToList()
+                .Select(row => string.Join(",", row.Select(e => e?.ToString() ?? "<null>")))
+                .ToList();
+        });
+
+        Assert.Equal(["1,<null>", "2,5", "3,7"], results);
+    }
+
+    // AssertArrays in the spec suite checks each element's GetType(): a boxed element must be read with its operand's
+    // own type (int stays Int32, long stays Int64), not as whatever an object-typed read of the BSON value yields.
+    [Fact]
+    public void Boxed_object_array_container_keeps_each_elements_runtime_type()
+    {
+        var collection = SeedScalarRows(nameof(Boxed_object_array_container_keeps_each_elements_runtime_type));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateScalarContext(collection, mode);
+            return db.Entities.OrderBy(x => x.Label).Select(x => new object?[] { x.I, x.S, x.L, x.D }).ToList()
+                .Select(row => string.Join(",", row.Select(DescribeElement)))
+                .ToList();
+        });
+
+        Assert.Equal(
+            [
+                "Int32:1,String:abc,Int64:10,Decimal:1.5",
+                "Int32:2,<null>,Int64:20,Decimal:2.5",
+                "Int32:3,<null>,Int64:30,Decimal:3.5"
+            ],
+            results);
+    }
+
+    // A boxed nullable element holding null. No driver-LINQ oracle: the driver's push-down deserializes the boxed int?
+    // with the non-nullable Int32 serializer and throws FormatException ("Cannot deserialize a 'Int32' from BsonType
+    // 'Null'"), as it did before this shape went native. Hand-computed oracle instead.
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Boxed_nullable_object_array_element_reads_null_and_keeps_runtime_types(MongoQueryMode mode)
+    {
+        var collection = SeedScalarRows(nameof(Boxed_nullable_object_array_element_reads_null_and_keeps_runtime_types) + mode);
+        using var db = CreateScalarContext(collection, mode);
+
+        var results = db.Entities.OrderBy(x => x.Label).Select(x => new object?[] { x.I, x.NullableI, x.S, x.L }).ToList()
+            .Select(row => string.Join(",", row.Select(DescribeElement)))
+            .ToList();
+
+        Assert.Equal(
+            [
+                "Int32:1,<null>,String:abc,Int64:10",
+                "Int32:2,Int32:5,<null>,Int64:20",
+                "Int32:3,Int32:7,<null>,Int64:30"
+            ],
+            results);
+    }
+
+    // A case-mapped container element over a null/missing string reads null natively: the raw string is projected and
+    // the mapping re-applied client-side with EF's null propagation (the relational answer, UPPER(NULL) = NULL).
+    // Explicit DriverLinq pushes $toUpper down instead, which maps null/missing to "" (server semantics), so it is
+    // not an oracle here; the native null is the EF-faithful answer and is kept. Hand-computed oracle.
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Case_mapped_container_element_over_a_null_string_reads_null(MongoQueryMode mode)
+    {
+        var collection = SeedScalarRows(nameof(Case_mapped_container_element_over_a_null_string_reads_null) + mode);
+        using var db = CreateScalarContext(collection, mode);
+
+        var results = db.Entities.OrderBy(x => x.Label).Select(x => new[] { x.S!.ToUpper(), x.Label }).ToList()
+            .Select(row => string.Join(",", row.Select(DescribeElement)))
+            .ToList();
+
+        Assert.Equal(["String:ABC,String:a", "<null>,String:b", "<null>,String:c"], results);
+    }
+
+    // A string-sequence element (`x.S.ToList()`, a List<char>) in a container. No driver-LINQ oracle: explicit
+    // DriverLinq throws ArgumentNullException materializing it even for a non-null string. So the native answer is
+    // pinned against a hand-computed oracle: the characters for a non-null string, and C#'s own ArgumentNullException
+    // (`((string)null).ToList()`) for a null/missing one.
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void String_sequence_container_element_matches_the_hand_oracle(MongoQueryMode mode)
+    {
+        var collection = SeedScalarRows(nameof(String_sequence_container_element_matches_the_hand_oracle) + mode);
+        using var db = CreateScalarContext(collection, mode);
+
+        var row = Assert.Single(db.Entities.Where(x => x.Label == "a").Select(x => new object?[] { x.S!.ToList(), x.I }).ToList());
+        Assert.Equal(['a', 'b', 'c'], Assert.IsType<List<char>>(row[0]));
+        Assert.Equal(1, Assert.IsType<int>(row[1]));
+
+        foreach (var label in new[] { "b", "c" })
+        {
+            Assert.Throws<ArgumentNullException>(
+                () => db.Entities.Where(x => x.Label == label).Select(x => new object?[] { x.S!.ToList(), x.I }).ToList());
+        }
+    }
+
+    // `new List<object> { ... }` is not a native container: the driver can't push a list initializer down, so the
+    // index-based shaper would be unreadable under explicit DriverLinq / a late fallback (see
+    // TryGetProjectionMembers' allowContainerElements). It keeps declining to the client-side construction.
+    [Fact]
+    public void Object_list_container_declines_cleanly()
+    {
+        var collection = SeedScalarRows(nameof(Object_list_container_declines_cleanly));
+
+        var results = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            using var db = CreateScalarContext(collection, mode);
+            return db.Entities.OrderBy(x => x.Label).Select(x => new List<object?> { x.S }).ToList()
+                .Select(row => $"{row.Count}|{string.Join(",", row.Select(DescribeElement))}")
+                .ToList();
+        });
+
+        Assert.Equal(["1|String:abc", "1|<null>", "1|<null>"], results);
+    }
+
+    // A non-nullable Length over a possibly-null string, as a container element, goes through the same null-propagation
+    // classifier as a named member (ClassifyNonNullableValueRead): EF's "Nullable object must have a value." on the
+    // null/missing rows, never a silent 0. No driver-LINQ oracle: its unguarded $strLenCP fails server-side on null.
+    [Fact]
+    public void Non_nullable_Length_container_element_throws_on_null_instead_of_reading_zero()
+    {
+        var collection = SeedScalarRows(nameof(Non_nullable_Length_container_element_throws_on_null_instead_of_reading_zero));
+        using var db = CreateScalarContext(collection, MongoQueryMode.NativeOnly);
+
+        foreach (var label in new[] { "b", "c" })
+        {
+            var exception = Assert.Throws<InvalidOperationException>(
+                () => db.Entities.Where(x => x.Label == label).Select(x => new[] { x.I, x.S!.Length }).ToList());
+            Assert.Equal("Nullable object must have a value.", exception.Message);
+        }
+
+        var row = Assert.Single(db.Entities.Where(x => x.Label == "a").Select(x => new[] { x.I, x.S!.Length }).ToList());
+        Assert.Equal([1, 3], row);
+    }
+
+    // Keyed by a string property that is not named Id, so it is stored as `_id` under a different CLR name: a driver
+    // class-map read of the raw document (what a `$$ROOT` scalar leaf gets) cannot map `_id` and throws, where the EF
+    // entity materializer maps it.
+    public class CodedRow
+    {
+        public string Code { get; set; } = "";
+        public string? City { get; set; }
+    }
+
+    private IMongoCollection<CodedRow> SeedCodedRows(string name)
+    {
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
+        coll.InsertMany(
+        [
+            new BsonDocument { {"_id", "A"}, {"City", "Oslo"} },
+            new BsonDocument { {"_id", "B"}, {"City", BsonNull.Value} }
+        ]);
+        return database.MongoDatabase.GetCollection<CodedRow>(coll.CollectionNamespace.CollectionName);
+    }
+
+    // Before this change the multi-argument positional-ctor arm admitted the whole entity as a `$$ROOT` leaf and the
+    // read side threw FormatException ("Element '_id' does not match any field or property of class CodedRow"). A
+    // whole-entity argument is now excluded from the scalar positional path, so the construction is the whole-entity
+    // client construction instead (NativeClientWholeEntityShape): whole documents fetched, the pair built client-side
+    // over the materialized entity. Oracle is hand-computed: driver-LINQ throws NotImplementedException for this shape.
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Whole_entity_positional_ctor_argument_is_not_read_as_a_scalar(MongoQueryMode mode)
+    {
+        var collection = SeedCodedRows(nameof(Whole_entity_positional_ctor_argument_is_not_read_as_a_scalar) + mode);
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb => mb.Entity<CodedRow>(e =>
+            {
+                e.HasKey(x => x.Code);
+                e.Property(x => x.Code).HasElementName("_id");
+            }),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+        var results = db.Entities.OrderBy(x => x.Code).Select(x => new KeyValuePair<CodedRow, string?>(x, x.City)).ToList();
+
+        Assert.Equal(["A:Oslo=Oslo", "B:<null>=<null>"],
+            results.Select(p => $"{p.Key.Code}:{p.Key.City ?? "<null>"}={p.Value ?? "<null>"}").ToList());
+        Assert.All(results, p => Assert.Same(p.Key, db.Entities.Local.Single(l => l.Code == p.Key.Code)));
+    }
+
+    // A whole-entity argument beside a leaf the whole-entity client construction does not admit (a translatable
+    // Substring call) must decline, not take the scalar positional path as a `$$ROOT` leaf: this is the case the
+    // argument-level whole-entity exclusion alone decides (the client construction would otherwise claim the body
+    // first). Only NativeOnly is asserted: the fallback's driver-LINQ throws NotImplementedException for this shape.
+    [Fact]
+    public void Whole_entity_positional_ctor_argument_beside_a_computed_argument_declines()
+    {
+        var collection = SeedCodedRows(nameof(Whole_entity_positional_ctor_argument_beside_a_computed_argument_declines));
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb => mb.Entity<CodedRow>(e =>
+            {
+                e.HasKey(x => x.Code);
+                e.Property(x => x.Code).HasElementName("_id");
+            }),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => db.Entities.Select(x => new KeyValuePair<CodedRow, string>(x, x.City!.Substring(1))).ToList());
+    }
+
+    private static string ClientDescribe(ScalarRow row) => $"<{row.Label}>";
+
+    // An opaque client call on the whole entity as an element is the whole-entity client construction's, so the scalar
+    // container arm steps aside (IsScalarPositionalConstruction) instead of declining on the untranslatable call.
+    [Fact]
+    public void Container_with_a_client_call_on_the_whole_entity_goes_native_with_parity()
+    {
+        var collection = SeedScalarRows(nameof(Container_with_a_client_call_on_the_whole_entity_goes_native_with_parity));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateScalarContext(collection, mode);
+            return db.Entities.OrderBy(x => x.Label).Select(x => new object?[] { ClientDescribe(x), x.I }).ToList()
+                .Select(row => string.Join(",", row.Select(DescribeElement)))
+                .ToList();
+        });
+
+        Assert.Equal(["String:<a>,Int32:1", "String:<b>,Int32:2", "String:<c>,Int32:3"], results);
+    }
+
+    // The container counterpart: a whole-entity element beside scalars is the whole-entity client construction, never a
+    // scalar container element; each scalar (boxed, computed or not) is read off the materialized entity. The boxed and
+    // computed elements used to read null there (a projection binding read by its member name off the raw document).
+    [Fact]
+    public void Whole_entity_container_element_is_not_read_as_a_scalar()
+    {
+        var collection = SeedScalarRows(nameof(Whole_entity_container_element_is_not_read_as_a_scalar));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateScalarContext(collection, mode);
+            return db.Entities.OrderBy(x => x.Label).Select(x => new object?[] { x, x.I, x.I + 10, x.S }).ToList()
+                .Select(row => $"{((ScalarRow)row[0]!).Label}|{string.Join(",", row.Skip(1).Select(DescribeElement))}")
+                .ToList();
+        });
+
+        Assert.Equal(["a|Int32:1,Int32:11,String:abc", "b|Int32:2,Int32:12,<null>", "c|Int32:3,Int32:13,<null>"], results);
+    }
 }

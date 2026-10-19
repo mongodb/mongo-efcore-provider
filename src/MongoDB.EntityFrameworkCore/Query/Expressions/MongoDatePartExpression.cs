@@ -18,9 +18,16 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// The date-part components translated natively. <c>TimeOfDay</c> is absent: MQL has no clean composition for
-/// it, and the driver-LINQ fallback handles it.
+/// The date-part components translated natively.
 /// </summary>
+/// <remarks>
+/// <see cref="TimeOfDay"/> is produced only as a whole projection leaf over a plain <c>DateTime</c> field
+/// (<c>MongoExpressionTranslator.TryTranslateTimeOfDayLeaf</c>), never by the general value translator: it renders
+/// as milliseconds since midnight, so only a read through
+/// <c>BsonSerializerFactory.TimeOfDayMillisecondsSerializer</c> gives the right <see cref="TimeSpan"/>, and a filter,
+/// group key or accumulator would compare or read those milliseconds as a <see cref="TimeSpan"/> in its own
+/// representation.
+/// </remarks>
 internal enum MongoDatePart
 {
     Year,
@@ -32,12 +39,14 @@ internal enum MongoDatePart
     Millisecond,
     DayOfWeek,
     DayOfYear,
-    Date
+    Date,
+    TimeOfDay
 }
 
 /// <summary>
 /// Extracts one <see cref="MongoDatePart"/> from a datetime-valued <see cref="Operand"/> via the matching MQL date
-/// operator (<c>$year</c>, <c>$month</c>, …, or <c>$dateTrunc</c> for <see cref="MongoDatePart.Date"/>).
+/// operator (<c>$year</c>, <c>$month</c>, …, <c>$dateTrunc</c> for <see cref="MongoDatePart.Date"/>, or the driver's
+/// <c>$dateDiff</c> from the day-truncated date in milliseconds for <see cref="MongoDatePart.TimeOfDay"/>).
 /// </summary>
 /// <remarks>
 /// <see cref="Operand"/> is any date-valued expression, so it can wrap a
@@ -52,11 +61,21 @@ internal sealed class MongoDatePartExpression(MongoExpression operand, MongoDate
     /// <summary>Which component to extract.</summary>
     public MongoDatePart Part { get; } = part;
 
+    /// <summary>
+    /// Whether <paramref name="node"/> is a <see cref="MongoDatePart.TimeOfDay"/> leaf: milliseconds, not a
+    /// <see cref="TimeSpan"/>'s default stored form. The one predicate the emit side's declines
+    /// (<c>AllFieldsDefaultSerialized</c>, the projected Distinct, set-op <c>OperandSerializationsMatch</c>) and the read side
+    /// (<c>MongoSelectDefinition.IsTimeOfDayProjection</c>) share.
+    /// </summary>
+    internal static bool IsTimeOfDay(MongoExpression node)
+        => node is MongoDatePartExpression { Part: MongoDatePart.TimeOfDay };
+
     /// <inheritdoc />
     public override Type Type { get; } = part switch
     {
         MongoDatePart.Date => typeof(DateTime),
         MongoDatePart.DayOfWeek => typeof(DayOfWeek),
+        MongoDatePart.TimeOfDay => typeof(TimeSpan),
         _ => typeof(int)
     };
 }

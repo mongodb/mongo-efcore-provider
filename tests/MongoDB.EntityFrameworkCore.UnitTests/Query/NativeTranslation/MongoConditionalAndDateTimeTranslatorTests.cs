@@ -17,6 +17,7 @@ using System;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -31,6 +32,7 @@ public class MongoConditionalAndDateTimeTranslatorTests
         public int? NullableAmount { get; set; }
         public bool Flag { get; set; }
         public DateTime Occurred { get; set; }
+        public DateTime? MaybeOccurred { get; set; }
         public DateTimeOffset? OccurredOffset { get; set; }
     }
 
@@ -167,12 +169,92 @@ public class MongoConditionalAndDateTimeTranslatorTests
         Assert.IsType<MongoDateTimeOffsetLocalExpression>(result);
     }
 
+    // TimeOfDay is only a projection leaf (TryTranslateTimeOfDayLeaf): the general value translator, which also feeds
+    // filters, group keys and accumulators, must never produce it.
     [Fact]
-    public void TimeOfDay_declines()
+    public void TimeOfDay_declines_as_a_general_value()
     {
         var (translator, body) = BuildValueBody(r => (object)r.Occurred.TimeOfDay);
 
         Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    [Fact]
+    public void TimeOfDay_inside_a_comparison_declines()
+    {
+        var (translator, body) = BuildValueBody(r => r.Occurred.TimeOfDay > TimeSpan.Zero);
+
+        Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    [Fact]
+    public void TimeOfDay_leaf_over_a_DateTime_field_translates()
+    {
+        var (translator, body) = BuildValueBody(r => (object)r.Occurred.TimeOfDay);
+
+        Assert.True(translator.TryTranslateTimeOfDayLeaf(body, out var result));
+
+        var datePart = Assert.IsType<MongoDatePartExpression>(result);
+        Assert.Equal(MongoDatePart.TimeOfDay, datePart.Part);
+        Assert.Equal(typeof(TimeSpan), datePart.Type);
+        Assert.Equal("Occurred", Assert.IsType<MongoFieldExpression>(datePart.Operand).ElementName);
+    }
+
+    [Fact]
+    public void TimeOfDay_leaf_over_a_nullable_DateTime_Value_translates()
+    {
+        var (translator, body) = BuildValueBody(r => (object)r.MaybeOccurred!.Value.TimeOfDay);
+
+        Assert.True(translator.TryTranslateTimeOfDayLeaf(body, out var result));
+        Assert.Equal("MaybeOccurred", Assert.IsType<MongoFieldExpression>(Assert.IsType<MongoDatePartExpression>(result).Operand).ElementName);
+    }
+
+    [Fact]
+    public void TimeOfDay_leaf_over_a_DateTimeOffset_declines()
+    {
+        var (translator, body) = BuildValueBody(r => (object)r.OccurredOffset!.Value.TimeOfDay);
+
+        Assert.False(translator.TryTranslateTimeOfDayLeaf(body, out _));
+    }
+
+    [Fact]
+    public void TimeOfDay_leaf_over_a_computed_date_declines()
+    {
+        var (translator, body) = BuildValueBody(r => (object)r.Occurred.AddDays(1).TimeOfDay);
+
+        Assert.False(translator.TryTranslateTimeOfDayLeaf(body, out _));
+    }
+
+    [Fact]
+    public void TimeOfDay_leaf_over_a_local_kind_DateTime_declines()
+    {
+        // The server's time of day is the UTC one; C# reads the Local-kind value's local one (EF-459).
+        var (translator, body) = BuildValueBodyWithNonDefaultSerialization(
+            r => (object)r.Occurred.TimeOfDay,
+            mb => mb.Entity<Row>().Property(r => r.Occurred).HasDateTimeKind(DateTimeKind.Local));
+
+        Assert.False(translator.TryTranslateTimeOfDayLeaf(body, out _));
+    }
+
+    [Fact]
+    public void TimeOfDay_leaf_over_a_value_converted_DateTime_declines()
+    {
+        var (translator, body) = BuildValueBodyWithNonDefaultSerialization(
+            r => (object)r.Occurred.TimeOfDay,
+            mb => mb.Entity<Row>().Property(r => r.Occurred).HasConversion(v => v, v => v));
+
+        Assert.False(translator.TryTranslateTimeOfDayLeaf(body, out _));
+    }
+
+    [Fact]
+    public void TimeOfDay_leaf_is_not_default_serialized()
+    {
+        // Pins the one guard every later operator over the leaf relies on (a terminal Max over the bare Select, a set
+        // op against a TimeSpan property): its milliseconds are not a TimeSpan's default stored form.
+        var (translator, body) = BuildValueBody(r => (object)r.Occurred.TimeOfDay);
+        Assert.True(translator.TryTranslateTimeOfDayLeaf(body, out var result));
+
+        Assert.False(MongoExpressionTranslator.AllFieldsDefaultSerialized(result));
     }
 
     [Fact]

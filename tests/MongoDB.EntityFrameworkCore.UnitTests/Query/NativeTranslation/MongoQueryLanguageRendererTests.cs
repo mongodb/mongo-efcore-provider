@@ -598,6 +598,52 @@ public class MongoQueryLanguageRendererTests
             result.ToJson());
     }
 
+    // A computed receiver ((c.Name + "x").StartsWith("A")) has no query-dialect form: RenderRegex would emit
+    // { <path>: /re/ } over a bogus path and match nothing. Both the classifier and RenderNode must send it to $expr.
+    private static MongoRegexExpression ComputedReceiverRegex(bool negated = false)
+    {
+        var name = GetProperty<Customer>("Name");
+        return new MongoRegexExpression(
+            new MongoConcatExpression([new MongoFieldExpression(name, "Name"), new MongoConstantExpression("x", null)]),
+            MongoRegexKind.StartsWith, new MongoConstantExpression("A", name), negated);
+    }
+
+    [Fact]
+    public void IsQueryDialectRenderable_rejects_a_regex_over_a_computed_receiver()
+        => Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(ComputedReceiverRegex()));
+
+    [Fact]
+    public void IsQueryDialectRenderable_accepts_a_regex_over_a_field_or_element_ref_receiver()
+    {
+        var name = GetProperty<Customer>("Name");
+        Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(new MongoRegexExpression(
+            new MongoFieldExpression(name, "Name"), MongoRegexKind.StartsWith, new MongoConstantExpression("A", name),
+            negated: false)));
+        Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(new MongoRegexExpression(
+            new MongoElementRefExpression("k", typeof(string)), MongoRegexKind.StartsWith,
+            new MongoConstantExpression("A", name), negated: false)));
+    }
+
+    [Fact]
+    public void Regex_over_a_computed_receiver_renders_via_expr_regexMatch()
+    {
+        var result = new MongoQueryLanguageRenderer().Render(ComputedReceiverRegex(), new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$expr" : { "$regexMatch" : { "input" : { "$concat" : [{ "$ifNull" : ["$Name", ""] }, { "$literal" : "x" }] }, "regex" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } } }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Negated_regex_over_a_computed_receiver_renders_via_expr_not_regexMatch()
+    {
+        var result = new MongoQueryLanguageRenderer().Render(ComputedReceiverRegex(negated: true), new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$expr" : { "$not" : [{ "$regexMatch" : { "input" : { "$concat" : [{ "$ifNull" : ["$Name", ""] }, { "$literal" : "x" }] }, "regex" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }] } }""",
+            result.ToJson());
+    }
+
     // ------------------------------------------------------------------
     // $elemMatch over an owned (embedded) array
     // ------------------------------------------------------------------

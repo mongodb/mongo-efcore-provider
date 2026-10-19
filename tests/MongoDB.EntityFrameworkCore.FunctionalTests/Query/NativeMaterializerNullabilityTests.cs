@@ -63,6 +63,12 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         public List<int> Tags { get; set; } = [];   // required non-nullable REFERENCE scalar (collection)
     }
 
+    private class StringKeyed
+    {
+        public string Id { get; set; } = "";       // string primary key: never null
+        public string? Label { get; set; }          // nullable, non-key string
+    }
+
     private static SingleEntityDbContext<T> CreateContext<T>(
         IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? model = null)
         where T : class
@@ -296,6 +302,464 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         {
             var nativeOnlyScore = nativeOnly.Entities.ToList().Single().Stats.Score;
             Assert.Equal(driverScore, nativeOnlyScore);
+        }
+    }
+
+    // A primary-key string is never null, so its Length is not null behind the non-nullable int it is read as.
+    [Fact]
+    public void String_primary_key_length_expression_projection_goes_native()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var context = CreateContext(collection, mode, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+            return context.Entities.OrderBy(e => e.Id).Select(e => new { e.Id, L = e.Id.Length + 5 }).ToList();
+        });
+
+        Assert.Equal([7, 10], result.Select(r => r.L));
+    }
+
+    // Control for the PK exemption: a nullable non-key string may be null, so its Length + 5 is read as int? and a null
+    // throws EF's "Nullable object must have a value." (never 0 + 5). Over non-null data it reads the exact values.
+    [Fact]
+    public void Nullable_non_key_string_length_expression_projection_goes_native_and_throws_on_null()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = "yy" }]);
+        var nullCollection = database.CreateCollection<StringKeyed>(nameof(Nullable_non_key_string_length_expression_projection_goes_native_and_throws_on_null) + "_null");
+        nullCollection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var context = CreateContext(collection, mode, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+            return context.Entities.OrderBy(e => e.Id).Select(e => new { e.Id, L = e.Label!.Length + 5 }).ToList();
+        });
+        Assert.Equal([6, 7], result.Select(r => r.L));
+
+        AssertThrowsNullableObjectMustHaveAValue(mode =>
+        {
+            using var context = CreateContext(nullCollection, mode, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+            _ = context.Entities.OrderBy(e => e.Id).Select(e => new { e.Id, L = e.Label!.Length + 5 }).ToList();
+        });
+    }
+
+    // EF's own message for reading a null through Nullable<T>.Value, which is what EF relational throws for a null
+    // behind a non-nullable projected type (upstream Non_nullable_property_through_optional_navigation).
+    private const string NullableObjectMustHaveAValue = "Nullable object must have a value.";
+
+    // Native (default) and NativeOnly both run the native pipeline and throw EF's exception. DriverLinq is not asserted:
+    // it sends an unguarded $strLenCP/$indexOfCP, which fails server-side on a null string.
+    private static void AssertThrowsNullableObjectMustHaveAValue(Action<MongoQueryMode> run)
+    {
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        {
+            var exception = Assert.Throws<InvalidOperationException>(() => run(mode));
+            Assert.Equal(NullableObjectMustHaveAValue, exception.Message);
+        }
+    }
+
+    // Each shape reads a null-propagated scalar (Length/IndexOf over a nullable string) behind a non-nullable type. The
+    // result is widened to long client-side, after ToList, so one theory covers int and long leaves.
+    private static List<long> RunNullableStringScalarShape(
+        IMongoCollection<StringKeyed> collection, MongoQueryMode mode, string shape)
+    {
+        using var context = CreateContext(collection, mode, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        var ordered = context.Entities.OrderBy(e => e.Id);
+        return shape switch
+        {
+            "Length" => ordered.Select(e => new { e.Label!.Length }).ToList().Select(r => (long)r.Length).ToList(),
+            "LongLength" => ordered.Select(e => new { L = (long)e.Label!.Length }).ToList().Select(r => r.L).ToList(),
+            "IndexOf" => ordered.Select(e => new { I = e.Label!.IndexOf("") }).ToList().Select(r => (long)r.I).ToList(),
+            "IndexOfChar" => ordered.Select(e => new { I = e.Label!.IndexOf("y") }).ToList().Select(r => (long)r.I).ToList(),
+            "BareLength" => ordered.Select(e => e.Label!.Length).ToList().Select(l => (long)l).ToList(),
+            "BareLongLength" => ordered.Select(e => (long)e.Label!.Length).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null)
+        };
+    }
+
+    [Theory]
+    [InlineData("Length", new long[] { 1, 2 })]
+    [InlineData("LongLength", new long[] { 1, 2 })]
+    [InlineData("IndexOf", new long[] { 0, 0 })]
+    [InlineData("IndexOfChar", new long[] { -1, 0 })]
+    [InlineData("BareLength", new long[] { 1, 2 })]
+    [InlineData("BareLongLength", new long[] { 1, 2 })]
+    public void Nullable_string_scalar_behind_non_nullable_type_reads_exact_values_natively(string shape, long[] expected)
+    {
+        var collection = database.CreateCollection<StringKeyed>(values: [shape]);
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = "yy" }]);
+
+        var result = NativeModeAssert.NativeAndParity(mode => RunNullableStringScalarShape(collection, mode, shape));
+
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("Length")]
+    [InlineData("LongLength")]
+    [InlineData("IndexOf")]
+    [InlineData("IndexOfChar")]
+    [InlineData("BareLength")]
+    [InlineData("BareLongLength")]
+    public void Nullable_string_scalar_behind_non_nullable_type_throws_on_null_row(string shape)
+    {
+        var collection = database.CreateCollection<StringKeyed>(values: [shape]);
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+
+        AssertThrowsNullableObjectMustHaveAValue(mode => RunNullableStringScalarShape(collection, mode, shape));
+    }
+
+    // $max/$min skip a null operand and Math.Sign's $switch orders a null below 0, so the server answers a non-null
+    // value where EF throws (the null row here would read Max(null, 5) as 5); no read of the value can see the null, so
+    // these decline instead of throwing on null. Only the NativeOnly decline is asserted: driver-LINQ can't translate
+    // the anonymous Math.Max/Min member ("unable to determine which serializer"), so there is no fallback oracle.
+    [Theory]
+    [InlineData("Max")]
+    [InlineData("Min")]
+    [InlineData("Sign")]
+    public void Null_absorbing_math_over_nullable_string_length_declines(string function)
+    {
+        var collection = database.CreateCollection<StringKeyed>(values: [function]);
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        var ordered = context.Entities.OrderBy(e => e.Id);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => function switch
+        {
+            "Max" => ordered.Select(e => new { V = Math.Max(e.Label!.Length, e.Id.Length) }).ToList().Select(r => r.V).ToList(),
+            "Min" => ordered.Select(e => new { V = Math.Min(e.Label!.Length, e.Id.Length) }).ToList().Select(r => r.V).ToList(),
+            _ => ordered.Select(e => new { V = Math.Sign(e.Label!.Length) }).ToList().Select(r => r.V).ToList()
+        });
+    }
+
+    // A nullable cast reads the null as null and stays native (no throw): the flag is only for non-nullable reads.
+    [Fact]
+    public void Nullable_cast_of_nullable_string_length_reads_null()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        var result = context.Entities.OrderBy(e => e.Id).Select(e => new { L = (int?)e.Label!.Length }).ToList();
+
+        Assert.Equal([1, null], result.Select(r => r.L));
+    }
+
+    // Distinct over the flagged projection re-reads it from the $group key; the flag must survive that rewrite, or a
+    // null row reads as 0.
+    [Fact]
+    public void Distinct_over_nullable_string_length_projection_throws_on_null_row()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+
+        AssertThrowsNullableObjectMustHaveAValue(mode =>
+        {
+            using var context = CreateContext(collection, mode, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+            _ = context.Entities.Select(e => new { e.Label!.Length }).Distinct().ToList();
+        });
+    }
+
+    // A projected set-op operand's flag lives on the operand's own Select; source1's shaper reads every combined row,
+    // so it must honour source2's flag too, or source2's null row reads as 0.
+    [Fact]
+    public void Union_operand_nullable_string_length_throws_on_null_row()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+
+        AssertThrowsNullableObjectMustHaveAValue(mode =>
+        {
+            using var context = CreateContext(collection, mode, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+            _ = context.Entities.Select(e => new { L = e.Id.Length })
+                .Union(context.Entities.Select(e => new { L = e.Label!.Length }))
+                .ToList();
+        });
+    }
+
+    // Min/Max/Average over a flagged bare projection reduce an all-null input to null, which the scalar-aggregate
+    // reader would read as 0 where EF throws; they decline. Driver-LINQ has no oracle (its unguarded $strLenCP fails
+    // server-side on null), so only the NativeOnly decline is asserted.
+    [Theory]
+    [InlineData("Max")]
+    [InlineData("Min")]
+    [InlineData("Average")]
+    public void Min_max_average_over_nullable_string_length_projection_decline(string op)
+    {
+        var collection = database.CreateCollection<StringKeyed>(values: [op]);
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = null }, new StringKeyed { Id = "abcde", Label = null }]);
+
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        var lengths = context.Entities.Select(e => e.Label!.Length);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => op switch
+        {
+            "Max" => (double)lengths.Max(),
+            "Min" => lengths.Min(),
+            _ => lengths.Average()
+        });
+    }
+
+    // Sum skips a null as EF's SUM does (COALESCE to 0), so it stays native and agrees with the oracle.
+    [Fact]
+    public void Sum_over_nullable_string_length_projection_goes_native()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = "yy" }]);
+
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var context = CreateContext(collection, mode, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+            return new List<int> { context.Entities.Select(e => e.Label!.Length).Sum() };
+        });
+
+        Assert.Equal([3], result);
+
+        // With a null row too: $sum skips the null (EF's SUM coalesces), so 1 + 2 = 3. NativeOnly against this hand
+        // oracle only: driver-LINQ's unguarded $strLenCP fails server-side on the null row.
+        var mixed = database.CreateCollection<StringKeyed>(nameof(Sum_over_nullable_string_length_projection_goes_native) + "_mixed");
+        mixed.InsertMany(
+        [
+            new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abc", Label = null },
+            new StringKeyed { Id = "abcde", Label = "yy" }
+        ]);
+        using var nativeOnly = CreateContext(mixed, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        Assert.Equal(3, nativeOnly.Entities.Select(e => e.Label!.Length).Sum());
+    }
+
+    private IMongoCollection<StringKeyed> CreateAllNullLabelCollection(string name, string variant)
+    {
+        var collection = database.CreateCollection<StringKeyed>(name, variant);
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = null }, new StringKeyed { Id = "abcde", Label = null }]);
+        return collection;
+    }
+
+    // Operators that reduce over a flagged alias downstream of the projection (a Distinct's flattened key, a set-op
+    // operand) see only an element ref, so they must consult the emit side's flag: over all-null input $max/$min/$avg
+    // answer null, which the scalar reader reads as 0 where EF's MAX-over-null throws. They decline. No driver oracle
+    // (its unguarded $strLenCP fails server-side on null), so only the NativeOnly decline is asserted.
+    [Theory]
+    [InlineData("Max")]
+    [InlineData("Min")]
+    [InlineData("Average")]
+    public void Selectorless_aggregate_over_distinct_nullable_string_length_declines(string op)
+    {
+        var collection = CreateAllNullLabelCollection(nameof(Selectorless_aggregate_over_distinct_nullable_string_length_declines), op);
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        var lengths = context.Entities.Select(e => e.Label!.Length).Distinct();
+        Assert.Throws<NativeTranslationNotSupportedException>(() => op switch
+        {
+            "Max" => (double)lengths.Max(),
+            "Min" => lengths.Min(),
+            _ => lengths.Average()
+        });
+    }
+
+    [Theory]
+    [InlineData("Max")]
+    [InlineData("Min")]
+    [InlineData("Average")]
+    [InlineData("MaxPlusOne")]
+    public void Selector_aggregate_over_distinct_nullable_string_length_declines(string op)
+    {
+        var collection = CreateAllNullLabelCollection(nameof(Selector_aggregate_over_distinct_nullable_string_length_declines), op);
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        var rows = context.Entities.Select(e => new { L = e.Label!.Length }).Distinct();
+        Assert.Throws<NativeTranslationNotSupportedException>(() => op switch
+        {
+            "Max" => (double)rows.Max(a => a.L),
+            "Min" => rows.Min(a => a.L),
+            "MaxPlusOne" => rows.Max(a => a.L + 1),
+            _ => rows.Average(a => a.L)
+        });
+    }
+
+    // A nullable read of the same Distinct alias reads the null and stays native: the flag gates only non-nullable reads.
+    [Fact]
+    public void Nullable_selector_aggregate_over_distinct_nullable_string_length_reads_null()
+    {
+        var collection = CreateAllNullLabelCollection(nameof(Nullable_selector_aggregate_over_distinct_nullable_string_length_reads_null), "n");
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        Assert.Null(context.Entities.Select(e => new { L = e.Label!.Length }).Distinct().Max(a => (int?)a.L));
+    }
+
+    // A GroupBy nested on the Distinct keys or accumulates over its flattened (flagged) alias. Before the fix each of
+    // these went native and answered 0 for the all-null input (Key 0; Max/Min/Average 0) where EF throws; the key
+    // part / accumulator guards now see the flag on the element reference and decline. No driver oracle (its
+    // unguarded $strLenCP fails server-side on null), so only the NativeOnly decline is asserted.
+    [Theory]
+    [InlineData("Key")]
+    [InlineData("KeyPlusOne")]
+    [InlineData("Max")]
+    [InlineData("Min")]
+    [InlineData("Average")]
+    public void GroupBy_over_distinct_nullable_string_length_declines(string shape)
+    {
+        var collection = CreateAllNullLabelCollection(nameof(GroupBy_over_distinct_nullable_string_length_declines), shape);
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        var rows = context.Entities.Select(e => new { e.Id, L = e.Label!.Length }).Distinct();
+        Assert.Throws<NativeTranslationNotSupportedException>(() => shape switch
+        {
+            "Key" => rows.GroupBy(x => x.L).Select(g => new { g.Key, C = g.Count() }).ToList().Select(r => (double)r.Key).ToList(),
+            "KeyPlusOne" => rows.GroupBy(x => x.L + 1).Select(g => new { g.Key, C = g.Count() }).ToList().Select(r => (double)r.Key).ToList(),
+            "Max" => rows.GroupBy(x => x.Id).Select(g => new { g.Key, M = g.Max(x => x.L) }).ToList().Select(r => (double)r.M).ToList(),
+            "Min" => rows.GroupBy(x => x.Id).Select(g => new { g.Key, M = g.Min(x => x.L) }).ToList().Select(r => (double)r.M).ToList(),
+            _ => rows.GroupBy(x => x.Id).Select(g => new { g.Key, M = g.Average(x => x.L) }).ToList().Select(r => r.M).ToList()
+        });
+    }
+
+    // Control: the nullable spelling of the same GroupBy key reads the null and stays native, so the guard above is
+    // the flag, not a blanket decline of grouping over a Distinct alias.
+    [Fact]
+    public void GroupBy_over_distinct_nullable_cast_of_string_length_reads_null()
+    {
+        var collection = CreateAllNullLabelCollection(nameof(GroupBy_over_distinct_nullable_cast_of_string_length_reads_null), "n");
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        var result = context.Entities.Select(e => new { e.Id, L = e.Label!.Length }).Distinct()
+            .GroupBy(x => (int?)x.L).Select(g => new { g.Key, C = g.Count() }).ToList();
+        var group = Assert.Single(result);
+        Assert.Null(group.Key);
+        Assert.Equal(2, group.C);
+    }
+
+    // A comparison over the flagged Distinct alias gets the renderer's null guard (MayBeNull sees the flag), so the null
+    // row fails `L < 3` as in EF's SQL (NULL < 3 is not true) instead of passing the aggregation dialect's
+    // null-below-everything `$lt` and then throwing on read. Hand oracle: only the "x" row (length 1) survives.
+    [Fact]
+    public void Where_over_distinct_nullable_string_length_excludes_the_null_row()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+
+        var result = context.Entities.Select(e => new { L = e.Label!.Length }).Distinct().Where(x => x.L < 3).ToList();
+
+        Assert.Equal([1], result.Select(r => r.L));
+    }
+
+    // The bare-parameter spelling over a bare computed Distinct key (TryResolveFlattenedAlias's SelfParam arm) must
+    // carry the same flag: without it the null row passes `$lt` and the flagged read then throws. Hand oracle: [1].
+    [Fact]
+    public void Where_on_bare_parameter_over_distinct_nullable_string_length_excludes_the_null_row()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+
+        var result = context.Entities.Select(e => e.Label!.Length).Distinct().Where(l => l < 3).ToList();
+
+        Assert.Equal([1], result);
+    }
+
+    // The same through a projected set-op operand: source1 is empty, so every reduced row is source2's flagged value.
+    [Fact]
+    public void Aggregate_over_set_op_operand_nullable_string_length_never_reads_null_as_zero()
+    {
+        var collection = CreateAllNullLabelCollection(nameof(Aggregate_over_set_op_operand_nullable_string_length_never_reads_null_as_zero), "c");
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        var exception = Record.Exception(() => context.Entities.Where(e => e.Id == "none").Select(e => e.Id.Length)
+            .Concat(context.Entities.Select(e => e.Label!.Length)).Max());
+        Assert.True(
+            exception is NativeTranslationNotSupportedException
+            || exception is InvalidOperationException { Message: NullableObjectMustHaveAValue },
+            $"Expected a decline or EF's exception, got {exception?.GetType().Name ?? "a result"}: {exception?.Message}");
+    }
+
+    private class JoinOwner
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+    }
+
+    private class JoinPet
+    {
+        public string Id { get; set; } = "";       // string primary key on the INNER side of a left join
+        public string OwnerId { get; set; } = "";
+    }
+
+    private class JoinDbContext(
+        TemporaryDatabaseFixture database, string owners, string pets, MongoQueryMode mode)
+        : DbContext(new DbContextOptionsBuilder<JoinDbContext>()
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+            .ReplaceService<IModelCacheKeyFactory, UncachedModelKeyFactory>()
+            .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .Options)
+    {
+        public DbSet<JoinOwner> Owners { get; set; } = null!;
+        public DbSet<JoinPet> Pets { get; set; } = null!;
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<JoinOwner>().ToCollection(owners);
+            modelBuilder.Entity<JoinPet>().ToCollection(pets);
+        }
+
+        private sealed class UncachedModelKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime) => System.Threading.Interlocked.Increment(ref _count);
+        }
+    }
+
+    // Control for the PK exemption: it is for the root document's own key only. The inner side of a left-outer join
+    // (GroupJoin + DefaultIfEmpty) is missing for an unmatched row even though the property is a key, so its Length
+    // behind a non-nullable int is read as int? and an unmatched row throws EF's "Nullable object must have a value."
+    // (EF relational's answer too), never 0 + 5. With every owner matched it reads the exact values, with parity.
+    [Fact]
+    public void Left_join_inner_string_primary_key_length_expression_throws_on_unmatched_row()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var owners = "jo" + suffix;
+        var pets = "jp" + suffix;
+        database.MongoDatabase.GetCollection<JoinOwner>(owners).InsertMany(
+            [new JoinOwner { Id = "o1", Name = "A" }, new JoinOwner { Id = "o2", Name = "B" }]);
+        database.MongoDatabase.GetCollection<JoinPet>(pets).InsertMany(
+            [new JoinPet { Id = "pet1", OwnerId = "o1" }, new JoinPet { Id = "pet22", OwnerId = "o2" }]);
+
+        List<(string Name, int L)> Run(MongoQueryMode mode)
+        {
+            using var context = new JoinDbContext(database, owners, pets, mode);
+            return context.Owners
+                .GroupJoin(context.Pets, o => o.Id, p => p.OwnerId, (o, ps) => new { o, ps })
+                .SelectMany(x => x.ps.DefaultIfEmpty(), (x, p) => new { x.o.Name, L = p!.Id.Length + 5 })
+                .OrderBy(r => r.Name)
+                .ToList()
+                .Select(r => (r.Name, r.L))
+                .ToList();
+        }
+
+        var result = NativeModeAssert.NativeAndParity(Run);
+        Assert.Equal([9, 10], result.Select(r => r.L));
+
+        // An owner with no pet: its inner side is missing.
+        database.MongoDatabase.GetCollection<JoinOwner>(owners).InsertOne(new JoinOwner { Id = "o3", Name = "C" });
+        AssertThrowsNullableObjectMustHaveAValue(mode => Run(mode));
+    }
+
+    // The bare-body join-scope arm (`... select p.Id.Length`, no wrapping `new`): an unmatched row must never read 0.
+    [Fact]
+    public void Bare_left_join_inner_string_length_never_reads_unmatched_as_zero()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var owners = "bo" + suffix;
+        var pets = "bp" + suffix;
+        database.MongoDatabase.GetCollection<JoinOwner>(owners).InsertMany(
+            [new JoinOwner { Id = "o1", Name = "A" }, new JoinOwner { Id = "o2", Name = "B" }]);
+        database.MongoDatabase.GetCollection<JoinPet>(pets).InsertMany([new JoinPet { Id = "pet1", OwnerId = "o1" }]);
+
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        {
+            using var context = new JoinDbContext(database, owners, pets, mode);
+            var exception = Record.Exception(() => context.Owners
+                .GroupJoin(context.Pets, o => o.Id, p => p.OwnerId, (o, ps) => new { o, ps })
+                .SelectMany(x => x.ps.DefaultIfEmpty(), (x, p) => p!.Id.Length)
+                .ToList());
+            Assert.True(
+                exception is NativeTranslationNotSupportedException && mode == MongoQueryMode.NativeOnly
+                || exception is InvalidOperationException { Message: NullableObjectMustHaveAValue }
+                || exception is MongoCommandException && mode == MongoQueryMode.Native,
+                $"{mode}: expected a decline or EF's exception, got {exception?.GetType().Name ?? "a result"}: {exception?.Message}");
         }
     }
 }

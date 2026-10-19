@@ -411,6 +411,39 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
                 .AsEnumerable().Select(x => F(x.X.D)).ToList());
     }
 
+    // Bare scalar operands with different aliases (`PlainDate` vs `UtcDate`, or a column vs a grouped aggregate's `_v`):
+    // the second operand is re-aliased to the first's alias, so the kind-shape comparison (which pairs operand leaves
+    // by alias) sees both leaves. (A bare computed date such as `o.PlainDate.AddDays(1)` doesn't bind natively at all
+    // yet, so it isn't covered here.)
+
+    [Fact]
+    public void Set_operation_of_bare_default_kind_date_columns_with_different_aliases_reads_back_with_the_default_kind()
+        => AssertNativeMatchesEntities(DateTimeKind.Utc, (q, _) =>
+            q.Select(o => o.PlainDate).Union(q.Select(o => o.UtcDate)).AsEnumerable().Select(F).ToList());
+
+    [Fact]
+    public void Set_operation_of_a_bare_local_kind_column_and_a_local_kind_aggregate_reads_back_with_that_kind()
+    {
+        AssertNativeMatchesEntities(DateTimeKind.Local, (q, _) =>
+            q.Select(o => o.LocalDate).Concat(q.GroupBy(o => o.Country).Select(g => g.Max(o => o.LocalDate)))
+                .AsEnumerable().Select(F).ToList());
+        AssertNativeMatchesEntities(DateTimeKind.Local, (q, _) =>
+            q.GroupBy(o => o.Country).Select(g => g.Max(o => o.LocalDate)).Concat(q.Select(o => o.LocalDate))
+                .AsEnumerable().Select(F).ToList());
+    }
+
+    [Fact]
+    public void Set_operation_of_bare_date_operands_mixing_local_and_default_kinds_declines()
+    {
+        AssertDeclines((q, _) =>
+            q.Select(o => o.LocalDate).Concat(q.Select(o => o.PlainDate)).AsEnumerable().Select(F).ToList());
+        AssertDeclines((q, _) =>
+            q.Select(o => o.PlainDate).Concat(q.Select(o => o.LocalDate)).AsEnumerable().Select(F).ToList());
+        AssertDeclines((q, _) =>
+            q.Select(o => o.PlainDate).Concat(q.GroupBy(o => o.Country).Select(g => g.Max(o => o.LocalDate)))
+                .AsEnumerable().Select(F).ToList());
+    }
+
     [Fact]
     public void Correlated_reducer_leaf_reads_back_with_the_property_kind()
     {
@@ -485,6 +518,25 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
     [Fact]
     public void Date_component_projection_over_a_local_kind_property_declines()
         => AssertDeclines((q, _) => q.Select(o => new { D = o.LocalDate.Date }).AsEnumerable().Select(x => F(x.D)).ToList());
+
+    // The server computes TimeOfDay from the UTC instant, where C# reads the Local-kind value's local time of day
+    // (EF-459); unlike Year/Hour, this shape is new to the native path, so it declines rather than join that gap.
+    [Fact]
+    public void TimeOfDay_projection_over_a_local_kind_property_declines()
+        => AssertDeclines((q, _) => q.Select(o => new { T = o.LocalDate.TimeOfDay }).AsEnumerable().Select(x => x.T.Ticks.ToString()).ToList());
+
+    [Fact]
+    public void Bare_TimeOfDay_projection_over_a_local_kind_property_declines()
+        => AssertDeclines((q, _) => q.Select(o => o.LocalDate.TimeOfDay).AsEnumerable().Select(t => t.Ticks.ToString()).ToList());
+
+    [Fact]
+    public void TimeOfDay_projection_over_a_utc_kind_property_stays_native()
+    {
+        var seed = Seed();
+        var native = NativeModeAssert.NativeAndParity(mode => Execute(seed, mode, (q, _) =>
+            q.Select(o => o.UtcDate.TimeOfDay).AsEnumerable().Select(t => t.Ticks.ToString()).ToList()));
+        Assert.Equal(Sorted([D1.TimeOfDay.Ticks.ToString(), D2.TimeOfDay.Ticks.ToString(), D3.TimeOfDay.Ticks.ToString()]), native);
+    }
 
     [Fact]
     public void Computed_group_key_over_a_local_kind_property_declines()

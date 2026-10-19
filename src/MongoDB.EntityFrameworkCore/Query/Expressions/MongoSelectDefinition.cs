@@ -55,7 +55,8 @@ internal sealed class MongoSelectDefinition
     public IReadOnlyList<MongoSelectOp> TrailingOps => _trailingOps;
 
     // Ops recorded once JoinInnerAccessConfirmed flips, incl. the confirming Where/OrderBy and any later reducer
-    // $limit: the Where decides "first", so it must run before the reducer's $limit. Exclusive with SetOperation.
+    // $limit: the Where decides "first", so it must run before the reducer's $limit. Recording stops once a set op
+    // attaches (ActiveOps then targets TrailingOps); a projected join-scope source1 keeps what it recorded before.
     private readonly List<MongoSelectOp> _postJoinOps = [];
 
     /// <summary>
@@ -295,6 +296,22 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal void ClearProjections() => _projections.Clear();
 
+    /// <summary>
+    /// Renames this select's single projection to <paramref name="alias"/>, keeping its expression and source, so a
+    /// bare scalar set-op operand emits the first operand's alias (see <c>CanAlignBareScalarAliases</c> in the
+    /// queryable method translator, the only caller).
+    /// </summary>
+    internal void ReplaceSingleProjectionAlias(string alias)
+    {
+        if (_projections.Count != 1)
+        {
+            throw new InvalidOperationException(
+                $"Expected exactly one projection to re-alias, found {_projections.Count}.");
+        }
+
+        _projections[0] = _projections[0] with { Alias = alias };
+    }
+
     // Projection-alias overrides: the single source for every site that would otherwise derive a $project alias
     // (and the name the DOM shaper reads by) from ProjectionMember.Last?.Name. A map rather than one string so a
     // named member can also decouple alias from document path ("Notes" -> "Home.Notes").
@@ -436,6 +453,62 @@ internal sealed class MongoSelectDefinition
             if (projection.Alias == alias)
             {
                 leaf = projection;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The staged output under <paramref name="alias"/> whose <see cref="MongoProjection.ThrowsOnNull"/> is set, in
+    /// <see cref="Projection"/> or in a projected set-op operand's own projection: the combined rows are all read
+    /// through this select's shaper, so an operand's null-propagated leaf must throw on null there too.
+    /// </summary>
+    /// <remarks>
+    /// The read side's only source for the flag (<c>MongoProjectionBindingRemovingExpressionVisitor</c>); the emit side
+    /// set it from the same <c>ClassifyNonNullableValueRead</c> call that admitted the leaf.
+    /// </remarks>
+    internal MongoProjection? FindThrowOnNullProjection(string alias)
+    {
+        foreach (var projection in _projections)
+        {
+            if (projection.ThrowsOnNull && projection.Alias == alias)
+            {
+                return projection;
+            }
+        }
+
+        foreach (var link in _setOperations)
+        {
+            if (link.OperandsProjected && link.OperandSelect.FindThrowOnNullProjection(alias) is { } operandProjection)
+            {
+                return operandProjection;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Whether the output under <paramref name="alias"/> is a native <c>DateTime.TimeOfDay</c> leaf
+    /// (<see cref="MongoDatePart.TimeOfDay"/>), here or in a projected set-op operand, so the read side must read its
+    /// milliseconds through <c>BsonSerializerFactory.TimeOfDayMillisecondsSerializer</c>.
+    /// </summary>
+    internal bool IsTimeOfDayProjection(string alias)
+    {
+        foreach (var projection in _projections)
+        {
+            if (projection.Alias == alias)
+            {
+                return MongoDatePartExpression.IsTimeOfDay(projection.Expression);
+            }
+        }
+
+        foreach (var link in _setOperations)
+        {
+            if (link.OperandsProjected && link.OperandSelect.IsTimeOfDayProjection(alias))
+            {
                 return true;
             }
         }
@@ -774,6 +847,96 @@ internal sealed class MongoSelectDefinition
     /// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsProjectedValueFreeOperator</c>.
     /// </remarks>
     internal bool HasClientCaseMappingProjectionLeaf { get; set; }
+
+    /// <summary>
+    /// <see langword="true"/> when the committed projection has a row-independent leaf the shaper evaluates
+    /// client-side and that is never projected (<c>NativeProjectionBinder.IsRowIndependentLeaf</c>: a closed
+    /// <c>new</c>, <c>new { }</c>, a captured value the <c>$literal</c> path can't render, a constructor argument of a
+    /// <c>MemberInit</c>). Set only in <c>NativeProjectionBinder</c>'s commit block. A <c>$literal</c>-rendered
+    /// constant or parameter is server-side and never sets it.
+    /// </summary>
+    /// <remarks>
+    /// The server never sees the value, so no server operator may read it: a set op (the shaper reused for every
+    /// combined row would show source1's value on source2's rows, and dedup would ignore the leaf) declines in
+    /// <c>IsPlainProjectedSelect</c>/<c>IsPlainDistinctSelect</c>, and every other operator that reads projected
+    /// values declines in <c>MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall</c>. <c>Distinct</c>
+    /// stays native: the value is the same for every row of one execution, so deduplicating by the projected leaves
+    /// alone is exact. When every leaf is client-evaluated the binder projects a constant sentinel
+    /// (<c>NativeProjectionBinder.ClientEvaluatedSentinelAlias</c>) so <see cref="Route"/> stays
+    /// <see cref="NativeRoute.Projection"/>.
+    /// </remarks>
+    internal bool HasClientEvaluatedProjectionLeaf { get; set; }
+
+    private HashSet<string>? _clientConditionalMembers;
+
+    /// <summary>
+    /// Records that the leaf of <paramref name="memberName"/> (<see cref="BareProjectionMemberKey"/> for a bare body) is
+    /// a ternary over client-only constructions (<c>c.City == "Seattle" ? new P { Id = "PAY" } : new P { ... }</c>):
+    /// only its test is projected, under that member's alias, and the shaper evaluates the conditional. Written only
+    /// by <c>NativeProjectionBinder</c>'s commit block, which also sets <see cref="HasClientEvaluatedProjectionLeaf"/>.
+    /// </summary>
+    internal void AddClientConditionalMember(string memberName)
+        => (_clientConditionalMembers ??= new HashSet<string>(StringComparer.Ordinal)).Add(memberName);
+
+    /// <summary>
+    /// <see langword="true"/> when some leaf is a client-evaluated ternary (see <see cref="AddClientConditionalMember"/>).
+    /// Unlike a row-independent leaf, its value differs between rows, so a <c>Distinct</c> over the projection (which
+    /// would dedup by the projected test and branch reads, not by the constructed values) declines too.
+    /// </summary>
+    internal bool HasClientConditionalProjectionLeaf
+        => _clientConditionalMembers is { Count: > 0 };
+
+    /// <summary>
+    /// Whether <paramref name="memberName"/> (<c>projectionMember.Last?.Name</c>; <see langword="null"/> for a bare
+    /// body) holds a client-evaluated ternary whose staged test is <paramref name="test"/> (structurally, after
+    /// <see cref="RebaseProjectionSources"/>). The read side's only admission test, so it binds exactly what the emit
+    /// side staged.
+    /// </summary>
+    internal bool IsClientConditionalLeaf(string? memberName, Expression test)
+        => IsRecordedClientConditionalLeaf(memberName, test);
+
+    private HashSet<string>? _clientConditionalReadAliases;
+
+    /// <summary>
+    /// Records that the projection under <paramref name="alias"/> is a row read inside a client-evaluated ternary's
+    /// branch (<c>Name = x.Name</c>). Written only by <c>NativeProjectionBinder</c>'s commit block.
+    /// </summary>
+    internal void AddClientConditionalRead(string alias)
+        => (_clientConditionalReadAliases ??= new HashSet<string>(StringComparer.Ordinal)).Add(alias);
+
+    /// <summary>
+    /// The alias the emit side staged a client-evaluated ternary's branch read <paramref name="read"/> under, matched
+    /// structurally against the staged read (after <see cref="RebaseProjectionSources"/>). The read side takes the
+    /// alias from here, never re-deriving it from the member path, and registers it explicitly
+    /// (<c>MongoQueryExpression.ApplyProjection</c>).
+    /// </summary>
+    internal bool TryGetClientConditionalReadAlias(Expression read, [NotNullWhen(true)] out string? alias)
+    {
+        alias = null;
+        if (_clientConditionalReadAliases is null)
+        {
+            return false;
+        }
+
+        foreach (var projection in _projections)
+        {
+            if (_clientConditionalReadAliases.Contains(projection.Alias)
+                && projection.Source is { } source
+                && Microsoft.EntityFrameworkCore.Query.ExpressionEqualityComparer.Instance.Equals(source, read))
+            {
+                alias = projection.Alias;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsRecordedClientConditionalLeaf(string? memberName, Expression test)
+        => _clientConditionalMembers?.Contains(memberName ?? BareProjectionMemberKey) == true
+           && TryGetProjectionLeaf(memberName, out var leaf)
+           && leaf.Value.Source is { } source
+           && Microsoft.EntityFrameworkCore.Query.ExpressionEqualityComparer.Instance.Equals(source, test);
 
     /// <summary>
     /// <see langword="true"/> when <see cref="Route"/> is <see cref="NativeRoute.WholeEntity"/> only because the
