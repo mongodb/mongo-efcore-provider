@@ -1,0 +1,366 @@
+// REVIEW-HACK: temporary probe file for the native-vs-driver regression review. Delete before committing.
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+using MongoDB.EntityFrameworkCore.Infrastructure;
+
+namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
+
+[XUnitCollection("QueryTests")]
+public class ZzReviewProbeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
+{
+    private static readonly string OutFile = Environment.GetEnvironmentVariable("REVIEW_PROBE_OUT") ?? "/tmp/review-probes.txt";
+    private static readonly MongoQueryMode[] Modes = [MongoQueryMode.DriverLinq, MongoQueryMode.Native, MongoQueryMode.NativeOnly];
+
+    private static void Record(string probe, Func<MongoQueryMode, object?> run)
+    {
+        var lines = new List<string> { $"### {probe}" };
+        foreach (var mode in Modes)
+        {
+            string outcome;
+            try
+            {
+                outcome = Format(run(mode));
+            }
+            catch (Exception ex)
+            {
+                var inner = ex;
+                while (inner.InnerException != null && inner is System.Reflection.TargetInvocationException) inner = inner.InnerException;
+                outcome = $"THROW {inner.GetType().Name}: {inner.Message.Split('\n')[0]}";
+                if (outcome.Length > 260) outcome = outcome[..260];
+            }
+            lines.Add($"  {mode,-10} => {outcome}");
+        }
+        lock (OutFile) File.AppendAllLines(OutFile, lines);
+    }
+
+    private static string Format(object? value)
+        => value switch
+        {
+            null => "<null>",
+            string s => $"\"{s}\"",
+            System.Collections.IEnumerable e => "[" + string.Join(", ", e.Cast<object?>().Select(Format)) + "]",
+            _ => value.ToString() ?? "<null>"
+        };
+
+    // ── Model ──────────────────────────────────────────────────────────────
+
+    public enum Level { Low = 1, Mid = 2, High = 10 }
+
+    public class Row
+    {
+        public ObjectId Id { get; set; }
+        public string Title { get; set; } = "";
+        public int Rank { get; set; }
+        public int? Score { get; set; }
+        public Level Level { get; set; }
+        public char Initial { get; set; }
+        public float Ratio { get; set; }
+        public TimeSpan Duration { get; set; }
+        public DateOnly Day { get; set; }
+        public DateTime Created { get; set; }
+        public string? Name { get; set; }
+    }
+
+    public class Customer
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public Address? Address { get; set; }
+    }
+
+    public class Address
+    {
+        public int Id { get; set; }
+        public int CustomerId { get; set; }
+        public string City { get; set; } = "";
+    }
+
+    public class Owner
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    public abstract class Animal
+    {
+        public int Id { get; set; }
+        public int OwnerId { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    public class Dog : Animal;
+    public class Cat : Animal;
+
+    public class Doc
+    {
+        [MongoDB.Bson.Serialization.Attributes.BsonRepresentation(BsonType.ObjectId)]
+        public string Id { get; set; } = "";
+        public string Code { get; set; } = "";
+        public Guid Gid { get; set; }
+        public int N { get; set; }
+        public double? D { get; set; }
+    }
+
+    public class Shipment
+    {
+        public int Id { get; set; }
+        public string? Region { get; set; }
+    }
+
+    public class Rate
+    {
+        public int Id { get; set; }
+        public string? Region { get; set; }
+    }
+
+    private sealed class ProbeContext(DbContextOptions options, string prefix) : DbContext(options)
+    {
+        public DbSet<Row> Rows => Set<Row>();
+        public DbSet<Customer> Customers => Set<Customer>();
+        public DbSet<Address> Addresses => Set<Address>();
+        public DbSet<Owner> Owners => Set<Owner>();
+        public DbSet<Animal> Animals => Set<Animal>();
+        public DbSet<Dog> Dogs => Set<Dog>();
+        public DbSet<Shipment> Shipments => Set<Shipment>();
+        public DbSet<Doc> Docs => Set<Doc>();
+        public DbSet<Rate> Rates => Set<Rate>();
+        public string Prefix { get; } = prefix;
+
+        protected override void OnModelCreating(ModelBuilder mb)
+        {
+            mb.Entity<Row>().ToCollection(Prefix + "Rows");
+            mb.Entity<Customer>(b =>
+            {
+                b.ToCollection(Prefix + "Customers");
+                b.HasOne(c => c.Address).WithOne().HasForeignKey<Address>(a => a.CustomerId);
+            });
+            mb.Entity<Address>().ToCollection(Prefix + "Addresses");
+            mb.Entity<Owner>().ToCollection(Prefix + "Owners");
+            mb.Entity<Animal>().ToCollection(Prefix + "Animals");
+            mb.Entity<Dog>();
+            mb.Entity<Cat>();
+            mb.Entity<Shipment>().ToCollection(Prefix + "Shipments");
+            mb.Entity<Doc>(b =>
+            {
+                b.ToCollection(Prefix + "Docs");
+                b.Property(x => x.Code).HasConversion(v => "p_" + v, v => v.Substring(2));
+            });
+            mb.Entity<Rate>().ToCollection(Prefix + "Rates");
+        }
+    }
+
+    private sealed class PrefixCacheKeyFactory : IModelCacheKeyFactory
+    {
+        public object Create(DbContext context, bool designTime) => ((ProbeContext)context).Prefix;
+    }
+
+    private ProbeContext Ctx(string prefix, MongoQueryMode mode)
+    {
+        var b = new DbContextOptionsBuilder<ProbeContext>()
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+            .ReplaceService<IModelCacheKeyFactory, PrefixCacheKeyFactory>()
+            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+        new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+        return new ProbeContext(b.Options, prefix);
+    }
+
+    private IMongoCollection<BsonDocument> Raw(string prefix, string name)
+        => database.MongoDatabase.GetCollection<BsonDocument>(prefix + name);
+
+    private string SeedRows()
+    {
+        var p = "P" + Guid.NewGuid().ToString("N")[..8];
+        var now = DateTime.UtcNow;
+        Raw(p, "Rows").InsertMany(
+        [
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", "a" }, { "Rank", 1 }, { "Score", 10 }, { "Level", 2 }, { "Initial", 65 }, { "Ratio", (double)1.1f }, { "Duration", "00:00:05" }, { "Day", new DateTime(2020, 1, 2, 0, 0, 0, DateTimeKind.Utc) }, { "Created", now }, { "Name", "x" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", "b" }, { "Rank", 2 }, { "Score", BsonNull.Value }, { "Level", 10 }, { "Initial", 66 }, { "Ratio", (double)2.5f }, { "Duration", "00:01:00" }, { "Day", new DateTime(2021, 1, 2, 0, 0, 0, DateTimeKind.Utc) }, { "Created", now.AddDays(-3) }, { "Name", BsonNull.Value } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", "c" }, { "Level", 1 }, { "Initial", 67 }, { "Ratio", 0.5 }, { "Duration", "00:00:01" }, { "Day", new DateTime(2019, 1, 2, 0, 0, 0, DateTimeKind.Utc) }, { "Created", now.AddDays(-10) } },
+        ]);
+        return p;
+    }
+
+    // ── Probes ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Probe_computed_non_nullable_over_null_or_missing()
+    {
+        var p = SeedRows();
+        Record("Score!.Value + 1 (anon)", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => new { x.Title, V = x.Score!.Value + 1 }).ToList().Select(a => $"{a.Title}={a.V}").ToList(); });
+        Record("(int)Score! * 2 (bare)", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => (int)x.Score! * 2).ToList(); });
+        Record("Math.Abs(Score!.Value)", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => new { V = Math.Abs(x.Score!.Value) }).ToList().Select(a => a.V).ToList(); });
+        Record("Rank + 1 with Rank missing", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => new { x.Title, V = x.Rank + 1 }).ToList().Select(a => $"{a.Title}={a.V}").ToList(); });
+        Record("Rank (bare) with Rank missing", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => x.Rank).ToList(); });
+        Record("Score!.Value / 2", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => new { V = x.Score!.Value / 2 }).ToList().Select(a => a.V).ToList(); });
+        Record("Score > 5 ? Score!.Value : 0", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => new { V = x.Rank > 1 ? x.Score!.Value : 0 }).ToList().Select(a => a.V).ToList(); });
+    }
+
+    [Fact]
+    public void Probe_string_concat_operand_types()
+    {
+        var p = SeedRows();
+        Record("\"S:\" + Level (enum)", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => "S:" + x.Level).ToList(); });
+        Record("Title + Initial (char)", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => x.Title + x.Initial).ToList(); });
+        Record("Title + Ratio (float)", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => x.Title + x.Ratio).ToList(); });
+        Record("Title + Day (DateOnly)", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => x.Title + x.Day).ToList(); });
+        Record("Title + Duration (TimeSpan)", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => x.Title + x.Duration).ToList(); });
+        Record("Title + Name (null string)", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => x.Title + x.Name).ToList(); });
+        Record("Where Title + Level == \"aMid\"", m => { using var db = Ctx(p, m); return db.Rows.AsNoTracking().Where(x => x.Title + x.Level == "aMid").Select(x => x.Title).ToList(); });
+    }
+
+    [Fact]
+    public void Probe_min_max_non_numeric()
+    {
+        var p = SeedRows();
+        Record("Max(Level)", m => { using var db = Ctx(p, m); return db.Rows.Max(x => x.Level); });
+        Record("Min(Level)", m => { using var db = Ctx(p, m); return db.Rows.Min(x => x.Level); });
+        Record("Select(Level).Max()", m => { using var db = Ctx(p, m); return db.Rows.Select(x => x.Level).Max(); });
+        Record("Max(Initial) char", m => { using var db = Ctx(p, m); return db.Rows.Max(x => x.Initial); });
+        Record("Max(Duration) TimeSpan", m => { using var db = Ctx(p, m); return db.Rows.Max(x => x.Duration); });
+        Record("Max(Day) DateOnly", m => { using var db = Ctx(p, m); return db.Rows.Max(x => x.Day); });
+        Record("Max(Ratio) float", m => { using var db = Ctx(p, m); return db.Rows.Max(x => x.Ratio); });
+        Record("Max(Name) string", m => { using var db = Ctx(p, m); return db.Rows.Max(x => x.Name); });
+        Record("Max(Name) string over empty", m => { using var db = Ctx(p, m); return db.Rows.Where(x => x.Title == "zzz").Max(x => x.Name); });
+        Record("Min(Created)", m => { using var db = Ctx(p, m); return db.Rows.Min(x => x.Created).Kind; });
+    }
+
+    [Fact]
+    public void Probe_sum_overflow()
+    {
+        var p = "P" + Guid.NewGuid().ToString("N")[..8];
+        Raw(p, "Rows").InsertMany(
+        [
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", "a" }, { "Rank", int.MaxValue } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", "b" }, { "Rank", 5 } },
+        ]);
+        Record("Sum(Rank) overflow", m => { using var db = Ctx(p, m); return db.Rows.Sum(x => x.Rank); });
+        Record("Select(Rank).Sum() overflow", m => { using var db = Ctx(p, m); return db.Rows.Select(x => x.Rank).Sum(); });
+        Record("Rank + Rank projection overflow", m => { using var db = Ctx(p, m); return db.Rows.OrderBy(x => x.Title).Select(x => x.Rank + x.Rank).ToList(); });
+    }
+
+    private static List<string> RecentTitles(ProbeContext db)
+        => db.Rows.AsNoTracking().Where(r => r.Created > DateTime.UtcNow.AddSeconds(-3)).Select(r => r.Title).ToList();
+
+    private static List<string> RecentTitlesNow(ProbeContext db)
+        => db.Rows.AsNoTracking().Where(r => r.Created > DateTime.Now.AddHours(-1)).Select(r => r.Title).ToList();
+
+    [Fact]
+    public void Probe_utcnow_add_staleness()
+    {
+        foreach (var mode in Modes)
+        {
+            var p = "P" + Guid.NewGuid().ToString("N")[..8];
+            Raw(p, "Rows").InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", "fresh" }, { "Created", DateTime.UtcNow } });
+            string outcome;
+            try
+            {
+                List<string> first, second;
+                using (var db = Ctx(p, mode)) first = RecentTitles(db);
+                Thread.Sleep(5000);
+                using (var db = Ctx(p, mode)) second = RecentTitles(db);
+                outcome = $"first={Format(first)} after5s={Format(second)} (expected [\"fresh\"] then [])";
+            }
+            catch (Exception ex) { outcome = $"THROW {ex.GetType().Name}: {ex.Message.Split('\n')[0]}"; }
+            lock (OutFile) File.AppendAllLines(OutFile, [$"### UtcNow.AddSeconds(-3) staleness [{mode}]", "  " + outcome]);
+        }
+
+        Record($"Now.AddHours(-1) local-offset (TZ offset now {TimeZoneInfo.Local.GetUtcOffset(DateTime.Now)}) row Created=UtcNow-30min", m =>
+        {
+            var p = "P" + Guid.NewGuid().ToString("N")[..8];
+            Raw(p, "Rows").InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", "halfhour" }, { "Created", DateTime.UtcNow.AddMinutes(-30) } });
+            using var db = Ctx(p, m);
+            return RecentTitlesNow(db);
+        });
+    }
+
+    [Fact]
+    public void Probe_principal_side_required_fk_include()
+    {
+        var p = "P" + Guid.NewGuid().ToString("N")[..8];
+        Raw(p, "Customers").InsertMany([new BsonDocument { { "_id", 1 }, { "Name", "with" } }, new BsonDocument { { "_id", 2 }, { "Name", "without" } }]);
+        Raw(p, "Addresses").InsertMany([new BsonDocument { { "_id", 10 }, { "CustomerId", 1 }, { "City", "Paris" } }]);
+        Record("Customers.Include(Address)", m => { using var db = Ctx(p, m); return db.Customers.Include(c => c.Address).OrderBy(c => c.Id).ToList().Select(c => $"{c.Name}:{c.Address?.City ?? "<none>"}").ToList(); });
+        Record("Customers.Select(c.Address.City)", m => { using var db = Ctx(p, m); return db.Customers.OrderBy(c => c.Id).Select(c => new { c.Name, City = c.Address!.City }).ToList().Select(a => $"{a.Name}:{a.City ?? "<null>"}").ToList(); });
+        Record("Customers.Where(Address == null)", m => { using var db = Ctx(p, m); return db.Customers.Where(c => c.Address == null).Select(c => c.Name).ToList(); });
+    }
+
+    [Fact]
+    public void Probe_tph_derived_join_and_nullable_key_join()
+    {
+        var p = "P" + Guid.NewGuid().ToString("N")[..8];
+        Raw(p, "Owners").InsertMany([new BsonDocument { { "_id", 1 }, { "Name", "o1" } }]);
+        Raw(p, "Animals").InsertMany(
+        [
+            new BsonDocument { { "_id", 1 }, { "_t", "Dog" }, { "OwnerId", 1 }, { "Name", "rex" } },
+            new BsonDocument { { "_id", 2 }, { "_t", "Cat" }, { "OwnerId", 1 }, { "Name", "tom" } },
+        ]);
+        Record("Owners.Join(Dogs)", m => { using var db = Ctx(p, m); return db.Owners.Join(db.Dogs, o => o.Id, d => d.OwnerId, (o, d) => o.Name + "-" + d.Name).ToList(); });
+        Record("Owners.Join(Animals.OfType<Dog>)", m => { using var db = Ctx(p, m); return db.Owners.Join(db.Animals.OfType<Dog>(), o => o.Id, d => d.OwnerId, (o, d) => o.Name + "-" + d.Name).ToList(); });
+
+        Raw(p, "Shipments").InsertMany([new BsonDocument { { "_id", 1 }, { "Region", "EU" } }, new BsonDocument { { "_id", 2 }, { "Region", BsonNull.Value } }, new BsonDocument { { "_id", 3 } }]);
+        Raw(p, "Rates").InsertMany([new BsonDocument { { "_id", 11 }, { "Region", "EU" } }, new BsonDocument { { "_id", 12 }, { "Region", BsonNull.Value } }, new BsonDocument { { "_id", 13 } }]);
+        Record("Shipments.Join(Rates on nullable Region) expected [1-11]", m => { using var db = Ctx(p, m); return db.Shipments.Join(db.Rates, s => s.Region, r => r.Region, (s, r) => s.Id + "-" + r.Id).ToList().OrderBy(x => x).ToList(); });
+    }
+
+    [Fact]
+    public void Probe_union_missing_vs_null_and_last_ties()
+    {
+        var p = SeedRows();
+        // Name: "x", null, missing
+        Record("Select(Name).Union(Select(Name)) expected [null, x]", m => { using var db = Ctx(p, m); return db.Rows.Select(x => x.Name).Union(db.Rows.Select(x => x.Name)).ToList().OrderBy(x => x).ToList(); });
+        Record("Select(Name).Distinct() expected [null, x]", m => { using var db = Ctx(p, m); return db.Rows.Select(x => x.Name).Distinct().ToList().OrderBy(x => x).ToList(); });
+        Record("Select(new{Name}).Distinct().Count expected 2", m => { using var db = Ctx(p, m); return db.Rows.Select(x => new { x.Name }).Distinct().Count(); });
+        Record("Count(Name == null) expected 2", m => { using var db = Ctx(p, m); return db.Rows.Count(x => x.Name == null); });
+        Record("Where(Name != \"x\") expected [b,c]", m => { using var db = Ctx(p, m); return db.Rows.Where(x => x.Name != "x").OrderBy(x => x.Title).Select(x => x.Title).ToList(); });
+        Record("Where(Score < 5) LINQ expects []", m => { using var db = Ctx(p, m); return db.Rows.Where(x => x.Score < 5).OrderBy(x => x.Title).Select(x => x.Title).ToList(); });
+        Record("Where(!(Score > 5)) LINQ expects [b,c]", m => { using var db = Ctx(p, m); return db.Rows.Where(x => !(x.Score > 5)).OrderBy(x => x.Title).Select(x => x.Title).ToList(); });
+        Record("Select(Score < 5) LINQ expects [F,F,F]", m => { using var db = Ctx(p, m); return db.Rows.OrderBy(x => x.Title).Select(x => x.Score < 5).ToList(); });
+        Record("Select(Score == null) expects [F,T,T]", m => { using var db = Ctx(p, m); return db.Rows.OrderBy(x => x.Title).Select(x => x.Score == null).ToList(); });
+        Record("Select(Name ?? \"d\") expects [x,d,d]", m => { using var db = Ctx(p, m); return db.Rows.OrderBy(x => x.Title).Select(x => x.Name ?? "d").ToList(); });
+        Record("Select(Name == null ? 1 : 2) expects [2,1,1]", m => { using var db = Ctx(p, m); return db.Rows.OrderBy(x => x.Title).Select(x => x.Name == null ? 1 : 2).ToList(); });
+        Record("Where(Name.Length > 0) expects [a]", m => { using var db = Ctx(p, m); return db.Rows.Where(x => x.Name!.Length > 0).Select(x => x.Title).ToList(); });
+        Record("Where(Rank == 0) LINQ expects [c] (missing->default)", m => { using var db = Ctx(p, m); return db.Rows.Where(x => x.Rank == 0).Select(x => x.Title).ToList(); });
+    }
+
+    [Fact]
+    public void Probe_null_parameter_vs_non_nullable_and_string_methods_on_represented()
+    {
+        var p = SeedRows();
+        int? minRank = null;
+        Record("Where(minRank == null || Rank >= minRank) minRank=null expects [a,b,c]", m => { using var db = Ctx(p, m); return db.Rows.Where(x => minRank == null || x.Rank >= minRank).OrderBy(x => x.Title).Select(x => x.Title).ToList(); });
+        Record("Where(Rank == minRank) minRank=null expects []", m => { using var db = Ctx(p, m); return db.Rows.Where(x => x.Rank == minRank).Select(x => x.Title).ToList(); });
+        Record("Where(Rank != minRank) minRank=null expects [a,b,c]", m => { using var db = Ctx(p, m); return db.Rows.Where(x => x.Rank != minRank).OrderBy(x => x.Title).Select(x => x.Title).ToList(); });
+        Level? lvl = null;
+        Record("Where(Level == lvl) lvl=null expects []", m => { using var db = Ctx(p, m); return db.Rows.Where(x => x.Level == lvl).Select(x => x.Title).ToList(); });
+        var ids = new List<int?> { 1, null };
+        Record("Where(ids.Contains(Rank)) ids=[1,null] expects [a] (or [a,c] if missing->0? no)", m => { using var db = Ctx(p, m); return db.Rows.Where(x => ids.Contains(x.Rank)).Select(x => x.Title).ToList(); });
+
+        var oid = ObjectId.GenerateNewId();
+        var g = Guid.NewGuid();
+        Raw(p, "Docs").InsertMany(
+        [
+            new BsonDocument { { "_id", oid }, { "Code", "p_abc" }, { "Gid", new BsonBinaryData(g, GuidRepresentation.Standard) }, { "N", 1 }, { "D", BsonNull.Value } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Code", "p_zzz" }, { "Gid", new BsonBinaryData(Guid.NewGuid(), GuidRepresentation.Standard) }, { "N", 2 }, { "D", 3.0 } },
+        ]);
+        var prefix = oid.ToString()[..10];
+        Record($"Docs.Where(Id.StartsWith(oidprefix)) expects [abc]", m => { using var db = Ctx(p, m); return db.Docs.Where(d => d.Id.StartsWith(prefix)).Select(d => d.Code).ToList(); });
+        Record("Docs.Where(Code.StartsWith(\"ab\")) converter expects [abc]", m => { using var db = Ctx(p, m); return db.Docs.Where(d => d.Code.StartsWith("ab")).Select(d => d.Code).ToList(); });
+        Record("Docs.Where(Code == \"abc\") converter expects [abc]", m => { using var db = Ctx(p, m); return db.Docs.Where(d => d.Code == "abc").Select(d => d.Code).ToList(); });
+        Record("Docs.Where(Code.ToLower() == \"abc\") converter expects [abc]", m => { using var db = Ctx(p, m); return db.Docs.Where(d => d.Code.ToLower() == "abc").Select(d => d.Code).ToList(); });
+        Record("Docs.Where(Code.Contains(\"b\")) converter expects [abc]", m => { using var db = Ctx(p, m); return db.Docs.Where(d => d.Code.Contains("b")).Select(d => d.Code).ToList(); });
+        Record("Docs.Where(Tuple(Gid,N) == Tuple(g,1)) expects [abc]", m => { using var db = Ctx(p, m); return db.Docs.Where(d => new Tuple<Guid, int>(d.Gid, d.N) == new Tuple<Guid, int>(g, 1)).Select(d => d.Code).ToList(); });
+        Record("Docs.Where(Gid == g) expects [abc]", m => { using var db = Ctx(p, m); return db.Docs.Where(d => d.Gid == g).Select(d => d.Code).ToList(); });
+        Record("Docs.Where(Math.Sign(D.Value) < 0) expects [] (or throw)", m => { using var db = Ctx(p, m); return db.Docs.Where(d => Math.Sign(d.D!.Value) < 0).Select(d => d.Code).ToList(); });
+        Record("Docs.Where(Math.Max(D.Value, 1) > 2) expects [zzz]", m => { using var db = Ctx(p, m); return db.Docs.Where(d => Math.Max(d.D!.Value, 1.0) > 2).Select(d => d.Code).ToList(); });
+    }
+}

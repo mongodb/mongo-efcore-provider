@@ -1,0 +1,30 @@
+### M25 Where(e => e.Value == 3_000_000_000L) [stored ints -1294967296, 5]
+  main => OK [1]
+### M25 parameterised Where(e => e.Value == big)
+  main => OK [1]
+### M25 materialised Values
+  main => OK [-1294967296, 5]
+### DF10 bare Select(x => x.Rank), c missing Rank
+  main => OK [1, 2, 0]
+### DF10 anon Select(x => new { x.Rank }), c missing Rank
+  main => OK [1, 2, 0]
+### DF10 anon Select(x => new { x.Title, x.Rank }), c missing Rank
+  main => OK ["a=1", "b=2", "c=0"]
+### DF10 entity read, c missing Rank
+  main => THREW InvalidOperationException: Document element is missing for required non-nullable property 'Rank'.
+### M22 join Customers.Where(Name starts A) with Orders.Where(Id < 10500).Include(Customer) (tracking)
+  main => OK [10400, 10450, 10600]
+### M22 same, AsNoTracking
+  main => OK [10400, 10450, 10600]
+### M22 control without Include
+  main => THREW ExpressionNotSupportedException: Expression not supported: EFTest-2026-10-01T13-19-03-1.Zbba82ea9Orders.Aggregate([]).Where(o => (Field(o, "_id", value(MongoDB.Bson.Serialization.Serializers.Int32Serializer)) < 10500)) in EFTest-2026-10-01T13-19-03-1.Zbba82ea9Customers.Aggregate([]).As(value(MongoDB.EntityFrameworkCore.Serializers.
+### M12 Customers.Select(c => new { c.Id, N = Orders.Count(o => o.CustomerId == c.Code) }) [Ana Code=2, Ben Code=1]
+  main => THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()' could not be translated. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=21010
+### M12 control: key-correlated Orders.Count(o => o.CustomerId == c.Id)
+  main => THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()' could not be translated. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=21010
+### M11 Include(c => c.Orders.OrderBy(o => o.Total).Take(n)) n=1
+  main => OK ["1:[10450,10600,10400]", "2:[10700]"]
+### M11 Include(c => c.Orders.OrderBy(o => o.Total).Take(1)) constant
+  main => OK ["1:[10450]", "2:[10700]"]
+### M11 Include(c => c.Orders.OrderBy(o => o.Total).Skip(s)) s=1
+  main => OK ["1:[10450,10600,10400]", "2:[10700]"]

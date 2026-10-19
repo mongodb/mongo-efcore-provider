@@ -229,7 +229,12 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     /// <summary>
     /// Gets the <see cref="MongoQueryMode"/> that controls how LINQ queries are translated.
     /// </summary>
-    public MongoQueryMode QueryMode { get; private set; } = MongoQueryMode.Native;
+    public MongoQueryMode QueryMode { get; private set; } = DefaultQueryMode;
+
+    /// <summary>
+    /// Process-wide default for <see cref="QueryMode"/>; test infrastructure only (InternalsVisibleTo).
+    /// </summary>
+    internal static MongoQueryMode DefaultQueryMode { get; set; } = MongoQueryMode.Native;
 
     /// <summary>
     /// Specifies the <see cref="MongoQueryMode"/> to use when translating LINQ queries.

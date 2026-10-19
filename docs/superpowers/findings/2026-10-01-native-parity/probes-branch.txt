@@ -1,0 +1,250 @@
+### "S:" + Level (enum)
+  DriverLinq => ["S:2", "S:10", "S:1"]
+  Native     => ["S:2", "S:10", "S:1"]
+  NativeOnly => ["S:2", "S:10", "S:1"]
+### Title + Initial (char)
+  DriverLinq => ["a65", "b66", "c67"]
+  Native     => ["a65", "b66", "c67"]
+  NativeOnly => ["a65", "b66", "c67"]
+### Title + Ratio (float)
+  DriverLinq => ["a1.100000023841858", "b2.5", "c0.5"]
+  Native     => ["a1.100000023841858", "b2.5", "c0.5"]
+  NativeOnly => ["a1.100000023841858", "b2.5", "c0.5"]
+### Title + Day (DateOnly)
+  DriverLinq => ["a2020-01-02T00:00:00.000Z", "b2021-01-02T00:00:00.000Z", "c2019-01-02T00:00:00.000Z"]
+  Native     => ["a2020-01-02T00:00:00.000Z", "b2021-01-02T00:00:00.000Z", "c2019-01-02T00:00:00.000Z"]
+  NativeOnly => ["a2020-01-02T00:00:00.000Z", "b2021-01-02T00:00:00.000Z", "c2019-01-02T00:00:00.000Z"]
+### Title + Duration (TimeSpan)
+  DriverLinq => ["a00:00:05", "b00:01:00", "c00:00:01"]
+  Native     => ["a00:00:05", "b00:01:00", "c00:00:01"]
+  NativeOnly => ["a00:00:05", "b00:01:00", "c00:00:01"]
+### Title + Name (null string)
+  DriverLinq => ["ax", <null>, <null>]
+  Native     => ["ax", "b", "c"]
+  NativeOnly => ["ax", "b", "c"]
+### Where Title + Level == "aMid"
+  DriverLinq => []
+  Native     => []
+  NativeOnly => []
+### UtcNow.AddSeconds(-3) staleness [DriverLinq]
+  first=["fresh"] after5s=[] (expected ["fresh"] then [])
+### UtcNow.AddSeconds(-3) staleness [Native]
+  first=["fresh"] after5s=["fresh"] (expected ["fresh"] then [])
+### UtcNow.AddSeconds(-3) staleness [NativeOnly]
+  first=["fresh"] after5s=["fresh"] (expected ["fresh"] then [])
+### Now.AddHours(-1) local-offset (TZ offset now 01:00:00) row Created=UtcNow-30min
+  DriverLinq => ["halfhour"]
+  Native     => []
+  NativeOnly => []
+### Score!.Value + 1 (anon)
+  DriverLinq => THROW FormatException: An error occurred while deserializing the V property of class <>f__AnonymousType319`2[[System.String, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e],[System.Int32, System.Private.CoreLib, Vers
+  Native     => ["a=11", "b=0", "c=0"]
+  NativeOnly => ["a=11", "b=0", "c=0"]
+### (int)Score! * 2 (bare)
+  DriverLinq => THROW FormatException: Cannot deserialize a 'Int32' from BsonType 'Null'.
+  Native     => [20, 0, 0]
+  NativeOnly => [20, 0, 0]
+### Math.Abs(Score!.Value)
+  DriverLinq => THROW FormatException: An error occurred while deserializing the V property of class <>f__AnonymousType211`1[[System.Int32, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]: Cannot deserialize a 'Int32' from BsonType
+  Native     => [10, 0, 0]
+  NativeOnly => [10, 0, 0]
+### Rank + 1 with Rank missing
+  DriverLinq => THROW FormatException: An error occurred while deserializing the V property of class <>f__AnonymousType319`2[[System.String, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e],[System.Int32, System.Private.CoreLib, Vers
+  Native     => ["a=2", "b=3", "c=0"]
+  NativeOnly => ["a=2", "b=3", "c=0"]
+### Rank (bare) with Rank missing
+  DriverLinq => [1, 2, 0]
+  Native     => THROW InvalidOperationException: Document element 'Rank' is missing for required non-nullable property 'Rank'.
+  NativeOnly => THROW InvalidOperationException: Document element 'Rank' is missing for required non-nullable property 'Rank'.
+### Score!.Value / 2
+  DriverLinq => THROW FormatException: An error occurred while deserializing the V property of class <>f__AnonymousType211`1[[System.Int32, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]: Cannot deserialize a 'Int32' from BsonType
+  Native     => [5, 0, 0]
+  NativeOnly => [5, 0, 0]
+### Score > 5 ? Score!.Value : 0
+  DriverLinq => THROW FormatException: An error occurred while deserializing the V property of class <>f__AnonymousType211`1[[System.Int32, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]: Cannot deserialize a 'Int32' from BsonType
+  Native     => [0, 0, 0]
+  NativeOnly => [0, 0, 0]
+### Select(Name).Union(Select(Name)) expected [null, x]
+  DriverLinq => [<null>, <null>, "x"]
+  Native     => [<null>, <null>, "x"]
+  NativeOnly => [<null>, <null>, "x"]
+### Select(Name).Distinct() expected [null, x]
+  DriverLinq => [<null>, <null>, "x"]
+  Native     => [<null>, "x"]
+  NativeOnly => [<null>, "x"]
+### Select(new{Name}).Distinct().Count expected 2
+  DriverLinq => 3
+  Native     => 2
+  NativeOnly => 2
+### Count(Name == null) expected 2
+  DriverLinq => 2
+  Native     => 2
+  NativeOnly => 2
+### Where(Name != "x") expected [b,c]
+  DriverLinq => ["b", "c"]
+  Native     => ["b", "c"]
+  NativeOnly => ["b", "c"]
+### Where(Score < 5) LINQ expects []
+  DriverLinq => []
+  Native     => []
+  NativeOnly => []
+### Where(!(Score > 5)) LINQ expects [b,c]
+  DriverLinq => ["b", "c"]
+  Native     => ["b", "c"]
+  NativeOnly => ["b", "c"]
+### Select(Score < 5) LINQ expects [F,F,F]
+  DriverLinq => [False, True, True]
+  Native     => [False, True, True]
+  NativeOnly => THROW NativeTranslationNotSupportedException: Query projects a non-entity result and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.
+### Select(Score == null) expects [F,T,T]
+  DriverLinq => [False, True, False]
+  Native     => [False, True, True]
+  NativeOnly => [False, True, True]
+### Select(Name ?? "d") expects [x,d,d]
+  DriverLinq => ["x", "d", "d"]
+  Native     => ["x", "d", "d"]
+  NativeOnly => ["x", "d", "d"]
+### Select(Name == null ? 1 : 2) expects [2,1,1]
+  DriverLinq => [2, 1, 2]
+  Native     => [2, 1, 1]
+  NativeOnly => [2, 1, 1]
+### Where(Name.Length > 0) expects [a]
+  DriverLinq => ["a"]
+  Native     => ["a"]
+  NativeOnly => ["a"]
+### Where(Rank == 0) LINQ expects [c] (missing->default)
+  DriverLinq => []
+  Native     => []
+  NativeOnly => []
+### Owners.Join(Dogs)
+  DriverLinq => ["o1-rex", "o1-tom"]
+  Native     => ["o1-rex", "o1-tom"]
+  NativeOnly => ["o1-rex", "o1-tom"]
+### Owners.Join(Animals.OfType<Dog>)
+  DriverLinq => THROW ExpressionNotSupportedException: Expression not supported: EFTest-2026-10-01T10-24-48-1.P528ec310Animals.Aggregate([]).OfType().As(value(MongoDB.EntityFrameworkCore.Serializers.EntitySerializer`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.ZzReview
+  Native     => THROW ExpressionNotSupportedException: Expression not supported: EFTest-2026-10-01T10-24-48-1.P528ec310Animals.Aggregate([]).OfType().As(value(MongoDB.EntityFrameworkCore.Serializers.EntitySerializer`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.ZzReview
+  NativeOnly => THROW NativeTranslationNotSupportedException: Query projects a non-entity result and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.
+### Shipments.Join(Rates on nullable Region) expected [1-11]
+  DriverLinq => ["1-11", "2-12", "2-13", "3-12", "3-13"]
+  Native     => ["1-11", "2-12", "2-13", "3-12", "3-13"]
+  NativeOnly => ["1-11", "2-12", "2-13", "3-12", "3-13"]
+### Sum(Rank) overflow
+  DriverLinq => THROW OverflowException: Arithmetic operation resulted in an overflow.
+  Native     => -2147483644
+  NativeOnly => -2147483644
+### Select(Rank).Sum() overflow
+  DriverLinq => THROW OverflowException: Arithmetic operation resulted in an overflow.
+  Native     => -2147483644
+  NativeOnly => -2147483644
+### Rank + Rank projection overflow
+  DriverLinq => THROW OverflowException: Arithmetic operation resulted in an overflow.
+  Native     => THROW OverflowException: Arithmetic operation resulted in an overflow.
+  NativeOnly => THROW OverflowException: Arithmetic operation resulted in an overflow.
+### Customers.Include(Address)
+  DriverLinq => ["with:Paris"]
+  Native     => ["with:Paris"]
+  NativeOnly => ["with:Paris"]
+### Customers.Select(c.Address.City)
+  DriverLinq => ["with:Paris", "without:<null>"]
+  Native     => ["with:Paris", "without:<null>"]
+  NativeOnly => ["with:Paris", "without:<null>"]
+### Customers.Where(Address == null)
+  DriverLinq => ["without"]
+  Native     => ["without"]
+  NativeOnly => ["without"]
+### Max(Level)
+  DriverLinq => High
+  Native     => THROW InvalidCastException: Invalid cast from 'System.Int32' to 'MongoDB.EntityFrameworkCore.FunctionalTests.Query.ZzReviewProbeTests+Level'.
+  NativeOnly => THROW InvalidCastException: Invalid cast from 'System.Int32' to 'MongoDB.EntityFrameworkCore.FunctionalTests.Query.ZzReviewProbeTests+Level'.
+### Min(Level)
+  DriverLinq => Low
+  Native     => THROW InvalidCastException: Invalid cast from 'System.Int32' to 'MongoDB.EntityFrameworkCore.FunctionalTests.Query.ZzReviewProbeTests+Level'.
+  NativeOnly => THROW InvalidCastException: Invalid cast from 'System.Int32' to 'MongoDB.EntityFrameworkCore.FunctionalTests.Query.ZzReviewProbeTests+Level'.
+### Select(Level).Max()
+  DriverLinq => High
+  Native     => THROW InvalidCastException: Invalid cast from 'System.Int32' to 'MongoDB.EntityFrameworkCore.FunctionalTests.Query.ZzReviewProbeTests+Level'.
+  NativeOnly => THROW InvalidCastException: Invalid cast from 'System.Int32' to 'MongoDB.EntityFrameworkCore.FunctionalTests.Query.ZzReviewProbeTests+Level'.
+### Max(Initial) char
+  DriverLinq => C
+  Native     => C
+  NativeOnly => C
+### Max(Duration) TimeSpan
+  DriverLinq => 00:01:00
+  Native     => THROW InvalidCastException: Invalid cast from 'System.String' to 'System.TimeSpan'.
+  NativeOnly => THROW InvalidCastException: Invalid cast from 'System.String' to 'System.TimeSpan'.
+### Max(Day) DateOnly
+  DriverLinq => 02/01/2021
+  Native     => THROW InvalidCastException: Invalid cast from 'System.DateTime' to 'System.DateOnly'.
+  NativeOnly => THROW InvalidCastException: Invalid cast from 'System.DateTime' to 'System.DateOnly'.
+### Max(Ratio) float
+  DriverLinq => 2.5
+  Native     => 2.5
+  NativeOnly => 2.5
+### Max(Name) string
+  DriverLinq => "x"
+  Native     => "x"
+  NativeOnly => "x"
+### Max(Name) string over empty
+  DriverLinq => THROW InvalidOperationException: Sequence contains no elements
+  Native     => THROW InvalidOperationException: Sequence contains no elements
+  NativeOnly => THROW InvalidOperationException: Sequence contains no elements
+### Min(Created)
+  DriverLinq => Utc
+  Native     => Utc
+  NativeOnly => Utc
+### Where(minRank == null || Rank >= minRank) minRank=null expects [a,b,c]
+  DriverLinq => ["a", "b", "c"]
+  Native     => ["a", "b", "c"]
+  NativeOnly => ["a", "b", "c"]
+### Where(Rank == minRank) minRank=null expects []
+  DriverLinq => ["c"]
+  Native     => THROW NullReferenceException: Object reference not set to an instance of an object.
+  NativeOnly => THROW NullReferenceException: Object reference not set to an instance of an object.
+### Where(Rank != minRank) minRank=null expects [a,b,c]
+  DriverLinq => ["a", "b"]
+  Native     => THROW NullReferenceException: Object reference not set to an instance of an object.
+  NativeOnly => THROW NullReferenceException: Object reference not set to an instance of an object.
+### Where(Level == lvl) lvl=null expects []
+  DriverLinq => []
+  Native     => THROW NullReferenceException: Object reference not set to an instance of an object.
+  NativeOnly => THROW NullReferenceException: Object reference not set to an instance of an object.
+### Where(ids.Contains(Rank)) ids=[1,null] expects [a] (or [a,c] if missing->0? no)
+  DriverLinq => ["a", "c"]
+  Native     => THROW NullReferenceException: Object reference not set to an instance of an object.
+  NativeOnly => THROW NullReferenceException: Object reference not set to an instance of an object.
+### Docs.Where(Id.StartsWith(oidprefix)) expects [abc]
+  DriverLinq => THROW MongoCommandException: Command aggregate failed: Executor error during aggregate command on namespace: EFTest-2026-10-01T10-26-26-1.P892f9f36Docs :: caused by :: $indexOfCP requires a string as the first argument, found: objectId.
+  Native     => []
+  NativeOnly => []
+### Docs.Where(Code.StartsWith("ab")) converter expects [abc]
+  DriverLinq => []
+  Native     => []
+  NativeOnly => []
+### Docs.Where(Code == "abc") converter expects [abc]
+  DriverLinq => ["abc"]
+  Native     => ["abc"]
+  NativeOnly => ["abc"]
+### Docs.Where(Code.ToLower() == "abc") converter expects [abc]
+  DriverLinq => []
+  Native     => []
+  NativeOnly => []
+### Docs.Where(Code.Contains("b")) converter expects [abc]
+  DriverLinq => ["abc"]
+  Native     => ["abc"]
+  NativeOnly => ["abc"]
+### Docs.Where(Tuple(Gid,N) == Tuple(g,1)) expects [abc]
+  DriverLinq => ["abc"]
+  Native     => THROW ArgumentException: .NET type System.Guid cannot be mapped to a BsonValue.
+  NativeOnly => THROW ArgumentException: .NET type System.Guid cannot be mapped to a BsonValue.
+### Docs.Where(Gid == g) expects [abc]
+  DriverLinq => ["abc"]
+  Native     => ["abc"]
+  NativeOnly => ["abc"]
+### Docs.Where(Math.Sign(D.Value) < 0) expects [] (or throw)
+  DriverLinq => THROW ExpressionNotSupportedException: Expression not supported: Sign(d.D.Value).
+  Native     => ["abc"]
+  NativeOnly => ["abc"]
+### Docs.Where(Math.Max(D.Value, 1) > 2) expects [zzz]
+  DriverLinq => THROW ExpressionNotSupportedException: Expression not supported: Max(d.D.Value, 1).
+  Native     => ["zzz"]
+  NativeOnly => ["zzz"]
