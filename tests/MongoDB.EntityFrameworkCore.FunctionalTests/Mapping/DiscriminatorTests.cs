@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
@@ -130,6 +131,19 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
         {
             using var db = SingleEntityDbContext.Create(collection, configuration);
+            var customer = Assert.Single(db.Entities.OfType<KeyedCustomer>());
+            Assert.Equal("Customer 1", customer.Name);
+
+            var order = Assert.Single(db.Entities.OfType<KeyedOrder>());
+            Assert.Equal("Order 1", order.OrderReference);
+        }
+
+        {
+            // Succeeding under NativeOnly is itself the "went native" signal: TryBuildDiscriminatorPredicate
+            // no longer rejects a value-converted discriminator (EF-349's driver-LINQ fix made the native
+            // and driver-LINQ discriminator BSON agree), so this no longer falls back / throws.
+            using var db = SingleEntityDbContext.Create(collection, configuration,
+                optionsBuilderAction: b => new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly));
             var customer = Assert.Single(db.Entities.OfType<KeyedCustomer>());
             Assert.Equal("Customer 1", customer.Name);
 
