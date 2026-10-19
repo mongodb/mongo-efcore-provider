@@ -37,16 +37,19 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// SIBLING leaf's readability a precondition" paragraph below.
 /// </para>
 /// <para>
-/// For a CHAIN (<c>scope.Levels.Count &gt; 1</c>, Task 6): every leaf MUST be a whole-entity leaf naming some
-/// scope in the chain (the root, or any level's Inner side) — a scalar/computed leaf declines the WHOLE
-/// projection outright, rather than being attempted through <see cref="NativeJoinScopeTranslator.TryTranslateValue"/>,
-/// because that method's own flat, depth-1-only shape check can — for one specific coincidental shape — pass
-/// while actually resolving against the WRONG level (see the "chain-only" comment on that decline in
-/// <see cref="TryBindProjection"/> for the worked example, and <c>NativeJoinScopeTranslator</c>'s own
-/// documented RESIDUAL GAP). This is a strict widening at Levels.Count == 1 (identical to before) and a
-/// stricter-than-depth-1 restriction at Levels.Count &gt; 1 (only whole-entity leaves, no scalars/computed at
-/// all) — see docs/superpowers/specs/2026-09-07-native-chained-join-scope-design.md, Component 6's "Out of
-/// scope" list.
+/// For a CHAIN (<c>scope.Levels.Count &gt; 1</c>, Task 6): an admitted leaf is a whole-entity leaf naming some
+/// scope in the chain (the root, or any level's Inner side), OR (native-chained-join-scalar-projection plan,
+/// Task 4) a scalar/computed leaf resolving to exactly ONE scope in the chain, via
+/// <see cref="NativeJoinScopeTranslator.TryTranslateSingleScope"/> rather than
+/// <see cref="NativeJoinScopeTranslator.TryTranslateValue"/> — that method's own flat, depth-1-only shape check
+/// can, for one specific coincidental shape, pass while actually resolving against the WRONG level (see the
+/// "chain-only" comment on that decline in <see cref="TryBindProjection"/> for the worked example, and
+/// <c>NativeJoinScopeTranslator</c>'s own documented RESIDUAL GAP); <c>TryTranslateSingleScope</c> avoids that
+/// hazard by re-rooting the leaf onto whichever single scope its member-name chain actually resolves to before
+/// translating. A leaf that resolves to no scope, or that SPANS more than one scope (e.g.
+/// <c>e.r.Total + l.Id</c>), still declines the WHOLE projection outright — see
+/// docs/superpowers/specs/2026-09-07-native-chained-join-scope-design.md, Component 6's "Out of scope" list, and
+/// the 2026-09-18 native-chained-join-scalar-projection plan that widened it.
 /// </para>
 /// <para>
 /// A whole-entity leaf (<c>x.Outer</c>/<c>x.Inner</c> verbatim) is asymmetric (EF-444) and BOTH sides now stage
@@ -132,10 +135,16 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// walks the actual member-NAME chain (never compares CLR types), and — the load-bearing half — a chain
 /// (<c>Levels.Count &gt; 1</c>) never falls through to the flat, type-comparing
 /// <c>NativeJoinScopeTranslator.TryTranslateValue</c> the gap warns about at all, for ANY leaf that doesn't
-/// resolve as whole-entity. See <c>NativeJoinScopeProjectionBinderTests
-/// .Declines_a_second_chained_join_rather_than_reusing_the_first_joins_scope</c>, whose trailing selector's
-/// leaves are scalar (not whole-entity) and so still declines here, unchanged, proving the gap's worked example
-/// remains closed after the widening.
+/// resolve as whole-entity — a scalar/computed leaf now instead resolves through
+/// <see cref="NativeJoinScopeTranslator.TryTranslateSingleScope"/> (native-chained-join-scalar-projection plan,
+/// Task 4), which shares that same safe, member-NAME-chain-based resolution rather than comparing CLR types.
+/// See <c>NativeJoinScopeProjectionBinderTests
+/// .Binds_a_second_chained_join_reusing_the_first_joins_target_type_at_the_correct_alias</c>, whose trailing
+/// selector's leaves (<c>o.Name</c>, <c>r2.Total</c>) are scalar (not whole-entity) and now BIND correctly
+/// here — <c>r2.Total</c> resolves against the SECOND join's own alias (<c>Levels[1].InnerPrefix</c>), never
+/// the FIRST join's (<c>Levels[0].InnerPrefix</c>) — a stronger proof that the gap's worked example stays
+/// closed than the old outright decline was: the leaf is now translated, and translated against the correct
+/// level, rather than merely refused.
 /// </para>
 /// </remarks>
 internal static class NativeJoinScopeProjectionBinder
@@ -271,26 +280,147 @@ internal static class NativeJoinScopeProjectionBinder
                 continue;
             }
 
-            // ORDINARY (scalar/computed) leaf. Only attempted for a DEPTH-1 scope, unchanged from before this
-            // task — NativeJoinScopeTranslator.TryTranslateValue's own flat-shape check (TryTranslateCore) only
-            // ever resolves against scope.Levels[0], and its documented RESIDUAL GAP is precisely that a
-            // CHAINED join whose own flat TransparentIdentifier<TOuter,TInner> coincidentally matches the
-            // recorded scope's Outer/Inner CLR types (e.g. two joins re-targeting the same entity type, with an
+            // A NESTED wrapped leaf (`CustomerId = new { Id = o.Customer!.CustomerID }`) — one level of
+            // nesting only (native-join-scope-nested-projection ticket). Declines the WHOLE outer leaf (not
+            // just this member) on any inner shape this doesn't recognize, exactly as
+            // NativeProjectionBinder.TryGetDocumentConstructionLeaf does for its own plain-root nested
+            // leaves — this is a SEPARATE recognizer building the same MongoDocumentConstructionExpression
+            // node, not a relaxation of that one's dotted-field decline.
+            //
+            // EF10-ONLY IN PRACTICE, and not because of anything in this file. On EF8/EF9 an OPTIONAL
+            // reference navigation (the shape a reference Include produces) is lowered by EF's nav-expansion
+            // onto EF's own internal LeftJoin shim (MongoQueryableMethodTranslatingExpressionVisitor
+            // .Ef8Ef9LeftJoinMethod), and NativeSlotPopulator.PopulateNativeSlots' candidate-join arm only
+            // matches QueryableMethods.{Join,GroupJoin} plus — under `#if !EF8 && !EF9` — QueryableMethods
+            // .LeftJoin, which does not exist before EF10. The shim therefore falls through to that method's
+            // catch-all and calls MarkNotNativelyRepresentable() before ANY Select-side binder runs, so
+            // TryBindProjection is never even reached (MEASURED: HasUnsupportedOperator is already true when
+            // TranslateSelect's wrapped arm consults IsSingleEligibleNativeJoinScope on EF9, false on EF10).
+            // That gap is family-wide, not nesting-specific — on EF8/EF9 NO wrapped projection over an
+            // optional-reference join binds natively, including the flat `new { o.Total, o.Customer.Name }`
+            // shape that predates this arm. A REQUIRED reference navigation lowers to QueryableMethods.Join
+            // instead and does go native on all three EF versions, this arm included. Consequence for tests:
+            // a functional/spec test asserting NativeOnly SUCCESS for an optional-reference nested projection
+            // must be `#if !EF8 && !EF9`-guarded (or assert the throw), and the MQL baselines differ.
+            if (scope.Levels.Count == 1
+                && leafBody.TryGetProjectionMembers(out var nestedMembers))
+            {
+                var translatedNestedMembers = new List<(string, MongoExpression)>();
+                var seenNestedMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var declined = false;
+
+                foreach (var (nestedMemberName, nestedValue) in nestedMembers)
+                {
+                    // MUST be a MongoFieldExpression, NOT merely "anything TryTranslateValue accepts"
+                    // (final-review Critical 1). The shared read side —
+                    // MongoProjectionBindingRemovingExpressionVisitor.ReadDocumentConstructionMemberTyped —
+                    // hard-casts each member's staged value to MongoFieldExpression, so staging any other node
+                    // kind here is an InvalidCastException at QUERY-COMPILE time, in the DEFAULT Native mode,
+                    // outside every TryBuildNativeFactory decline path: a hard crash for a shape that works
+                    // under MongoQueryMode.DriverLinq. Two node kinds TryTranslateValue really does return for
+                    // an admissible-looking nested member reach that cast: a MongoBinaryExpression for a
+                    // COMPUTED member (`Combo = o.OrderNo + o.Customer!.Rank`), and a MongoOuterFieldExpression
+                    // for an OUTER-sourced member (`Copy = new { N = o.OrderNo }` — the two-scope translator
+                    // resolves outer-rooted access to the root-anchored sibling type, see
+                    // MongoExpressionTranslator's `operandIsOuter` arm). Both now decline the whole outer leaf
+                    // and fall back, exactly as before this arm existed. So the shapes this arm actually
+                    // ACCEPTS are precisely the INNER-sourced plain field members — whose ElementName is the
+                    // dotted "<InnerPrefix>.<element>" path both read sides know how to walk — which is the
+                    // motivating shape and the only one with end-to-end coverage.
+                    //
+                    // This is the same node-kind requirement the sibling recognizer
+                    // NativeProjectionBinder.TryGetDocumentConstructionLeaf enforces via
+                    // MongoExpressionTranslator.TryTranslateField (which is MongoFieldExpression-typed by
+                    // signature); stating it here as an explicit type test is the closest this arm can get to
+                    // that, since NativeJoinScopeTranslator has no field-typed entry point.
+                    //
+                    // DELIBERATELY NOT applying that sibling's two further conjuncts:
+                    //  * `!field.ElementName.Contains('.')` — a dotted ElementName is the NORMAL, required
+                    //    shape here (the Inner side lives under the join's "_lookup_<Nav>" sub-document), and
+                    //    both read legs walk it segment-by-segment: the native leg reads [alias, memberName]
+                    //    out of the $project's own output, and the mixed/fallback leg explicitly splits a
+                    //    dotted ElementName (MongoMixedProjectionBindingRemovingExpressionVisitor
+                    //    .ReadDocumentConstructionMember). The sibling declines dotted fields because ITS
+                    //    members are owned-hop paths with no such natural read, not because dots are unsafe.
+                    //  * NativeGroupByBinder.HasDefaultKeySerialization(field.Property) (EF-447) — it would be
+                    //    DEAD CODE here, for two independent reasons. (1) MEASURED: the join-scope value
+                    //    translator already declines a value-converted member outright, and does so for a
+                    //    FLAT join-scope leaf exactly as for a nested one — an ordinary
+                    //    `new { C = x.Inner.ConvertedProperty }` over the same join is NativeRoute.Fallback
+                    //    while the unconverted sibling is NativeRoute.Projection — so no property the guard
+                    //    would reject can reach this loop at all. That is pre-existing behavior neither
+                    //    introduced nor widened here; it is pinned by NativeJoinScopeNestedProjectionTests
+                    //    .Nested_projection_with_value_converted_member_falls_back (functional), so a future
+                    //    widening of the translator reddens rather than silently inheriting this reasoning.
+                    //    (2) Even if one did reach here, the guard's actual hazard — a value read back through
+                    //    a GENERIC CLR-TYPE serializer with no backing IProperty, the way a $group _id is —
+                    //    does not exist on this node: every read of it, on BOTH legs, goes through
+                    //    BsonBinding.CreateGetPropertyValueAtPath, which is PROPERTY-aware (it is handed
+                    //    field.Property and reads through that property's own serializer/nullability).
+                    if (!NativeJoinScopeTranslator.TryTranslateValue(scope, rootParam, nestedValue, out var nestedLeaf)
+                        || nestedLeaf is not MongoFieldExpression
+                        || !seenNestedMembers.Add(nestedMemberName))
+                    {
+                        declined = true;
+                        break;
+                    }
+
+                    translatedNestedMembers.Add((nestedMemberName, nestedLeaf));
+                }
+
+                if (declined)
+                {
+                    return false;
+                }
+
+                if (!seenAliases.Add(alias))
+                {
+                    return false;
+                }
+
+                staged.Add(new MongoProjection(
+                    alias, new MongoDocumentConstructionExpression(leafBody, translatedNestedMembers)));
+                continue;
+            }
+
+            // ORDINARY (scalar/computed) leaf. For a DEPTH-1 scope, unchanged from before this task —
+            // NativeJoinScopeTranslator.TryTranslateValue's own flat-shape check (TryTranslateCore) only ever
+            // resolves against scope.Levels[0], and its documented RESIDUAL GAP is precisely that a CHAINED
+            // join whose own flat TransparentIdentifier<TOuter,TInner> coincidentally matches the recorded
+            // scope's Outer/Inner CLR types (e.g. two joins re-targeting the same entity type, with an
             // intermediate confirming Select flattening the first back down to a plain entity — see
             // MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope's own remarks)
             // can pass that check while actually belonging to a LATER level — misresolving the leaf against the
             // WRONG level's $lookup alias, silently. TryResolveScopeDepth above safely and structurally
             // recognizes a whole-entity leaf at ANY level without this hazard (it walks the ACTUAL member-name
-            // chain rather than comparing CLR types), which is why it is tried first and unconditionally; a
-            // scalar/computed leaf has no such safe generalization available in this ticket's scope (see the
-            // design doc's explicit "Out of scope" listing), so for Levels.Count > 1 this arm declines the
-            // WHOLE projection outright rather than risk the flat-shape translator's known-unsafe fallback.
+            // chain rather than comparing CLR types), which is why it is tried first and unconditionally.
+            //
+            // For a CHAIN (Levels.Count > 1, native-chained-join-scalar-projection plan): rather than risking
+            // the flat-shape translator's known-unsafe fallback above, this arm instead calls
+            // NativeJoinScopeTranslator.TryTranslateSingleScope, which structurally re-roots the leaf's member-
+            // name chain onto whichever single scope it resolves to (via TryRerootToSingleScope) before
+            // translating — the same identity/name-chain walk TryResolveScopeDepth uses above, generalized to a
+            // scalar/computed leaf rather than a whole-entity one. A leaf that resolves to no scope, or that
+            // SPANS more than one scope (e.g. `e.r.Total + l.Id`), fails to re-root and declines the WHOLE
+            // projection outright — no partial commit.
+            MongoExpression? computedLeaf;
             if (scope.Levels.Count > 1)
             {
-                return false;
+                // A nested wrapped leaf (`Nested = new { Value = l.Sku }`) trailing a CHAIN is explicitly out of
+                // scope (native-chained-join-scalar-projection plan design doc) — the depth-1-only nested-leaf
+                // arm above is a careful, hand-rolled recognizer that hard-requires each nested member to
+                // resolve to a MongoFieldExpression (the read side casts to it); TryTranslateSingleScope's
+                // underlying MongoExpressionTranslator.TranslateOperand has its OWN, generic NewExpression→
+                // MongoDocumentConstructionExpression handling (built for NativeProjectionBinder's structural-
+                // equality lowering) that carries no such guarantee for a join-scope leaf, so a nested leaf
+                // reaching here must decline, not be silently admitted through that unrelated generic path.
+                if (leafBody.TryGetProjectionMembers(out _)
+                    || !NativeJoinScopeTranslator.TryTranslateSingleScope(scope, rootParam, leafBody, valueMode: true, out computedLeaf))
+                {
+                    return false; // one untranslatable/cross-scope/nested leaf declines the whole projection — no partial commit
+                }
             }
-
-            if (!NativeJoinScopeTranslator.TryTranslateValue(scope, rootParam, leafBody, out var computedLeaf))
+            else if (!NativeJoinScopeTranslator.TryTranslateValue(scope, rootParam, leafBody, out computedLeaf))
             {
                 return false; // one untranslatable leaf declines the whole projection — no partial commit
             }

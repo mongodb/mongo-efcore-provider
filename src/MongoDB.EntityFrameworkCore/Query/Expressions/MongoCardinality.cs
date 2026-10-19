@@ -44,7 +44,8 @@ internal sealed class MongoCardinality
         object? emptyValue,
         Type resultType,
         bool presenceOnly,
-        object? presentValue)
+        object? presentValue,
+        bool unorderedLastRow = false)
     {
         Reducer = reducer;
         Aggregate = aggregate;
@@ -54,6 +55,7 @@ internal sealed class MongoCardinality
         ResultType = resultType;
         PresenceOnly = presenceOnly;
         PresentValue = presentValue;
+        UnorderedLastRow = unorderedLastRow;
     }
 
     /// <summary>Reducer kind for entity reducers; null for scalar aggregates.</summary>
@@ -83,9 +85,19 @@ internal sealed class MongoCardinality
     /// <summary>The result value to yield when a row survives, for a <see cref="PresenceOnly"/> aggregate.</summary>
     public object? PresentValue { get; }
 
+    /// <summary>
+    /// EF-322: <see langword="true"/> for a Last/LastOrDefault <see cref="Reducer"/> composed with no
+    /// explicit prior sort (<c>MongoSelectDefinition.TryFlipTrailingSortDirection</c> declined). Tells
+    /// <c>MongoSelectLowerer</c> to lower this reducer to the <c>$group{_id:null,_last:{$last:"$$ROOT"}}</c>
+    /// + <c>$replaceRoot</c> pattern, emitted AFTER any <c>$lookup</c> so an <c>Include</c>d collection is
+    /// already present in the captured "$$ROOT" — rather than the ordinary sort-flip + <c>$limit</c> pattern
+    /// used when <see langword="false"/>.
+    /// </summary>
+    public bool UnorderedLastRow { get; }
+
     /// <summary>Builds the IR for an entity-reducer terminal operator (First/FirstOrDefault/Single/SingleOrDefault).</summary>
-    public static MongoCardinality ForReducer(MongoReducerKind kind, Type resultType)
-        => new(kind, null, null, default, null, resultType, presenceOnly: false, presentValue: null);
+    public static MongoCardinality ForReducer(MongoReducerKind kind, Type resultType, bool unorderedLastRow = false)
+        => new(kind, null, null, default, null, resultType, presenceOnly: false, presentValue: null, unorderedLastRow);
 
     /// <summary>Builds the IR for a scalar-aggregate terminal operator.</summary>
     public static MongoCardinality ForAggregate(

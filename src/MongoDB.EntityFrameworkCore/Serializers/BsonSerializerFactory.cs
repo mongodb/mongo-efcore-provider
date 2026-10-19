@@ -42,6 +42,14 @@ public sealed class BsonSerializerFactory
     private static bool SupportsDictionary(Type type)
         => type.IsGenericType && SupportedDictionaryTypes.Contains(type.GetGenericTypeDefinition());
 
+    // Mirrors what GetCollectionSerializer actually accepts: Memory<>/ReadOnlyMemory<> (neither implements
+    // IEnumerable) plus anything that genuinely enumerates. Used to keep a non-collection generic type (e.g.
+    // an anonymous type) off the collection-serializer path in CreateTypeSerializer.
+    private static bool IsSupportedCollectionType(Type type)
+        => type.TryGetItemType(typeof(Memory<>)) != null
+           || type.TryGetItemType(typeof(ReadOnlyMemory<>)) != null
+           || typeof(System.Collections.IEnumerable).IsAssignableFrom(type);
+
     private static readonly BinaryVectorSerializer<BinaryVectorFloat32, float> BinaryVectorFloat32Serializer
         = new(BinaryVectorDataType.Float32);
 
@@ -95,9 +103,15 @@ public sealed class BsonSerializerFactory
                 => GetNullableSerializer(type.GetGenericArguments()[0], property),
             {IsGenericType: true} when SupportsDictionary(type)
                 => GetDictionarySerializer(type),
-            {IsGenericType: true}
+            // A generic type that is NOT a collection (e.g. a compiler-generated anonymous type reading back a
+            // composite GroupBy key wholesale, `<>f__AnonymousType<string, int>`) falls through to the same
+            // BsonClassMapSerializer path as any other POCO, below — being generic alone doesn't make it a
+            // collection. Only route to the collection serializer when the type actually enumerates, or is one
+            // of the two Memory<>/ReadOnlyMemory<> shapes GetCollectionSerializer special-cases below (neither
+            // implements IEnumerable).
+            {IsGenericType: true} when IsSupportedCollectionType(type)
                 => GetCollectionSerializer(type, CreateTypeSerializer(type.GetGenericArguments()[0])),
-            {IsValueType: true, IsPrimitive: false}
+            {IsPrimitive: false}
                 // Adapted from BsonClassMapSerializationProvider in the C# driver
                 => (IBsonSerializer)Activator.CreateInstance(
                     typeof(BsonClassMapSerializer<>).MakeGenericType(type), BsonClassMap.LookupClassMap(type))!,

@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -213,6 +214,46 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         var other = new Customer { Id = ObjectId.GenerateNewId(), Name = "Other" };
 
         var results = db.Entities.AsNoTracking().Where(c => c == other).ToList();
+
+        Assert.Empty(results);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    //  Entity-list Contains — `customers.Contains(c)`, generalizing the single-comparand shape above
+    //  to a client-side LIST of entity values (including a null entry) — goes native via a primary-key
+    //  $in (MongoExpressionTranslator.EntityEquality.cs's TryTranslateEntityListContains), not an
+    //  OR-chain: see that method's remarks for why a list-length-independent rewrite is required here.
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Entity_list_contains_with_null_and_other_goes_native()
+    {
+        var collection = SeedCustomers(nameof(Entity_list_contains_with_null_and_other_goes_native));
+        var existingId = collection.Find(FilterDefinition<Customer>.Empty)
+            .ToList().Single(c => c.Name == "Alpha").Id;
+
+        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
+        var customers = new List<Customer?> { null, new Customer { Id = existingId, Name = "Ignored — only the key is compared" } };
+
+        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
+        // here proves `customers.Contains(c)` went through the native key-based $in path rather than
+        // driver-LINQ.
+        var results = db.Entities.AsNoTracking().Where(c => customers.Contains(c)).ToList();
+
+        var found = Assert.Single(results);
+        Assert.Equal("Alpha", found.Name);
+        spyLogger.AssertExecutedMqlContains("\"$in\"");
+    }
+
+    [Fact]
+    public void Entity_list_contains_with_no_match_returns_empty()
+    {
+        var collection = SeedCustomers(nameof(Entity_list_contains_with_no_match_returns_empty));
+        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out _);
+
+        var customers = new List<Customer?> { null, new Customer { Id = ObjectId.GenerateNewId(), Name = "Other" } };
+
+        var results = db.Entities.AsNoTracking().Where(c => customers.Contains(c)).ToList();
 
         Assert.Empty(results);
     }
