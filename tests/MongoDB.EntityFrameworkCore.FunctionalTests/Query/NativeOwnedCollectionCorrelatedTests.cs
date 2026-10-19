@@ -241,6 +241,104 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
         }
     }
 
+    // GATE AUDIT (spike/gate-audit): a nested (non-correlated) quantifier over the ELEMENT's OWN collection,
+    // sitting inside an outer quantifier that IS correlated back to the root — e.g.
+    // `b.Posts.Any(p => p.Comments.Any(c => c.Text == b.Title))`. TryResolveOwnedCollectionPath's two-scope
+    // branch used to decline ANY quantifier source not rooted on the outer param, which blocked this shape
+    // even though it isn't the "array reached through the outer scope" case EF-421 explicitly declines —
+    // p.Comments is a perfectly ordinary element-scoped collection; only its element PREDICATE reaches back to
+    // the root. See MongoExpressionTranslatorTests.GATE_AUDIT_probe_* for the isolated translator-level repro.
+    public class DeepBlog
+    {
+        public ObjectId Id { get; set; }
+        public string Title { get; set; } = "";
+        public List<DeepPost> Posts { get; set; } = [];
+    }
+
+    public class DeepPost
+    {
+        public string Title { get; set; } = "";
+        public List<DeepComment> Comments { get; set; } = [];
+    }
+
+    public class DeepComment
+    {
+        // Deliberately collides with DeepBlog.Title, mirroring this file's existing seeding rationale: a
+        // mis-scoped (element-scoped) resolution of `b.Title` would silently retarget onto DeepComment.Title.
+        public string Title { get; set; } = "";
+    }
+
+    private static readonly Action<ModelBuilder> DeepBlogModel = mb =>
+        mb.Entity<DeepBlog>().OwnsMany(b => b.Posts, p => p.OwnsMany(x => x.Comments));
+
+    private IMongoCollection<DeepBlog> SeedDeep(
+        string name, params (string BlogTitle, (string PostTitle, string[] CommentTitles)[] Posts)[] rows)
+    {
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
+        coll.InsertMany(rows.Select(r => new BsonDocument
+        {
+            { "_id", ObjectId.GenerateNewId() },
+            { "Title", r.BlogTitle },
+            { "Posts", new BsonArray(r.Posts.Select(p => new BsonDocument
+                {
+                    { "Title", p.PostTitle },
+                    { "Comments", new BsonArray(p.CommentTitles.Select(t => new BsonDocument { { "Title", t } })) }
+                }))
+            }
+        }));
+        return database.MongoDatabase.GetCollection<DeepBlog>(coll.CollectionNamespace.CollectionName);
+    }
+
+    [Fact]
+    public void Nested_quantifier_over_the_elements_own_collection_inside_a_correlated_outer_quantifier_goes_native()
+    {
+        // "match": some post has a comment whose Title equals the OWNER's Title.
+        // "nomatch": no post has any comment matching the owner's Title.
+        var collection = SeedDeep(
+            nameof(Nested_quantifier_over_the_elements_own_collection_inside_a_correlated_outer_quantifier_goes_native),
+            ("match", [("p1", ["x", "match"]), ("p2", ["y"])]),
+            ("nomatch", [("p1", ["x", "y"]), ("p2", ["z"])]),
+            ("empty", []));
+
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, DeepBlogModel);
+
+        var titles = db.Entities.AsNoTracking()
+            .Where(b => b.Posts.Any(p => p.Comments.Any(c => c.Title == b.Title)))
+            .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
+
+        Assert.Equal(new[] { "match" }, titles);
+    }
+
+    [Fact]
+    public void Nested_quantifier_over_the_elements_own_collection_inside_a_correlated_outer_quantifier_matches_the_oracle()
+    {
+        var collection = SeedDeep(
+            nameof(Nested_quantifier_over_the_elements_own_collection_inside_a_correlated_outer_quantifier_matches_the_oracle),
+            ("match", [("p1", ["x", "match"]), ("p2", ["y"])]),
+            ("nomatch", [("p1", ["x", "y"]), ("p2", ["z"])]),
+            ("empty", []),
+            ("emptyPost", [("p1", [])]));
+
+        System.Linq.Expressions.Expression<Func<DeepBlog, bool>> predicate =
+            b => b.Posts.Any(p => p.Comments.Any(c => c.Title == b.Title));
+
+        List<string> expected;
+        using (var db = CreateContext(collection, MongoQueryMode.Native, DeepBlogModel))
+        {
+            expected = db.Entities.AsNoTracking().ToList()
+                .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t).ToList();
+        }
+
+        List<string> actual;
+        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, DeepBlogModel))
+        {
+            actual = db.Entities.AsNoTracking().Where(predicate).ToList()
+                .Select(b => b.Title).OrderBy(t => t).ToList();
+        }
+
+        Assert.Equal(expected, actual);
+    }
+
     public class RefBlog
     {
         public ObjectId Id { get; set; }
