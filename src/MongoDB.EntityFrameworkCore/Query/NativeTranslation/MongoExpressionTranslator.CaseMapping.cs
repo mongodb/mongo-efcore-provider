@@ -43,8 +43,7 @@ internal sealed partial class MongoExpressionTranslator
 
         if (!IsCaseMappingCall(callSide, out var receiver, out var toUpper)
             || Unwrap(constantSide) is not ConstantExpression { Value: string constant }
-            || !TryResolveMember(Unwrap(receiver), out var property, out var fieldPath, out var isOuter)
-            || isOuter || property.ClrType != typeof(string))
+            || !TryResolveInnerStringField(Unwrap(receiver), out var field))
             return false;
 
         var negated = comparison.NodeType == ExpressionType.NotEqual;
@@ -56,8 +55,8 @@ internal sealed partial class MongoExpressionTranslator
         }
 
         result = new MongoRegexExpression(
-            new MongoFieldExpression(property, fieldPath), MongoRegexKind.Exact,
-            new MongoConstantExpression(constant, property), negated, caseInsensitive: true);
+            field, MongoRegexKind.Exact, new MongoConstantExpression(constant, field.Property), negated,
+            caseInsensitive: true);
         return true;
     }
 

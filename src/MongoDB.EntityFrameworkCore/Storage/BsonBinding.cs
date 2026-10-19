@@ -21,6 +21,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Options;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
@@ -221,6 +223,21 @@ internal static class BsonBinding
         Expression.Call(null, GetElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
 
     /// <summary>
+    /// A <c>float</c> (or <c>float?</c>) serializer that narrows a BSON double to a <c>float</c> with rounding instead
+    /// of throwing <see cref="TruncationException"/>, but still throws on overflow.
+    /// </summary>
+    /// <remarks>
+    /// For an aliased server-computed value (an <c>$avg</c> accumulator, arithmetic), which the server returns as a
+    /// double that is generally not exactly representable as a <c>float</c>. The BCL narrows the same way: LINQ to
+    /// objects accumulates a <c>float</c> <c>Average</c> in <c>double</c> and casts the result to <c>float</c>.
+    /// </remarks>
+    internal static IBsonSerializer CreateNarrowingFloatSerializer(Type type)
+    {
+        var single = new SingleSerializer(BsonType.Double, new RepresentationConverter(allowOverflow: false, allowTruncation: true));
+        return type == typeof(float) ? single : new NullableSerializer<float>(single);
+    }
+
+    /// <summary>
     /// As <see cref="CreateGetElementValue(Expression, string, Type)"/>, but when <paramref name="dateTimeKindSource"/>
     /// is non-null a <see cref="DateTime"/> reads back with that property's configured <see cref="DateTimeKind"/>.
     /// </summary>
@@ -235,9 +252,8 @@ internal static class BsonBinding
         Expression bsonDocExpression, string name, Type type, IReadOnlyProperty? dateTimeKindSource) =>
         dateTimeKindSource == null
             ? CreateGetElementValue(bsonDocExpression, name, type)
-            : Expression.Call(null, GetKindAwareElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression,
-                Expression.Constant(name),
-                Expression.Constant(BsonSerializerFactory.CreateTypeSerializer(type, dateTimeKindSource), typeof(IBsonSerializer)));
+            : CreateGetElementValue(
+                bsonDocExpression, name, type, BsonSerializerFactory.CreateTypeSerializer(type, dateTimeKindSource));
 
     /// <summary>
     /// As <see cref="CreateGetElementValue(Expression, string, Type)"/>, reading the element through
@@ -363,17 +379,36 @@ internal static class BsonBinding
         var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
         if (TryReadElementValue(document, serializationInfo, out T? value))
         {
-            if (value == null && !property.IsNullable)
-            {
-                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
-            }
-
+            ThrowIfNullForRequired(value, property);
             return value;
         }
 
         if (property.IsNullable) return default;
 
-        throw new InvalidOperationException($"Document element is missing for required non-nullable property '{property.Name}'.");
+        throw new InvalidOperationException(RequiredPropertyMissingMessage(property));
+    }
+
+    /// <summary>
+    /// The message thrown when a required non-nullable property's element is missing. Shared with the streaming
+    /// materializer (<c>MongoStreamingEntityMaterializerRewriter</c>), which mirrors <see cref="GetPropertyValue{T}"/>.
+    /// </summary>
+    internal static string RequiredPropertyMissingMessage(IReadOnlyProperty property)
+        => $"Document element is missing for required non-nullable property '{property.Name}'.";
+
+    /// <summary>
+    /// The message thrown when a required non-nullable property's element is BSON null. Shared with the streaming
+    /// materializer (<c>MongoStreamingEntityMaterializerRewriter</c>), which mirrors <see cref="GetPropertyValue{T}"/>.
+    /// </summary>
+    internal static string RequiredPropertyNullMessage(IReadOnlyProperty property)
+        => $"Document element is null for required non-nullable property '{property.Name}'.";
+
+    // A null read of a required non-nullable property. Never fires for a non-nullable value-typed T.
+    private static void ThrowIfNullForRequired<T>(T? value, IReadOnlyProperty property)
+    {
+        if (value == null && !property.IsNullable)
+        {
+            throw new InvalidOperationException(RequiredPropertyNullMessage(property));
+        }
     }
 
     /// <summary>
@@ -411,11 +446,7 @@ internal static class BsonBinding
             return placeholder;
         }
 
-        if (value == null && !property.IsNullable)
-        {
-            throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
-        }
-
+        ThrowIfNullForRequired(value, property);
         return value;
     }
 
@@ -434,11 +465,7 @@ internal static class BsonBinding
 
         if (TryReadElementValue(document, projectedSerializationInfo, out T? value))
         {
-            if (value == null && !property.IsNullable)
-            {
-                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
-            }
-
+            ThrowIfNullForRequired(value, property);
             return value;
         }
 

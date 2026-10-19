@@ -63,10 +63,17 @@ Scope, joins, grouping:
   types is the regression). Primitive: `MongoExpressionTranslator.TryBeginOwnedHopWalk`.
 - **Multi-scope join projections**: a trailing `Select` over `Joins.Count >= 2` is native only for a whole-entity
   leaf or a leaf resolving to exactly one chain scope.
+- **Collection Include over a join scope** (`ti => Include(ti.Outer…, nav)`) is native only on the root scope. A join
+  holding the Include's `_lookup_<Nav>` alias would be collapsed into it by `AddLookup`: at depth 1 the join is
+  renamed (so an Inner-side op, `JoinInnerAccessConfirmed`, declines); over a chain no join is renamed and the Include
+  renames itself (`existingIncompatibleLookup`), keeping later joins' `localField`s and Inner filters valid. Renames use
+  `MongoQueryExpression.GetUnusedLookupAlias`. A join level the binding would take as the Include's intermediate
+  (a lookup satisfying `LookupExpression.IsCollectionIncludeIntermediateFor(root type)`) declines: the binding nests by type, not alias.
 - **Navigation-less joins** are native iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved both keys
   (`JoinInfo.Lookup != null`); a navigation resolved to the wrong target is rebuilt by it, a non-simple key
   declines (`JoinLookupImplementsKeySelectors`). Composite-PK components live at `_id.<Name>`
-  (`LookupExpression.GetFieldPath`).
+  (`LookupExpression.GetFieldPath`). "Simple" includes an anonymous key of scalar properties (same anonymous type
+  both sides, one hop, `StoredSerialization.StoredAlike` per pair), rendered as `let` + `$and`.
 - **Paging vs. joins.** EF hoists `Skip`/`Take`/`Where`/`OrderBy` ahead of a join's result selector; recorded ops
   are deferred until after the join unless the join is in the left-outer-reference-navigation "safe to page
   before `$lookup`" set (reducers there decline). Paging ahead of a row-multiplying join stays ahead; paging both
@@ -88,7 +95,11 @@ Scope, joins, grouping:
   key parts, declines unless `CanRebindConstantLeafToDocument` rebinds it (bare, ungrouped, int/long/double/bool/
   string). source1 may be a single-level confirmed join scope (`IsPreCombineJoinScope`); source2 has no lookups.
   Projected operands must store each alias the same way (`OperandSerializationsMatch`: same property, both default,
-  or equivalent converters).
+  or `StoredSerialization.StoredAlike`).
+- **One "stored alike" rule** (`StoredSerialization.StoredAlike`) for two properties whose stored values are compared
+  or read through one serializer: equal `BsonRepresentation`; converters absent, the same instance, or the same type
+  and provider type with structurally equal to/from-provider expressions (closures compare by reference: separately
+  created closures decline). Don't add a per-caller variant.
 - **A composite `$group` `_id` omits a missing sub-key**; `MongoPipelineFactory.RenderCompositeKeyPart`
   `$ifNull`-normalizes every possibly-null part once. Key-only accumulator conditions use `NullSafeKeyRead`.
 
@@ -106,6 +117,12 @@ Rendering (null/missing/dialect semantics):
 - **Top-level aggregation `$eq`/`$ne` against null is `$ifNull`-wrapped**, but not inside a `$filter`/`$map` scope.
 - **`$expr` inside `$elemMatch` is a hard server error**; reject at `IsQueryDialectRenderable`. `$size` on a
   missing/null array also errors: `$ifNull` around `$size`/`$filter` is mandatory.
+- **Relational comparisons, sort keys and aggregates run on the stored form**: over a converted or non-default-
+  represented property they decline natively and the driver-LINQ bridge throws (EF-337). Shared predicates:
+  `StoredOrdering.PreservesClrOrdering` (comparison vs a value) and `PreservesClrOrderingForAggregateAndSort` (adds
+  integral narrowing converters); equality is never gated. Native aggregates stay on `HasDefaultKeySerialization`. The
+  bridge walks the whole key/operand (`??`, `?:`, projected members, `g.Key`, set-op sources); an unclassifiable
+  construct is refused if the query reads such a property.
 - **Non-default-serialized bools are truthiness-tested wrongly** (`HasConversion<string>()` stores `"True"`/
   `"False"`, both truthy): gate `$not`/`$and`/`$or` operands and bare boolean roots via
   `MongoExpressionTranslator.IsUnsafeTruthinessRoot`.

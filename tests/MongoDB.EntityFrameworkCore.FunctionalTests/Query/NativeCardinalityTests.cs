@@ -41,6 +41,9 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         public int Value { get; set; }
         public decimal DecimalValue { get; set; }
         public int? NullableValue { get; set; }
+        public float FloatValue { get; set; }
+        public float? NullableFloatValue { get; set; }
+        public decimal? NullableDecimalValue { get; set; }
         public bool IsActive { get; set; }
         public string Name { get; set; } = "";
 
@@ -450,6 +453,77 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     {
         using var db = CreateDecimalContext([1.0m, 2.0m, 3.0m], MongoQueryMode.NativeOnly, nameof(Average_over_decimal_goes_native));
         Assert.Equal(2.0m, db.Entities.Average(e => e.DecimalValue));
+    }
+
+    // EF-228: Average over float / float? / decimal? / int?. The oracle is LINQ-to-objects, which accumulates in
+    // double and narrows to float (so 1.6 and 1.7 average to 1.6500001f, not the float-arithmetic 1.65f).
+
+    private static readonly float[] FloatSeed = [1.6f, 1.7f];
+
+    private SingleEntityDbContext<ValueEntity> CreateFloatContext(float?[] seed, MongoQueryMode mode, string name)
+        => CreateContext(
+            seed,
+            v => new ValueEntity { Id = ObjectId.GenerateNewId(), FloatValue = v ?? 0f, NullableFloatValue = v, Name = "g" },
+            mode, name);
+
+    [Fact]
+    public void Average_over_float_goes_native_and_matches_linq_to_objects()
+    {
+        using var db = CreateFloatContext([1.6f, 1.7f], MongoQueryMode.NativeOnly, nameof(Average_over_float_goes_native_and_matches_linq_to_objects));
+        var expected = FloatSeed.Average();
+        Assert.Equal(1.6500001f, expected);
+        Assert.Equal(expected, db.Entities.Average(e => e.FloatValue));
+    }
+
+    [Fact]
+    public void Average_over_nullable_float_goes_native_and_matches_linq_to_objects()
+    {
+        using var db = CreateFloatContext([1.6f, null, 1.7f], MongoQueryMode.NativeOnly, nameof(Average_over_nullable_float_goes_native_and_matches_linq_to_objects));
+        Assert.Equal(1.6500001f, db.Entities.Average(e => e.NullableFloatValue));
+    }
+
+    [Fact]
+    public void Average_over_nullable_float_with_no_values_is_null()
+    {
+        using var db = CreateFloatContext([null, null], MongoQueryMode.NativeOnly, nameof(Average_over_nullable_float_with_no_values_is_null));
+        Assert.Null(db.Entities.Average(e => e.NullableFloatValue));
+    }
+
+    [Fact]
+    public void Grouped_average_over_float_goes_native_and_matches_linq_to_objects()
+    {
+        using var db = CreateFloatContext([1.6f, 1.7f], MongoQueryMode.NativeOnly, nameof(Grouped_average_over_float_goes_native_and_matches_linq_to_objects));
+        var result = db.Entities.GroupBy(e => e.Name).Select(g => new { g.Key, Avg = g.Average(x => x.FloatValue) }).ToList();
+        var row = Assert.Single(result);
+        Assert.Equal("g", row.Key);
+        Assert.Equal(1.6500001f, row.Avg);
+    }
+
+    [Fact]
+    public void Average_over_nullable_decimal_goes_native()
+    {
+        using var db = CreateContext(
+            new decimal?[] { 1.0m, null, 2.0m },
+            v => new ValueEntity { Id = ObjectId.GenerateNewId(), NullableDecimalValue = v },
+            MongoQueryMode.NativeOnly, nameof(Average_over_nullable_decimal_goes_native));
+        Assert.Equal(1.5m, db.Entities.Average(e => e.NullableDecimalValue));
+    }
+
+    [Fact]
+    public void Average_over_nullable_int_ignores_nulls()
+    {
+        // Nulls are skipped, not counted as zero: (2 + 6) / 2 = 4, not 8 / 3.
+        using var db = CreateNullableContext([2, null, 6], MongoQueryMode.NativeOnly, nameof(Average_over_nullable_int_ignores_nulls));
+        Assert.Equal(4.0, db.Entities.Average(e => e.NullableValue));
+    }
+
+    [Fact]
+    public void Average_over_float_under_explicit_driver_linq_throws_truncation()
+    {
+        // EF-228 DriverLinq leg, NOT fixed: the driver's float Average reads the double result through a
+        // float serializer and throws. Pinned so a change is noticed; driver-LINQ is being retired.
+        using var db = CreateFloatContext([1.6f, 1.7f], MongoQueryMode.DriverLinq, nameof(Average_over_float_under_explicit_driver_linq_throws_truncation));
+        Assert.Throws<TruncationException>(() => db.Entities.Average(e => e.FloatValue));
     }
 
     [Fact]

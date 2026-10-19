@@ -17,6 +17,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Extensions; // IsInHierarchy()
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -37,7 +38,7 @@ internal static class StreamingEligibility
             return true; // cycle guard
         }
 
-        if (entityType.BaseType != null || entityType.GetDirectlyDerivedTypes().Any())
+        if (entityType.IsInHierarchy())
         {
             return false;
         }

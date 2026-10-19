@@ -77,6 +77,41 @@ internal static class NativeDateTimeKindReadBack
            && property.GetDateTimeKind() is not (DateTimeKind.Unspecified or DateTimeKind.Utc);
 
     /// <summary>
+    /// Whether <paramref name="value"/> is (or is computed from) a kind-sensitive <c>DateTime</c> property, so a server-side
+    /// date part or calendar-unit add over it would be evaluated in UTC while the C# value is in local time.
+    /// </summary>
+    /// <remarks>
+    /// Context-free: it walks only the nodes that carry a <c>DateTime</c> through (fields, date arithmetic, truncation,
+    /// branches, casts). Every property test goes through <see cref="IsKindSensitive"/>, the one predicate shared with
+    /// the read-back checks above and with the driver-LINQ bridge. The pass-through node set (casts, <c>.Date</c>,
+    /// <c>AddXxx</c>, <c>??</c>, <c>?:</c>) mirrors the bridge's LINQ-tree walker
+    /// <c>MongoEFToLinqTranslatingExpressionVisitor.FindLocalKindProperty</c>; change the two together.
+    /// </remarks>
+    internal static bool ReferencesKindSensitiveProperty(MongoExpression value)
+        => value switch
+        {
+            MongoFieldExpression field => IsKindSensitive(field.Property),
+            MongoOuterFieldExpression outerField => IsKindSensitive(outerField.Property),
+            MongoDateAddExpression dateAdd => ReferencesKindSensitiveProperty(dateAdd.StartDate),
+            MongoDatePartExpression { Part: MongoDatePart.Date } datePart => ReferencesKindSensitiveProperty(datePart.Operand),
+            MongoConvertExpression convert => ReferencesKindSensitiveProperty(convert.Operand),
+            MongoConditionalExpression conditional
+                => ReferencesKindSensitiveProperty(conditional.IfTrue) || ReferencesKindSensitiveProperty(conditional.IfFalse),
+            MongoCoalesceExpression coalesce
+                => ReferencesKindSensitiveProperty(coalesce.Left) || ReferencesKindSensitiveProperty(coalesce.Right),
+            MongoElementRefExpression { ValueProperty: { } valueProperty } => IsKindSensitive(valueProperty),
+            _ => false
+        };
+
+    /// <summary>
+    /// Whether adding <paramref name="unit"/>s is calendar arithmetic whose result depends on the time zone (a day is
+    /// 23 or 25 hours across a DST change, a month ends at a local midnight). Hour and smaller units are exact elapsed
+    /// time and agree between UTC and local.
+    /// </summary>
+    internal static bool IsCalendarUnit(MongoDateAddUnit unit)
+        => unit is MongoDateAddUnit.Year or MongoDateAddUnit.Month or MongoDateAddUnit.Day;
+
+    /// <summary>
     /// The kind-sensitive property whose stored value the <paramref name="select"/>'s projection output
     /// <paramref name="alias"/> holds unchanged, or <see langword="null"/> when there is none (the generic read is then
     /// already correct, or the query was declined by <see cref="HasUnreproducibleReadBack"/>).
@@ -185,11 +220,16 @@ internal static class NativeDateTimeKindReadBack
     /// whole composite key member by member rather than through its type's class map.
     /// </summary>
     internal static bool IsKindSensitiveKeyPart(MongoSelectDefinition select, MongoExpression fieldRef)
-    {
-        var level = select.PriorGrouping != null ? Level.GroupInput : Level.Document;
-        return Find(fieldRef, select, level) != null
-               || (IsDateTimeTyped(fieldRef) && ReferencesKindSensitiveDate(fieldRef, select, level));
-    }
+        => CarriesKindSensitiveDate(fieldRef, select, GroupInputLevel(select));
+
+    // Whether `value` passes a kind-sensitive property's value through unchanged (Find), or is a DateTime derived from one.
+    private static bool CarriesKindSensitiveDate(MongoExpression value, MongoSelectDefinition select, Level level)
+        => Find(value, select, level) != null
+           || (IsDateTimeTyped(value) && ReferencesKindSensitiveDate(value, select, level));
+
+    // The level a $group's input is evaluated at: the prior grouping's output when one exists, else the document.
+    private static Level GroupInputLevel(MongoSelectDefinition select)
+        => select.PriorGrouping != null ? Level.GroupInput : Level.Document;
 
     private static Level ProjectionLevel(MongoSelectDefinition select)
         => select.Grouping != null ? Level.GroupOutput : Level.Document;
@@ -222,14 +262,11 @@ internal static class NativeDateTimeKindReadBack
     {
         switch (value)
         {
-            case MongoElementRefExpression { Path: GroupIdPath } when CompositeGroupingAt(select, level) is { } grouping:
-                var inputLevel = level == Level.PriorGroupOutput
-                    ? Level.Document
-                    : select.PriorGrouping != null ? Level.GroupInput : Level.Document;
+            case MongoElementRefExpression { Path: GroupIdPath }
+                when GroupingAt(select, level) is ({ IsCompositeKey: true } grouping, var inputLevel):
                 foreach (var part in grouping.Key)
                 {
-                    if (Find(part.FieldRef, select, inputLevel) != null
-                        || (IsDateTimeTyped(part.FieldRef) && ReferencesKindSensitiveDate(part.FieldRef, select, inputLevel))
+                    if (CarriesKindSensitiveDate(part.FieldRef, select, inputLevel)
                         || HoldsKindSensitiveDateInClassMapRead(part.FieldRef, select, inputLevel))
                         return true;
                 }
@@ -255,15 +292,15 @@ internal static class NativeDateTimeKindReadBack
 
     private const string GroupIdPath = "_id";
 
-    private static MongoGrouping? CompositeGroupingAt(MongoSelectDefinition select, Level level)
+    // The grouping whose output `level` is, and the level that grouping's input (key parts, accumulator operands) is
+    // evaluated at; no grouping for a non-group-output level.
+    private static (MongoGrouping? Grouping, Level InputLevel) GroupingAt(MongoSelectDefinition select, Level level)
         => level switch
         {
-            Level.GroupOutput => select.Grouping,
-            Level.PriorGroupOutput => select.PriorGrouping,
-            _ => null
-        } is { IsCompositeKey: true } grouping
-            ? grouping
-            : null;
+            Level.GroupOutput => (select.Grouping, GroupInputLevel(select)),
+            Level.PriorGroupOutput => (select.PriorGrouping, Level.Document),
+            _ => (null, Level.Document)
+        };
 
     // The kind-sensitive property whose stored value `value` passes through unchanged. A ternary or coalesce is admitted
     // when every branch is such a value (any Local-kind properties read back alike) or a null constant.
@@ -366,12 +403,7 @@ internal static class NativeDateTimeKindReadBack
         operand = null!;
         operandLevel = default;
 
-        var (grouping, inputLevel) = level switch
-        {
-            Level.GroupOutput => (select.Grouping, select.PriorGrouping != null ? Level.GroupInput : Level.Document),
-            Level.PriorGroupOutput => (select.PriorGrouping, Level.Document),
-            _ => (null, Level.Document)
-        };
+        var (grouping, inputLevel) = GroupingAt(select, level);
 
         if (grouping is null)
             return false;
@@ -416,7 +448,7 @@ internal static class NativeDateTimeKindReadBack
             case Level.GroupOutput when select.Grouping is { } grouping:
                 if (!TryResolveGroupOutput(grouping, elementRef.Path, valuePreservingOnly, out target))
                     return false;
-                targetLevel = select.PriorGrouping != null ? Level.GroupInput : Level.Document;
+                targetLevel = GroupInputLevel(select);
                 return true;
 
             case Level.GroupInput:

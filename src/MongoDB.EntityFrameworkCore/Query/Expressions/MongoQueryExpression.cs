@@ -168,13 +168,8 @@ internal sealed partial class MongoQueryExpression : Expression
             return null;
         }
 
-        var current = memberExpression.Expression;
-        while (current is IncludeExpression include)
-        {
-            current = include.EntityExpression;
-        }
-
-        return current is StructuralTypeShaperExpression { StructuralType: IReadOnlyEntityType entityType }
+        return memberExpression.Expression?.UnwrapIncludes()
+                is StructuralTypeShaperExpression { StructuralType: IReadOnlyEntityType entityType }
             ? entityType.FindProperty(property)?.GetElementName() ?? property.Name
             : property.Name;
     }

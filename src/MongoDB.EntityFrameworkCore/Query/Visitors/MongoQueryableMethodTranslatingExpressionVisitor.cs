@@ -373,6 +373,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Join/LeftJoin/GroupJoin TransparentIdentifier selectors pass through; any other projecting Select
         // this method can't lower natively marks the query non-representable.
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+
+        // The join-scope bare-leaf arms below each stage one leaf under the synthetic "_v" alias and read it back whole.
+        ShapedQueryExpression BindBareJoinScopeLeaf()
+            => source.UpdateShaperExpression(
+                BindProjectionByAlias(mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body));
+
         if (source.ShaperExpression is GroupByShaperExpression)
         {
             // Bind the accumulators and finalize Grouping for a supported shape, else mark non-native. Either way the
@@ -403,7 +409,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         {
             // Bare body: bound under the alias the binder returned. Wrapped: walk member by member.
             var selectManyShaper = bareSelectManyLeafAlias != null
-                ? BindSelectManyMember(mongoQueryExpression, bareSelectManyLeafAlias, selector.Body)
+                ? BindProjectionByAlias(mongoQueryExpression, bareSelectManyLeafAlias, selector.Body)
                 : BuildSelectManyResultShaper(mongoQueryExpression, selector.Body, _projectionBindingExpressionVisitor);
             return source.UpdateShaperExpression(selectManyShaper);
         }
@@ -441,32 +447,75 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             mongoQueryExpression.Select.MarkNotNativelyRepresentable();
         }
         // A collection Include directly over a join scope, e.g. Customers.Include(c => c.Orders).Join(Orders, ...).
-        // Gated by IsSingleEligibleNativeJoinScope; confirms and registers the join's $lookup. The Include's own $lookup
-        // registers later during shaper compilation, so don't mark non-representable on success.
+        // Gated by IsSingleEligibleNativeJoinScope; confirms and registers the join's $lookup(s). The Include's own
+        // $lookup registers later during shaper compilation, so don't mark non-representable on success.
         //
-        // Outer-rooted only. When the join resolves to the Include's navigation, both would claim one alias and AddLookup
-        // would collapse them, but the join needs $unwind and the Include the bare array; renaming the join's alias is safe
-        // only because nothing reads the join's Inner side here. An Inner-rooted Include is declined:
-        // RebindInnerShaperToOuterQuery already baked the original alias into Inner's shaper.
-        else if (TryGetCollectionIncludeOverJoinScope(selector) is { EntityExpression: MemberExpression { Member.Name: "Outer" } } collectionInclude)
+        // Root-rooted only (`ti.Outer`, or `ti.Outer.Outer...` resolving to scope 0 over a chain). An Inner-rooted Include
+        // is declined: RebindInnerShaperToOuterQuery already baked the original alias into Inner's shaper.
+        //
+        // Alias collision: a join resolving to the Include's navigation claims the Include's `_lookup_<Nav>` alias, and
+        // AddLookup would collapse them, but the join needs $unwind and the Include the bare array.
+        // - Single level: the join is renamed `<alias>_join`, safe only while nothing reads its Inner side, so an Inner
+        //   Where/OrderBy (JoinInnerAccessConfirmed: its field refs carry the original alias) declines.
+        // - Chain: no join is renamed. TranslateJoinCore registered every level's $lookup, so the Include binding sees
+        //   the colliding $unwind-ed lookup and renames the Include instead (MongoProjectionBindingExpressionVisitor's
+        //   existingIncompatibleLookup), leaving every reader of a join alias (a later join's localField via
+        //   LookupExpression.ReadsOutputOf, an Inner-side filter) intact. Paging recorded after a join may sit between
+        //   two joins and would be deferred past every $lookup, so it declines (as the chained bare-leaf arm below).
+        else if (TryGetCollectionIncludeOverJoinScope(selector) is { } collectionInclude
+                 && (collectionInclude.EntityExpression is MemberExpression { Member.Name: "Outer", Expression: ParameterExpression }
+                     || mongoQueryExpression.Select.JoinScope is { Levels.Count: > 1 }))
         {
-            if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var collectionJoin))
-            {
-                var includeNavigation = (INavigation)collectionInclude.Navigation!;
-                if (collectionJoin.Lookup!.As == LookupExpression.GetLookupAlias(includeNavigation))
-                {
-                    var renamedAlias = $"{collectionJoin.Lookup.As}_join";
-                    collectionJoin.Alias = renamedAlias;
-                    collectionJoin.Lookup.As = renamedAlias;
-                }
+            var select = mongoQueryExpression.Select;
+            var includeNavigation = (INavigation)collectionInclude.Navigation!;
 
-                mongoQueryExpression.AddLookup(collectionJoin.Lookup);
-                mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
-                mongoQueryExpression.Select.MarkJoinLookupConfirmed();
+            // A join level the Include binding would mistake for the Include's intermediate document (an unwound
+            // reference/navigation-less hop targeting the root's type, matched by type) nests the root Include's $lookup
+            // under that join's alias while the reader reads it at root: empty Includes or a read failure. Decline.
+            // Same predicate as the binding; the binding itself is a known gap.
+            if (mongoQueryExpression.Joins.Any(
+                    j => j.Lookup?.IsCollectionIncludeIntermediateFor(includeNavigation.DeclaringEntityType) == true))
+            {
+                select.MarkNotNativelyRepresentable();
+            }
+            else if (select.JoinScope is { Levels.Count: > 1 } includeChainScope)
+            {
+                if (NativeJoinScopeTranslator.TryResolveBareScopeLeaf(
+                        includeChainScope, selector.Parameters[0], collectionInclude.EntityExpression, out var includeScopeIndex)
+                    && includeScopeIndex == 0
+                    && !select.HasPagingDeferredPastAChainJoin
+                    && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
+                {
+                    NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, includeChainScope);
+                }
+                else
+                {
+                    select.MarkNotNativelyRepresentable();
+                }
             }
             else
             {
-                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+                var includeAlias = LookupExpression.GetLookupAlias(includeNavigation);
+                var joinCollides = mongoQueryExpression.Joins is [{ Lookup: { } singleJoinLookup }]
+                                   && singleJoinLookup.As == includeAlias;
+                if (!(joinCollides && select.JoinInnerAccessConfirmed)
+                    && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var collectionJoin))
+                {
+                    if (collectionJoin.Lookup!.As == includeAlias)
+                    {
+                        var renamedAlias = mongoQueryExpression.GetUnusedLookupAlias($"{collectionJoin.Lookup.As}_join");
+                        collectionJoin.Alias = renamedAlias;
+                        collectionJoin.Lookup.As = renamedAlias;
+                    }
+
+                    mongoQueryExpression.AddLookup(collectionJoin.Lookup);
+                    select.MarkReferenceIncludeConfirmed();
+                    select.MarkJoinLookupConfirmed();
+                }
+                else
+                {
+                    select.MarkNotNativelyRepresentable();
+                }
             }
         }
         // A bare `x.Outer`/`x.Inner` selector over an eligible single-level join, recorded as an unconfirmed candidate;
@@ -479,11 +528,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         //
         // Depth-1 only (`Levels.Count: 1`); a bare root leaf over a chain is handled by the next arm.
         else if (IsTransparentIdentifierMemberAccessSelector(selector)
-                 && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 }
+                 && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 } bareLeafScope
                  && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var bareLeafJoin))
         {
-            mongoQueryExpression.AddLookup(bareLeafJoin.Lookup!);
-            mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
+            // Without the join-lookup confirmation, an operator composed after this Select could record a native op
+            // that lowers before the $lookup and resolves against the outer entity type. See
+            // MongoSelectDefinition.HasConfirmedJoinLookup.
+            NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, bareLeafScope);
             // The Inner spelling is read off the join's _lookup_<Nav> field of a whole document, which the driver-LINQ
             // fallback's pushed-down `_v` projection doesn't provide — see HasBareJoinInnerEntityLeaf.
             var isInnerLeaf = selector.Body is MemberExpression { Member.Name: "Inner" };
@@ -493,9 +544,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             }
             // A following Distinct must dedup the selected side only — see TryBindWholeEntityDistinct.
             mongoQueryExpression.Select.MarkBareJoinEntityLeaf(bareLeafJoin.Lookup!, isInnerLeaf);
-            // Without this, an operator composed after this Select could record a native op that lowers before
-            // the $lookup and resolves against the outer entity type. See MongoSelectDefinition.HasConfirmedJoinLookup.
-            mongoQueryExpression.Select.MarkJoinLookupConfirmed();
         }
         // A bare ROOT-entity leaf over a chained join scope (`ti => ti.Outer.Outer`), what nav-expansion leaves after a
         // multi-hop reference-navigation filter. Confirms every level. Root only: a non-root whole-entity leaf needs
@@ -511,7 +559,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                  && NativeJoinScopeTranslator.TryResolveBareScopeLeaf(
                      chainedLeafScope, selector.Parameters[0], selector.Body, out var chainedLeafScopeIndex)
                  && chainedLeafScopeIndex == 0
-                 && !(mongoQueryExpression.Select.HasPaging && mongoQueryExpression.Select.HasPagingRecordedAfterAJoin)
+                 && !mongoQueryExpression.Select.HasPagingDeferredPastAChainJoin
                  && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
         {
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, chainedLeafScope);
@@ -546,9 +594,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         else if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var conditionalLeafJoin)
                  && NativeJoinScopeProjectionBinder.TryBindConditionalProjection(mongoQueryExpression, selector, conditionalLeafJoin))
         {
-            var boundBareLeaf = BindSelectManyMember(
-                mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
-            return source.UpdateShaperExpression(boundBareLeaf);
+            return BindBareJoinScopeLeaf();
         }
         // A bare join scope null check, e.g. `ti => ti.Inner == null` (what nav-expansion leaves of
         // `o => o.Customer == null`), at any chain depth. A bool leaf under "_v", bound like the conditional arm above;
@@ -556,9 +602,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         else if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var nullCheckLeafJoin)
                  && NativeJoinScopeProjectionBinder.TryBindNullCheckProjection(mongoQueryExpression, selector, nullCheckLeafJoin))
         {
-            var boundNullCheckLeaf = BindSelectManyMember(
-                mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
-            return source.UpdateShaperExpression(boundNullCheckLeaf);
+            return BindBareJoinScopeLeaf();
         }
         // A bare scalar/computed body over a single-level join scope, e.g. `ti => ti.Inner.City` (what EF's null-check
         // removal leaves of `nav != null ? nav.Member : null`). Tried after the whole-entity and conditional arms.
@@ -584,9 +628,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     ThrowsOnNull: bareValueRead == NonNullableValueRead.ThrowOnNull));
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, mongoQueryExpression.Select.JoinScope!);
 
-            var boundBareValueLeaf = BindSelectManyMember(
-                mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
-            return source.UpdateShaperExpression(boundBareValueLeaf);
+            return BindBareJoinScopeLeaf();
         }
         // A parameter-free body over a single-level join scope, e.g. `Select(ti => "Foo")` after `Skip`/`Take`. The
         // bare-value arm above can't take it: NativeJoinScopeTranslator requires an Outer/Inner access. Staged as a
@@ -603,9 +645,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, parameterFreeLeaf));
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, parameterFreeScope);
 
-            var boundParameterFreeLeaf = BindSelectManyMember(
-                mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
-            return source.UpdateShaperExpression(boundParameterFreeLeaf);
+            return BindBareJoinScopeLeaf();
         }
         else if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector)
                  && !IsTransparentIdentifierMemberAccessSelector(selector)
@@ -642,12 +682,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // bare pass-through arm, else Route stays Fallback. Gated on HasClientWrappedWholeEntityShaper, which only that
             // binder arm sets.
             else if (mongoQueryExpression.Select.HasClientWrappedWholeEntityShaper
-                     && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 }
-                     && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var clientMethodJoin))
+                     && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 } clientMethodScope
+                     && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
             {
-                mongoQueryExpression.AddLookup(clientMethodJoin.Lookup!);
-                mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
-                mongoQueryExpression.Select.MarkJoinLookupConfirmed();
+                NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, clientMethodScope);
             }
         }
 
@@ -782,10 +820,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // propagated. Never read on driver-LINQ, which declines such a selector (ThrowIfDriverLinqCaseMapsGroupedResult).
     private static Expression BindGroupMember(MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression)
     {
-        if (mongoQueryExpression.Select.TryGetDocumentConstructionProjection(alias, valueExpression.Type, out var construction))
+        if (TryBindDocumentConstruction(mongoQueryExpression, alias, valueExpression, out var boundConstruction))
         {
-            var constructionIndex = mongoQueryExpression.AddToProjection(construction, alias);
-            return new ProjectionBindingExpression(mongoQueryExpression, constructionIndex, valueExpression.Type);
+            return boundConstruction;
         }
 
         var receiver = NativeGroupByBinder.PeelResultMemberCaseMapping(valueExpression);
@@ -852,9 +889,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // propagated, as MongoProjectionBindingExpressionVisitor does for a named member.
     private static Expression BindPositionalCtorProjectionMember(MongoQueryExpression mongoQueryExpression, string memberName, Expression valueExpression)
     {
-        var alias = mongoQueryExpression.Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
-            ? overriddenAlias
-            : memberName;
+        var alias = mongoQueryExpression.Select.ResolveProjectionAlias(memberName);
         var receiver = NativeProjectionBinder.PeelCaseMapping(valueExpression);
         var index = mongoQueryExpression.AddToProjection(receiver, alias);
         return ReapplyCaseMapping(
@@ -934,32 +969,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     {
         joinInfo = null;
 
-        if (mongoQueryExpression.Select.JoinScope is not { } scope
-            || scope.Levels.Count != mongoQueryExpression.Joins.Count
-            || mongoQueryExpression.Select.HasUnsupportedOperator
-            || mongoQueryExpression.Select.HasTerminalOperator
-            || mongoQueryExpression.Select.UnwindSource != null)
+        if (!HasCompleteJoinScope(mongoQueryExpression, out _))
         {
             return false;
         }
 
         // IsNativelyEligible already checked each join before JoinScope was built to Joins.Count levels.
         var candidate = mongoQueryExpression.Joins[^1];
-        if (candidate.Lookup is not { } lookup)
-        {
-            return false;
-        }
-
-        // Every join needs a resolved Lookup, not just the last: ConfirmEntireChain confirms every level
-        // unconditionally, so a null earlier Lookup would drop that $lookup while the projection still reads its
-        // alias. JoinLookupImplementsKeySelectors should already prevent this; checked structurally anyway.
-        foreach (var chainJoin in mongoQueryExpression.Joins)
-        {
-            if (chainJoin.Lookup is null)
-            {
-                return false;
-            }
-        }
 
         // Paging or a reducer recorded before this arm confirms is emitted ahead of the $lookup/$unwind. That is
         // sound only when every level's $unwind is 1:1; otherwise it pages the un-joined outer rows
@@ -1041,6 +1057,41 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     /// <summary>
+    /// The structural core shared by <see cref="IsSingleEligibleNativeJoinScope"/> and
+    /// <see cref="TryGetGroupByJoinScope"/>: a join scope with one level per join, no unsupported or terminal
+    /// operator, no unwind source, and a resolved <c>Lookup</c> on every join. Pure.
+    /// </summary>
+    private static bool HasCompleteJoinScope(
+        MongoQueryExpression mongoQueryExpression, [NotNullWhen(true)] out MongoJoinScope? scope)
+    {
+        var select = mongoQueryExpression.Select;
+        scope = select.JoinScope;
+        if (scope == null
+            || scope.Levels.Count != mongoQueryExpression.Joins.Count
+            || select.HasUnsupportedOperator
+            || select.HasTerminalOperator
+            || select.UnwindSource != null)
+        {
+            scope = null;
+            return false;
+        }
+
+        // Every join needs a resolved Lookup, not just the last: ConfirmEntireChain confirms every level
+        // unconditionally, so a null earlier Lookup would drop that $lookup while the projection still reads its
+        // alias. JoinLookupImplementsKeySelectors should already prevent this; checked structurally anyway.
+        foreach (var chainJoin in mongoQueryExpression.Joins)
+        {
+            if (chainJoin.Lookup is null)
+            {
+                scope = null;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Translates a <c>Select</c> body that doesn't reference its parameter to a bare constant or query parameter,
     /// which <c>RenderProject</c> <c>$literal</c>-wraps. Anything else declines, as does a value that would throw at
     /// pipeline-build time (<see cref="NativeSlotPopulator.TryProbeBareValueRenders"/>). Pure.
@@ -1080,16 +1131,11 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     internal static MongoJoinScope? TryGetGroupByJoinScope(MongoQueryExpression mongoQueryExpression, LambdaExpression keySelector)
     {
         var select = mongoQueryExpression.Select;
-        if (select.JoinScope is not { } scope
+        if (!HasCompleteJoinScope(mongoQueryExpression, out var scope)
             || !keySelector.Parameters[0].Type.IsTransparentIdentifierType()
-            || scope.Levels.Count != mongoQueryExpression.Joins.Count
-            || select.HasUnsupportedOperator
-            || select.HasTerminalOperator
-            || select.UnwindSource != null
             || select.Cardinality != null
             // ConfirmEntireChain isn't idempotent (it counts confirmations), so a second confirm must be unreachable.
-            || select.HasConfirmedJoinLookup
-            || mongoQueryExpression.Joins.Any(j => j.Lookup is null))
+            || select.HasConfirmedJoinLookup)
         {
             return null;
         }
@@ -1140,7 +1186,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     private static bool IsTransparentIdentifierMemberAccessSelector(LambdaExpression selector)
     {
         if (selector.Parameters.Count != 1
-            || !selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+            || !selector.Parameters[0].Type.IsTransparentIdentifierType())
         {
             return false;
         }
@@ -1155,7 +1201,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             body = include.EntityExpression;
         }
 
-        return body is MemberExpression { Member.Name: "Outer" or "Inner" } member
+        return body is MemberExpression member
+               && member.IsTransparentIdentifierOuterOrInnerAccess()
                && member.Expression == selector.Parameters[0];
     }
 
@@ -1171,11 +1218,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return null;
         }
 
-        var body = selector.Body;
-        while (body is IncludeExpression include)
-        {
-            body = include.EntityExpression;
-        }
+        var body = selector.Body.UnwrapIncludes();
 
         return body is MemberExpression { Member.Name: "Outer" or "Inner" } member
                && member.Expression == selector.Parameters[0]
@@ -1243,30 +1286,40 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && !navigation.IsEmbedded();
 
     /// <summary>
-    /// Recognizes <c>Select(ti =&gt; IncludeExpression(ti.Outer, nav, ...))</c> (or the <c>ti.Inner</c> mirror):
-    /// a single-level non-embedded collection <c>Include</c> over one side of a user
-    /// <c>Join</c>/<c>GroupJoin</c>/<c>LeftJoin</c>, e.g. <c>Customers.Include(c =&gt; c.Orders).Join(Orders, ...)
-    /// .Select(c =&gt; c)</c>. None of the other Include recognizers admit this shape.
+    /// Recognizes <c>Select(ti =&gt; IncludeExpression(ti.Outer, nav, ...))</c> (or the <c>ti.Inner</c> mirror, or a
+    /// longer <c>Outer</c>/<c>Inner</c> hop chain such as <c>ti.Outer.Outer</c> over a join chain): a single-level
+    /// non-embedded collection <c>Include</c> over one side of a user <c>Join</c>/<c>GroupJoin</c>/<c>LeftJoin</c>, e.g.
+    /// <c>Customers.Include(c =&gt; c.Orders).Join(Orders, ...).Select(c =&gt; c)</c>. None of the other Include
+    /// recognizers admit this shape.
     /// <para>
-    /// The collection's <c>$lookup</c> registers later during projection binding; the caller must still gate
-    /// the join itself through <see cref="IsSingleEligibleNativeJoinScope"/> before confirming it.
+    /// Structural only: the caller resolves which scope the hop chain names, and must still gate the join itself
+    /// through <see cref="IsSingleEligibleNativeJoinScope"/> before confirming it. The collection's <c>$lookup</c>
+    /// registers later during projection binding.
     /// </para>
     /// </summary>
     internal static IncludeExpression? TryGetCollectionIncludeOverJoinScope(LambdaExpression selector)
     {
         if (selector.Parameters.Count != 1
-            || !selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+            || !selector.Parameters[0].Type.IsTransparentIdentifierType()
+            || selector.Body is not IncludeExpression { Navigation: INavigation navigation } includeExpression
+            || !navigation.IsCollection
+            || navigation.IsEmbedded())
         {
             return null;
         }
 
-        return selector.Body is IncludeExpression { Navigation: INavigation navigation } includeExpression
-               && navigation.IsCollection
-               && !navigation.IsEmbedded()
-               && includeExpression.EntityExpression is MemberExpression { Member.Name: "Outer" or "Inner" } member
-               && member.Expression == selector.Parameters[0]
-            ? includeExpression
-            : null;
+        var hop = includeExpression.EntityExpression;
+        if (hop is not MemberExpression)
+        {
+            return null;
+        }
+
+        while (hop is MemberExpression member && member.IsTransparentIdentifierOuterOrInnerAccess())
+        {
+            hop = member.Expression;
+        }
+
+        return hop == selector.Parameters[0] ? includeExpression : null;
     }
 
     /// <summary>
@@ -1364,7 +1417,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         collectionLevel = null;
 
         if (selector.Parameters.Count != 1
-            || !selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+            || !selector.Parameters[0].Type.IsTransparentIdentifierType())
         {
             return false;
         }
@@ -2340,6 +2393,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return false;
         }
 
+        // An anonymous-type key (EF-436): only the navigation-less branch builds its Lookup, from the same recognizer,
+        // with one key pair per member, so it matches by construction.
+        if (TryGetAnonymousJoinKeyMembers(outerKeySelector, innerKeySelector, out var outerMembers, out _))
+        {
+            return joinInfo.Navigation == null
+                && (lookup.CompositeKey?.Count ?? 1) == outerMembers.Count;
+        }
+
         if (outerKeySelector.Body.TryGetSimplePropertyName() == null
             || innerKeySelector.Body.TryGetSimplePropertyName() == null)
         {
@@ -2440,11 +2501,267 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         LambdaExpression innerKeySelector,
         [NotNullWhen(true)] out IProperty? outerProperty,
         [NotNullWhen(true)] out IProperty? innerProperty)
+        => TryResolveRawKeyJoinProperties(
+            fkOwnerEntityType, innerEntityType, fkPropertyName, innerKeySelector.Body.TryGetSimplePropertyName(),
+            out outerProperty, out innerProperty);
+
+    private static bool TryResolveRawKeyJoinProperties(
+        IEntityType fkOwnerEntityType,
+        IEntityType innerEntityType,
+        string? fkPropertyName,
+        string? innerKeyPropertyName,
+        [NotNullWhen(true)] out IProperty? outerProperty,
+        [NotNullWhen(true)] out IProperty? innerProperty)
     {
-        var innerKeyPropertyName = innerKeySelector.Body.TryGetSimplePropertyName();
         outerProperty = fkPropertyName != null ? fkOwnerEntityType.FindProperty(fkPropertyName) : null;
         innerProperty = innerKeyPropertyName != null ? innerEntityType.FindProperty(innerKeyPropertyName) : null;
         return outerProperty != null && innerProperty != null;
+    }
+
+    /// <summary>
+    /// Recognizes an anonymous-type join key of simple properties. Both sides construct the same anonymous type, so
+    /// members pair by position (<c>new { a.X, Y = a.Z } equals new { b.X, Y = b.W }</c> pairs <c>a.X</c> with
+    /// <c>b.X</c> and <c>a.Z</c> with <c>b.W</c>): each member is a property read (<c>x.P</c> or
+    /// <c>EF.Property(x, "P")</c>), optionally lifted to its own nullable type, and each inner member reads directly
+    /// off the inner parameter. The outer members' hop, and each pair's scalar-ness and storage, are checked by
+    /// <see cref="TryResolveAnonymousKeyJoinProperties"/>.
+    /// </summary>
+    /// <remarks>
+    /// Anything else declines ("non-simple key declines"): constant or computed members, nested anonymous types,
+    /// non-anonymous constructions (<c>new Key(...)</c> or <c>new Key { ... }</c> compare by the type's own
+    /// <c>Equals</c>, reference equality for a plain class), and narrowing or representation-changing conversions.
+    /// </remarks>
+    private static bool TryGetAnonymousJoinKeyMembers(
+        LambdaExpression outerKeySelector,
+        LambdaExpression innerKeySelector,
+        out IReadOnlyList<Expression> outerMembers,
+        out IReadOnlyList<string> innerPropertyNames)
+    {
+        outerMembers = [];
+        innerPropertyNames = [];
+
+        if (outerKeySelector.Body is not NewExpression { Arguments.Count: > 0 } outerNew
+            || innerKeySelector.Body is not NewExpression innerNew
+            || outerNew.Type != innerNew.Type
+            || !IsAnonymousType(outerNew.Type)
+            || innerNew.Arguments.Count != outerNew.Arguments.Count)
+        {
+            return false;
+        }
+
+        var outer = new List<Expression>(outerNew.Arguments.Count);
+        var inner = new List<string>(innerNew.Arguments.Count);
+        for (var i = 0; i < outerNew.Arguments.Count; i++)
+        {
+            var outerMember = StripNullableLift(outerNew.Arguments[i]);
+            var innerMember = StripNullableLift(innerNew.Arguments[i]);
+            if (outerMember is null
+                || innerMember is null
+                || outerMember.TryGetSimplePropertyName() == null
+                || GetKeySelectorTargetObject(innerMember)?.RemoveConvert() is not { } innerTarget
+                || !ReferenceEquals(innerTarget, innerKeySelector.Parameters[0]))
+            {
+                return false;
+            }
+
+            outer.Add(outerMember);
+            inner.Add(innerMember.TryGetSimplePropertyName()!);
+        }
+
+        outerMembers = outer;
+        innerPropertyNames = inner;
+        return true;
+
+        // `(int?)x.P` over an `int` P preserves equality; any other conversion (narrowing, enum-to-int, boxing) may
+        // not, so it declines. A member that's already a bare read passes through.
+        static Expression? StripNullableLift(Expression member)
+            => member switch
+            {
+                UnaryExpression { NodeType: ExpressionType.Convert, Operand: var operand } convert
+                    when Nullable.GetUnderlyingType(convert.Type) == operand.Type => operand,
+                UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } => null,
+                _ => member
+            };
+
+        static bool IsAnonymousType(Type type)
+            => type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)
+                && type.Name.Contains("AnonymousType", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Resolves the entity type a join key selector's outer side reads off: the root entity when
+    /// <paramref name="isDirectFromRoot"/>, else the inner side of the prior join at <paramref name="throughLevel"/>
+    /// (1-based, at most <paramref name="priorJoinCount"/>), returned as <paramref name="throughJoin"/>. Declines any
+    /// other hop.
+    /// </summary>
+    private static bool TryResolveKeyHopAnchor(
+        MongoQueryExpression outerQueryExpression,
+        bool isDirectFromRoot,
+        int? throughLevel,
+        int priorJoinCount,
+        [NotNullWhen(true)] out IEntityType? anchorEntityType,
+        out JoinInfo? throughJoin)
+    {
+        throughJoin = null;
+
+        if (isDirectFromRoot)
+        {
+            anchorEntityType = outerQueryExpression.CollectionExpression.EntityType;
+            return true;
+        }
+
+        if (throughLevel is { } level && level >= 1 && level <= priorJoinCount)
+        {
+            throughJoin = outerQueryExpression.Joins[level - 1];
+            anchorEntityType = throughJoin.InnerEntityType;
+            return true;
+        }
+
+        anchorEntityType = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Builds a navigation-less raw-key <c>$lookup</c> (EF-377/EF-436) for <paramref name="joinInfo"/> over the given
+    /// outer/inner key-property pairs, forced to unwind and preserving unmatched rows for a left-outer join. One pair
+    /// keeps the localField/foreignField form; more render as <c>let</c> + <c>$and</c>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="LookupExpression.GetFieldPath"/>, not a bare <c>GetElementName()</c>: a component of a composite
+    /// primary key is stored nested under <c>_id</c> (<c>"_id.ProductId"</c>), so the bare name names no field and the
+    /// <c>$lookup</c> silently matches nothing in every query mode (pinned by <c>NativeCompositeKeyJoinTests</c>). A
+    /// through-hop's local fields are scoped by its alias, as for a transitive navigation hop.
+    /// </remarks>
+    private static LookupExpression BuildRawKeyJoinLookup(
+        IEntityType innerEntityType,
+        IReadOnlyList<(IProperty Outer, IProperty Inner)> pairs,
+        JoinInfo? throughJoin,
+        JoinInfo joinInfo)
+    {
+        var keyPairs = pairs
+            .Select(p =>
+            {
+                var outerFieldPath = LookupExpression.GetFieldPath(p.Outer);
+                return new LookupKeyPair(
+                    throughJoin != null ? $"{throughJoin.Alias}.{outerFieldPath}" : outerFieldPath,
+                    LookupExpression.GetFieldPath(p.Inner),
+                    p.Outer.IsNullable || p.Inner.IsNullable);
+            })
+            .ToList();
+
+        return keyPairs.Count == 1
+            ? new LookupExpression(
+                innerEntityType, innerEntityType.GetCollectionName(), keyPairs[0].LocalField, keyPairs[0].ForeignField,
+                joinInfo.Alias, forceUnwind: true)
+            {
+                PreserveNullAndEmptyArrays = joinInfo.IsLeftOuter
+            }
+            : new LookupExpression(
+                innerEntityType, innerEntityType.GetCollectionName(), keyPairs, joinInfo.Alias, forceUnwind: true)
+            {
+                PreserveNullAndEmptyArrays = joinInfo.IsLeftOuter
+            };
+    }
+
+    /// <summary>
+    /// Resolves an anonymous join key (<see cref="TryGetAnonymousJoinKeyMembers"/>) to its property pairs: every
+    /// outer member must read off the same hop (the root, or one prior join's inner side; no owned-navigation segment)
+    /// and every member must name a mapped property.
+    /// </summary>
+    /// <remarks>
+    /// Each pair must also compare in the database as it does in C# (<see cref="IsStoredEqualityFaithfulKeyPair"/>):
+    /// otherwise the <c>$lookup</c> silently answers differently (element overlap for arrays, no match across two
+    /// stored forms).
+    /// </remarks>
+    private static bool TryResolveAnonymousKeyJoinProperties(
+        MongoQueryExpression outerQueryExpression,
+        IEntityType innerEntityType,
+        LambdaExpression outerKeySelector,
+        IReadOnlyList<Expression> outerMembers,
+        IReadOnlyList<string> innerPropertyNames,
+        int priorJoinCount,
+        out JoinInfo? throughJoin,
+        [NotNullWhen(true)] out List<(IProperty Outer, IProperty Inner)>? pairs)
+    {
+        throughJoin = null;
+        pairs = null;
+
+        (bool IsDirectFromRoot, int? ThroughLevel)? hop = null;
+        foreach (var member in outerMembers)
+        {
+            // RemoveConvert: EF.Property(x, "P") takes its entity as `(object)x`.
+            var (target, embeddedSegments) = PeelEmbeddedSegments(
+                GetKeySelectorTargetObject(member)?.RemoveConvert(), outerKeySelector.Parameters[0]);
+            if (embeddedSegments.Count > 0)
+            {
+                return false;
+            }
+
+            var memberHop = AnalyzeKeySelectorTarget(target, outerKeySelector.Parameters[0], priorJoinCount);
+            if (hop != null && hop != memberHop)
+            {
+                return false;
+            }
+
+            hop = memberHop;
+        }
+
+        if (!TryResolveKeyHopAnchor(
+                outerQueryExpression, hop!.Value.IsDirectFromRoot, hop.Value.ThroughLevel, priorJoinCount,
+                out var fkOwnerEntityType, out throughJoin))
+        {
+            return false;
+        }
+
+        var resolved = new List<(IProperty Outer, IProperty Inner)>(outerMembers.Count);
+        for (var i = 0; i < outerMembers.Count; i++)
+        {
+            if (!TryResolveRawKeyJoinProperties(
+                    fkOwnerEntityType, innerEntityType, outerMembers[i].TryGetSimplePropertyName(),
+                    innerPropertyNames[i], out var outerProperty, out var innerProperty)
+                || !IsStoredEqualityFaithfulKeyPair(outerProperty, innerProperty))
+            {
+                return false;
+            }
+
+            resolved.Add((outerProperty, innerProperty));
+        }
+
+        pairs = resolved;
+        return true;
+    }
+
+    /// <summary>
+    /// Whether stored-value equality of an anonymous-key pair agrees with the member-wise C# equality.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only scalar members: value types and <see cref="string"/>. A primitive collection would match by element
+    /// overlap (<c>localField</c>/<c>foreignField</c>) or array equality, and other reference types (<c>byte[]</c>,
+    /// lists) compare by reference in C#, so none of them is reproducible.
+    /// </para>
+    /// <para>
+    /// Both sides must be stored alike (<see cref="StoredSerialization.StoredAlike"/>, shared with the projected set
+    /// op): the same <c>BsonRepresentation</c>, and either no value converter or equivalent ones (the same instance,
+    /// or the same type and provider type with structurally equal conversion expressions). An enum
+    /// stored as a string on one side and as an int on the other never matches in the database; nor do
+    /// <c>BoolToStringConverter("N", "Y")</c> and <c>("F", "T")</c>, whose constants differ in their expressions. This
+    /// is stricter than the single-key path, which isn't gated.
+    /// </para>
+    /// </remarks>
+    private static bool IsStoredEqualityFaithfulKeyPair(IProperty outerProperty, IProperty innerProperty)
+    {
+        return IsScalarKeyType(outerProperty.ClrType)
+               && IsScalarKeyType(innerProperty.ClrType)
+               && !outerProperty.IsPrimitiveCollection
+               && !innerProperty.IsPrimitiveCollection
+               && StoredSerialization.StoredAlike(outerProperty, innerProperty);
+
+        static bool IsScalarKeyType(Type type)
+        {
+            var underlying = Nullable.GetUnderlyingType(type) ?? type;
+            return underlying.IsValueType || underlying == typeof(string);
+        }
     }
 
     /// <summary>
@@ -2512,21 +2829,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         JoinInfo? throughJoin = null;
         string? embeddedPath = null;
 
-        IEntityType? anchorEntityType = null;
-        if (isDirectFromRoot)
-        {
-            anchorEntityType = outerEntityType;
-        }
-        else if (throughLevel is { } level && level >= 1 && level <= priorJoinCount)
-        {
-            // Transitive join: resolve the navigation on the join hop the key selector actually reaches
-            // through (found by position, not by IEntityType — see above) and remember it so the
-            // $lookup's localField can be prefixed with that intermediate's alias.
-            throughJoin = outerQueryExpression.Joins[level - 1];
-            anchorEntityType = throughJoin.InnerEntityType;
-        }
-
-        if (anchorEntityType != null)
+        // A transitive join resolves the navigation on the join hop the key selector actually reaches through (found
+        // by position, not by IEntityType — see above) and remembers it so the $lookup's localField can be prefixed
+        // with that intermediate's alias.
+        if (TryResolveKeyHopAnchor(
+                outerQueryExpression, isDirectFromRoot, throughLevel, priorJoinCount,
+                out var anchorEntityType, out throughJoin))
         {
             // Walk any embedded segments via the navigation graph (not CLR type) so sibling owned
             // navigations sharing a CLR type (e.g. ShippingAddress/BillingAddress) resolve to the right
@@ -2601,6 +2909,19 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Each cross-collection projection carries its OWNING navigation and a stable "_lookup_<Navigation>" alias; the
         // shaper derives the field it reads from that plus UsesDriverJoinFields (native => "_inner"; flat => the alias),
         // so the projection is never retroactively rewritten.
+        // An anonymous-type key (EF-436) never resolves a navigation (GetKeySelectorTargetObject of a `new` is null,
+        // so no anchor above) and is built here as a navigation-less raw-key $lookup over every member pair.
+        List<(IProperty Outer, IProperty Inner)>? anonymousKeyPairs = null;
+        JoinInfo? anonymousKeyThroughJoin = null;
+        if (navigation == null
+            && TryGetAnonymousJoinKeyMembers(outerKeySelector, innerKeySelector, out var outerMembers, out var innerNames)
+            && TryResolveAnonymousKeyJoinProperties(
+                outerQueryExpression, innerEntityType, outerKeySelector, outerMembers, innerNames, priorJoinCount,
+                out anonymousKeyThroughJoin, out var resolvedPairs))
+        {
+            anonymousKeyPairs = resolvedPairs;
+        }
+
         joinInfo.Navigation = navigation;
         joinInfo.Alias = UniquifyLookupAlias(
             navigation != null
@@ -2614,6 +2935,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             joinInfo.Lookup = BuildNavigationJoinLookup(
                 navigation, joinInfo.Alias, joinInfo.IsLeftOuter, throughJoin, embeddedPath);
         }
+        else if (anonymousKeyPairs != null)
+        {
+            joinInfo.Lookup = BuildRawKeyJoinLookup(innerEntityType, anonymousKeyPairs, anonymousKeyThroughJoin, joinInfo);
+        }
         else if (fkPropertyName != null)
         {
             // Bare key-equality Join hop with no model navigation (EF-377): build the $lookup directly from the raw
@@ -2623,20 +2948,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     throughJoin?.InnerEntityType ?? outerEntityType, innerEntityType, fkPropertyName, innerKeySelector,
                     out var outerProperty, out var innerProperty))
             {
-                // LookupExpression.GetFieldPath, not a bare GetElementName(): a component of a composite primary key is
-                // stored nested under _id ("_id.ProductId"), so the bare name names no field and the $lookup silently
-                // matches nothing in every query mode (pinned by NativeCompositeKeyJoinTests).
-                var outerFieldPath = LookupExpression.GetFieldPath(outerProperty);
-                var localField = throughJoin != null
-                    ? $"{throughJoin.Alias}.{outerFieldPath}"
-                    : outerFieldPath;
-
-                joinInfo.Lookup = new Expressions.LookupExpression(
-                    innerEntityType, innerEntityType.GetCollectionName(), localField, LookupExpression.GetFieldPath(innerProperty),
-                    joinInfo.Alias, forceUnwind: true)
-                {
-                    PreserveNullAndEmptyArrays = joinInfo.IsLeftOuter
-                };
+                joinInfo.Lookup = BuildRawKeyJoinLookup(
+                    innerEntityType, [(outerProperty, innerProperty)], throughJoin, joinInfo);
             }
         }
 
@@ -2706,17 +3019,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var current = targetObject;
         while (current != null && !ReferenceEquals(current, parameter))
         {
-            var (name, next) = current.RemoveConvert() switch
-            {
-                MemberExpression member when member.IsTransparentIdentifierOuterOrInnerAccess() => (null, null),
-                MemberExpression member => (member.Member.Name, member.Expression),
-                MethodCallExpression call when call.Method.IsEFPropertyMethod()
-                    && call.Arguments.Count == 2
-                    && call.Arguments[1] is ConstantExpression { Value: string propertyName } => (propertyName, call.Arguments[0]),
-                _ => (null, null)
-            };
-
-            if (name == null || next == null)
+            var step = current.RemoveConvert();
+            if ((step is MemberExpression member && member.IsTransparentIdentifierOuterOrInnerAccess())
+                || !step.TryGetMemberOrEFProperty(out var next, out var name))
             {
                 // Reached the Outer/Inner plumbing or an unrecognized shape; AnalyzeKeySelectorTarget takes it.
                 break;
@@ -2948,15 +3253,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return projectionBody.RebuildProjectionMembers(boundValues);
     }
 
-    // Registers one SelectMany-result member and returns an index-based binding, like BindGroupMember. The DOM
-    // shaper reads the value raw by alias (the member name), matching NativeSelectManyBinder.TryBind's alias.
-    private static Expression BindSelectManyMember(MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression)
+    // Registers one projection leaf under `alias` and returns an index-based binding (SelectMany-result members, the
+    // join-scope bare leaves, set-op operands; like BindGroupMember). The DOM shaper reads the value raw by alias (for
+    // a SelectMany result, the member name, matching NativeSelectManyBinder.TryBind's alias).
+    private static Expression BindProjectionByAlias(MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression)
     {
         var index = mongoQueryExpression.AddToProjection(valueExpression, alias);
         return new ProjectionBindingExpression(mongoQueryExpression, index, valueExpression.Type);
     }
 
-    // BindSelectManyMember for join results (EF-444). When the folded leaf (the join's shaper substituted in) is a
+    // BindProjectionByAlias for join results (EF-444). When the folded leaf (the join's shaper substituted in) is a
     // whole-entity StructuralTypeShaperExpression, rebind its EntityProjectionExpression under this alias; registering
     // the raw leaf would be a scalar alias read that throws "No known serializer for type '<Entity>'". Non-join callers
     // pass no folded expression, so this is inert for them.
@@ -2980,7 +3286,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         //    like the leaf. NativeJoinScopeProjectionBinder.TryResolveReferenceIncludeLevel admits only that shape
         //    and has already staged the Inner document into the $project.
         //
-        // Anything else (e.g. a nested ThenInclude) falls through to BindSelectManyMember, which fails loudly
+        // Anything else (e.g. a nested ThenInclude) falls through to BindProjectionByAlias, which fails loudly
         // rather than yielding silent nulls. Every wrapper is checked before anything is rebound, since
         // AddToProjection mutates.
         var allIncludesRebindable = true;
@@ -3023,14 +3329,27 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // shaper reads each member by dotted path; the raw form would be an alias read of an anonymous type and throw.
         // Uses the same lookup as MongoProjectionBindingExpressionVisitor.TryGetNativeDocumentConstructionLeaf so the two
         // can't diverge on admission rules.
+        return TryBindDocumentConstruction(mongoQueryExpression, alias, valueExpression, out var boundConstruction)
+            ? boundConstruction
+            : BindProjectionByAlias(mongoQueryExpression, alias, valueExpression);
+    }
+
+    // Registers the MongoDocumentConstructionExpression already staged under `alias` (if any) in place of the raw
+    // construction, so the shaper reads each member by path rather than alias-reading the whole CLR type.
+    private static bool TryBindDocumentConstruction(
+        MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression,
+        [NotNullWhen(true)] out Expression? bound)
+    {
         if (mongoQueryExpression.Select.TryGetDocumentConstructionProjection(
                 alias, valueExpression.Type, out var construction))
         {
             var constructionIndex = mongoQueryExpression.AddToProjection(construction, alias);
-            return new ProjectionBindingExpression(mongoQueryExpression, constructionIndex, valueExpression.Type);
+            bound = new ProjectionBindingExpression(mongoQueryExpression, constructionIndex, valueExpression.Type);
+            return true;
         }
 
-        return BindSelectManyMember(mongoQueryExpression, alias, valueExpression);
+        bound = null;
+        return false;
     }
 
     // Whether BindResultMember can rebind this folded expression by index: a whole-entity
@@ -3092,9 +3411,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         if (IsPlainWholeEntitySelect(mongo1) && IsPlainWholeEntitySelect(mongo2)
             && mongo1.CollectionExpression.EntityType == mongo2.CollectionExpression.EntityType)
         {
-            mongo1.Select.AppendSetOperation(new MongoSetOperation(
-                kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, mongo2.CollectionExpression.EntityType));
-            mongo1.Select.IsSetOp = true;
+            AppendSetOperationLink(mongo1, mongo2, kind);
             return source1;
         }
 
@@ -3113,9 +3430,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             && (IsPlainWholeEntitySelect(mongo2) || IsWholeEntitySetOpChainSelect(mongo2))
             && mongo1.CollectionExpression.EntityType == mongo2.CollectionExpression.EntityType)
         {
-            mongo1.Select.AppendSetOperation(new MongoSetOperation(
-                kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, mongo2.CollectionExpression.EntityType));
-            mongo1.Select.IsSetOp = true; // already true when mongo1 is itself a chain; needed when it is plain
+            // IsSetOp is already true when mongo1 is itself a chain; setting it is needed when it is plain.
+            AppendSetOperationLink(mongo1, mongo2, kind);
             return source1;
         }
 
@@ -3155,7 +3471,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 // Admitted through CanRebindConstantLeafToDocument. Read the `$literal`-projected value by alias, so
                 // source2's rows read their own value instead of source1's baked-in one.
                 source1 = source1.UpdateShaperExpression(
-                    BindSelectManyMember(mongo1, mongo1.Select.Projection[0].Alias, source1.ShaperExpression));
+                    BindProjectionByAlias(mongo1, mongo1.Select.Projection[0].Alias, source1.ShaperExpression));
             }
 
             if (alignBareScalarAliases)
@@ -3166,10 +3482,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 mongo2.Select.ReplaceSingleProjectionAlias(mongo1.Select.Projection[0].Alias);
             }
 
-            mongo1.Select.AppendSetOperation(new MongoSetOperation(
-                kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, mongo2.CollectionExpression.EntityType,
-                operandsProjected: true));
-            mongo1.Select.IsSetOp = true;
+            AppendSetOperationLink(mongo1, mongo2, kind, operandsProjected: true);
             return source1;
         }
 
@@ -3182,6 +3495,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         mongo1.Select.MarkNotNativelyRepresentable();
         return source1;
+    }
+
+    // Appends mongo2 as the next set-op link of mongo1's select and marks mongo1 a set op.
+    private static void AppendSetOperationLink(
+        MongoQueryExpression mongo1, MongoQueryExpression mongo2, MongoSetOperationKind kind, bool operandsProjected = false)
+    {
+        mongo1.Select.AppendSetOperation(new MongoSetOperation(
+            kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, mongo2.CollectionExpression.EntityType,
+            operandsProjected));
+        mongo1.Select.IsSetOp = true;
     }
 
     // Whether the select is already a whole-entity Concat/Union nesting, so it can take another link or serve as
@@ -3295,11 +3618,30 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // IsGroupBy are mutually exclusive, so a real GroupBy is handled by IsPlainGroupBySelect. PriorGrouping
     // excludes a GroupBy nested on the Distinct. A whole-entity Distinct is covered by IsPlainWholeEntitySelect.
     private static bool IsPlainDistinctSelect(MongoQueryExpression mongo, bool allowPreCombineLookups = false)
-        => mongo.Select.Route == NativeRoute.GroupBy
+        => IsPlainGroupedOperandSelect(mongo, allowPreCombineLookups)
            && mongo.Select.IsDistinct
            && !mongo.Select.IsGroupBy
            // Same reason as IsPlainProjectedSelect: the Distinct keeps the flag of the Select it deduplicates.
-           && !mongo.Select.HasClientEvaluatedProjectionLeaf
+           && !mongo.Select.HasClientEvaluatedProjectionLeaf;
+
+    // A real GroupBy(key).Select(aggregate) as a set-op operand. The join wrong-data hazard of grouped sources
+    // doesn't apply to Union/Concat, and the lowerer emits a Grouping-bearing operand's $group + $project the
+    // same way for Distinct and GroupBy (AppendSetOpChainStages). Mirrors IsPlainDistinctSelect.
+    private static bool IsPlainGroupBySelect(MongoQueryExpression mongo, bool allowPreCombineLookups = false)
+        => IsPlainGroupedOperandSelect(mongo, allowPreCombineLookups)
+           && mongo.Select.IsGroupBy
+           // Operand lowering emits only the operand's $group + flattening $project, so post-group
+           // Skip/Take, HAVING, or OrderBy would be silently dropped. Such operands fall through to the
+           // out-of-scope decline.
+           && mongo.Select.GroupPagingOps.Count == 0
+           && mongo.Select.GroupHavingPredicate == null
+           && mongo.Select.GroupOrderOp == null;
+
+    // The conjuncts IsPlainDistinctSelect and IsPlainGroupBySelect share: a Grouping-bearing GroupBy-route select with
+    // no prior grouping, scalar cardinality, SelectMany unwind, join or VectorSearch, and no lookups beyond (for
+    // source1 only) InjectAfterRoot ones.
+    private static bool IsPlainGroupedOperandSelect(MongoQueryExpression mongo, bool allowPreCombineLookups)
+        => mongo.Select.Route == NativeRoute.GroupBy
            && mongo.Select.Grouping != null
            && mongo.Select.PriorGrouping == null
            && mongo.Select.Cardinality == null
@@ -3307,26 +3649,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && !mongo.IsJoinQuery
            && (allowPreCombineLookups ? mongo.Lookups.All(l => l.InjectAfterRoot) : mongo.Lookups.Count == 0)
            && !mongo.CapturedExpression.ContainsVectorSearch();
-
-    // A real GroupBy(key).Select(aggregate) as a set-op operand. The join wrong-data hazard of grouped sources
-    // doesn't apply to Union/Concat, and the lowerer emits a Grouping-bearing operand's $group + $project the
-    // same way for Distinct and GroupBy (AppendSetOpChainStages). Mirrors IsPlainDistinctSelect.
-    private static bool IsPlainGroupBySelect(MongoQueryExpression mongo, bool allowPreCombineLookups = false)
-        => mongo.Select.Route == NativeRoute.GroupBy
-           && mongo.Select.IsGroupBy
-           && mongo.Select.Grouping != null
-           && mongo.Select.PriorGrouping == null
-           && mongo.Select.Cardinality == null
-           && mongo.Select.UnwindSource == null
-           && !mongo.IsJoinQuery
-           && (allowPreCombineLookups ? mongo.Lookups.All(l => l.InjectAfterRoot) : mongo.Lookups.Count == 0)
-           && !mongo.CapturedExpression.ContainsVectorSearch()
-           // Operand lowering emits only the operand's $group + flattening $project, so post-group
-           // Skip/Take, HAVING, or OrderBy would be silently dropped. Such operands fall through to the
-           // out-of-scope decline.
-           && mongo.Select.GroupPagingOps.Count == 0
-           && mongo.Select.GroupHavingPredicate == null
-           && mongo.Select.GroupOrderOp == null;
 
     // mongo1's shaper is reused for every combined row, so a constant/parameter leaf (never read from the
     // document) would repeat mongo1's value. Only unsafe in that context; standalone this shape is fine (see
@@ -3479,10 +3801,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     // Both sides default-serialized (a computed value, null here, has no property and so no converter); or the same
-    // property; or two properties with no BsonRepresentation whose type-mapping converters (the ones
-    // BsonSerializerFactory wraps) are the same converter type with the same provider type and structurally equal
-    // conversion expressions, e.g. two HasConversion<string>() enums. Anything else (a converter against none, two
-    // different converters, a BsonRepresentation) declines; EF value converters have no equality of their own.
+    // property; or two properties stored identically (StoredSerialization.StoredAlike, shared with the anonymous-key
+    // join: equal BsonRepresentation, equivalent converters), e.g. two HasConversion<string>()
+    // enums or two [BsonRepresentation(String)] enums. Anything else (a converter or representation against none, two
+    // different converters or representations) declines.
     private static bool StoredSerializationsMatch(MongoFieldExpression? field1, MongoFieldExpression? field2)
     {
         var default1 = field1 == null || NativeGroupByBinder.HasDefaultKeySerialization(field1.Property);
@@ -3497,21 +3819,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return false;
         }
 
-        if (field1.Property == field2.Property)
-        {
-            return true;
-        }
-
-        return field1.Property.GetBsonRepresentation() == null
-               && field2.Property.GetBsonRepresentation() == null
-               && field1.Property.GetTypeMapping().Converter is { } converter1
-               && field2.Property.GetTypeMapping().Converter is { } converter2
-               && converter1.GetType() == converter2.GetType()
-               && converter1.ProviderClrType == converter2.ProviderClrType
-               && ExpressionEqualityComparer.Instance.Equals(
-                   converter1.ConvertToProviderExpression, converter2.ConvertToProviderExpression)
-               && ExpressionEqualityComparer.Instance.Equals(
-                   converter1.ConvertFromProviderExpression, converter2.ConvertFromProviderExpression);
+        return field1.Property == field2.Property
+               || StoredSerialization.StoredAlike(field1.Property, field2.Property);
     }
 
     // The entity field whose stored value a projected operand's alias carries: the projected field itself, or, for a

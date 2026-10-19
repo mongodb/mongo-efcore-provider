@@ -157,15 +157,15 @@ internal sealed class MongoSelectDefinition
     /// scope after an inner-side <c>Where</c>).
     /// </summary>
     /// <remarks>
-    /// The two <see cref="Grouping"/> branches are kept exclusive (<c>IsDistinct &amp;&amp; !IsGroupBy</c> /
-    /// <c>IsGroupBy &amp;&amp; !IsDistinct</c>): a GroupBy nested on a projected Distinct (both true, see
+    /// The two <see cref="Grouping"/> branches are kept exclusive (<see cref="IsProjectedDistinctOutput"/> /
+    /// <see cref="IsKeyedGroupOutput"/>): a GroupBy nested on a projected Distinct (both flags true, see
     /// <see cref="PriorGrouping"/>) must fall through to <see cref="PipelineOps"/>; <c>MongoSelectLowerer</c>
     /// places its post-group ops structurally.
     /// </remarks>
     private List<MongoSelectOp> ActiveOps
         => SetOperation != null ? _trailingOps
-            : IsDistinct && !IsGroupBy && Grouping != null ? _postGroupOps
-            : IsGroupBy && !IsDistinct && Grouping != null ? _postGroupOps
+            : IsProjectedDistinctOutput ? _postGroupOps
+            : IsKeyedGroupOutput ? _postGroupOps
             : _joinInnerAccessConfirmed || _referenceCollectionCountPredicateConfirmed ? _postJoinOps
             : _pipelineOps;
 
@@ -365,6 +365,14 @@ internal sealed class MongoSelectDefinition
     }
 
     /// <summary>
+    /// The alias <paramref name="memberName"/> is emitted under: its override (see <see cref="TryGetProjectionAlias"/>),
+    /// else the member name itself.
+    /// </summary>
+    [return: NotNullIfNotNull(nameof(memberName))]
+    internal string? ResolveProjectionAlias(string? memberName)
+        => TryGetProjectionAlias(memberName, out var overriddenAlias) ? overriddenAlias : memberName;
+
+    /// <summary>
     /// Looks up the <see cref="MongoDocumentConstructionExpression"/> an emit-side recognizer already staged into
     /// <see cref="Projection"/> for <paramref name="memberName"/>, if any.
     /// </summary>
@@ -398,7 +406,7 @@ internal sealed class MongoSelectDefinition
             return false;
         }
 
-        var alias = TryGetProjectionAlias(memberName, out var overriddenAlias) ? overriddenAlias : memberName;
+        var alias = ResolveProjectionAlias(memberName);
 
         foreach (var projection in Projection)
         {
@@ -442,7 +450,7 @@ internal sealed class MongoSelectDefinition
             return false;
         }
 
-        var alias = TryGetProjectionAlias(memberName, out var overriddenAlias) ? overriddenAlias : memberName;
+        var alias = ResolveProjectionAlias(memberName);
         if (alias is null)
         {
             return false;
@@ -747,8 +755,26 @@ internal sealed class MongoSelectDefinition
     /// predicate would run before the aliases it reads exist, and silently answer over the wrong rows.
     /// </remarks>
     internal bool IsFinalizedKeyedGroupOutput
-        => IsGroupBy && !IsDistinct && Grouping != null && Cardinality == null
+        => IsKeyedGroupOutput && Cardinality == null
            && PriorGrouping == null && SetOperation == null;
+
+    /// <summary>
+    /// <see langword="true"/> once a projected <c>Distinct()</c>'s <c>$group</c> is finalized and no <c>GroupBy</c> is
+    /// nested on it: later operators resolve against its key-part aliases
+    /// (<see cref="NativeTranslation.MongoExpressionTranslator.DistinctAliasScope"/>), not the entity.
+    /// </summary>
+    [MemberNotNullWhen(true, nameof(Grouping))]
+    internal bool IsProjectedDistinctOutput
+        => IsDistinct && !IsGroupBy && Grouping != null;
+
+    /// <summary>
+    /// <see langword="true"/> once a keyed <c>GroupBy(key).Select(...)</c>'s <see cref="Grouping"/> is finalized and it is
+    /// not nested on a projected <c>Distinct</c> (whose <see cref="IsDistinct"/> would also be set). Unlike
+    /// <see cref="IsFinalizedKeyedGroupOutput"/>, a terminal, prior grouping or set op may already be attached.
+    /// </summary>
+    [MemberNotNullWhen(true, nameof(Grouping))]
+    internal bool IsKeyedGroupOutput
+        => IsGroupBy && !IsDistinct && Grouping != null;
 
     /// <summary>
     /// <see langword="true"/> when a set op is the only thing done so far (no grouping/distinct/unwind, no
@@ -1049,6 +1075,13 @@ internal sealed class MongoSelectDefinition
     /// can represent, so <c>IsSingleEligibleNativeJoinScope</c> declines.
     /// </summary>
     internal bool HasPagingRecordedAfterAJoin => _hasPagingRecordedAfterAJoin;
+
+    /// <summary>
+    /// <see langword="true"/> when paging exists and was recorded after a join existed, i.e. it would have to be
+    /// deferred past the <c>$lookup</c> chain. The chain-scope arms (collection Include over a join chain, chained
+    /// bare leaf) decline on this rather than restate the pair of flags.
+    /// </summary>
+    internal bool HasPagingDeferredPastAChainJoin => HasPaging && HasPagingRecordedAfterAJoin;
 
     /// <summary>Records a <c>Skip</c>/<c>Take</c> seen while <paramref name="joinCount"/> (at least one) joins existed.</summary>
     internal void MarkPagingRecordedAfterAJoin(int joinCount)

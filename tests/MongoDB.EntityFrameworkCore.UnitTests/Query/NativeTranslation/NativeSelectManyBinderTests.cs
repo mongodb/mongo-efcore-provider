@@ -669,7 +669,7 @@ public class NativeSelectManyBinderTests
     {
         // Only an arithmetic bare body is admitted. A bare member access (`ti.Inner.Name`) is path-addressable,
         // so its alias would have to be its own document path for a late fallback (tier 1), not `_v`. Without
-        // IsArithmeticComputedLeaf's gate the member loop's first branch would bind it under `_v`.
+        // NativeProjectionBinder.IsArithmeticLeafShape's gate the member loop's first branch would bind it under `_v`.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 

@@ -258,14 +258,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     var fieldAccess = TryResolveFieldAccess(projection.Expression);
                     if (fieldAccess.Property != null)
                     {
-                        if (fieldAccess.Property.ClrType != projectionBindingExpression.Type
-                            && fieldAccess.Property.ClrType.UnwrapNullableType() != projectionBindingExpression.Type.UnwrapNullableType())
-                        {
-                            throw new InvalidOperationException(
-                                $"Aliased projection type '{projectionBindingExpression.Type}' does not match source property " +
-                                $"'{fieldAccess.Property.Name}' of type '{fieldAccess.Property.ClrType}'; the property's serializer " +
-                                "may produce values that cannot be cast to the binding's outer type.");
-                        }
+                        ThrowIfAliasedTypeMismatch(fieldAccess.Property, projectionBindingExpression.Type);
 
                         var valueExpression = BsonBinding.CreateGetValueExpression(
                             DocParameter,
@@ -277,9 +270,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         // the property is nullable; the assert above permits the binding type to be the
                         // non-nullable form, so convert to the exact binding type to keep the shaper's
                         // expression tree well-typed.
-                        return valueExpression.Type == projectionBindingExpression.Type
-                            ? valueExpression
-                            : Expression.Convert(valueExpression, projectionBindingExpression.Type);
+                        return valueExpression.ConvertIfRequired(projectionBindingExpression.Type);
                     }
 
                     // Reference-collection-nav First().Member: must throw on an empty source like Enumerable.First().
@@ -697,13 +688,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                 var ownership = entityType.FindOwnership();
                 if (ownership?.IsUnique == false && property.IsOwnedTypeOrdinalKey())
                 {
-                    var readExpression = _ordinalMappings[docExpression];
-                    if (readExpression.Type != type)
-                    {
-                        readExpression = Expression.Convert(readExpression, type);
-                    }
-
-                    return readExpression;
+                    return _ordinalMappings[docExpression].ConvertIfRequired(type);
                 }
 
                 var principalProperty = property.FindFirstPrincipal();
@@ -737,7 +722,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                                 ownerBsonDocExpression, (string?)null, false, typeof(BsonDocument));
                             Expression keyRead = BsonBinding.CreateGetPropertyValueOrPlaceholder(
                                 ownerDocument, principalProperty, principalProperty.ClrType, placeholder);
-                            return keyRead.Type == type ? keyRead : Expression.Convert(keyRead, type);
+                            return keyRead.ConvertIfRequired(type);
                         }
 
                         return CreateGetValueExpression(ownerBsonDocExpression, principalProperty, type);
@@ -880,7 +865,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             _ => ReadDocumentConstructionMemberGeneric(construction, path, memberName, value.Type)
         };
 
-        return read.Type == memberType ? read : Expression.Convert(read, memberType);
+        return read.ConvertIfRequired(memberType);
     }
 
     /// <summary>
@@ -940,7 +925,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             : flagged.Expression.Type.UnwrapNullableType();
         Expression value = Expression.Property(
             CreateAliasRead(alias, valueType.MakeNullable()), valueType.MakeNullable().GetProperty(nameof(Nullable<int>.Value))!);
-        read = value.Type == type ? value : Expression.Convert(value, type);
+        read = value.ConvertIfRequired(type);
         return true;
     }
 
@@ -957,13 +942,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     private Expression CreateAliasRead(string alias, Type type)
         => type.UnwrapNullableType() == typeof(TimeSpan) && _queryExpression.Select.IsTimeOfDayProjection(alias)
             ? BsonBinding.CreateGetElementValue(DocParameter, alias, type, BsonSerializerFactory.CreateTimeOfDaySerializer(type))
-            : BsonBinding.CreateGetElementValue(
-                DocParameter,
-                alias,
-                type,
-                type.UnwrapNullableType() == typeof(DateTime)
-                    ? NativeDateTimeKindReadBack.FindForProjectionAlias(_queryExpression.Select, alias)
-                    : null);
+            : type.UnwrapNullableType() == typeof(float)
+                ? BsonBinding.CreateGetElementValue(DocParameter, alias, type, BsonBinding.CreateNarrowingFloatSerializer(type))
+                : BsonBinding.CreateGetElementValue(
+                    DocParameter,
+                    alias,
+                    type,
+                    type.UnwrapNullableType() == typeof(DateTime)
+                        ? NativeDateTimeKindReadBack.FindForProjectionAlias(_queryExpression.Select, alias)
+                        : null);
 
     /// <summary>
     /// Reads one member of a <see cref="MongoDocumentConstructionExpression"/> leaf. The native implementation
@@ -1028,6 +1015,23 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
         var elementType = typeMapping?.ClrType ?? type;
         return BsonBinding.CreateGetValueExpression(innerExpression, propertyName, required, elementType, entityType!);
+    }
+
+    /// <summary>
+    /// Throws when an alias read of <paramref name="property"/> is bound as <paramref name="bindingType"/> and the two
+    /// differ beyond nullability: the property's serializer would produce values that can't be cast to the binding's
+    /// type. Nullability may differ in either direction, so both sides are unwrapped.
+    /// </summary>
+    protected static void ThrowIfAliasedTypeMismatch(IProperty property, Type bindingType)
+    {
+        if (property.ClrType != bindingType
+            && property.ClrType.UnwrapNullableType() != bindingType.UnwrapNullableType())
+        {
+            throw new InvalidOperationException(
+                $"Aliased projection type '{bindingType}' does not match source property " +
+                $"'{property.Name}' of type '{property.ClrType}'; the property's serializer " +
+                "may produce values that cannot be cast to the binding's outer type.");
+        }
     }
 
     protected ResolvedFieldAccess TryResolveFieldAccess(Expression? expression)
@@ -1241,11 +1245,6 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             throw new InvalidOperationException(CoreStrings.TranslationFailed(includeExpression.Print()));
         }
 
-        var includeMethod = navigation.IsCollection
-            ? MongoIncludeFixups.IncludeCollectionMethodInfo
-            : MongoIncludeFixups.IncludeReferenceMethodInfo;
-        var includingClrType = navigation.DeclaringEntityType.ClrType;
-        var relatedEntityClrType = navigation.TargetEntityType.ClrType;
 #pragma warning disable EF1001 // Internal EF Core API usage.
         Expression entityEntryVariable = _trackQueryResults
             ? shaperBlock.Variables.Single(v => v.Type == typeof(InternalEntityEntry))
@@ -1253,29 +1252,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 #pragma warning restore EF1001 // Internal EF Core API usage.
 
         var concreteEntityTypeVariable = shaperBlock.Variables.Single(v => v.Type == typeof(IEntityType));
-        var inverseNavigation = navigation.Inverse;
-        var fixup = MongoIncludeFixups.GenerateFixup(
-            includingClrType, relatedEntityClrType, navigation, inverseNavigation!);
-
         var navigationExpression = Visit(includeExpression.NavigationExpression);
 
         shaperExpressions.Add(
-            Expression.IfThen(
-                Expression.Call(
-                    Expression.Constant(navigation.DeclaringEntityType, typeof(IReadOnlyEntityType)),
-                    MongoIncludeFixups.IsAssignableFromMethodInfo,
-                    Expression.Convert(concreteEntityTypeVariable, typeof(IReadOnlyEntityType))),
-                Expression.Call(
-                    includeMethod.MakeGenericMethod(includingClrType, relatedEntityClrType),
-                    entityEntryVariable,
-                    instanceVariable,
-                    concreteEntityTypeVariable,
-                    navigationExpression,
-                    Expression.Constant(navigation),
-                    Expression.Constant(inverseNavigation, typeof(INavigation)),
-                    Expression.Constant(fixup),
+            MongoIncludeFixups.CreateIncludeCall(
+                navigation,
+                entityEntryVariable,
+                instanceVariable,
+                concreteEntityTypeVariable,
+                navigationExpression,
 #pragma warning disable EF1001 // Internal EF Core API usage.
-                    Expression.Constant(includeExpression.SetLoaded))));
+                includeExpression.SetLoaded));
 #pragma warning restore EF1001 // Internal EF Core API usage.
     }
 
@@ -1306,10 +1293,6 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
         return (TCollection)collection;
     }
-
-    private static readonly MethodInfo CollectionAccessorAddMethodInfo
-        = typeof(IClrCollectionAccessor).GetTypeInfo()
-            .GetDeclaredMethod(nameof(IClrCollectionAccessor.Add))!;
 
     private int GetProjectionIndex(ProjectionBindingExpression projectionBindingExpression)
         => projectionBindingExpression.ProjectionMember != null

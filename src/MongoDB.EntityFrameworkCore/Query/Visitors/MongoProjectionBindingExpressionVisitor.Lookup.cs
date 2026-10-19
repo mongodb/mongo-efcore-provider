@@ -172,12 +172,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         var objectArrayProjection = new ObjectArrayProjectionExpression(
             navigation, outerEntityProjection.ParentAccessExpression, lookupAlias);
 
-        Expression innerShaperExpression = new StructuralTypeShaperExpression(
-            navigation.TargetEntityType,
-            Expression.Convert(
-                Expression.Convert(objectArrayProjection.InnerProjection, typeof(object)),
-                typeof(ValueBuffer)),
-            nullable: true);
+        Expression innerShaperExpression = CreateNullableEntityShaper(
+            navigation.TargetEntityType, objectArrayProjection.InnerProjection);
 
         // Wrap the inner shaper with nested ThenInclude collection includes so the shaper reads the
         // nested $lookup arrays from each element document.
@@ -262,10 +258,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         // Bind the count as a scalar projection mapped to the original Count(Where(...)) subtree. Keeping
         // it a plain MethodCallExpression in the projection mapping leaves the projection push-down-able
         // (ProjectionAnalyzer.CanPushDown stays true); the EF-to-driver translator rewrites it to $size.
-        var projectionMember = GetCurrentProjectionMember();
-        _projectionMapping[projectionMember] = methodCallExpression;
-
-        result = new ProjectionBindingExpression(_queryExpression, projectionMember, methodCallExpression.Type);
+        result = BindWholeLeaf(methodCallExpression);
         return true;
     }
 
@@ -290,14 +283,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// or an <see cref="IncludeExpression"/> chain (ThenInclude) whose innermost entity is that parameter.
     /// </summary>
     private static bool IsEntityMaterializingSelector(Expression body, ParameterExpression parameter)
-    {
-        while (body is IncludeExpression include)
-        {
-            body = include.EntityExpression;
-        }
-
-        return body == parameter;
-    }
+        => body.UnwrapIncludes() == parameter;
 
     /// <summary>
     /// Locate the outer entity <see cref="StructuralTypeShaperExpression"/> — the principal side of the join —
@@ -463,12 +449,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 var nestedArrayProjection = new ObjectArrayProjectionExpression(
                     nav, parentArrayProjection.InnerProjection.ParentAccessExpression, nestedLookupAlias, null);
 
-                var nestedInnerShaper = new StructuralTypeShaperExpression(
-                    nav.TargetEntityType,
-                    Expression.Convert(
-                        Expression.Convert(nestedArrayProjection.InnerProjection, typeof(object)),
-                        typeof(ValueBuffer)),
-                    nullable: true);
+                var nestedInnerShaper = CreateNullableEntityShaper(
+                    nav.TargetEntityType, nestedArrayProjection.InnerProjection);
 
                 var nestedCollectionShaper = new CollectionShaperExpression(
                     nestedArrayProjection,
@@ -492,11 +474,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// </summary>
     private LookupExpression TryGetDeclaringJoinLookup(IncludeExpression includeExpression)
     {
-        var entityExpression = includeExpression.EntityExpression;
-        while (entityExpression is IncludeExpression wrappingInclude)
-        {
-            entityExpression = wrappingInclude.EntityExpression;
-        }
+        var entityExpression = includeExpression.EntityExpression.UnwrapIncludes();
 
         if (entityExpression is not StructuralTypeShaperExpression
             {
@@ -531,11 +509,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         // A reference Include off the same root may already wrap the entity in IncludeExpressions (e.g.
         // Include(o => o.Customer).Include(o => o.OrderDetails)). Unwrap to the StructuralTypeShaperExpression that carries the
         // projection index; visitedEntity is passed through to Update below to preserve the wrapping.
-        var shaperCandidate = visitedEntity;
-        while (shaperCandidate is IncludeExpression wrappingInclude)
-        {
-            shaperCandidate = wrappingInclude.EntityExpression;
-        }
+        var shaperCandidate = visitedEntity.UnwrapIncludes();
 
         EntityProjectionExpression outerEntityProjection;
         if (shaperCandidate is StructuralTypeShaperExpression shaper
@@ -553,12 +527,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         var objectArrayProjection = new ObjectArrayProjectionExpression(
             navigation, outerEntityProjection.ParentAccessExpression, lookupAlias);
 
-        Expression innerShaperExpression = new StructuralTypeShaperExpression(
-            navigation.TargetEntityType,
-            Expression.Convert(
-                Expression.Convert(objectArrayProjection.InnerProjection, typeof(object)),
-                typeof(ValueBuffer)),
-            nullable: true);
+        Expression innerShaperExpression = CreateNullableEntityShaper(
+            navigation.TargetEntityType, objectArrayProjection.InnerProjection);
 
         // For ThenInclude on collection-then-collection paths, wrap the inner shaper
         // with IncludeExpressions for nested collections so the binding remover
@@ -945,12 +915,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 var nestedArrayProjection = new ObjectArrayProjectionExpression(
                     nav, parentArrayProjection.InnerProjection.ParentAccessExpression, nestedLookupAlias, null);
 
-                var nestedInnerShaper = new StructuralTypeShaperExpression(
-                    nav.TargetEntityType,
-                    Expression.Convert(
-                        Expression.Convert(nestedArrayProjection.InnerProjection, typeof(object)),
-                        typeof(ValueBuffer)),
-                    nullable: true);
+                var nestedInnerShaper = CreateNullableEntityShaper(
+                    nav.TargetEntityType, nestedArrayProjection.InnerProjection);
 
                 // Recurse so this collection's deeper ThenIncludes are wrapped onto its element shaper; otherwise the deepest
                 // navigation is never materialized and comes back null. Reads the "_lookup_<Nav>" sub-documents relative to THIS
@@ -978,10 +944,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                     false,
                     LookupExpression.GetLookupAlias(refNav));
                 var refEntityProjection = new EntityProjectionExpression(refNav.TargetEntityType, refAccess);
-                var refShaper = new StructuralTypeShaperExpression(
-                    refNav.TargetEntityType,
-                    Expression.Convert(Expression.Convert(refEntityProjection, typeof(object)), typeof(ValueBuffer)),
-                    nullable: true);
+                var refShaper = CreateNullableEntityShaper(refNav.TargetEntityType, refEntityProjection);
 
                 result = new IncludeExpression(result, refShaper, refNav, include.SetLoaded);
             }

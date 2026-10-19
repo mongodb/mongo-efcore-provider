@@ -27,6 +27,12 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal static class MongoTransparentScopeResolver
 {
     /// <summary>
+    /// The hop names of EF Core's <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c> (<c>[outerHop, innerHop]</c>),
+    /// which every <c>SelectMany</c>/<c>Join</c> scope chain in the native translator is built from.
+    /// </summary>
+    internal static readonly IReadOnlyList<string> TransparentIdentifierHops = ["Outer", "Inner"];
+
+    /// <summary>
     /// Peels a chain of member accesses named from <paramref name="hopNames"/> down to the bare
     /// <paramref name="rootParam"/> parameter, and resolves which scope it refers to. Given
     /// <paramref name="sourceCount"/> chained scopes, the <c>k</c>-th level's own element is reached via

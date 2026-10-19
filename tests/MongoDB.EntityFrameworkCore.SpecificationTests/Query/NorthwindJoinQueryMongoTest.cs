@@ -261,21 +261,13 @@ Customers.
 
     public override async Task Join_composite_key(bool async)
     {
-        // Fails: Join shape not translated EF-X017
-        await AssertTranslationFailed(() =>
-            base.Join_composite_key(async));
+        // EF-436: an anonymous-type key of simple properties is a navigation-less $lookup over every member pair.
+        await base.Join_composite_key(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-Customers.
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "let" : { "k0" : { "$ifNull" : ["$_id", null] }, "k1" : { "$ifNull" : ["$_id", null] } }, "pipeline" : [{ "$match" : { "$expr" : { "$and" : [{ "$eq" : [{ "$ifNull" : ["$CustomerID", null] }, "$$k0"] }, { "$eq" : [{ "$ifNull" : ["$CustomerID", null] }, "$$k1"] }] } } }], "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$project" : { "c" : "$$ROOT", "_lookup_Order" : "$_lookup_Order", "_id" : 0 } }
 """);
-        }
     }
 
     public override async Task Join_complex_condition(bool async)
@@ -395,8 +387,9 @@ Customers.
 
     public override async Task Unflattened_GroupJoin_composed_2(bool async)
     {
-        // Fails: same unflattened-GroupJoin shape as Unflattened_GroupJoin_composed above (identical
-        // InvalidOperationException from EF Core itself, before reaching the provider).
+        // Fails: same unflattened-GroupJoin shape as Unflattened_GroupJoin_composed above: EF Core rewrites the
+        // GroupJoin into a correlated DbSet<Order>().Where(...) in the projection, which the provider's projection
+        // binder can't translate (InvalidOperationException, every mode).
         await AssertTranslationFailed(() => base.Unflattened_GroupJoin_composed_2(async));
 
         AssertMql(

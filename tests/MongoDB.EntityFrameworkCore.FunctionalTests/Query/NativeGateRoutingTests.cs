@@ -176,13 +176,25 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
             q => q.Where(e => e.Status == Status.Active).OrderBy(e => e.Name).Select(e => e.Name), EnumModel);
     }
 
-    [Fact]
-    public void A_enum_as_string_order_by_parity()
+    // Sorting an enum stored as its name would order alphabetically ("Active" < "Closed" < "Suspended"), not by the
+    // enum's value as C# does, so it is refused on every path (EF-337, StoredOrdering); equality above still works.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void A_enum_as_string_order_by_is_refused(MongoQueryMode mode)
     {
-        var collection = SeedEnum(nameof(A_enum_as_string_order_by_parity));
-        // Native sorts on the stored string ("Active" < "Closed" < "Suspended"); ThenBy Name breaks ties.
-        AssertParity(collection,
-            q => q.OrderBy(e => e.Status).ThenBy(e => e.Name).Select(e => e.Name), EnumModel);
+        var collection = SeedEnum(nameof(A_enum_as_string_order_by_is_refused) + mode);
+        using var db = CreateContext(collection, mode, EnumModel);
+        var ex = Record.Exception(() => db.Entities.OrderBy(e => e.Status).ThenBy(e => e.Name).Select(e => e.Name).ToList());
+        if (mode == MongoQueryMode.NativeOnly)
+        {
+            Assert.IsType<NativeTranslationNotSupportedException>(ex);
+        }
+        else
+        {
+            Assert.Contains("EnumEntity.Status'", Assert.IsType<NotSupportedException>(ex).Message);
+        }
     }
 
     [Fact]
@@ -195,13 +207,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
         Assert.True(WentNative(collection, q => q.Where(e => e.Status == Status.Active).ToList(), EnumModel));
     }
 
-    [Fact]
-    public void A_enum_as_string_order_by_routing()
-    {
-        var collection = SeedEnum(nameof(A_enum_as_string_order_by_routing));
-        Assert.True(WentNative(collection,
-            q => q.OrderBy(e => e.Status).ThenBy(e => e.Name).ToList(), EnumModel));
-    }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
     //  Shape B — owned / nested navigation sub-property predicate (e.Address.City)

@@ -534,7 +534,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Explicit_result_selector_form_computed_conditional_leaf_goes_native()
     {
         // MongoFieldPrefixRewriter must prefix a MongoConditionalExpression's operands with the unwind path. The
-        // ternary is nested under a top-level `+` because IsArithmeticComputedLeaf only admits arithmetic top nodes.
+        // ternary is nested under a top-level `+` because NativeProjectionBinder.IsArithmeticLeafShape only admits arithmetic top nodes.
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = (i.Flag ? 1m : 2m) + 0m })
             .OrderBy(r => r.X).ToList();
@@ -2479,7 +2479,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 .AsEnumerable().OrderBy(x => x.Name).ToList());
     }
 
-    // `r.Tag.ToUpper()` is a MethodCallExpression, so IsArithmeticComputedLeaf declines it. (String `+` goes native
+    // `r.Tag.ToUpper()` is a MethodCallExpression, so NativeProjectionBinder.IsArithmeticLeafShape declines it. (String `+` goes native
     // via $concat; see Reference_form_string_concat_computed_leaf_goes_native.)
     [Fact]
     public void Reference_form_computed_leaf_hard_fails_in_every_mode()
