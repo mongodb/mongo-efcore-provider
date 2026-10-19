@@ -512,7 +512,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal(driverLinqLabels, nativeLabels);
     }
 
-    // Why the rule uses NativeGroupByBinder.HasDefaultKeySerialization rather than "the property's CLR type is not
+    // Why the rule uses StoredSerialization.HasDefaultKeySerialization rather than "the property's CLR type is not
     // an enum". `Coded` is an int (not an enum) value-converted to a string (not default-serialized). The shipped
     // rule keeps the property serializer and renders "2"; the "not an enum" rule would render 2, which MongoDB
 

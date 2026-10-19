@@ -3389,7 +3389,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // The owner Id has an ObjectId<->string converter, which EF propagates to the element's shadow owner-FK, but
         // the __ownerKey sentinel is copied from the raw "$_id", bypassing it. IsWholeElementRepresentable declines via
-        // NativeGroupByBinder.HasDefaultKeySerialization on the owned-key properties, with NotSupportedException at
+        // StoredSerialization.HasDefaultKeySerialization on the owned-key properties, with NotSupportedException at
         // translation time.
         var seed = new[]
         {

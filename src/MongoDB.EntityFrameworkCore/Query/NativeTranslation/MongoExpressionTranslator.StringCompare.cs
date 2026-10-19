@@ -124,6 +124,6 @@ internal sealed partial class MongoExpressionTranslator
     // relational comparison against a converted field would compare converted BSON values, not CLR strings).
     private bool IsFoldSafe(Expression a, Expression b)
         => TryResolveMember(Unwrap(a), out var property, out _, out var isOuter)
-           && !isOuter && !property.IsNullable && NativeGroupByBinder.HasDefaultKeySerialization(property)
+           && !isOuter && !property.IsNullable && StoredSerialization.HasDefaultKeySerialization(property)
            && Unwrap(b) is ConstantExpression { Value: string };
 }

@@ -321,7 +321,7 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
                && (IsAggregate(query) || IsComputed(query)))
            || (query == "OrderBy_negated" && ex.GetType().Name == "ExpressionNotSupportedException"
                && storage is Storage.CastingConverterToLong or Storage.CastingConverterToDouble)
-           // A native Distinct key is likewise default-serialized only (NativeGroupByBinder.HasDefaultKeySerialization).
+           // A native Distinct key is likewise default-serialized only (StoredSerialization.HasDefaultKeySerialization).
            || (mode == MongoQueryMode.NativeOnly && query.StartsWith("Distinct", StringComparison.Ordinal)
                && ex is NativeTranslationNotSupportedException)
            || (mode != MongoQueryMode.NativeOnly && IsGroupByAggregate(query) && ex is InvalidOperationException)

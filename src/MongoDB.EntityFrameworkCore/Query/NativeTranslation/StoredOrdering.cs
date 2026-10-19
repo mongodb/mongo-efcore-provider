@@ -36,7 +36,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <para>
 /// <see cref="PreservesClrOrdering"/> is shared by the native translator's declines and the driver-LINQ bridge's refusal
 /// (<c>MongoEFToLinqTranslatingExpressionVisitor.ThrowIfStoredOrderingDiffers</c>); declining alone would only move the query to the
-/// driver, which is wrong the same way. Native aggregates stay stricter (<see cref="NativeGroupByBinder.HasDefaultKeySerialization"/>):
+/// driver, which is wrong the same way. Native aggregates stay stricter (<see cref="StoredSerialization.HasDefaultKeySerialization"/>):
 /// their result is read back through a generic serializer, not the property's.
 /// </para>
 /// <para>
@@ -55,7 +55,7 @@ internal static class StoredOrdering
 {
     /// <summary>Whether a relational comparison of <paramref name="property"/> against a (serialized) value gives the CLR answer.</summary>
     internal static bool PreservesClrOrdering(IProperty property)
-        => NativeGroupByBinder.HasDefaultKeySerialization(property)
+        => StoredSerialization.HasDefaultKeySerialization(property)
            || IsIdentityRepresentation(property)
            || IsExactlyOrderedRepresentation(property)
            || ClassifyNumericConversion(property) == NumericConversion.Widening;
@@ -86,7 +86,7 @@ internal static class StoredOrdering
     /// type (<c>Decimal128</c>, string, ...) and is not read back as the CLR type.
     /// </summary>
     internal static bool PreservesClrValueForNumericReduction(IProperty property)
-        => NativeGroupByBinder.HasDefaultKeySerialization(property)
+        => StoredSerialization.HasDefaultKeySerialization(property)
            || ClassifyNumericConversion(property) != NumericConversion.None;
 
     /// <summary>

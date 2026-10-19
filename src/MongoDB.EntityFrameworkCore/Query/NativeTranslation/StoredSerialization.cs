@@ -34,6 +34,14 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </remarks>
 internal static class StoredSerialization
 {
+    // The key is read back from _id through a generic CLR-type serializer (no backing IProperty), which only reproduces default/identity serialization; a value
+    // converter or non-default BsonRepresentation would throw or return the raw stored value, so such keys fall back. Accumulator operands are held to the same
+    // rule ($sum/$max reduce the stored form). Also used by TranslateOfType's discriminator guard and as the strict half of StoredOrdering.PreservesClrOrdering (EF-337).
+    internal static bool HasDefaultKeySerialization(IProperty property)
+        => property.GetValueConverter() == null
+           && property.GetTypeMapping().Converter == null
+           && property.GetBsonRepresentation() == null;
+
     /// <summary>
     /// Equal <see cref="MongoPropertyExtensions.GetBsonRepresentation"/> and equivalent effective converters. The configured
     /// provider-type annotation isn't compared: the serializer reads only the effective converter, representation and CLR type.

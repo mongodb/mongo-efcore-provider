@@ -41,6 +41,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// <param name="includeOriginalTokens">
     /// If <see langword="false"/>, then original tokens are also included in the output, otherwise they are not.
     /// </param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddAsciiFoldingFilter(bool? includeOriginalTokens = null)
     {
         var filterDefinition = definition.GetOrAddTokenFilterDefinition<IncludeOriginalTokensFilterDefinition>("asciiFolding");
@@ -60,6 +61,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// <param name="includeOriginalTokens">
     /// If <see langword="false"/>, then original tokens are also included in the output, otherwise they are not.
     /// </param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddDaitchMokotoffSoundexFilter(bool? includeOriginalTokens = null)
     {
         var filterDefinition = definition.GetOrAddTokenFilterDefinition<IncludeOriginalTokensFilterDefinition>("daitchMokotoffSoundex");
@@ -81,6 +83,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// If <see langword="true"/>, then tokens shorter than "minGram" or longer than "maxGram" are
     /// indexed, otherwise they are not.
     /// </param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddEdgeGramFilter(int minGram, int maxGram, bool? includeOutOfBoundsTerms = null)
     {
         var filterDefinition = definition.GetOrAddTokenFilterDefinition<GramFilterDefinition>("edgeGram");
@@ -98,6 +101,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "englishPossessive" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#std-label-englishPossessive-tf-ref"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddEnglishPossessiveFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("englishPossessive");
@@ -113,6 +117,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "flattenGraph" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#std-label-flattenGraph-tf-ref"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddFlattenGraphFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("flattenGraph");
@@ -128,6 +133,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "icuFolding" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#std-label-icufolding-tf-ref"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddIcuFoldingFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("icuFolding");
@@ -143,6 +149,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#std-label-icunormalizer-tf-ref"/>.
     /// </remarks>
     /// <param name="normalizationForm">The normalization form to apply, as defined by <see cref="IcuNormalizationForm"/></param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddIcuNormalizerFilter(IcuNormalizationForm? normalizationForm = null)
     {
         var filterDefinition = definition.GetOrAddTokenFilterDefinition<IcuNormalizingFilterDefinition>("icuNormalizer");
@@ -161,6 +168,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "keywordRepeat" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#std-label-keywordRepeat-tf-ref"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddKeywordRepeatFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("keywordRepeat");
@@ -175,6 +183,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "kStemming" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#std-label-kStemming-tf-ref"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddKStemmingFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("kStemming");
@@ -191,6 +200,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// </remarks>
     /// <param name="min">The minimum length of a token.</param>
     /// <param name="max">The maximum length of a token.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddLengthFilter(int? min = null, int? max = null)
     {
         var filterDefinition = definition.GetOrAddTokenFilterDefinition<MinMaxFilterDefinition>("length");
@@ -206,6 +216,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "lowercase" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#std-label-lowercase-tf-ref"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddLowercaseFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("lowercase");
@@ -226,6 +237,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// If <see langword="true"/>, then tokens shorter than "minGram" or longer than maxGram" are
     /// indexed, otherwise they are not.
     /// </param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddNGramFilter(int minGram, int maxGram, bool? includeOutOfBoundsTerms = null)
     {
         var filterDefinition = definition.GetOrAddTokenFilterDefinition<GramFilterDefinition>("nGram");
@@ -244,6 +256,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "porterStemming" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#porterstemming"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddPorterStemmingFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("porterStemming");
@@ -261,6 +274,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// <param name="pattern">The regular expression pattern to apply to each token.</param>
     /// <param name="replacement">The replacement string to substitute wherever a matching pattern occurs.</param>
     /// <param name="matches">Defines whether to replace all matching patterns, or only the first.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddRegexFilter(string pattern, string replacement, RegexTokenFilterMatches matches)
     {
         var filterDefinition = definition.GetOrAddTokenFilterDefinition<RegexFilterDefinition>("regex");
@@ -278,6 +292,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "removeDuplicates" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#removeduplicates"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddRemoveDuplicatesFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("removeDuplicates");
@@ -291,6 +306,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "reverse" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#reverse"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddReverseFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("reverse");
@@ -307,6 +323,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// </remarks>
     /// <param name="minShingleSize">The minimum number of tokens per shingle. Must be greater than or equal to two.</param>
     /// <param name="maxShingleSize">The maximum number of tokens per shingle.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddShingleFilter(int minShingleSize, int maxShingleSize)
     {
         var filterDefinition = definition.GetOrAddTokenFilterDefinition<ShingleMinMaxFilterDefinition>("shingle");
@@ -324,6 +341,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#snowballStemming"/>.
     /// </remarks>
     /// <param name="stemmerName">The stemmer to use, as defined by <see cref="SnowballStemmerName"/>.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddSnowballStemmingFilter(SnowballStemmerName stemmerName)
     {
         var filterDefinition = definition.GetOrAddTokenFilterDefinition<SnowballStemmingFilterDefinition>("snowballStemming");
@@ -339,6 +357,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "spanishPluralStemming" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#spanishpluralstemming"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddSpanishPluralStemmingFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("spanishPluralStemming");
@@ -353,6 +372,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "stempel" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#stempel"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddStempelFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("stempel");
@@ -371,6 +391,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// <param name="ignoreCase">
     /// If <see langword="false"/>, then token matching is case-sensitive, otherwise matching of tokens is case-insensitive.
     /// </param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddStopWordFilter(IEnumerable<string> stopWordTokens, bool? ignoreCase = null)
     {
         var filterDefinition = definition.GetOrAddTokenFilterDefinition<StopWordFilterDefinition>("stopword");
@@ -387,6 +408,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// For more information about the "trim" filter, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/#trim"/>.
     /// </remarks>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddTrimFilter()
     {
         definition.GetOrAddTokenFilterDefinition<EmptySearchIndexFilterDefinition>("trim");
@@ -405,6 +427,7 @@ public class TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition definit
     /// </remarks>
     /// <param name="options">A <see cref="WordDelimiterOptions"/> with options for the filter.</param>
     /// <param name="protectedWords">List of the tokens to protect from delimitation.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenFilterSearchIndexBuilder AddWordDelimiterGraphFilter(
         WordDelimiterOptions? options = null, IEnumerable<string>? protectedWords = null)
     {

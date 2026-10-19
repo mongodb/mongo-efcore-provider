@@ -31,6 +31,7 @@ public static class MongoPropertyBuilderExtensions
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="name">The element name for the property.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder HasElementName(
         this PropertyBuilder propertyBuilder,
         string name)
@@ -46,6 +47,7 @@ public static class MongoPropertyBuilderExtensions
     /// <typeparam name="TProperty">The type of the property being configured.</typeparam>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="name">The element name for the property.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder<TProperty> HasElementName<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
         string name)
@@ -91,6 +93,7 @@ public static class MongoPropertyBuilderExtensions
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="binaryVectorDataType">The format to use for packing the binary vector.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder HasBinaryVectorDataType(
         this PropertyBuilder propertyBuilder,
         BinaryVectorDataType? binaryVectorDataType)
@@ -105,6 +108,7 @@ public static class MongoPropertyBuilderExtensions
     /// <typeparam name="TProperty">The type of the property being configured.</typeparam>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="binaryVectorDataType">The format to use for packing the binary vector.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder<TProperty> HasBinaryVectorDataType<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
         BinaryVectorDataType? binaryVectorDataType)
@@ -154,6 +158,7 @@ public static class MongoPropertyBuilderExtensions
     /// or <see langword="null" /> to unset the configuration and use the default.</param>
     /// <param name="allowOverflow">Whether to allow overflow or not.</param>
     /// <param name="allowTruncation">Whether to allow truncation or not.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder HasBsonRepresentation(
         this PropertyBuilder propertyBuilder,
         BsonType? bsonType,
@@ -173,6 +178,7 @@ public static class MongoPropertyBuilderExtensions
     /// or <see langword="null" /> to unset the configuration and use the default.</param>
     /// <param name="allowOverflow">Whether to allow overflow or not.</param>
     /// <param name="allowTruncation">Whether to allow truncation or not.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder<TProperty> HasBsonRepresentation<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
         BsonType? bsonType,
@@ -224,6 +230,7 @@ public static class MongoPropertyBuilderExtensions
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder HasDateTimeKind(
         this PropertyBuilder propertyBuilder,
         DateTimeKind dateTimeKind)
@@ -237,6 +244,7 @@ public static class MongoPropertyBuilderExtensions
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder<TProperty> HasDateTimeKind<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
         DateTimeKind dateTimeKind)
@@ -247,6 +255,7 @@ public static class MongoPropertyBuilderExtensions
     /// </summary>
     /// <param name="propertyBuilder">The builder for the property being configured.</param>
     /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to use for the property.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static IConventionPropertyBuilder HasDateTimeKind(
         this IConventionPropertyBuilder propertyBuilder,
         DateTimeKind dateTimeKind)

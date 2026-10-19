@@ -143,7 +143,7 @@ internal static class NativeSelectManyBinder
 
         // c.Refs.Where(p1).Where(p2) nav-expands to Where(Where(Where(root, fkPred), p1), p2): the innermost Where carries the FK correlation, outer ones are user filters.
         // A folded fkPred && userPred is split below.
-        var body = UnwrapAsQueryable(collectionSelector.Body);
+        var body = MongoExpressionTranslator.UnwrapAsQueryable(collectionSelector.Body);
         var userPredicates = new List<LambdaExpression>();
         while (body is MethodCallExpression
                {
@@ -151,10 +151,10 @@ internal static class NativeSelectManyBinder
                    Arguments: [var outerSource, var outerPredArg]
                }
                && outerDecl == typeof(System.Linq.Queryable)
-               && UnwrapAsQueryable(outerSource) is not EntityQueryRootExpression)
+               && MongoExpressionTranslator.UnwrapAsQueryable(outerSource) is not EntityQueryRootExpression)
         {
             userPredicates.Add(outerPredArg.UnwrapLambdaFromQuote());
-            body = UnwrapAsQueryable(outerSource);
+            body = MongoExpressionTranslator.UnwrapAsQueryable(outerSource);
         }
 
         if (!NativeCorrelationMatcher.TryMatchRootWhere(body, out var root, out var predicate))
@@ -220,7 +220,7 @@ internal static class NativeSelectManyBinder
 
         var ti = collectionSelector.Parameters[0];
         if (!NativeCorrelationMatcher.TryMatchRootWhere(
-                UnwrapAsQueryable(collectionSelector.Body), out var root, out var predicate))
+                MongoExpressionTranslator.UnwrapAsQueryable(collectionSelector.Body), out var root, out var predicate))
             return false;
 
         // Rewrite `ti.Inner` onto a level-1-entity parameter so the single-level matcher recognizes the correlation.
@@ -581,7 +581,7 @@ internal static class NativeSelectManyBinder
     /// <summary>Peels <c>Where(...)</c> layers off an owned collection selector down to the nav access, collecting their predicates (all user filters).</summary>
     private static Expression PeelOwnedInnerWhere(Expression source, List<LambdaExpression> userPredicates)
     {
-        var current = UnwrapAsQueryable(source);
+        var current = MongoExpressionTranslator.UnwrapAsQueryable(source);
         while (current is MethodCallExpression
                {
                    Method: { Name: nameof(System.Linq.Queryable.Where), DeclaringType: var decl },
@@ -590,7 +590,7 @@ internal static class NativeSelectManyBinder
                && decl == typeof(System.Linq.Queryable))
         {
             userPredicates.Add(predArg.UnwrapLambdaFromQuote());
-            current = UnwrapAsQueryable(whereSource);
+            current = MongoExpressionTranslator.UnwrapAsQueryable(whereSource);
         }
         return current;
     }
@@ -622,9 +622,5 @@ internal static class NativeSelectManyBinder
         }
         return true;
     }
-
-    private static Expression UnwrapAsQueryable(Expression e)
-        => e is MethodCallExpression { Method.Name: nameof(System.Linq.Queryable.AsQueryable), Arguments: [var inner] }
-            ? inner : e;
 
 }

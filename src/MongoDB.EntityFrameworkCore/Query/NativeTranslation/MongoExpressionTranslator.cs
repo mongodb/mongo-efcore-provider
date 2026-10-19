@@ -509,8 +509,8 @@ internal sealed partial class MongoExpressionTranslator
     internal static bool AllFieldsDefaultSerialized(MongoExpression expr)
         => expr switch
         {
-            MongoFieldExpression f => NativeGroupByBinder.HasDefaultKeySerialization(f.Property),
-            MongoOuterFieldExpression outerField => NativeGroupByBinder.HasDefaultKeySerialization(outerField.Property),
+            MongoFieldExpression f => StoredSerialization.HasDefaultKeySerialization(f.Property),
+            MongoOuterFieldExpression outerField => StoredSerialization.HasDefaultKeySerialization(outerField.Property),
             MongoBinaryExpression b => AllFieldsDefaultSerialized(b.Left) && AllFieldsDefaultSerialized(b.Right),
             MongoConvertExpression c => AllFieldsDefaultSerialized(c.Operand),
             MongoConcatExpression concat => concat.Operands.All(AllFieldsDefaultSerialized),
@@ -1396,7 +1396,7 @@ internal sealed partial class MongoExpressionTranslator
     // Subsumed by TranslateOperand's own MongoConvertExpression guard, but kept as a cheap early-out. Nullable
     // relational comparisons don't decline here; they get a bracket via NeedsNumericTypeBracket.
     private static bool CanFallThroughToExpr(IProperty property)
-        => NativeGroupByBinder.HasDefaultKeySerialization(property);
+        => StoredSerialization.HasDefaultKeySerialization(property);
 
     // The Convert(_, Int32) that C#'s char-comparison lowering wraps around a MongoStringFirstOrLastExpression.
     private static bool TryUnwrapCharFirstOrLast(
@@ -1443,7 +1443,7 @@ internal sealed partial class MongoExpressionTranslator
         IProperty property, Type? toleratedWideningTarget, bool isIdentityLikeConvert)
         => isIdentityLikeConvert
             ? property
-            : (toleratedWideningTarget is not null && NativeGroupByBinder.HasDefaultKeySerialization(property))
+            : (toleratedWideningTarget is not null && StoredSerialization.HasDefaultKeySerialization(property))
               || StoredOrdering.ConstantsSerializeByClrType(property)
                 ? null
                 : property;

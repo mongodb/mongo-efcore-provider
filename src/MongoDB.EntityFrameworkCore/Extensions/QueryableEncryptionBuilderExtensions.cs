@@ -34,6 +34,7 @@ public static class QueryableEncryptionBuilderExtensions
     /// <param name="builder">The <see cref="PropertyBuilder"/> for the property being configured.</param>
     /// <param name="dataKeyId">The encryption data key id to be used as a <see cref="Guid"/>.</param>
     /// <typeparam name="T">The type of property being configured.</typeparam>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertyBuilder<T> IsEncrypted<T>(
         this PropertyBuilder<T> builder,
         Guid dataKeyId)
@@ -50,6 +51,7 @@ public static class QueryableEncryptionBuilderExtensions
     /// <param name="dataKeyId">The encryption data key id to be used as a <see cref="Guid"/>.</param>
     /// <typeparam name="TOwnerEntity">The type that owns this object.</typeparam>
     /// <typeparam name="TDependentEntity">The type of the object that is owned.</typeparam>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> IsEncrypted<TOwnerEntity, TDependentEntity>(
         this OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> builder,
         Guid dataKeyId) where TOwnerEntity : class where TDependentEntity : class
@@ -66,6 +68,7 @@ public static class QueryableEncryptionBuilderExtensions
     /// <param name="dataKeyId">The encryption data key id to be used as a <see cref="Guid"/>.</param>
     /// <typeparam name="TOwnerEntity">The type that owns this object.</typeparam>
     /// <typeparam name="TDependentEntity">The type of the object that is owned.</typeparam>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static OwnershipBuilder<TOwnerEntity, TDependentEntity> IsEncrypted<TOwnerEntity, TDependentEntity>(
         this OwnershipBuilder<TOwnerEntity, TDependentEntity> builder,
         Guid dataKeyId) where TOwnerEntity : class where TDependentEntity : class
@@ -82,6 +85,7 @@ public static class QueryableEncryptionBuilderExtensions
     /// <param name="dataKeyId">The encryption data key id to be used as a <see cref="Guid"/>.</param>
     /// <param name="equalityBuilder">The additional configuration for configuring equality options.</param>
     /// <typeparam name="T">The type of property being configured.</typeparam>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     /// <remarks>
     /// <see cref="BsonType.Decimal128"/>, <see cref="BsonType.Double"/>, <see cref="BsonType.Document"/>,
     /// and <see cref="BsonType.Array"/>, storage types  are not permitted for equality encryption.
@@ -106,6 +110,7 @@ public static class QueryableEncryptionBuilderExtensions
     /// <param name="dataKeyId">The encryption data key id to be used as a <see cref="Guid"/>.</param>
     /// <param name="rangeBuilder">The additional configuration for configuring range options.</param>
     /// <typeparam name="T">The type of property being configured.</typeparam>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     /// <remarks>
     /// Only <see cref="BsonType.Decimal128"/>, <see cref="BsonType.Double"/>, <see cref="BsonType.Int32"/>,
     /// and <see cref="BsonType.Int64"/> storage types are permitted for range encryption.
@@ -136,6 +141,7 @@ public static class QueryableEncryptionBuilderExtensions
     /// <param name="dataKeyId">The encryption data key id to be used as a <see cref="Guid"/>.</param>
     /// <param name="rangeBuilder">The additional configuration for configuring range options.</param>
     /// <typeparam name="T">The type of property being configured.</typeparam>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     /// <remarks>
     /// Only <see cref="BsonType.Decimal128"/>, <see cref="BsonType.Double"/>, <see cref="BsonType.Int32"/>,
     /// and <see cref="BsonType.Int64"/> storage types are permitted for range encryption.

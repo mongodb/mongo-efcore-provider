@@ -34,6 +34,7 @@ public class GeoSearchIndexBuilder(SearchIndexGeoDefinition definition)
     /// but does not index shape geometries such as lines and polygons.
     /// </summary>
     /// <param name="indexShapes">If <see langword="true"/>, then shapes are indexed, otherwise they are not.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public GeoSearchIndexBuilder IndexShapes(bool indexShapes = true)
     {
         definition.IndexShapes = indexShapes;

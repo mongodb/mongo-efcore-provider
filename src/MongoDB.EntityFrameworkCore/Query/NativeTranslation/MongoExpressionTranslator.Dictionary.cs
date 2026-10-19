@@ -70,7 +70,7 @@ internal sealed partial class MongoExpressionTranslator
         if (!TryResolveMember(Unwrap(receiver), out property, out path, out var isOuter)
             || isOuter
             || !TryGetStringKeyedValueType(property.ClrType, out _)
-            || !NativeGroupByBinder.HasDefaultKeySerialization(property))
+            || !StoredSerialization.HasDefaultKeySerialization(property))
         {
             return false;
         }

@@ -579,7 +579,7 @@ public class NativeCorrelatedReducerLeafTests
         Assert.Contains(mongoQ.GetPendingLookups(), l => l.As == "_lookup_Sightings");
     }
 
-    // Both use NativeGroupByBinder.HasDefaultKeySerialization. The member is read off the alias with no
+    // Both use StoredSerialization.HasDefaultKeySerialization. The member is read off the alias with no
     // IProperty, so it would materialize the raw stored value; the sort key orders by stored representation
     // (enum-as-string sorts 1 < 0 < 2), so the wrong element would be "first".
 

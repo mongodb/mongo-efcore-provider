@@ -41,10 +41,14 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System.Linq.Expressions.ExpressionVisitor
 {
     /// <summary>
-    /// For join queries, strips the outermost Select EF adds to extract from TransparentIdentifier, then rewrites every LeftJoin in the residual
-    /// chain. The driver only recognizes "Join" (<c>JoinMethodToPipelineTranslator</c> requires <c>QueryableMethod.Join</c>), so each
-    /// <c>Queryable.LeftJoin</c> becomes <c>Queryable.Join</c> with a <see cref="LeftJoinResult{TOuter,TInner}"/> result selector; the driver's
-    /// documents then have _outer/_inner fields matching the LeftJoinResult property names.
+    /// For join queries, strip the outermost Select that EF adds to extract from TransparentIdentifier,
+    /// then rewrite every LeftJoin in the residual chain. The driver's LINQ v3 pipeline has no LeftJoin
+    /// translator: it dispatches on method name and only recognizes "Join" (routed to
+    /// <c>JoinMethodToPipelineTranslator</c>, which requires <c>method.Is(QueryableMethod.Join)</c>).
+    /// So every <c>Queryable.LeftJoin</c> the provider emits must be
+    /// rewritten to <c>Queryable.Join</c> with a
+    /// <see cref="LeftJoinResult{TOuter,TInner}"/> result selector — the driver produces documents with
+    /// _outer/_inner fields which match the LeftJoinResult property names.
     /// </summary>
     private Expression? StripOuterSelectForJoin(Expression expression)
     {
@@ -86,12 +90,21 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Recursively rewrites every <c>Queryable.LeftJoin</c> into <c>Queryable.Join</c> with a <see cref="LeftJoinResult{TOuter,TInner}"/> result
-    /// selector, cascading the element-type change (TransparentIdentifier&lt;O,I&gt; to LeftJoinResult&lt;O,I&gt;) into every downstream operator so
-    /// <c>.Outer</c>/<c>.Inner</c> become <c>._outer</c>/<c>._inner</c>. Bottom-up, so chained joins and nested joins are handled.
-    /// <paramref name="convertExplicitJoins"/>: whether an explicit user <c>Queryable.Join</c> also gets a LeftJoinResult selector. The shaped
-    /// path needs it (its shaper reads <c>_outer</c>/<c>_inner</c>); the projected path must NOT, since the user's selector is the projection and
-    /// is emitted verbatim. A <c>LeftJoin</c> is always converted.
+    /// Recursively rewrites every <c>Queryable.LeftJoin</c> node in a
+    /// method-call chain into <c>Queryable.Join</c> with a
+    /// <see cref="LeftJoinResult{TOuter,TInner}"/> result selector, and cascades the resulting element-type
+    /// change (TransparentIdentifier&lt;O,I&gt; → LeftJoinResult&lt;O,I&gt;) into every downstream operator
+    /// (Select / Where / OrderBy / chained Join+LeftJoin / terminal ops) so member accesses
+    /// <c>.Outer</c>/<c>.Inner</c> become <c>._outer</c>/<c>._inner</c> and generic arguments stay consistent.
+    /// Works bottom-up so multi-level Includes (chained joins) and joins nested inside other operators are
+    /// all handled.
+    ///
+    /// <paramref name="convertExplicitJoins"/> controls whether an explicit user <c>Queryable.Join</c> also
+    /// gets a <see cref="LeftJoinResult{TOuter,TInner}"/> result selector. The shaped (entity-materializing)
+    /// path needs this — its client-side shaper reads <c>_outer</c>/<c>_inner</c> from the joined document.
+    /// The projected path must NOT convert explicit Joins: their result selector is the user's projection and
+    /// has to be emitted verbatim. (A <c>LeftJoin</c> is always converted regardless, since the driver has no
+    /// LeftJoin translator.)
     /// </summary>
     private Expression RewriteLeftJoins(Expression expression, bool convertExplicitJoins)
     {
@@ -150,9 +163,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Rewrites one Join/LeftJoin node given its (possibly already-rewritten) source. A LeftJoin becomes a <c>Queryable.Join</c> with a
-    /// <see cref="LeftJoinResult{TOuter,TInner}"/> selector. An explicit user Join keeps its own result selector (it must round-trip unchanged);
-    /// only its parameter/generic types and key selectors are remapped when a nested join changed the outer element type.
+    /// Rewrites a single Join/LeftJoin node given its (possibly already-rewritten) source. A LeftJoin is
+    /// converted to a <c>Queryable.Join</c> with a <see cref="LeftJoinResult{TOuter,TInner}"/> result
+    /// selector so the driver's Join translator (which has no LeftJoin equivalent) accepts it. An explicit
+    /// user <c>Queryable.Join</c> keeps its own result selector — it must round-trip unchanged so the
+    /// emitted projection matches what the user wrote; only its parameter/generic types are remapped when a
+    /// nested join below it changed the outer element type. Key selectors are remapped when the outer element
+    /// type changed.
     /// </summary>
     private Expression RewriteJoinNode(
         MethodCallExpression call, Expression newSource, Type? newSourceItemType, bool convertToJoin, bool isLeftJoin, bool shapedPath)
@@ -228,16 +245,20 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Emits the left-outer join for a single-reference <c>LeftJoin</c> as raw aggregation stages (<see cref="MongoQueryable.AppendStage"/>),
-    /// mirroring the driver's <c>JoinMethodToPipelineTranslator</c> but with <c>preserveNullAndEmptyArrays: true</c> on the <c>$unwind</c>:
+    /// Emits the driver-native left-outer join pipeline for a single-reference <c>LeftJoin</c> as raw
+    /// aggregation stages (via <see cref="MongoQueryable.AppendStage"/>), mirroring the driver's
+    /// <c>JoinMethodToPipelineTranslator</c> output but with a <c>preserveNullAndEmptyArrays: true</c>
+    /// <c>$unwind</c> so principals with a null/absent related entity are preserved:
     /// <code>
     /// { $project: { _outer: "$$ROOT", _id: 0 } }
     /// { $lookup:  { from: &lt;inner collection&gt;, localField: "_outer.&lt;fk&gt;", foreignField: "&lt;pk&gt;", as: "_inner" } }
     /// { $unwind:  { path: "$_inner", preserveNullAndEmptyArrays: true } }
     /// { $project: { _outer: "$_outer", _inner: "$_inner", _id: 0 } }
     /// </code>
-    /// The root-level <c>_outer</c>/<c>_inner</c> shape matches the driver's Join, so the shaper is unchanged. Returns <see langword="null"/>
-    /// (fall back to the driver's inner Join) for shapes it doesn't recognise, e.g. composite/anonymous join keys.
+    /// The output document shape (root-level <c>_outer</c>/<c>_inner</c>) is identical to the driver's Join,
+    /// so the client-side shaper is unchanged. Returns <see langword="null"/> (falling back to the driver's
+    /// inner Join) for any join shape this builder does not recognise (e.g. composite/anonymous join keys),
+    /// preserving prior behaviour for those cases.
     /// </summary>
     private Expression? TryBuildDriverNativeLeftJoinPipeline(
         MethodCallExpression call, Expression newSource)
@@ -295,9 +316,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Builds the serializer for <see cref="LeftJoinResult{TOuter,TInner}"/> with <c>_outer</c>/<c>_inner</c> using the provider's entity serializers,
-    /// mirroring the driver Join's synthesized one. A <see cref="BsonClassMapSerializer{TClass}"/> (an <c>IBsonDocumentSerializer</c>) lets the
-    /// driver translate downstream member access as for its own Join.
+    /// Builds an <see cref="IBsonSerializer"/> for <see cref="LeftJoinResult{TOuter,TInner}"/> whose
+    /// <c>_outer</c>/<c>_inner</c> members serialize with the provider's entity serializers, mirroring the
+    /// serializer the driver's own Join translator synthesizes for its <c>_outer</c>/<c>_inner</c> result
+    /// documents. Returning a <see cref="BsonClassMapSerializer{TClass}"/> (an
+    /// <c>IBsonDocumentSerializer</c>) lets the driver translate downstream <c>_outer</c>/<c>_inner</c> member
+    /// access exactly as for the driver Join path.
     /// </summary>
     private IBsonSerializer BuildLeftJoinResultSerializer(
         Type outerClrType, Type innerClrType, IEntityType outerEntityType, IEntityType innerEntityType)
@@ -317,7 +341,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return (IBsonSerializer)Activator.CreateInstance(serializerType, classMap)!;
     }
 
-    /// <summary>The dotted BSON path for a simple <c>EF.Property</c>/member-access join key; <see langword="null"/> for composite/anonymous/computed keys.</summary>
+    /// <summary>
+    /// Resolves the dotted BSON field path for a simple <c>EF.Property(p, "Name")</c> / member-access join
+    /// key selector body. Returns <see langword="null"/> for shapes we don't handle (composite/anonymous
+    /// keys, conversions, computed keys).
+    /// </summary>
     private static string? TryGetKeyFieldPath(Expression keyBody, IEntityType entityType)
     {
         var propertyName = keyBody.TryGetSimplePropertyName();
@@ -342,8 +370,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Appends a raw stage via <see cref="MongoQueryable.AppendStage"/>, keeping the element type unless <paramref name="newElementType"/> changes
-    /// it (the final stage, to surface LeftJoinResult). <paramref name="outSerializer"/>, when supplied, lets the driver introspect the new type's members.
+    /// Appends a single raw aggregation stage via <see cref="MongoQueryable.AppendStage"/>, keeping the
+    /// queryable's element type unless <paramref name="newElementType"/> changes it (used on the final
+    /// stage to surface the LeftJoinResult shape downstream). When <paramref name="outSerializer"/> is
+    /// supplied it is registered as the output serializer so the driver can introspect the new element type's
+    /// members for downstream operators; otherwise the driver resolves the serializer for the output type.
     /// </summary>
     private static Expression AppendRawStage(
         Expression query, Type elementType, BsonDocument stage, Type? newElementType = null,
@@ -385,13 +416,16 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             .Single(m => m.Name == nameof(Enumerable.DefaultIfEmpty) && m.GetParameters().Length == 1);
 
     /// <summary>
-    /// Builds the driver-translatable left-outer join for the PROJECTED (non-shaped) path:
+    /// Builds the canonical driver-translatable left-outer join for the PROJECTED (non-shaped) path:
     /// <code>
     /// outer.GroupJoin(inner, outerKey, innerKey, (o, g) => new LeftJoinResult&lt;TOuter, IEnumerable&lt;TInner&gt;&gt;(o, g))
     ///      .SelectMany(c => c._inner.DefaultIfEmpty(), (c, i) => new LeftJoinResult&lt;TOuter, TInner&gt;(c._outer, i))
     /// </code>
-    /// Principals with no match survive, and the element type / document shape equals the inner-Join path's, so the downstream selector and shaper
-    /// are unchanged.
+    /// The driver renders this as <c>$lookup</c> (array) + <c>$map</c>/<c>$cond</c> (substituting a single
+    /// <see langword="null"/> when the matched array is empty) + <c>$unwind</c>, so principals with no matching
+    /// related entity survive — and the terminal element type / document shape is the same
+    /// <see cref="LeftJoinResult{TOuter,TInner}"/> (<c>_outer</c>/<c>_inner</c>) the inner-Join path produced,
+    /// keeping the downstream result selector and shaper unchanged.
     /// </summary>
     private Expression BuildProjectedLeftOuterJoin(
         MethodCallExpression call, Expression newSource, Type outerType, Type innerType, Type keyType, Type oldOuterType)
@@ -445,6 +479,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             Expression.Quote(resultSelector));
     }
 
+    /// <summary>
+    /// Rewrite a lambda expression to change its first parameter type from TransparentIdentifier to
+    /// LeftJoinResult, mapping field accesses from Outer/Inner to _outer/_inner.
+    /// </summary>
     private static LambdaExpression RewriteLambdaForLeftJoinResult(LambdaExpression lambda, Type newParameterType)
     {
         var oldParam = lambda.Parameters[0];
@@ -456,6 +494,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return Expression.Lambda(body, newParams);
     }
 
+    /// <summary>
+    /// Rewrites member accesses from TransparentIdentifier fields (Outer/Inner) to
+    /// LeftJoinResult properties (_outer/_inner) when the parameter is replaced.
+    /// </summary>
     private sealed class TransparentIdentifierToLeftJoinResultRewriter(
         ParameterExpression oldParam,
         ParameterExpression newParam) : System.Linq.Expressions.ExpressionVisitor
@@ -479,17 +521,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// For explicit Join queries, strip the Join chain and return just the base source; the <c>$lookup</c>
-    /// stages appended by AppendLookupStages do the join.
-    /// <para>
-    /// Chain shape: <c>root [ops]* (.LeftJoin(...) [ops]*)+ .Select(...) [.Count()]</c>. The base source survives
-    /// verbatim and EF's trailing TransparentIdentifier-unpacking <c>Select</c> is dropped. Any other operator
-    /// between or above the joins is user-composed and must be reattached (dropping it silently returns
-    /// unfiltered/unordered rows); its lambdas are rewritten to read <c>_lookup_&lt;Nav&gt;</c> fields, and those
-    /// lookups go in <see cref="_injectedEarlyLookups"/> to be emitted right above the base source.
-    /// </para>
-    /// Returns <see langword="null"/> when the shape can't be handled; the join is then left for the driver to
-    /// render (or fail), which is preferred over emitting a pipeline with the wrong row set.
+    /// Strips the Join chain and returns the base source; the pending <c>$lookup</c> stages handle the
+    /// actual join. A user-composed operator above/between the joins is not plumbing and must be
+    /// reattached instead of dropped (dropping it silently returns unfiltered/unordered results — EF-369),
+    /// with its lambdas rewritten to read the flattened <c>_lookup_&lt;Nav&gt;</c> fields.
+    /// Returns <see langword="null"/> when the shape can't be handled — the join survives and callers fall
+    /// back to the driver rendering it natively, rather than emitting a pipeline with the wrong row set.
     /// </summary>
     private Expression? StripJoinForLookup(Expression expression)
     {
@@ -828,9 +865,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Fails translation rather than let <see cref="StripJoinForLookup"/> silently discard a <c>Where</c> while peeling a join chain (that would
-    /// return the unfiltered cross product); mirrors EF-X021's filtered-Include guard. A <c>Where</c> at or below <paramref name="baseSource"/>
-    /// becomes a leading <c>$match</c> and is unaffected. Translating the discarded filter is tracked as EF-X024.
+    /// Prevents <see cref="StripJoinForLookup"/> from silently discarding a <c>Where</c> while peeling a
+    /// join chain to its base source — that would return the unfiltered cross product with no error, so
+    /// this fails translation instead (mirrors EF-X021's filtered-Include guard). A <c>Where</c> at or
+    /// below <paramref name="baseSource"/> becomes a leading <c>$match</c> and is unaffected. Translating
+    /// rather than rejecting the discarded filter is tracked as EF-X024.
     /// </summary>
     private static void GuardAgainstDiscardedFilter(
         Expression discardedFrom, Expression baseSource, Expression fullQuery)
@@ -1029,9 +1068,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     /// <summary>
     /// Distinguishes the EF-synthesized trailing <c>Select</c> that merely unpacks the join's
-    /// TransparentIdentifier (dropped; the <c>$lookup</c> replaces it) from a user-composed <c>Select</c>
-    /// (reattached). Recognized structurally: its body is an <see cref="IncludeExpression"/> or a bare
-    /// <c>.Outer</c> chain back to the parameter, which a user selector can't be.
+    /// TransparentIdentifier (join plumbing to drop) from a user-composed <c>Select</c> projection (to
+    /// reattach): the synthesized one's selector body is only ever an <see cref="IncludeExpression"/> or a
+    /// bare chain of <c>.Outer</c> accesses back to the parameter.
     /// </summary>
     private static bool IsSynthesizedIdentifierSelect(MethodCallExpression call)
     {
@@ -1113,7 +1152,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return Failed ? null : Expression.Lambda(body, _rootParam);
         }
 
-        /// <summary>The <c>$lookup</c> supplying the <c>Inner</c> of the TransparentIdentifier at <paramref name="depth"/> (0 = innermost), or <see langword="null"/>.</summary>
+        /// <summary>
+        /// Resolves the <c>$lookup</c> that supplies the <c>Inner</c> of the TransparentIdentifier at
+        /// <paramref name="depth"/> (0 = innermost join). Matched on the join's inner entity CLR type
+        /// AND the join's outer key (the FK property), so two navigations to the same entity type stay
+        /// distinguishable. Returns <see langword="null"/> when the match is missing.
+        /// </summary>
         private LookupExpression? ResolveLookup(int depth, Type innerType)
             => depth < 0 || depth >= _joinsInnermostFirst.Count
                 ? null
@@ -1172,6 +1216,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 return base.VisitParameter(node);
             }
 
+            /// <summary>Number of nested TransparentIdentifier levels in a join element type.</summary>
             private static int NestingDepth(Type type)
                 => type.IsTransparentIdentifierType() ? 1 + NestingDepth(type.GetGenericArguments()[0]) : 0;
         }
@@ -1197,7 +1242,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return null;
     }
 
-    /// <summary>Appends $lookup stages for cross-collection collection Includes.</summary>
+    /// <summary>
+    /// Appends $lookup stages for cross-collection collection Includes.
+    /// Uses the same AppendStage pattern as VectorSearch.
+    /// </summary>
     private Expression AppendLookupStages(Expression query)
         // Tail-append every pending $lookup except those flagged InjectAfterRoot (InjectAfterRootLookupStages emits them), and suppress forceUnwind
         // lookups when a surviving native Join already supplies the join (_appendForceUnwindLookups).
@@ -1214,10 +1262,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             query, _pendingLookups.Where(l => l.InjectAfterRoot || l.IsBridgeReadableArray).Concat(_bridgeOwnedLookups));
 
     /// <summary>
-    /// Whether a lookup is emitted below the pipeline tail and so must not be tail-appended: either marked
-    /// <see cref="LookupExpression.InjectAfterRoot"/> at compile time, or scheduled above the base source by this
-    /// execution's <see cref="StripJoinForLookup"/> (<see cref="_injectedEarlyLookups"/>). The latter is
-    /// per-execution state, not written to the shared, cached <see cref="LookupExpression"/>.
+    /// Whether a lookup is already emitted below the pipeline tail and so must not be tail-appended too:
+    /// either compile-time <see cref="LookupExpression.InjectAfterRoot"/>, or this execution's
+    /// <see cref="StripJoinForLookup"/> scheduling it for early injection (kept
+    /// as per-execution state, not written back onto the shared, compile-time <see cref="LookupExpression"/>).
     /// </summary>
     private bool IsInjectedEarly(LookupExpression lookup)
         => lookup.InjectAfterRoot || lookup.IsBridgeReadableArray || _injectedEarlyLookups.Contains(lookup);

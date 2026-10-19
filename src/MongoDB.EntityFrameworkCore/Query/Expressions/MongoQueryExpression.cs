@@ -24,13 +24,18 @@ using Microsoft.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-/// <summary>A top-level MongoDB collection query.</summary>
+/// <summary>
+/// Represents a top-level MongoDB-specific collection for querying server-side.
+/// </summary>
 internal sealed partial class MongoQueryExpression : Expression
 {
     private Dictionary<ProjectionMember, Expression> _projectionMapping = new();
     private readonly List<ProjectionExpression> _projection = [];
 
-    /// <summary>Creates a <see cref="MongoQueryExpression"/> for the given entity type.</summary>
+    /// <summary>
+    /// Create a <see cref="MongoQueryExpression"/> for the given entity type.
+    /// </summary>
+    /// <param name="entityType">The <see cref="IEntityType"/> this collection relates to.</param>
     public MongoQueryExpression(IEntityType entityType)
     {
         CollectionExpression = new MongoCollectionExpression(entityType);
@@ -38,13 +43,17 @@ internal sealed partial class MongoQueryExpression : Expression
             new EntityProjectionExpression(entityType, new RootReferenceExpression(entityType));
     }
 
-    /// <summary>The collection this query is bound to.</summary>
+    /// <summary>
+    /// Represents the Mongo collection this query is bound to.
+    /// </summary>
     public MongoCollectionExpression CollectionExpression { get; private set; }
 
     /// <summary>The native-translation logical query IR for this collection. Get-only: callers mutate its members, never reassign it.</summary>
     public MongoSelectDefinition Select { get; } = new();
 
-    /// <summary>The expression captured from the original EF-bound LINQ query.</summary>
+    /// <summary>
+    /// The <see cref="Expression"/> captured from the original EF-bound LINQ query.
+    /// </summary>
     public Expression? CapturedExpression { get; set; }
 
     /// <inheritdoc />

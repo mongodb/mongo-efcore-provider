@@ -53,242 +53,279 @@ internal static class NativeProjectionBinder
             return false;
         }
 
-        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType, selector.Parameters[0]);
-        var projections = new List<MongoProjection>();
+        var session = new ProjectionBindSession(mongoQ, selector);
+        if (!session.TryBindBody() || !session.TryFinish())
+        {
+            return false;
+        }
+
+        session.Commit();
+        return true;
+    }
+
+    /// <summary>
+    /// One bind of a selector to the projection slot. The leaves are staged here, one arm per selector shape, and applied to the query only by
+    /// <see cref="Commit"/> after <see cref="TryFinish"/> has passed every cross-leaf gate, so a declined selector leaves nothing behind.
+    /// </summary>
+    private sealed class ProjectionBindSession
+    {
+        private readonly MongoQueryExpression _mongoQ;
+        private readonly LambdaExpression _selector;
+        private readonly MongoExpressionTranslator _translator;
+        private readonly PendingProjectionStaging _staged = new();
+
+        private readonly List<MongoProjection> _projections = [];
         // Parallel to projections: true for an owned array leaf (skipped by the sibling-readability check).
-        var leafIsArray = new List<bool>();
+        private readonly List<bool> _leafIsArray = [];
         // Parallel: true for an owned single-reference navigation entity (also skipped; TryTranslateLeaf proved its alias equals its document path).
-        var leafIsOwnedNavEntity = new List<bool>();
-        // Staged rather than applied to mongoQ, so a later declining leaf leaves no half-registered lookup behind (likewise the two lists below).
-        var pendingLookups = new List<LookupExpression>();
-        var pendingReducerLeaves = new List<MongoCorrelatedReducerLeaf>();
-        // Lookups a projected reference-collection Count leaf needs stamped IsBareCountSizeSource (see NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup).
-        var pendingBareCountStamps = new List<LookupExpression>();
-        // Element leaves (`c.Orders.OrderBy(..).ToList()`, `.FirstOrDefault()`): each one's keyed lookup and the alias the read side finds it by. Staged, not applied.
-        var pendingElementLeaves = new List<(LookupExpression Lookup, string Alias)>();
-        // A correlated subquery over another collection (`c.Orders.Any(...)`) resolves to its staged `$lookup` array, so the arms serving owned collections serve it too.
-        translator.ReferencedCollectionResolver = source => ResolveReferencedCollection(
-            mongoQ, selector.Parameters[0], source, pendingLookups, pendingBareCountStamps);
+        private readonly List<bool> _leafIsOwnedNavEntity = [];
         // AddToProjection disambiguates aliases case-insensitively, so two members differing only by case would make the DOM shaper read a renamed alias the native
         // $project never emits (a silently dropped value). Decline instead.
-        var seenAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var hasArrayLeaf = false;
-        // An owned single-reference navigation entity leaf (`new { b.Address, b.Title }`) shares the array leaf's hazard (drags the owner's shadow key into the document); OR'd with hasArrayLeaf below.
-        var hasOwnedNavEntityLeaf = false;
+        private readonly HashSet<string> _seenAliases = new(StringComparer.OrdinalIgnoreCase);
+        private bool _hasArrayLeaf;
+        // An owned single-reference navigation entity leaf (`new { b.Address, b.Title }`) shares the array leaf's hazard (drags the owner's shadow key into the document); OR'd with hasArrayLeaf.
+        private bool _hasOwnedNavEntityLeaf;
         // A string-to-char-sequence call (`e.City.AsEnumerable()`/ToList/ToArray); committed to HasStringSequenceProjectionLeaf, which keeps the projection away from the
         // driver's LINQ v3 push-down (MongoShapedQueryCompilingExpressionVisitor.VisitProjectedQuery). Derived syntactically: only TryTranslateLeaf's string-sequence arm admits it.
-        var hasStringSequenceLeaf = false;
-        var hasCaseMappingLeaf = false;
+        private bool _hasStringSequenceLeaf;
+        private bool _hasCaseMappingLeaf;
         // A row-independent leaf evaluated client-side instead of projected (IsRowIndependentLeaf); committed to HasClientEvaluatedProjectionLeaf.
-        var hasClientEvaluatedLeaf = false;
-        string? bareProjectionAlias = null;
-        var bareProjectionTier = ProjectionAliasTier.DocumentPath;
+        private bool _hasClientEvaluatedLeaf;
+        private string? _bareProjectionAlias;
+        private ProjectionAliasTier _bareProjectionTier = ProjectionAliasTier.DocumentPath;
         // (memberName, alias) overrides for wrapped-body leaves whose alias differs from the member name, plus owned-nav-entity leaves.
-        var namedAliasOverrides = new List<(string MemberName, string Alias)>();
+        private readonly List<(string MemberName, string Alias)> _namedAliasOverrides = [];
         // Set only by the wrapped-body arm, whose projection aliases are the member names (a positional arm's are synthetic).
-        var isWrappedBody = false;
-        var hasPositionalCtorProjection = false;
+        private bool _isWrappedBody;
+        private bool _hasPositionalCtorProjection;
         // Members (BareProjectionMemberKey for a bare body) whose leaf is a ternary over client-only constructions (TryCollectClientConditionalBranches): only the test is staged, under the member's alias.
-        var clientConditionalMembers = new List<string>();
-        // The row reads inside those branches, keyed by binding-member name (to catch two different reads bound under one member), and every member name the read side looks up; checked after the switch.
-        var clientConditionalReads =
-            new Dictionary<string, ClientConditionalRead>(StringComparer.OrdinalIgnoreCase);
-        var clientConditionalMemberNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var clientConditionalReadAliases = new List<string>();
+        private readonly List<string> _clientConditionalMembers = [];
+        // The row reads inside those branches, keyed by binding-member name (to catch two different reads bound under one member), and every member name the read side looks up; checked in TryFinish.
+        private readonly Dictionary<string, ClientConditionalRead> _clientConditionalReads = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _clientConditionalMemberNames = new(StringComparer.OrdinalIgnoreCase);
+        private readonly List<string> _clientConditionalReadAliases = [];
 
-        switch (selector.Body)
+        public ProjectionBindSession(MongoQueryExpression mongoQ, LambdaExpression selector)
         {
-            // Wrapped body: anonymous type/DTO via NewExpression-with-Members or MemberInit (a construction failing TryGetProjectionMembers falls to the bare-body case).
-            // A MemberInit whose constructor arguments are all row-independent (`new Dto(param) { A = x.A }`) is admitted: only its bindings are members.
-            case NewExpression or MemberInitExpression
-                when selector.Body.TryGetProjectionMembers(
-                    out var wrappedMembers, rowIndependentConstructorArgumentsOver: selector.Parameters[0]):
-                isWrappedBody = true;
-                hasClientEvaluatedLeaf |= selector.Body is MemberInitExpression { NewExpression.Arguments.Count: > 0 };
-                foreach (var (memberName, member) in FlattenNestedConstructions(translator, wrappedMembers))
-                {
-                    var memberValue = PeelCaseMapping(member, includeDateTimeToString: true);
-                    hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
-                    var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, pendingElementLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
-                    {
-                        // Last resort, only after the leaf arms (incl. the $literal path) declined: a row-independent leaf is evaluated by the shaper and never projected.
-                        if (IsRowIndependentLeaf(member, selector.Parameters[0]))
-                        {
-                            hasClientEvaluatedLeaf = true;
-                            continue;
-                        }
+            _mongoQ = mongoQ;
+            _selector = selector;
+            _translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType, selector.Parameters[0]);
+            // A correlated subquery over another collection (`c.Orders.Any(...)`) resolves to its staged `$lookup` array, so the arms serving owned collections serve it too.
+            _translator.ReferencedCollectionResolver = source => ResolveReferencedCollection(
+                mongoQ, selector.Parameters[0], source, _staged);
+        }
 
-                        // A ternary over client-only constructions (`X = c.City == "Seattle" ? new P { ... } : new P { ... }`): stage only the test, as this member's bool leaf, and let the
-                        // shaper evaluate the conditional. Reached only after TryLeaf declined the whole ternary (HasMisreadDocumentConstructionBranch).
-                        if (memberValue is ConditionalExpression wrappedClientConditional
-                            && TryCollectClientConditionalBranches(
-                                translator, selector.Parameters[0], wrappedClientConditional, memberName,
-                                clientConditionalReads, clientConditionalMemberNames)
-                            && TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], wrappedClientConditional.Test,
-                                alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, pendingElementLeaves, out var testLeaf,
-                                out _, out _, out var testThrowsOnNull)
-                            && TryStageLeaf(alias, testLeaf, wrappedClientConditional.Test, testThrowsOnNull))
-                        {
-                            clientConditionalMembers.Add(memberName);
-                            hasClientEvaluatedLeaf = true;
-                            continue;
-                        }
-
-                        return false;
-                    }
-
-                    if (!TryStageLeaf(alias, leaf, memberValue, throwsOnNull, isArrayLeaf, isOwnedNavEntityLeaf))
-                        return false;
-                    // The nav-entity leaf always registers a DocumentPath override, even though its alias equals the member name: the late-fallback strip it triggers supplies the retained _id.
-                    if (alias != memberName || isOwnedNavEntityLeaf)
-                        namedAliasOverrides.Add((memberName, alias));
-                }
-
-                break;
-
-            // Single-argument ctor-only DTO (`x => new CustomerDtoWithEntityInCtor(x)`; Members is null for a named-type construction). The read side
-            // (MongoProjectionBindingExpressionVisitor.VisitNew) resolves every Members-null argument under one ambient ProjectionMember, safe only with one argument.
-            case NewExpression { Members: null, Arguments: { Count: 1 } ctorArguments }:
+        /// <summary>Stages the leaves of the selector's shape; false declines the whole selector.</summary>
+        public bool TryBindBody()
+        {
+            switch (_selector.Body)
             {
-                var ctorArgument = ctorArguments[0];
+                // Wrapped body: anonymous type/DTO via NewExpression-with-Members or MemberInit (a construction failing TryGetProjectionMembers falls to the bare-body case).
+                // A MemberInit whose constructor arguments are all row-independent (`new Dto(param) { A = x.A }`) is admitted: only its bindings are members.
+                case NewExpression or MemberInitExpression
+                    when _selector.Body.TryGetProjectionMembers(
+                        out var wrappedMembers, rowIndependentConstructorArgumentsOver: _selector.Parameters[0]):
+                    return TryBindWrappedBody(wrappedMembers);
 
-                // Sub-case 1: the sole argument is the whole root entity: leave Projection empty so Route resolves to WholeEntity and the DTO is constructed client-side. Must
-                // precede sub-case 2: the whole-root-entity arm yields a "$ROOT" element ref which TryDeriveDocumentPathAlias would accept as an alias (invalid field name).
-                if (IsWholeRootEntityLeaf(mongoQ, ctorArgument, selector.Parameters[0]))
-                {
-                    // To TranslateUnion/Concat's IsPlainWholeEntitySelect this looks like a plain entity fetch, but the per-row result is the DTO, so a native $unionWith would dedupe the wrong thing (HasClientWrappedWholeEntityShaper).
-                    mongoQ.Select.HasClientWrappedWholeEntityShaper = true;
-                    break;
-                }
+                // Single-argument ctor-only DTO (`x => new CustomerDtoWithEntityInCtor(x)`; Members is null for a named-type construction). The read side
+                // (MongoProjectionBindingExpressionVisitor.VisitNew) resolves every Members-null argument under one ambient ProjectionMember, safe only with one argument.
+                case NewExpression { Members: null, Arguments: { Count: 1 } ctorArguments }:
+                    return TryBindSingleCtorArgument(ctorArguments[0]);
 
-                // Sub-case 2: any other bare-admissible leaf; reuses the bare-body alias derivation so VisitNew's ambient-member lookup reads it as for a bare body.
-                if (!TryBindAsBareProjection(ctorArgument, BareLeafProvisionalAlias, allowWholeRootEntityLeafForThis: true))
-                {
-                    return false;
-                }
+                // Multi-argument ctor-only DTO (`new CustomerListItem(x.CustomerID, x.City)`): like the wrapped arm with positional member names, committed via
+                // HasPositionalCtorProjectionShaper so TranslateSelect avoids VisitNew's shared-ambient-member collision. A whole-entity argument
+                // (`new KeyValuePair<Customer, string>(c, c.City)`) is never a scalar positional leaf (the `$$ROOT` read would throw FormatException or yield an untracked
+                // instance) and falls to the default arm's whole-entity client construction (IsScalarPositionalConstruction).
+                case NewExpression { Members: null, Arguments: { Count: > 1 } } when
+                    _selector.Body.TryGetProjectionMembers(out var positionalMembers, allowPositionalConstructorArguments: true)
+                    && IsScalarPositionalConstruction(_mongoQ, _selector.Body, positionalMembers, _selector.Parameters[0]):
+                    return TryBindPositionalConstructor(positionalMembers);
 
-                break;
-            }
+                // Positional container of scalar elements (`new[] { x.I, x.NullableI }`, `new object[] { x.I, x.S }`; not `new List<object> { ... }`, see TryGetProjectionMembers'
+                // allowContainerElements): each element is one `_ctorArg<N>` leaf bound by index through the positional-ctor shaper. A boxing Convert-to-object is peeled
+                // (UnwrapContainerElementBoxing) so the element reads with its own type; the read side re-boxes it. Disjoint from neighbouring shapes: an all-row-independent
+                // container is IsRowIndependentLeaf's, one with a whole-entity element is NativeClientWholeEntityShape's. Bare scalar leaves only (allowWholeRootEntityLeaf: false).
+                case NewArrayExpression when
+                    !IsRowIndependentLeaf(_selector.Body, _selector.Parameters[0])
+                    && _selector.Body.TryGetProjectionMembers(out var containerElements, allowContainerElements: true)
+                    && IsScalarPositionalConstruction(_mongoQ, _selector.Body, containerElements, _selector.Parameters[0]):
+                    return TryBindPositionalContainer(containerElements);
 
-            // Multi-argument ctor-only DTO (`new CustomerListItem(x.CustomerID, x.City)`): like the wrapped arm with positional member names, committed via
-            // HasPositionalCtorProjectionShaper so TranslateSelect avoids VisitNew's shared-ambient-member collision. A whole-entity argument
-            // (`new KeyValuePair<Customer, string>(c, c.City)`) is never a scalar positional leaf (the `$$ROOT` read would throw FormatException or yield an untracked
-            // instance) and falls to the default arm's whole-entity client construction (IsScalarPositionalConstruction).
-            case NewExpression { Members: null, Arguments: { Count: > 1 } } when
-                selector.Body.TryGetProjectionMembers(out var positionalMembers, allowPositionalConstructorArguments: true)
-                && IsScalarPositionalConstruction(mongoQ, selector.Body, positionalMembers, selector.Parameters[0]):
-                foreach (var (memberName, member) in positionalMembers)
-                {
-                    var memberValue = PeelCaseMapping(member);
-                    hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
-                    var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, pendingElementLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
-                        return false;
-                    if (!TryStageLeaf(alias, leaf, memberValue, throwsOnNull, isArrayLeaf, isOwnedNavEntityLeaf))
-                        return false;
-                    if (alias != memberName || isOwnedNavEntityLeaf)
-                        namedAliasOverrides.Add((memberName, alias));
-                }
+                // Client method wrapping the whole entity (`x => context.ClientMethod(x)`): like the single-argument ctor-only arm, fetch whole documents and let EF invoke it
+                // client-side. Requires exactly one entity-referencing operand; anything else falls to the bare-body arm, which declines.
+                case MethodCallExpression methodCall
+                    // Excludes EF.Property(x, "Name"): a field accessor the bare-body arm translates; admitting it here would leave Projection empty while the shaper reads a projected field.
+                    when !methodCall.Method.IsEFPropertyMethod()
+                         && TryGetSoleWholeRootEntityOperand(_mongoQ, methodCall, _selector.Parameters[0]):
+                    _mongoQ.Select.HasClientWrappedWholeEntityShaper = true;
+                    return true;
 
-                hasPositionalCtorProjection = true;
-                break;
-
-            // Positional container of scalar elements (`new[] { x.I, x.NullableI }`, `new object[] { x.I, x.S }`; not `new List<object> { ... }`, see TryGetProjectionMembers'
-            // allowContainerElements): each element is one `_ctorArg<N>` leaf bound by index through the positional-ctor shaper. A boxing Convert-to-object is peeled
-            // (UnwrapContainerElementBoxing) so the element reads with its own type; the read side re-boxes it. Disjoint from neighbouring shapes: an all-row-independent
-            // container is IsRowIndependentLeaf's, one with a whole-entity element is NativeClientWholeEntityShape's. Bare scalar leaves only (allowWholeRootEntityLeaf: false).
-            case NewArrayExpression when
-                !IsRowIndependentLeaf(selector.Body, selector.Parameters[0])
-                && selector.Body.TryGetProjectionMembers(out var containerElements, allowContainerElements: true)
-                && IsScalarPositionalConstruction(mongoQ, selector.Body, containerElements, selector.Parameters[0]):
-                foreach (var (elementName, element) in containerElements)
-                {
-                    var elementOperand = UnwrapContainerElementBoxing(element);
-                    var elementValue = PeelCaseMapping(elementOperand);
-                    hasCaseMappingLeaf |= !ReferenceEquals(elementValue, elementOperand);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], elementValue, elementName, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, pendingElementLeaves, out var leaf, out var isArrayLeaf, out _, out var throwsOnNull))
-                        return false;
-                    if (!TryStageLeaf(elementName, leaf, elementValue, throwsOnNull, isArrayLeaf))
-                        return false;
-                }
-
-                hasPositionalCtorProjection = true;
-                break;
-
-            // Client method wrapping the whole entity (`x => context.ClientMethod(x)`): like the single-argument ctor-only arm, fetch whole documents and let EF invoke it
-            // client-side. Requires exactly one entity-referencing operand; anything else falls to the bare-body arm, which declines.
-            case MethodCallExpression methodCall
-                // Excludes EF.Property(x, "Name"): a field accessor the bare-body arm translates; admitting it here would leave Projection empty while the shaper reads a projected field.
-                when !methodCall.Method.IsEFPropertyMethod()
-                     && TryGetSoleWholeRootEntityOperand(mongoQ, methodCall, selector.Parameters[0]):
-                mongoQ.Select.HasClientWrappedWholeEntityShaper = true;
-                break;
-
-            // Bare body (`b => b.Title`, `b => b.Posts.Count`): with no member name the alias is derived from the translated leaf and registered as an override
-            // (AddProjectionAliasOverride), in two tiers. Tier 1 (TryDeriveDocumentPathAlias): the leaf has a root-relative document path used as the alias, so alias-addressed
-            // and document-path reads coincide and a late fallback can strip the projection (ShouldStripBareProjectionOnFallback). Tier 2 (TryDeriveSyntheticAlias): a
-            // computed leaf under the driver's own bare alias `_v`, so an un-stripped fallback writes what the shaper reads; admits a size/filtered-size top node
-            // (IsFallbackSafeBareSizeLeaf) or an arithmetic/numeric-cast over an array-free subtree (IsArrayFreeComputedSubtree). `b.Posts.Count * 2` declines: its fallback
-            // renders a bare $size that errors on a missing array.
-            default:
-            {
-                // Declined when a prior Select already populated Projection: the single bare ProjectionMember names one alias and the override is write-once.
-                if (mongoQ.Select.Projection.Count > 0)
-                {
-                    return false;
-                }
-
-                // Provisional alias; only IsNativeArrayProjectionLeaf's alias-agreement conjunct reads it (vacuous for a bare array body).
-                var provisionalAlias = selector.Body is MaterializeCollectionNavigationExpression materializeBare
-                    ? (materializeBare.Navigation as INavigation)?.TargetEntityType.GetContainingElementName()
-                      ?? BareLeafProvisionalAlias
-                    : BareLeafProvisionalAlias;
-
-                // false keeps a true bare `b => b.Address` declining; the ctor-wrap arm passes true.
-                if (!TryBindAsBareProjection(selector.Body, provisionalAlias, allowWholeRootEntityLeafForThis: false))
-                {
-                    // A row-independent body the $literal path can't render (`x => new { }`, or a captured value EF folded the whole body into): the shaper evaluates it, only the sentinel is projected.
-                    if (IsRowIndependentLeaf(selector.Body, selector.Parameters[0]))
-                    {
-                        hasClientEvaluatedLeaf = true;
-                        break;
-                    }
-
-                    // A ternary over client-only constructions: the test is staged as the bare bool leaf and the shaper evaluates the conditional, as in the wrapped arm. Disjoint from the whole-entity client construction below.
-                    if (selector.Body is ConditionalExpression bareClientConditional
-                        && TryCollectClientConditionalBranches(
-                            translator, selector.Parameters[0], bareClientConditional, MongoSelectDefinition.BareProjectionMemberKey,
-                            clientConditionalReads, clientConditionalMemberNames)
-                        && TryBindAsBareProjection(
-                            bareClientConditional.Test, BareLeafProvisionalAlias, allowWholeRootEntityLeafForThis: false))
-                    {
-                        clientConditionalMembers.Add(MongoSelectDefinition.BareProjectionMemberKey);
-                        hasClientEvaluatedLeaf = true;
-                        break;
-                    }
-
-                    // Untranslatable (embeds a client method, or constructs over the whole entity: `new object[] { x }`, `new Wrapper(x) { City = x.City }`): if every entity reference is the whole entity, fetch whole documents and evaluate client-side.
-                    if (!IsClientOnlyWholeEntityExpression(mongoQ, selector.Body, selector.Parameters[0]))
-                    {
-                        return false;
-                    }
-
-                    mongoQ.Select.HasClientWrappedWholeEntityShaper = true;
-                }
-
-                break;
+                default:
+                    return TryBindBareBody();
             }
         }
 
-        // Shared by the bare-body and single-argument ctor-only arms; mutates this method's locals. Tier 1 (document path) before tier 2 (synthetic `_v`) so the late-fallback strip works.
-        bool TryBindAsBareProjection(Expression bareLikeExpr, string provisionalAlias, bool allowWholeRootEntityLeafForThis)
+        private bool TryBindWrappedBody(IReadOnlyList<(string MemberName, Expression Value)> members)
         {
-            var peeled = PeelCaseMapping(bareLikeExpr, includeDateTimeToString: true);
-            hasCaseMappingLeaf |= !ReferenceEquals(peeled, bareLikeExpr);
+            _isWrappedBody = true;
+            _hasClientEvaluatedLeaf |= _selector.Body is MemberInitExpression { NewExpression.Arguments.Count: > 0 };
+            foreach (var (memberName, member) in FlattenNestedConstructions(_translator, members))
+            {
+                var memberValue = NativeCaseMapping.PeelCaseMapping(member, includeDateTimeToString: true);
+                _hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
+                var alias = DeriveWrappedLeafAlias(_mongoQ, _selector.Parameters[0], memberValue, memberName);
+                if (!TryTranslateLeaf(_mongoQ, _translator, _selector.Parameters[0], memberValue, alias, _staged, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
+                {
+                    // Last resort, only after the leaf arms (incl. the $literal path) declined: a row-independent leaf is evaluated by the shaper and never projected.
+                    if (IsRowIndependentLeaf(member, _selector.Parameters[0]))
+                    {
+                        _hasClientEvaluatedLeaf = true;
+                        continue;
+                    }
+
+                    // A ternary over client-only constructions (`X = c.City == "Seattle" ? new P { ... } : new P { ... }`): stage only the test, as this member's bool leaf, and let the
+                    // shaper evaluate the conditional. Reached only after TryLeaf declined the whole ternary (HasMisreadDocumentConstructionBranch).
+                    if (memberValue is ConditionalExpression wrappedClientConditional
+                        && TryCollectClientConditionalBranches(
+                            _translator, _selector.Parameters[0], wrappedClientConditional, memberName,
+                            _clientConditionalReads, _clientConditionalMemberNames)
+                        && TryTranslateLeaf(_mongoQ, _translator, _selector.Parameters[0], wrappedClientConditional.Test,
+                            alias, _staged, out var testLeaf,
+                            out _, out _, out var testThrowsOnNull)
+                        && TryStageLeaf(alias, testLeaf, wrappedClientConditional.Test, testThrowsOnNull))
+                    {
+                        _clientConditionalMembers.Add(memberName);
+                        _hasClientEvaluatedLeaf = true;
+                        continue;
+                    }
+
+                    return false;
+                }
+
+                if (!TryStageLeaf(alias, leaf, memberValue, throwsOnNull, isArrayLeaf, isOwnedNavEntityLeaf))
+                    return false;
+                // The nav-entity leaf always registers a DocumentPath override, even though its alias equals the member name: the late-fallback strip it triggers supplies the retained _id.
+                if (alias != memberName || isOwnedNavEntityLeaf)
+                    _namedAliasOverrides.Add((memberName, alias));
+            }
+
+            return true;
+        }
+
+        private bool TryBindSingleCtorArgument(Expression ctorArgument)
+        {
+            // Sub-case 1: the sole argument is the whole root entity: leave Projection empty so Route resolves to WholeEntity and the DTO is constructed client-side. Must
+            // precede sub-case 2: the whole-root-entity arm yields a "$ROOT" element ref which TryDeriveDocumentPathAlias would accept as an alias (invalid field name).
+            if (IsWholeRootEntityLeaf(_mongoQ, ctorArgument, _selector.Parameters[0]))
+            {
+                // To TranslateUnion/Concat's IsPlainWholeEntitySelect this looks like a plain entity fetch, but the per-row result is the DTO, so a native $unionWith would dedupe the wrong thing (HasClientWrappedWholeEntityShaper).
+                _mongoQ.Select.HasClientWrappedWholeEntityShaper = true;
+                return true;
+            }
+
+            // Sub-case 2: any other bare-admissible leaf; reuses the bare-body alias derivation so VisitNew's ambient-member lookup reads it as for a bare body.
+            return TryBindAsBareProjection(ctorArgument, BareLeafProvisionalAlias, allowWholeRootEntityLeafForThis: true);
+        }
+
+        private bool TryBindPositionalConstructor(IReadOnlyList<(string MemberName, Expression Value)> members)
+        {
+            foreach (var (memberName, member) in members)
+            {
+                var memberValue = NativeCaseMapping.PeelCaseMapping(member);
+                _hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
+                var alias = DeriveWrappedLeafAlias(_mongoQ, _selector.Parameters[0], memberValue, memberName);
+                if (!TryTranslateLeaf(_mongoQ, _translator, _selector.Parameters[0], memberValue, alias, _staged, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
+                    return false;
+                if (!TryStageLeaf(alias, leaf, memberValue, throwsOnNull, isArrayLeaf, isOwnedNavEntityLeaf))
+                    return false;
+                if (alias != memberName || isOwnedNavEntityLeaf)
+                    _namedAliasOverrides.Add((memberName, alias));
+            }
+
+            _hasPositionalCtorProjection = true;
+            return true;
+        }
+
+        private bool TryBindPositionalContainer(IReadOnlyList<(string MemberName, Expression Value)> elements)
+        {
+            foreach (var (elementName, element) in elements)
+            {
+                var elementOperand = UnwrapContainerElementBoxing(element);
+                var elementValue = NativeCaseMapping.PeelCaseMapping(elementOperand);
+                _hasCaseMappingLeaf |= !ReferenceEquals(elementValue, elementOperand);
+                if (!TryTranslateLeaf(_mongoQ, _translator, _selector.Parameters[0], elementValue, elementName, _staged, out var leaf, out var isArrayLeaf, out _, out var throwsOnNull))
+                    return false;
+                if (!TryStageLeaf(elementName, leaf, elementValue, throwsOnNull, isArrayLeaf))
+                    return false;
+            }
+
+            _hasPositionalCtorProjection = true;
+            return true;
+        }
+
+        // Bare body (`b => b.Title`, `b => b.Posts.Count`): with no member name the alias is derived from the translated leaf and registered as an override
+        // (AddProjectionAliasOverride), in two tiers. Tier 1 (TryDeriveDocumentPathAlias): the leaf has a root-relative document path used as the alias, so alias-addressed
+        // and document-path reads coincide and a late fallback can strip the projection (ShouldStripBareProjectionOnFallback). Tier 2 (TryDeriveSyntheticAlias): a
+        // computed leaf under the driver's own bare alias `_v`, so an un-stripped fallback writes what the shaper reads; admits a size/filtered-size top node
+        // (IsFallbackSafeBareSizeLeaf) or an arithmetic/numeric-cast over an array-free subtree (IsArrayFreeComputedSubtree). `b.Posts.Count * 2` declines: its fallback
+        // renders a bare $size that errors on a missing array.
+        private bool TryBindBareBody()
+        {
+            // Declined when a prior Select already populated Projection: the single bare ProjectionMember names one alias and the override is write-once.
+            if (_mongoQ.Select.Projection.Count > 0)
+            {
+                return false;
+            }
+
+            // Provisional alias; only IsNativeArrayProjectionLeaf's alias-agreement conjunct reads it (vacuous for a bare array body).
+            var provisionalAlias = _selector.Body is MaterializeCollectionNavigationExpression materializeBare
+                ? (materializeBare.Navigation as INavigation)?.TargetEntityType.GetContainingElementName()
+                  ?? BareLeafProvisionalAlias
+                : BareLeafProvisionalAlias;
+
+            // false keeps a true bare `b => b.Address` declining; the ctor-wrap arm passes true.
+            if (!TryBindAsBareProjection(_selector.Body, provisionalAlias, allowWholeRootEntityLeafForThis: false))
+            {
+                // A row-independent body the $literal path can't render (`x => new { }`, or a captured value EF folded the whole body into): the shaper evaluates it, only the sentinel is projected.
+                if (IsRowIndependentLeaf(_selector.Body, _selector.Parameters[0]))
+                {
+                    _hasClientEvaluatedLeaf = true;
+                    return true;
+                }
+
+                // A ternary over client-only constructions: the test is _staged as the bare bool leaf and the shaper evaluates the conditional, as in the wrapped arm. Disjoint from the whole-entity client construction below.
+                if (_selector.Body is ConditionalExpression bareClientConditional
+                    && TryCollectClientConditionalBranches(
+                        _translator, _selector.Parameters[0], bareClientConditional, MongoSelectDefinition.BareProjectionMemberKey,
+                        _clientConditionalReads, _clientConditionalMemberNames)
+                    && TryBindAsBareProjection(
+                        bareClientConditional.Test, BareLeafProvisionalAlias, allowWholeRootEntityLeafForThis: false))
+                {
+                    _clientConditionalMembers.Add(MongoSelectDefinition.BareProjectionMemberKey);
+                    _hasClientEvaluatedLeaf = true;
+                    return true;
+                }
+
+                // Untranslatable (embeds a client method, or constructs over the whole entity: `new object[] { x }`, `new Wrapper(x) { City = x.City }`): if every entity reference is the whole entity, fetch whole documents and evaluate client-side.
+                if (!IsClientOnlyWholeEntityExpression(_mongoQ, _selector.Body, _selector.Parameters[0]))
+                {
+                    return false;
+                }
+
+                _mongoQ.Select.HasClientWrappedWholeEntityShaper = true;
+            }
+
+            return true;
+        }
+
+        // Shared by the bare-body and single-argument ctor-only arms; stages onto this session. Tier 1 (document path) before tier 2 (synthetic `_v`) so the late-fallback strip works.
+        private bool TryBindAsBareProjection(Expression bareLikeExpr, string provisionalAlias, bool allowWholeRootEntityLeafForThis)
+        {
+            var peeled = NativeCaseMapping.PeelCaseMapping(bareLikeExpr, includeDateTimeToString: true);
+            _hasCaseMappingLeaf |= !ReferenceEquals(peeled, bareLikeExpr);
             bareLikeExpr = peeled;
-            if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], bareLikeExpr, provisionalAlias,
-                    pendingLookups, pendingReducerLeaves, pendingBareCountStamps, pendingElementLeaves, out var bareLeaf, out var bareIsArrayLeaf, out _,
+            if (!TryTranslateLeaf(_mongoQ, _translator, _selector.Parameters[0], bareLikeExpr, provisionalAlias,
+                    _staged, out var bareLeaf, out var bareIsArrayLeaf, out _,
                     out var bareThrowsOnNull, allowWholeRootEntityLeafForThis))
             {
                 return false;
@@ -298,182 +335,182 @@ internal static class NativeProjectionBinder
             if (TryDeriveDocumentPathAlias(bareLeaf, out var documentPathAlias))
             {
                 derivedAlias = documentPathAlias;
-                bareProjectionTier = ProjectionAliasTier.DocumentPath;
+                _bareProjectionTier = ProjectionAliasTier.DocumentPath;
             }
-            else if (TryDeriveSyntheticAlias(bareLeaf, selector, pendingLookups, out var syntheticAlias))
+            else if (TryDeriveSyntheticAlias(bareLeaf, _selector, _staged, out var syntheticAlias))
             {
                 derivedAlias = syntheticAlias;
-                bareProjectionTier = ProjectionAliasTier.Synthetic;
+                _bareProjectionTier = ProjectionAliasTier.Synthetic;
             }
             else
             {
                 return false;
             }
 
-            // Nothing is staged before the single bare leaf, so the alias is always fresh. isOwnedNavEntityLeaf is discarded: TryTranslateLeaf only produces it on the wrapped arm's path.
+            // Nothing is _staged before the single bare leaf, so the alias is always fresh. isOwnedNavEntityLeaf is discarded: TryTranslateLeaf only produces it on the wrapped arm's path.
             if (!TryStageLeaf(derivedAlias, bareLeaf, bareLikeExpr, bareThrowsOnNull, bareIsArrayLeaf))
             {
                 return false;
             }
 
-            bareProjectionAlias = derivedAlias;
+            _bareProjectionAlias = derivedAlias;
             return true;
         }
 
-        bool IsOwnedArrayLeafValue(Expression leafValue)
+        private bool IsOwnedArrayLeafValue(Expression leafValue)
             => leafValue is MaterializeCollectionNavigationExpression
-               || TryMatchOwnedArraySelectLeaf(leafValue, mongoQ.CollectionExpression.EntityType, out _, out _, out _);
+               || TryMatchOwnedArraySelectLeaf(leafValue, _mongoQ.CollectionExpression.EntityType, out _, out _, out _);
 
-        // Claims the alias (false on a case-insensitive collision) and stages one leaf, keeping leafIsArray/leafIsOwnedNavEntity index-aligned with projections and folding it into the has*Leaf flags.
-        bool TryStageLeaf(
+        // Claims the alias (false on a case-insensitive collision) and stages one leaf, keeping _leafIsArray/_leafIsOwnedNavEntity index-aligned with _projections and folding it into the has*Leaf flags.
+        private bool TryStageLeaf(
             string alias, MongoExpression leaf, Expression value, bool throwsOnNull,
             bool isArrayLeaf = false, bool isOwnedNavEntityLeaf = false)
         {
-            if (!seenAliases.Add(alias))
+            if (!_seenAliases.Add(alias))
             {
                 // Two array leaves over the same owned collection (`new { b.Posts, Titles = b.Posts.Select(...) }`) read one stored array: the second shares the first's projection (and registers its own
                 // alias override). Only owned arrays: a projected reference-collection list (`_lookup_<Nav>`) also sets isArrayLeaf, and two of those must keep declining.
                 return isArrayLeaf
                        && IsOwnedArrayLeafValue(value)
                        && leaf is MongoElementRefExpression sharedArray
-                       && projections.Exists(p => p.Alias == alias && p.Expression is MongoElementRefExpression existing
+                       && _projections.Exists(p => p.Alias == alias && p.Expression is MongoElementRefExpression existing
                                                   && existing.Path == sharedArray.Path
                                                   && p.Source is { } existingValue && IsOwnedArrayLeafValue(existingValue));
             }
 
-            projections.Add(new MongoProjection(alias, leaf, value, throwsOnNull));
-            leafIsArray.Add(isArrayLeaf);
-            hasArrayLeaf |= isArrayLeaf;
-            leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
-            hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
-            hasStringSequenceLeaf |= value is MethodCallExpression stringSequenceCall
+            _projections.Add(new MongoProjection(alias, leaf, value, throwsOnNull));
+            _leafIsArray.Add(isArrayLeaf);
+            _hasArrayLeaf |= isArrayLeaf;
+            _leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
+            _hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
+            _hasStringSequenceLeaf |= value is MethodCallExpression stringSequenceCall
                                      && IsStringSequenceMaterializationCall(stringSequenceCall);
             return true;
         }
 
-        // The row reads of client-evaluated ternaries: the read side binds each under the member path it walks (`X.Name`) and takes its alias from the staged read
-        // (TryGetClientConditionalReadAlias). A name the walk enters must be no other leaf's alias (a duplicate would be renamed by AddToProjection's de-dup) and no
-        // member with an alias override. Kept away from array/owned-nav leaves: their whole-document fallback and _id retention aren't reasoned for it.
-        if (clientConditionalMembers.Count > 0)
+        /// <summary>Checks the rules that span leaves and adds the staged extras (root key, client-evaluated sentinel); false declines the selector.</summary>
+        public bool TryFinish()
         {
-            if (hasArrayLeaf || hasOwnedNavEntityLeaf)
-                return false;
-
-            foreach (var memberName in clientConditionalMemberNames)
+            // The row reads of client-evaluated ternaries: the read side binds each under the member path it walks (`X.Name`) and takes its alias from the _staged read
+            // (TryGetClientConditionalReadAlias). A name the walk enters must be no other leaf's alias (a duplicate would be renamed by AddToProjection's de-dup) and no
+            // member with an alias override. Kept away from array/owned-nav leaves: their whole-document fallback and _id retention aren't reasoned for it.
+            if (_clientConditionalMembers.Count > 0)
             {
-                if (seenAliases.Contains(memberName)
-                    || namedAliasOverrides.Exists(o => string.Equals(o.MemberName, memberName, StringComparison.OrdinalIgnoreCase)))
-                    return false;
-            }
-
-            // One staged projection per DISTINCT read: the read side looks each alias up structurally, so two members reading the same field must resolve to one alias.
-            var stagedReads = new List<Expression>();
-            foreach (var read in clientConditionalReads.Values)
-            {
-                if (stagedReads.Exists(r => ExpressionEqualityComparer.Instance.Equals(r, read.Value)))
-                    continue;
-
-                stagedReads.Add(read.Value);
-                var readAlias = ClientConditionalReadAliasPrefix + clientConditionalReadAliases.Count;
-                if (!TryStageLeaf(readAlias, read.Field, read.Value, throwsOnNull: false))
+                if (_hasArrayLeaf || _hasOwnedNavEntityLeaf)
                     return false;
 
-                clientConditionalReadAliases.Add(readAlias);
-            }
-        }
-
-        // With an array or owned-nav-entity leaf present, a late fallback runs EF's client-side mixed shaper over whole un-projected documents (ProjectionAnalyzer.CanPushDown
-        // refuses entity-typed leaves), so every other leaf must read correctly off a whole document (a plain top-level field whose alias equals its element name). Renamed,
-        // dotted and computed leaves don't, so the projection declines; the array/nav-entity leaves are skipped (their alias == document path check proves them).
-        if (hasArrayLeaf || hasOwnedNavEntityLeaf)
-        {
-            for (var i = 0; i < projections.Count; i++)
-            {
-                if (leafIsArray[i] || leafIsOwnedNavEntity[i] || IsWholeDocumentReadableLeaf(projections[i].Expression))
-                    continue;
-
-                // A dotted scalar of a wrapped body (`new { b.Home.City, b.Home.Notes }`) takes its document path as its alias (same alias == document-path invariant as array leaves);
-                // the read side walks a dotted alias segment by segment through the property's serializer. Declines when the path collides with another alias.
-                if (isWrappedBody
-                    && projections[i].Expression is MongoFieldExpression { ElementName: var documentPath } dottedField
-                    && documentPath.Contains('.')
-                    && !string.Equals(projections[i].Alias, documentPath, StringComparison.OrdinalIgnoreCase)
-                    && !ProjectionPathsCollide(projections, i, documentPath))
+                foreach (var memberName in _clientConditionalMemberNames)
                 {
-                    var memberAlias = projections[i].Alias;
-                    seenAliases.Remove(memberAlias);
-                    seenAliases.Add(documentPath);
-                    projections[i] = projections[i] with { Alias = documentPath };
-                    namedAliasOverrides.Add((memberAlias, documentPath));
-                    continue;
+                    if (_seenAliases.Contains(memberName)
+                        || _namedAliasOverrides.Exists(o => string.Equals(o.MemberName, memberName, StringComparison.OrdinalIgnoreCase)))
+                        return false;
                 }
 
-                return false;
+                // One _staged projection per DISTINCT read: the read side looks each alias up structurally, so two members reading the same field must resolve to one alias.
+                var stagedReads = new List<Expression>();
+                foreach (var read in _clientConditionalReads.Values)
+                {
+                    if (stagedReads.Exists(r => ExpressionEqualityComparer.Instance.Equals(r, read.Value)))
+                        continue;
+
+                    stagedReads.Add(read.Value);
+                    var readAlias = ClientConditionalReadAliasPrefix + _clientConditionalReadAliases.Count;
+                    if (!TryStageLeaf(readAlias, read.Field, read.Value, throwsOnNull: false))
+                        return false;
+
+                    _clientConditionalReadAliases.Add(readAlias);
+                }
             }
+
+            // With an array or owned-nav-entity leaf present, a late fallback runs EF's client-side mixed shaper over whole un-projected documents (ProjectionAnalyzer.CanPushDown
+            // refuses entity-typed leaves), so every other leaf must read correctly off a whole document (a plain top-level field whose alias equals its element name). Renamed,
+            // dotted and computed leaves don't, so the projection declines; the array/nav-entity leaves are skipped (their alias == document path check proves them).
+            if (_hasArrayLeaf || _hasOwnedNavEntityLeaf)
+            {
+                for (var i = 0; i < _projections.Count; i++)
+                {
+                    if (_leafIsArray[i] || _leafIsOwnedNavEntity[i] || IsWholeDocumentReadableLeaf(_projections[i].Expression))
+                        continue;
+
+                    // A dotted scalar of a wrapped body (`new { b.Home.City, b.Home.Notes }`) takes its document path as its alias (same alias == document-path invariant as array leaves);
+                    // the read side walks a dotted alias segment by segment through the property's serializer. Declines when the path collides with another alias.
+                    if (_isWrappedBody
+                        && _projections[i].Expression is MongoFieldExpression { ElementName: var documentPath } dottedField
+                        && documentPath.Contains('.')
+                        && !string.Equals(_projections[i].Alias, documentPath, StringComparison.OrdinalIgnoreCase)
+                        && !ProjectionPathsCollide(_projections, i, documentPath))
+                    {
+                        var memberAlias = _projections[i].Alias;
+                        _seenAliases.Remove(memberAlias);
+                        _seenAliases.Add(documentPath);
+                        _projections[i] = _projections[i] with { Alias = documentPath };
+                        _namedAliasOverrides.Add((memberAlias, documentPath));
+                        continue;
+                    }
+
+                    return false;
+                }
+            }
+
+            // An owned element with a shadow key reads its owner's key from the shaped document (via _ownerMappings), so a $project without _id fails per row ("Document element
+            // is missing for required non-nullable property"). Emit the root key too; it is inert for the result shape and suppresses RenderProject's default `_id: 0`.
+            // IsPlainProjectedSelect declines these as set-op operands (HasArrayProjectionLeaf) because this _id would leak into the comparison key: change both together.
+            if ((_hasArrayLeaf || _hasOwnedNavEntityLeaf) && _seenAliases.Add("_id"))
+            {
+                // Properties[0] is only an approximate Type for a composite key (stored nested under _id); inert, nothing reads it.
+                var keyProperty = _mongoQ.CollectionExpression.EntityType.FindPrimaryKey()!.Properties[0];
+                _projections.Add(new MongoProjection("_id", new MongoElementRefExpression("_id", keyProperty.ClrType)));
+            }
+
+            // Every leaf is client-evaluated: stage a constant so Route stays Projection (one row per document) instead of collapsing to WholeEntity. A constant rather than _id, so a
+            // Distinct over it dedups to the one row the execution-wide client value calls for (ClientEvaluatedSentinelAlias).
+            if (_hasClientEvaluatedLeaf && _projections.Count == 0)
+            {
+                _projections.Add(new MongoProjection(ClientEvaluatedSentinelAlias, new MongoConstantExpression(true, null)));
+            }
+
+            return true;
         }
 
-        // An owned element with a shadow key reads its owner's key from the shaped document (via _ownerMappings), so a $project without _id fails per row ("Document element
-        // is missing for required non-nullable property"). Emit the root key too; it is inert for the result shape and suppresses RenderProject's default `_id: 0`.
-        // IsPlainProjectedSelect declines these as set-op operands (HasArrayProjectionLeaf) because this _id would leak into the comparison key: change both together.
-        if ((hasArrayLeaf || hasOwnedNavEntityLeaf) && seenAliases.Add("_id"))
+        /// <summary>Applies everything staged to the query. Call only after <see cref="TryFinish"/> returned true.</summary>
+        public void Commit()
         {
-            // Properties[0] is only an approximate Type for a composite key (stored nested under _id); inert, nothing reads it.
-            var keyProperty = mongoQ.CollectionExpression.EntityType.FindPrimaryKey()!.Properties[0];
-            projections.Add(new MongoProjection("_id", new MongoElementRefExpression("_id", keyProperty.ClrType)));
-        }
+            _staged.CommitTo(_mongoQ);
+            foreach (var projection in _projections)
+                _mongoQ.Select.AddProjection(projection);
+            // Registered after every `return false`, so a declined body leaves no override behind.
+            if (_bareProjectionAlias != null)
+            {
+                _mongoQ.Select.AddProjectionAliasOverride(
+                    MongoSelectDefinition.BareProjectionMemberKey, _bareProjectionAlias, _bareProjectionTier);
+            }
 
-        // Every leaf is client-evaluated: stage a constant so Route stays Projection (one row per document) instead of collapsing to WholeEntity. A constant rather than _id, so a
-        // Distinct over it dedups to the one row the execution-wide client value calls for (ClientEvaluatedSentinelAlias).
-        if (hasClientEvaluatedLeaf && projections.Count == 0)
-        {
-            projections.Add(new MongoProjection(ClientEvaluatedSentinelAlias, new MongoConstantExpression(true, null)));
-        }
+            // DocumentPath by construction: DeriveWrappedLeafAlias returns a non-member alias only when it is the document path; owned-nav-entity leaves register unconditionally.
+            foreach (var (memberName, alias) in _namedAliasOverrides)
+            {
+                _mongoQ.Select.AddProjectionAliasOverride(memberName, alias, ProjectionAliasTier.DocumentPath);
+            }
 
-        foreach (var lookup in pendingLookups)
-            mongoQ.AddLookup(lookup);
-        foreach (var reducerLeaf in pendingReducerLeaves)
-            mongoQ.AddCorrelatedReducerLeaf(reducerLeaf);
-        foreach (var lookupToStamp in pendingBareCountStamps)
-            lookupToStamp.IsBareCountSizeSource = true;
-        foreach (var (elementLookup, elementAlias) in pendingElementLeaves)
-        {
-            if (!elementLookup.ElementLeafAliases.Contains(elementAlias))
-                elementLookup.ElementLeafAliases.Add(elementAlias);
-        }
-        foreach (var projection in projections)
-            mongoQ.Select.AddProjection(projection);
-        // Registered after every `return false`, so a declined body leaves no override behind.
-        if (bareProjectionAlias != null)
-        {
-            mongoQ.Select.AddProjectionAliasOverride(
-                MongoSelectDefinition.BareProjectionMemberKey, bareProjectionAlias, bareProjectionTier);
-        }
+            // Provenance for IsPlainProjectedSelect's set-op decline (leaked owner _id); this and the flags below are set only on a successful commit.
+            if (_hasArrayLeaf || _hasOwnedNavEntityLeaf)
+                _mongoQ.Select.HasArrayProjectionLeaf = true;
+            // An element leaf is read by its own alias, which a set operation cannot align across operands.
+            if (_staged.ElementLeaves.Count > 0)
+                _mongoQ.Select.HasArrayProjectionLeaf = true;
+            if (_hasStringSequenceLeaf)
+                _mongoQ.Select.HasStringSequenceProjectionLeaf = true;
+            if (_hasCaseMappingLeaf)
+                _mongoQ.Select.HasClientCaseMappingProjectionLeaf = true;
+            if (_hasPositionalCtorProjection)
+                _mongoQ.Select.HasPositionalCtorProjectionShaper = true;
+            if (_hasClientEvaluatedLeaf)
+                _mongoQ.Select.HasClientEvaluatedProjectionLeaf = true;
+            foreach (var clientConditionalMember in _clientConditionalMembers)
+                _mongoQ.Select.AddClientConditionalMember(clientConditionalMember);
+            foreach (var clientConditionalReadAlias in _clientConditionalReadAliases)
+                _mongoQ.Select.AddClientConditionalRead(clientConditionalReadAlias);
 
-        // DocumentPath by construction: DeriveWrappedLeafAlias returns a non-member alias only when it is the document path; owned-nav-entity leaves register unconditionally.
-        foreach (var (memberName, alias) in namedAliasOverrides)
-        {
-            mongoQ.Select.AddProjectionAliasOverride(memberName, alias, ProjectionAliasTier.DocumentPath);
         }
-
-        // Provenance for IsPlainProjectedSelect's set-op decline (leaked owner _id); this and the flags below are set only on a successful commit.
-        if (hasArrayLeaf || hasOwnedNavEntityLeaf)
-            mongoQ.Select.HasArrayProjectionLeaf = true;
-        // An element leaf is read by its own alias, which a set operation cannot align across operands.
-        if (pendingElementLeaves.Count > 0)
-            mongoQ.Select.HasArrayProjectionLeaf = true;
-        if (hasStringSequenceLeaf)
-            mongoQ.Select.HasStringSequenceProjectionLeaf = true;
-        if (hasCaseMappingLeaf)
-            mongoQ.Select.HasClientCaseMappingProjectionLeaf = true;
-        if (hasPositionalCtorProjection)
-            mongoQ.Select.HasPositionalCtorProjectionShaper = true;
-        if (hasClientEvaluatedLeaf)
-            mongoQ.Select.HasClientEvaluatedProjectionLeaf = true;
-        foreach (var clientConditionalMember in clientConditionalMembers)
-            mongoQ.Select.AddClientConditionalMember(clientConditionalMember);
-        foreach (var clientConditionalReadAlias in clientConditionalReadAliases)
-            mongoQ.Select.AddClientConditionalRead(clientConditionalReadAlias);
-        return true;
     }
 
     /// <summary>A row read inside a client-evaluated ternary's branch, staged under the binding member's name.</summary>
@@ -653,7 +690,7 @@ internal static class NativeProjectionBinder
         if (cast.NodeType is not (ExpressionType.Convert or ExpressionType.ConvertChecked)
             || property.GetValueConverter() != null
             || property.GetTypeMapping().Converter != null
-            || NativeGroupByBinder.HasDefaultKeySerialization(property))
+            || StoredSerialization.HasDefaultKeySerialization(property))
         {
             return false;
         }
@@ -707,33 +744,6 @@ internal static class NativeProjectionBinder
 
     private static bool IsEnumType(Type type)
         => (Nullable.GetUnderlyingType(type) ?? type).IsEnum;
-
-    /// <summary>True for zero-argument <c>ToLower</c>/<c>ToUpper</c>/<c>ToLowerInvariant</c>/<c>ToUpperInvariant</c> on a <see langword="string"/>. Server forms are ASCII-only, so a leaf stages only the receiver (<see cref="PeelCaseMapping"/>) and the call is re-applied client-side.</summary>
-    internal static bool IsCaseMappingCall(MethodCallExpression call)
-        => call is { Object.Type: var objectType, Arguments.Count: 0 }
-           && objectType == typeof(string)
-           && call.Method.DeclaringType == typeof(string)
-           && call.Method.Name is nameof(string.ToLower) or nameof(string.ToUpper)
-               or nameof(string.ToLowerInvariant) or nameof(string.ToUpperInvariant);
-
-    /// <summary>
-    /// The receiver of a (possibly repeated) case-mapping call, which is what the leaf stages; the call stays in the shaper (<c>MongoProjectionBindingExpressionVisitor.Visit</c>;
-    /// positional-ctor: <c>BindPositionalCtorProjectionMember</c>). <paramref name="includeDateTimeToString"/> also peels <see cref="IsDateTimeToString"/> (plain-<c>Select</c> callers only: their read side re-applies it).
-    /// </summary>
-    internal static Expression PeelCaseMapping(Expression leafExpression, bool includeDateTimeToString = false)
-    {
-        while (leafExpression is MethodCallExpression call
-               && (IsCaseMappingCall(call) || includeDateTimeToString && IsDateTimeToString(call)))
-            leafExpression = call.Object!;
-
-        return leafExpression;
-    }
-
-    /// <summary>True for <c>ToString()</c>/<c>ToString("format")</c> on a <see cref="DateTime"/> (or nullable). No server form matches .NET's culture-sensitive output (driver-LINQ pushes down an ISO <c>$toString</c>, wrong on main), so a leaf stages only the receiver and the call is re-applied client-side, as for <c>DateTimeOffset.ToString</c> (D-TOSTRING).</summary>
-    internal static bool IsDateTimeToString(MethodCallExpression call)
-        => call is { Method.Name: nameof(ToString), Object: { } receiver }
-           && receiver.Type.UnwrapNullableType() == typeof(DateTime)
-           && call.Arguments is [] or [ConstantExpression { Value: string }];
 
     /// <summary>
     /// True for a numeric computed leaf the server evaluates whole: <c>-x</c> (Negate/NegateChecked over a numeric operand), or a widening numeric cast over such a negation or an
@@ -919,10 +929,7 @@ internal static class NativeProjectionBinder
         ParameterExpression outerParameter,
         Expression leafExpression,
         string alias,
-        List<LookupExpression> pendingLookups,
-        List<MongoCorrelatedReducerLeaf> pendingReducerLeaves,
-        List<LookupExpression> pendingBareCountStamps,
-        List<(LookupExpression Lookup, string Alias)> pendingElementLeaves,
+        PendingProjectionStaging staged,
         out MongoExpression result,
         out bool isArrayLeaf,
         out bool isOwnedNavEntityLeaf,
@@ -930,8 +937,7 @@ internal static class NativeProjectionBinder
         bool allowWholeRootEntityLeaf = false)
     {
         if (!TryTranslateLeafCore(
-                mongoQ, translator, outerParameter, leafExpression, alias, pendingLookups, pendingReducerLeaves,
-                pendingBareCountStamps, pendingElementLeaves, out result, out isArrayLeaf, out isOwnedNavEntityLeaf, allowWholeRootEntityLeaf))
+                mongoQ, translator, outerParameter, leafExpression, alias, staged, out result, out isArrayLeaf, out isOwnedNavEntityLeaf, allowWholeRootEntityLeaf))
         {
             throwsOnNull = false;
             return false;
@@ -961,10 +967,7 @@ internal static class NativeProjectionBinder
         ParameterExpression outerParameter,
         Expression leafExpression,
         string alias,
-        List<LookupExpression> pendingLookups,
-        List<MongoCorrelatedReducerLeaf> pendingReducerLeaves,
-        List<LookupExpression> pendingBareCountStamps,
-        List<(LookupExpression Lookup, string Alias)> pendingElementLeaves,
+        PendingProjectionStaging staged,
         out MongoExpression result,
         out bool isArrayLeaf,
         out bool isOwnedNavEntityLeaf,
@@ -992,7 +995,7 @@ internal static class NativeProjectionBinder
             && IsEnumType(castUnary.Operand.Type)
             && IsEnumType(castUnary.Type)
             && TryTranslatePlainField(translator, castUnary.Operand, out var castField)
-            && NativeGroupByBinder.HasDefaultKeySerialization(castField.Property))
+            && StoredSerialization.HasDefaultKeySerialization(castField.Property))
         {
             result = castField;
             return true;
@@ -1063,7 +1066,7 @@ internal static class NativeProjectionBinder
         // `_lookup_<Nav>.<Member>` path fits neither alias tier; the gate keeps a future tier widening from admitting a bare body whose late-fallback read is impossible.
         if (allowWholeRootEntityLeaf
             && TryGetCorrelatedReducerLeaf(
-                mongoQ, outerParameter, leafExpression, alias, pendingLookups, pendingReducerLeaves,
+                mongoQ, outerParameter, leafExpression, alias, staged,
                 out var correlatedReducerRef))
         {
             result = correlatedReducerRef;
@@ -1071,7 +1074,7 @@ internal static class NativeProjectionBinder
         }
 
         if (TryTranslateProjectedCollectionCount(
-                mongoQ, outerParameter, leafExpression, pendingLookups, pendingBareCountStamps, out var sizeExpression))
+                mongoQ, outerParameter, leafExpression, staged, out var sizeExpression))
         {
             result = sizeExpression!;
             return true;
@@ -1082,7 +1085,7 @@ internal static class NativeProjectionBinder
         if (leafExpression is BinaryExpression { Left: MethodCallExpression countCall, Right: ConstantExpression { Value: int or long } countBound } countComparison
             && MongoExpressionTranslator.MapComparisonOperator(countComparison.NodeType) is { } countOperator
             && TryTranslateProjectedCollectionCount(
-                mongoQ, outerParameter, countCall, pendingLookups, pendingBareCountStamps, out var comparedSize))
+                mongoQ, outerParameter, countCall, staged, out var comparedSize))
         {
             result = new MongoBinaryExpression(countOperator, comparedSize!, new MongoConstantExpression(countBound.Value, null));
             return true;
@@ -1091,7 +1094,7 @@ internal static class NativeProjectionBinder
         // Projected reference-collection-nav list (`Orders = c.Orders.ToList()`): the read side comes from MongoProjectionBindingExpressionVisitor.TryBindProjectedCollectionNavigation in every mode; this arm
         // only keeps Route native and retains the $lookup field under its alias. Wrapped bodies only. Reuses isArrayLeaf (shares the array leaf's hazards; _id retention is inert).
         if (allowWholeRootEntityLeaf
-            && TryTranslateProjectedCollectionNavigationList(mongoQ, outerParameter, leafExpression, pendingLookups, out var listNavigation)
+            && TryTranslateProjectedCollectionNavigationList(mongoQ, outerParameter, leafExpression, staged, out var listNavigation)
             && alias == LookupExpression.GetLookupAlias(listNavigation))
         {
             result = new MongoElementRefExpression(alias, listNavigation.TargetEntityType.ClrType);
@@ -1105,7 +1108,7 @@ internal static class NativeProjectionBinder
         // (MongoProjectionBindingExpressionVisitor.TryBindReferencedElementLeaf). Wrapped bodies only: it reads by member alias.
         if (allowWholeRootEntityLeaf
             && TryTranslateReferencedElementLeaf(
-                mongoQ, outerParameter, leafExpression, alias, pendingLookups, pendingBareCountStamps, pendingElementLeaves,
+                mongoQ, outerParameter, leafExpression, alias, staged,
                 out var elementArrayRef))
         {
             result = elementArrayRef;
@@ -1567,9 +1570,9 @@ internal static class NativeProjectionBinder
         }
 
         // A projected reference-collection-nav list (`Orders = c.Orders.ToList()`) is read back by TryBindProjectedCollectionNavigation under the lookup's own alias (_lookup_<Nav>), whatever the member is
-        // named. The throwaway pendingLookups list is fine: this only picks the alias; TryTranslateLeaf re-matches to stage the lookup.
+        // named. The throwaway staging is fine: this only picks the alias; TryTranslateLeaf re-matches to stage the lookup.
         if (TryTranslateProjectedCollectionNavigationList(
-                mongoQ, outerParameter, leafExpression, pendingLookups: [], out var refNavigation))
+                mongoQ, outerParameter, leafExpression, new PendingProjectionStaging(), out var refNavigation))
         {
             return LookupExpression.GetLookupAlias(refNavigation);
         }
@@ -1805,7 +1808,7 @@ internal static class NativeProjectionBinder
     private static bool TryDeriveSyntheticAlias(
         MongoExpression leaf,
         LambdaExpression selector,
-        List<LookupExpression> pendingLookups,
+        PendingProjectionStaging staged,
         out string alias)
     {
         alias = null!;
@@ -1814,7 +1817,7 @@ internal static class NativeProjectionBinder
         {
             // Gate 1a: a size node as the top node whose un-stripped fallback cannot abort (IsFallbackSafeBareSizeLeaf).
             case MongoSizeExpression or MongoFilteredSizeExpression
-                when IsFallbackSafeBareSizeLeaf(leaf, selector, pendingLookups):
+                when IsFallbackSafeBareSizeLeaf(leaf, selector, staged):
                 break;
 
             // Gate 1a2: a comparison of a reference-collection size (a $lookup output, always an array, so the fallback's bare $size cannot abort) against a constant: `c.Orders.Count > 0`.
@@ -1822,7 +1825,7 @@ internal static class NativeProjectionBinder
                 {
                     IsComparison: true, Left: MongoSizeExpression lookupCountSize, Right: MongoConstantExpression
                 }
-                when pendingLookups.Exists(l => l.As == lookupCountSize.FieldName)
+                when staged.Lookups.Exists(l => l.As == lookupCountSize.FieldName)
                      && MongoAggregationExpressionRenderer.CanRender(leaf):
                 break;
 
@@ -1909,11 +1912,11 @@ internal static class NativeProjectionBinder
     /// reducing operator (<c>.Distinct()</c>, <c>.Sum()</c>) escapes the rewrite but is coalesced by <c>MongoEFToLinqTranslatingExpressionVisitor.TryRewriteEmbeddedCollectionNavigationCount</c>. Every decline is fail-closed.
     /// </remarks>
     private static bool IsFallbackSafeBareSizeLeaf(
-        MongoExpression leaf, LambdaExpression selector, List<LookupExpression> pendingLookups)
+        MongoExpression leaf, LambdaExpression selector, PendingProjectionStaging staged)
         => leaf switch
         {
             MongoSizeExpression lookupSize
-                when pendingLookups.Exists(l => l.As == lookupSize.FieldName) => true,
+                when staged.Lookups.Exists(l => l.As == lookupSize.FieldName) => true,
 
             MongoFilteredSizeExpression filtered => !filtered.ArrayPath.Contains('.'),
 
@@ -1964,23 +1967,22 @@ internal static class NativeProjectionBinder
 
     /// <summary>
     /// Resolves <paramref name="source"/> to a staged referenced-collection array when it is exactly the foreign-key correlation of a collection navigation off the query root
-    /// (<see cref="NativeCorrelationMatcher"/>), else <see langword="null"/>. Stages the <c>$lookup</c> (not unwound) into <paramref name="pendingLookups"/> and marks it a whole-array source, so a later
+    /// (<see cref="NativeCorrelationMatcher"/>), else <see langword="null"/>. Stages the <c>$lookup</c> (not unwound) into <paramref name="staged"/> and marks it a whole-array source, so a later
     /// filtered or paged Include of the same navigation is rerouted instead of merged into it.
     /// </summary>
     internal static MongoExpressionTranslator.ReferencedCollectionSource? ResolveReferencedCollection(
         MongoQueryExpression mongoQ,
         ParameterExpression outerParameter,
         Expression source,
-        List<LookupExpression> pendingLookups,
-        List<LookupExpression> pendingBareCountStamps)
+        PendingProjectionStaging staged)
     {
         // The foreign-key correlation of a collection navigation: the navigation's own lookup.
         if (NativeCorrelationMatcher.TryMatchCorrelatedRootWhere(mongoQ, outerParameter, source, out var navigation)
             && NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup(
-                mongoQ, navigation, pendingLookups, typeof(int), out var lookupToStamp, out _))
+                mongoQ, navigation, staged.Lookups, typeof(int), out var lookupToStamp, out _))
         {
-            if (lookupToStamp is not null && !pendingBareCountStamps.Contains(lookupToStamp))
-                pendingBareCountStamps.Add(lookupToStamp);
+            if (lookupToStamp is not null && !staged.BareCountStamps.Contains(lookupToStamp))
+                staged.BareCountStamps.Add(lookupToStamp);
 
             return new MongoExpressionTranslator.ReferencedCollectionSource(
                 LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType);
@@ -2008,7 +2010,7 @@ internal static class NativeProjectionBinder
                 && TryTranslateOuterConditions(conditions, out var outerConditions)
                 && TryStageKeyedArrayLookup(
                     mongoQ, outerParameter, root.EntityType, keyParts,
-                    wheres.Where((_, i) => i != correlated[0]).Concat(conditions.Element).ToList(), pendingLookups, pendingBareCountStamps,
+                    wheres.Where((_, i) => i != correlated[0]).Concat(conditions.Element).ToList(), staged,
                     out var stagedKeyed, outerConditions: outerConditions))
             {
                 return new MongoExpressionTranslator.ReferencedCollectionSource(stagedKeyed.As, root.EntityType);
@@ -2029,15 +2031,14 @@ internal static class NativeProjectionBinder
         IEntityType targetEntityType,
         IReadOnlyList<CorrelationKeyPart> keyParts,
         List<LambdaExpression> filters,
-        List<LookupExpression> pendingLookups,
-        List<LookupExpression> pendingBareCountStamps,
-        [NotNullWhen(true)] out LookupExpression? staged,
+        PendingProjectionStaging staged,
+        [NotNullWhen(true)] out LookupExpression? keyedLookup,
         IReadOnlyList<(string Field, int Direction)>? elementSort = null,
         MongoExpression? elementLimit = null,
         MongoExpression? elementSkip = null,
         IReadOnlyList<LookupOuterCondition>? outerConditions = null)
     {
-        staged = null;
+        keyedLookup = null;
         elementSort ??= [];
         outerConditions ??= [];
 
@@ -2055,7 +2056,7 @@ internal static class NativeProjectionBinder
         {
             foreach (var filter in filters)
             {
-                if (ReferencesParameter(filter, outerParameter)
+                if (filter.ReferencesParameter(outerParameter)
                     || !new MongoExpressionTranslator(targetEntityType, filter.Parameters[0]).TryTranslate(filter.Body, out var translated))
                 {
                     return false;
@@ -2067,7 +2068,7 @@ internal static class NativeProjectionBinder
             }
 
             var baseAlias = NativeCorrelationMatcher.BuildCorrelatedArrayLookup(targetEntityType, keyParts).As;
-            var existing = pendingLookups.Concat(mongoQ.GetPendingLookups())
+            var existing = staged.Lookups.Concat(mongoQ.GetPendingLookups())
                 .Where(l => l.IsCorrelatedArraySource && (l.ElementFilters.Count > 0 || l.HasElementStages || l.HasOuterConditions)
                             && l.As.StartsWith(baseAlias + "_f", StringComparison.Ordinal))
                 .ToList();
@@ -2082,11 +2083,11 @@ internal static class NativeProjectionBinder
 
         var keyed = NativeCorrelationMatcher.BuildCorrelatedArrayLookup(
             targetEntityType, keyParts, filters, filterPredicate, aliasSuffix, elementSort, elementLimit, elementSkip, outerConditions);
-        if (!NativeCorrelationMatcher.TryStageNativeCollectionLookup(mongoQ, keyed, pendingLookups, out staged))
+        if (!NativeCorrelationMatcher.TryStageNativeCollectionLookup(mongoQ, keyed, staged.Lookups, out keyedLookup))
             return false;
 
-        if (!pendingBareCountStamps.Contains(staged))
-            pendingBareCountStamps.Add(staged);
+        if (!staged.BareCountStamps.Contains(keyedLookup))
+            staged.BareCountStamps.Add(keyedLookup);
 
         return true;
 
@@ -2122,24 +2123,6 @@ internal static class NativeProjectionBinder
         protected override Expression VisitParameter(ParameterExpression node) => ReferenceEquals(node, from) ? to : node;
     }
 
-    private static bool ReferencesParameter(Expression expression, ParameterExpression parameter)
-    {
-        var finder = new ParameterReferenceFinder(parameter);
-        finder.Visit(expression);
-        return finder.Found;
-    }
-
-    private sealed class ParameterReferenceFinder(ParameterExpression parameter) : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        protected override Expression VisitParameter(ParameterExpression node)
-        {
-            Found |= ReferenceEquals(node, parameter);
-            return node;
-        }
-    }
-
     /// <summary>
     /// Recognizes a projected element leaf (<see cref="ReferencedElementShape"/>) and stages the keyed array lookup behind it, with
     /// the element filters, ordering and (for <c>FirstOrDefault</c>) a limit of one inside its sub-pipeline.
@@ -2163,9 +2146,7 @@ internal static class NativeProjectionBinder
         ParameterExpression outerParameter,
         Expression leafExpression,
         string alias,
-        List<LookupExpression> pendingLookups,
-        List<LookupExpression> pendingBareCountStamps,
-        List<(LookupExpression Lookup, string Alias)> pendingElementLeaves,
+        PendingProjectionStaging staged,
         [NotNullWhen(true)] out MongoElementRefExpression? result)
     {
         result = null;
@@ -2199,7 +2180,7 @@ internal static class NativeProjectionBinder
                 || !new MongoExpressionTranslator(target, key.Parameters[0]).TryTranslateField(key.Body, out var keyField)
                 || keyField.ElementName.Contains('.')
                 || !StoredOrdering.PreservesClrOrderingForAggregateAndSort(keyField.Property)
-                || !NativeGroupByBinder.HasDefaultKeySerialization(keyField.Property))
+                || !StoredSerialization.HasDefaultKeySerialization(keyField.Property))
             {
                 return false;
             }
@@ -2213,13 +2194,13 @@ internal static class NativeProjectionBinder
             || (shape.Skip is not null && skip is null)
             || !TryStageKeyedArrayLookup(
                 mongoQ, outerParameter, target, keyParts, shape.Filters.Concat(conditions.Element).ToList(),
-                pendingLookups, pendingBareCountStamps, out var staged, sort, limit, skip, outerConditions))
+                staged, out var keyedLookup, sort, limit, skip, outerConditions))
         {
             return false;
         }
 
-        pendingElementLeaves.Add((staged, alias));
-        result = new MongoElementRefExpression(staged.As, target.ClrType);
+        staged.ElementLeaves.Add((keyedLookup, alias));
+        result = new MongoElementRefExpression(keyedLookup.As, target.ClrType);
         return true;
     }
 
@@ -2234,7 +2215,7 @@ internal static class NativeProjectionBinder
 
         foreach (var condition in conditions.Outer)
         {
-            if (!NativeGroupByBinder.HasDefaultKeySerialization(condition.Property)
+            if (!StoredSerialization.HasDefaultKeySerialization(condition.Property)
                 || NativeQueryParameter.TranslateConstantOrParameter(condition.Value.RemoveConvert(), condition.Property) is not { } value)
             {
                 return false;
@@ -2253,8 +2234,7 @@ internal static class NativeProjectionBinder
         MongoQueryExpression mongoQ,
         ParameterExpression outerParameter,
         Expression leafExpression,
-        List<LookupExpression> pendingLookups,
-        List<LookupExpression> pendingBareCountStamps,
+        PendingProjectionStaging staged,
         out MongoExpression? result)
     {
         result = null;
@@ -2277,14 +2257,14 @@ internal static class NativeProjectionBinder
         }
 
         if (!NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup(
-                mongoQ, navigation, pendingLookups, leafExpression.Type, out var lookupToStamp, out var sizeExpression))
+                mongoQ, navigation, staged.Lookups, leafExpression.Type, out var lookupToStamp, out var sizeExpression))
         {
             return false;
         }
 
         // Staged: a later leaf may still decline the whole projection.
         if (lookupToStamp is not null)
-            pendingBareCountStamps.Add(lookupToStamp);
+            staged.BareCountStamps.Add(lookupToStamp);
 
         result = sizeExpression;
         return true;
@@ -2303,7 +2283,7 @@ internal static class NativeProjectionBinder
         MongoQueryExpression mongoQ,
         ParameterExpression outerParameter,
         Expression leafExpression,
-        List<LookupExpression> pendingLookups,
+        PendingProjectionStaging staged,
         [NotNullWhen(true)] out INavigation? navigation)
     {
         navigation = null;
@@ -2337,7 +2317,7 @@ internal static class NativeProjectionBinder
 
         // As for the Count leaf: a TPH-derived target declines, a bare Include lookup for the same nav is reused, and a different PipelineKind (filtered Include) declines rather than read the wrong shape.
         if (!NativeCorrelationMatcher.TryStageNativeCollectionLookup(
-                mongoQ, new LookupExpression(matchedNavigation), pendingLookups, out _))
+                mongoQ, new LookupExpression(matchedNavigation), staged.Lookups, out _))
         {
             return false;
         }
@@ -2377,8 +2357,7 @@ internal static class NativeProjectionBinder
         ParameterExpression outerParameter,
         Expression leafExpression,
         string alias,
-        List<LookupExpression> pendingLookups,
-        List<MongoCorrelatedReducerLeaf> pendingReducerLeaves,
+        PendingProjectionStaging staged,
         [NotNullWhen(true)] out MongoElementRefExpression? result)
     {
         result = null;
@@ -2528,7 +2507,7 @@ internal static class NativeProjectionBinder
             || !elementTranslator.TryTranslateField(memberBody, out var memberField)
             || memberField.ElementName.Contains('.')
             // Read back by alias with no IProperty, so value converters/non-default representations can't be honored.
-            || !NativeGroupByBinder.HasDefaultKeySerialization(memberField.Property))
+            || !StoredSerialization.HasDefaultKeySerialization(memberField.Property))
         {
             return false;
         }
@@ -2548,7 +2527,7 @@ internal static class NativeProjectionBinder
         }
 
         // AddLookup dedupes by As (first wins), which would silently drop this leaf's sub-pipeline (the mirror case is guarded in TryTranslateProjectedCollectionCount).
-        if (NativeCorrelationMatcher.FindStagedOrPendingLookup(mongoQ, pendingLookups, lookup.As) is not null)
+        if (NativeCorrelationMatcher.FindStagedOrPendingLookup(mongoQ, staged.Lookups, lookup.As) is not null)
         {
             return false;
         }
@@ -2579,7 +2558,7 @@ internal static class NativeProjectionBinder
                     .TryTranslateField(sortKeySelector.Body, out var sortField)
                 || sortField.ElementName.Contains('.')
                 // $sort uses the stored representation; a converted key (enum stored as string) may sort differently from the CLR order and pick a different "first" row.
-                || !NativeGroupByBinder.HasDefaultKeySerialization(sortField.Property))
+                || !StoredSerialization.HasDefaultKeySerialization(sortField.Property))
             {
                 return false;
             }
@@ -2590,8 +2569,8 @@ internal static class NativeProjectionBinder
 
         lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
 
-        pendingLookups.Add(lookup);
-        pendingReducerLeaves.Add(
+        staged.Lookups.Add(lookup);
+        staged.ReducerLeaves.Add(
             new MongoCorrelatedReducerLeaf(alias, lookup, memberField.ElementName, throwOnEmpty));
 
         result = new MongoElementRefExpression(

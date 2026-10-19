@@ -59,7 +59,7 @@ internal sealed partial class MongoExpressionTranslator
     {
         receiver = null!;
         toUpper = false;
-        if (Unwrap(node) is not MethodCallExpression call || !NativeProjectionBinder.IsCaseMappingCall(call))
+        if (Unwrap(node) is not MethodCallExpression call || !NativeCaseMapping.IsCaseMappingCall(call))
             return false;
 
         toUpper = call.Method.Name is nameof(string.ToUpper) or nameof(string.ToUpperInvariant);
