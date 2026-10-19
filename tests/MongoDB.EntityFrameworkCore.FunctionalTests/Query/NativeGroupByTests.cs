@@ -2074,6 +2074,44 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     [Fact]
+    public void GroupBy_HAVING_on_Guid_composite_sub_key_matches_driver_linq()
+    {
+        // Same as GroupBy_HAVING_on_Guid_key_matches_driver_linq, but the Guid is one part of a composite key
+        // (g.Key.ExternalId reads "_id.ExternalId"): the captured value must still serialize through that part's
+        // property. Covers both the HAVING-then-Select and the terminal Count(pred) group predicate.
+        var idA = Guid.NewGuid();
+        var idB = Guid.NewGuid();
+        var seed = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", ExternalId = idA },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", ExternalId = idA },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "UK", ExternalId = idA },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "UK", ExternalId = idB },
+        };
+
+        (string Country, Guid ExternalId, int Count)[] RunHaving(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => new { o.Country, o.ExternalId })
+                .Where(g => g.Key.ExternalId == idA)
+                .Select(g => new { g.Key.Country, g.Key.ExternalId, Count = g.Count() })
+                .AsEnumerable()
+                .OrderBy(r => r.Country)
+                .Select(r => (r.Country, r.ExternalId, r.Count)).ToArray();
+
+        int RunCount(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => new { o.Country, o.ExternalId })
+                .Count(g => g.Key.ExternalId == idA);
+
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateContext(seed, mode, nameof(GroupBy_HAVING_on_Guid_composite_sub_key_matches_driver_linq) + mode);
+            Assert.Equal([("UK", idA, 1), ("US", idA, 2)], RunHaving(db));
+            Assert.Equal(2, RunCount(db));
+        }
+    }
+
+    [Fact]
     public void Nested_GroupBy_preserves_first_level_HAVING_matches_driver_linq()
     {
         // SnapshotPriorGroupingForNestedGroupBy must carry GroupHavingPredicate aside with Grouping/Projection;

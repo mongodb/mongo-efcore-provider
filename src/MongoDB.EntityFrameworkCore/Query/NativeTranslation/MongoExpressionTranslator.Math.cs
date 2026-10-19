@@ -77,7 +77,8 @@ internal sealed partial class MongoExpressionTranslator
         [nameof(Math.Min)] = MongoMathFunction.Min
     };
 
-    private bool TryTranslateMath(Expression node, bool allowNumericWidening, [NotNullWhen(true)] out MongoExpression? result)
+    // Operands always translate with allowNumericWidening: true, whatever the caller's mode (see TryBuildMathExpression).
+    private bool TryTranslateMath(Expression node, [NotNullWhen(true)] out MongoExpression? result)
     {
         result = null;
 
@@ -86,12 +87,7 @@ internal sealed partial class MongoExpressionTranslator
             && angleCall.Arguments.Count == 1
             && AngleConversionsByName.TryGetValue(angleCall.Method.Name, out var angleFunction))
         {
-            var angleOperand = TranslateOperand(angleCall.Arguments[0], allowNumericWidening: true);
-            if (angleOperand is null)
-                return false;
-
-            result = new MongoMathExpression(angleFunction, [angleOperand], angleCall.Method.ReturnType);
-            return true;
+            return TryBuildMathExpression(angleCall, angleFunction, out result);
         }
 
         if (node is not MethodCallExpression call || call.Method.DeclaringType != typeof(Math) && call.Method.DeclaringType != typeof(MathF))
@@ -104,55 +100,41 @@ internal sealed partial class MongoExpressionTranslator
         if (call.Method.Name == nameof(Math.Round)
             && (call.Arguments.Count == 1 || (call.Arguments.Count == 2 && call.Arguments[1].Type == typeof(int))))
         {
-            return TryTranslateRoundOrLog(call, allowNumericWidening, call.Arguments.Count == 1 ? MongoMathFunction.Round : MongoMathFunction.RoundDigits, out result);
+            return TryBuildMathExpression(call, call.Arguments.Count == 1 ? MongoMathFunction.Round : MongoMathFunction.RoundDigits, out result);
         }
 
         if (call.Method.Name == nameof(Math.Log) && call.Arguments.Count is 1 or 2)
-            return TryTranslateRoundOrLog(call, allowNumericWidening, call.Arguments.Count == 1 ? MongoMathFunction.Ln : MongoMathFunction.LogNewBase, out result);
+            return TryBuildMathExpression(call, call.Arguments.Count == 1 ? MongoMathFunction.Ln : MongoMathFunction.LogNewBase, out result);
 
         if (call.Arguments.Count == 2 && BinaryFunctionsByName.TryGetValue(call.Method.Name, out var binaryFunction))
-        {
-            var left = TranslateOperand(call.Arguments[0], allowNumericWidening: true);
-            var right = left is null ? null : TranslateOperand(call.Arguments[1], allowNumericWidening: true);
-            if (left is null || right is null)
-                return false;
-
-            result = new MongoMathExpression(binaryFunction, [left, right], call.Method.ReturnType);
-            return true;
-        }
+            return TryBuildMathExpression(call, binaryFunction, out result);
 
         if (call.Arguments.Count != 1 || !UnaryFunctionsByName.TryGetValue(call.Method.Name, out var function))
             return false;
 
-        var operand = TranslateOperand(call.Arguments[0], allowNumericWidening: true);
-        if (operand is null)
-            return false;
-
-        result = new MongoMathExpression(function, [operand], call.Method.ReturnType);
-        return true;
+        return TryBuildMathExpression(call, function, out result);
     }
 
-    private bool TryTranslateRoundOrLog(
-        MethodCallExpression call, bool allowNumericWidening, MongoMathFunction function,
-        [NotNullWhen(true)] out MongoExpression? result)
+    /// <summary>
+    /// Builds a <see cref="MongoMathExpression"/> for <paramref name="function"/> over every argument of
+    /// <paramref name="call"/>, each translated as a numeric-widening operand; declines if any argument doesn't
+    /// translate.
+    /// </summary>
+    private bool TryBuildMathExpression(
+        MethodCallExpression call, MongoMathFunction function, [NotNullWhen(true)] out MongoExpression? result)
     {
         result = null;
 
-        var first = TranslateOperand(call.Arguments[0], allowNumericWidening: true);
-        if (first is null)
-            return false;
-
-        if (call.Arguments.Count == 1)
+        var operands = new MongoExpression[call.Arguments.Count];
+        for (var i = 0; i < operands.Length; i++)
         {
-            result = new MongoMathExpression(function, [first], call.Method.ReturnType);
-            return true;
+            if (TranslateOperand(call.Arguments[i], allowNumericWidening: true) is not { } operand)
+                return false;
+
+            operands[i] = operand;
         }
 
-        var second = TranslateOperand(call.Arguments[1], allowNumericWidening: true);
-        if (second is null)
-            return false;
-
-        result = new MongoMathExpression(function, [first, second], call.Method.ReturnType);
+        result = new MongoMathExpression(function, operands, call.Method.ReturnType);
         return true;
     }
 }
