@@ -19,15 +19,12 @@ using System.Linq.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Abstract base class for all dialect-agnostic MongoDB query expression nodes.
-/// Subclasses of this type plug into the EF Core <see cref="ExpressionVisitor"/> machinery
-/// and are used by the native translator, lowerer, and renderer.
+/// Abstract base class for all dialect-agnostic MongoDB query expression nodes, used by the native translator,
+/// lowerer, and renderers.
 /// </summary>
 /// <remarks>
-/// Deriving from <see cref="System.Linq.Expressions.Expression"/> (and the <see cref="VisitChildren"/> /
-/// <c>Update</c> plumbing) is forward-looking: it leaves room for visitor-driven transforms / pushdown over
-/// these nodes. That machinery is <em>not yet exercised at parity</em> — the renderer walks the tree with a
-/// hand-written <c>switch</c> rather than via a visitor, and <see cref="VisitChildren"/> is a no-op identity.
+/// <see cref="VisitChildren"/> is a no-op identity; consumers walk the tree with hand-written <c>switch</c>es rather
+/// than visitors.
 /// </remarks>
 internal abstract class MongoExpression : Expression
 {
@@ -59,16 +56,12 @@ internal enum MongoBinaryOperator
     Divide,
 
     /// <summary>
-    /// C# integer division: <c>$divide</c> wrapped in <c>$trunc</c>. MongoDB has no integer-division operator —
-    /// <c>$divide</c> over two integral operands yields a <c>double</c> — so a bare <c>Divide</c> would both
-    /// answer the wrong value for a comparison and fail to deserialize into an integral projection member.
+    /// C# integer division: <c>$divide</c> wrapped in <c>$trunc</c>. MongoDB's <c>$divide</c> always yields a
+    /// <c>double</c>, which would compare wrongly and fail to deserialize into an integral member.
     /// </summary>
     /// <remarks>
-    /// The choice between this and <see cref="Divide"/> is made at TRANSLATE time, from the CLR type of the division
-    /// node — not at render time
-    /// from the operands' types. That is deliberate: an operand's widening <c>Convert</c> (e.g.
-    /// <c>(double)a / b</c>) is unwrapped by <c>TranslateOperand</c>, so by render time both operands look
-    /// integral even though C# computed in <c>double</c>. Only the original node's type distinguishes them.
+    /// Chosen at translate time from the division node's CLR type, not at render time from the operands: widening
+    /// <c>Convert</c>s (<c>(double)a / b</c>) are unwrapped by then, so the operands would look integral.
     /// </remarks>
     IntegerDivide,
 

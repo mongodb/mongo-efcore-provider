@@ -22,9 +22,8 @@ using MongoDB.EntityFrameworkCore.UnitTests.TestUtilities;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// Tests for the native-translation logical query IR, <see cref="MongoSelectDefinition"/> (the
-/// "MongoSelectExpression" of the EF-323 design), composed into <see cref="MongoQueryExpression"/>
-/// via its <see cref="MongoQueryExpression.Select"/> property.
+/// Tests for the native-translation logical query IR, <see cref="MongoSelectDefinition"/>, exposed as
+/// <see cref="MongoQueryExpression.Select"/>.
 /// </summary>
 public class MongoSelectDefinitionTests
 {
@@ -56,7 +55,7 @@ public class MongoSelectDefinitionTests
         Assert.Equal(MongoBinaryOperator.AndAlso, binary.Operator);
     }
 
-    // ── Ordered select-op pipeline merge rules (EF-347 Task 1) ──────────────────────
+    // ── Ordered select-op pipeline merge rules ──────────────────────
 
     private static MongoConstantExpression Const(int v) => new(v, forSerialization: null);
     private static MongoOrdering Asc() => new(Const(1), Ascending: true);
@@ -121,7 +120,7 @@ public class MongoSelectDefinitionTests
         Assert.True(s.HasLimit);
     }
 
-    // ── DeferPipelineOpsPastConfirmedJoin (native-post-join-paging plan, final-review fix, Minor 5) ──────
+    // ── DeferPipelineOpsPastConfirmedJoin ──────
 
     [Fact]
     public void DeferPipelineOpsPastConfirmedJoin_moves_ops_in_order_and_clears_the_source_list()
@@ -149,8 +148,6 @@ public class MongoSelectDefinitionTests
         s.DeferPipelineOpsPastConfirmedJoin();
         Assert.Single(s.PostLookupPagingOps);
 
-        // PipelineOps is already empty after the first call, so a second call adds nothing further and
-        // PostLookupPagingOps is unchanged.
         s.DeferPipelineOpsPastConfirmedJoin();
         Assert.Single(s.PostLookupPagingOps);
         Assert.Empty(s.PipelineOps);
@@ -264,7 +261,7 @@ public class MongoSelectDefinitionTests
         Assert.Equal(NativeRoute.Fallback, select.Route);
     }
 
-    // ── UnwindSources chain (EF-347 nested-reference slice) ─────────────────────────
+    // ── UnwindSources chain ─────────────────────────
 
     [Fact]
     public void New_select_has_no_unwind_sources_and_null_UnwindSource_shim()
@@ -332,22 +329,10 @@ public class MongoSelectDefinitionTests
         Assert.False(select.IsSingleReferenceUnwindTerminalOnly);
     }
 
-    // ── Reference-Include candidate join counting (EF-368, fix round 1) ────────────
+    // ── Reference-Include candidate join counting ────────────
     //
-    // These exercise MarkSawCandidateReferenceIncludeJoin/MarkReferenceIncludeConfirmed directly at the IR
-    // level.
-    //
-    // STALE-COMMENT CORRECTION: this note used to say "Task 4 wires the candidate-recording call site
-    // (NativeSlotPopulator) but NOT the confirming one (that is Task 5's job) — so there is no LINQ shape yet
-    // that reaches MarkReferenceIncludeConfirmed ... a functional/end-to-end test would be vacuous today
-    // (nothing can confirm)". THAT IS NO LONGER TRUE. Task 5 shipped (EF-368): single-level reference Include
-    // goes native, and MongoQueryableMethodTranslatingExpressionVisitor.TryConfirmReferenceInclude calls
-    // MarkReferenceIncludeConfirmed on an ordinary LINQ shape. End-to-end coverage exists in
-    // NativeReferenceIncludeTests and is NOT vacuous.
-    //
-    // These IR-level tests are kept anyway, for the reason that still holds: they pin the
-    // two-candidate-joins-one-confirmation counter arithmetic directly, which no single end-to-end query
-    // shape isolates.
+    // Pins the candidate/confirmation counter arithmetic directly, which no single end-to-end query shape
+    // isolates. End-to-end coverage is in NativeReferenceIncludeTests.
 
     [Fact]
     public void HasUnconfirmedCandidateJoin_false_with_no_candidates()
@@ -376,9 +361,8 @@ public class MongoSelectDefinitionTests
     [Fact]
     public void HasUnconfirmedCandidateJoin_true_when_only_one_of_two_candidates_is_confirmed()
     {
-        // The fix-round-1 regression pin: two candidate joins, only one confirmed. A flat boolean pair would
-        // go "all confirmed" the moment ANY join confirms, wrongly admitting the second, untouched candidate
-        // and defeating default-deny. The count form must still report unconfirmed here.
+        // A boolean pair would read "all confirmed" once any join confirms, wrongly admitting the second
+        // candidate; the count must still report unconfirmed.
         var select = new MongoSelectDefinition();
         select.MarkSawCandidateReferenceIncludeJoin();
         select.MarkSawCandidateReferenceIncludeJoin();
@@ -403,9 +387,7 @@ public class MongoSelectDefinitionTests
     [Fact]
     public void HasUnconfirmedCandidateJoin_true_when_confirmations_exceed_candidates()
     {
-        // A confirmation arriving without a matching candidate join is a broken invariant. The strict
-        // inequality (!=, not >) means this fails closed (still routes to Fallback) rather than being
-        // silently read as "all confirmed" — see the doc comment on HasUnconfirmedCandidateJoin.
+        // Excess confirmations are a broken invariant; != (not >) makes this fail closed to Fallback.
         var select = new MongoSelectDefinition();
         select.MarkSawCandidateReferenceIncludeJoin();
         select.MarkReferenceIncludeConfirmed();

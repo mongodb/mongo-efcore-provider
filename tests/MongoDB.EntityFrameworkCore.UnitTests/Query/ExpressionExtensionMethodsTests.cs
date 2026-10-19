@@ -100,8 +100,8 @@ public class ExpressionExtensionMethodsTests
     [Fact]
     public void Named_members_new_expression_is_unaffected_by_the_new_flag()
     {
-        // An anonymous type: NewExpression.Members IS populated by the compiler. Passing
-        // allowPositionalConstructorArguments: true must not change this arm's behavior at all.
+        // Anonymous type: NewExpression.Members is populated, so allowPositionalConstructorArguments: true must
+        // not change this arm's behavior.
         Expression<System.Func<string, int, object>> lambda = (a, b) => new { A = a, B = b };
         var newExpr = (NewExpression)lambda.Body;
 
@@ -124,33 +124,18 @@ public class ExpressionExtensionMethodsTests
         Assert.Empty(members);
     }
 
-    // The whole safety story for family A (ordinary Select/Join projections) depends on exactly 5 call sites
-    // NEVER passing allowPositionalConstructorArguments: true — see TryGetProjectionMembers' own parameter doc.
-    // Passing true there would let a wrapped member's alias be a synthetic positional pseudo-name
-    // ("_ctorArg0", ...) that EF Core's ProjectionMember/MemberInfo-keyed read side (which those 5 call sites
-    // alone rely on) can never resolve, silently breaking projection reads. This is currently enforced only by
-    // that doc comment, so pin it with a cheap source-text check: every call site outside the
-    // known family-B/opt-in set must not pass true.
+    // Family-A call sites (ordinary Select/Join projections) must never pass allowPositionalConstructorArguments:
+    // true: the synthetic "_ctorArg0"-style aliases can't be resolved by EF Core's ProjectionMember/MemberInfo-keyed
+    // read side, silently breaking projection reads. Otherwise enforced only by TryGetProjectionMembers' doc, so pin
+    // it with a source-text check.
     [Fact]
     public void Family_A_call_sites_never_opt_in_to_allowPositionalConstructorArguments()
     {
         var repoRoot = RepoRoot();
 
-        // The family-A call sites this ticket's design doc calls out as load-bearing: NativeProjectionBinder's
-        // WRAPPED arm, its document-construction leaf, and NativeJoinScopeProjectionBinder.TryBindProjection's
-        // top-level member walk, its NESTED wrapped-leaf arm (native-join-scope-nested-projection ticket, which
-        // reuses the same primitive to recognize the inner `new {...}` body one level down), PLUS (native-
-        // chained-join-scalar-projection plan) the ordinary/computed leaf arm's own guard excluding a nested-
-        // projection-shaped leafBody from the Levels.Count > 1 chain-scalar path. Listed with their expected
-        // call count so a call site silently added or removed doesn't go unnoticed.
-        //
-        // NativeProjectionBinder.cs ALSO carries exactly ONE family-B (opted-in) call site as of the
-        // multi-argument positional-ctor-DTO projection ticket: the NewExpression{Members:null,Arguments.Count>1}
-        // arm, which (like GroupBy's/SelectMany's own ctor-DTO result selectors) is read back by INDEX
-        // (MongoQueryableMethodTranslatingExpressionVisitor.BuildPositionalCtorProjectionShaper), never through
-        // the ProjectionMember/MemberInfo-keyed dictionary the family-A sites depend on — see
-        // MongoSelectDefinition.HasPositionalCtorProjectionShaper's remarks. ExpectedOptedInCallCount distinguishes
-        // that one line from the file's two still-forbidden family-A sites.
+        // Expected call counts per file, so an added or removed call site is noticed. The one opted-in (family-B)
+        // site in NativeProjectionBinder.cs is the multi-argument positional-ctor-DTO arm, which is read back by
+        // index (see MongoSelectDefinition.HasPositionalCtorProjectionShaper), not via ProjectionMember.
         var familyASources = new (string RelativePath, int ExpectedCallCount, int ExpectedOptedInCallCount)[]
         {
             ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeProjectionBinder.cs", 3, 1),
@@ -187,9 +172,8 @@ public class ExpressionExtensionMethodsTests
     }
 
     /// <summary>
-    /// Walks up from this test file's own on-disk path (captured via <see cref="CallerFilePathAttribute"/>, so
-    /// this works regardless of the test runner's working directory or build output layout) to the repo root —
-    /// three levels up from <c>tests/MongoDB.EntityFrameworkCore.UnitTests/Query/</c>.
+    /// Repo root, found from this file's path via <see cref="CallerFilePathAttribute"/> so it's independent of the
+    /// runner's working directory.
     /// </summary>
     private static string RepoRoot([CallerFilePath] string thisFilePath = "")
         => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(thisFilePath)!, "..", "..", ".."));

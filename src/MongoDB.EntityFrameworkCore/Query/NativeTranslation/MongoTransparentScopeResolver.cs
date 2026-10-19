@@ -20,13 +20,9 @@ using System.Linq.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Shared parameter-identity scope resolution for a nested "transparent identifier"-shaped parameter — a
-/// single lambda parameter whose member-access chain (e.g. <c>ti.Outer.Inner</c>) walks down through a fixed
-/// set of named hops to one of several logical scopes. Originally built for <c>SelectMany</c>'s
-/// <c>TransparentIdentifier(Outer, Inner)</c> shape (hop names always literally <c>"Outer"</c>/<c>"Inner"</c>);
-/// generalized to accept a caller-supplied hop-names list so <c>Join</c>'s own (possibly
-/// user-named) two-scope result selector can reuse the identical walk. See the scope-by-parameter-identity
-/// invariant in <c>Query/AGENTS.md</c> — resolution is always by parameter identity, never by member name.
+/// Resolves which logical scope a transparent-identifier member chain (e.g. <c>ti.Outer.Inner</c>) refers to,
+/// for <c>SelectMany</c>'s <c>TransparentIdentifier</c> and <c>Join</c>'s (possibly user-named) result selector.
+/// Resolution is by parameter identity, never member name alone (see <c>Query/AGENTS.md</c>).
 /// </summary>
 internal static class MongoTransparentScopeResolver
 {
@@ -36,12 +32,9 @@ internal static class MongoTransparentScopeResolver
     /// <paramref name="sourceCount"/> chained scopes, the <c>k</c>-th level's own element is reached via
     /// <c>(sourceCount - k)</c> leading <c>hopNames[0]</c> hops followed by exactly one trailing
     /// <c>hopNames[1]</c> hop; the root scope is reached via exactly <paramref name="sourceCount"/>
-    /// <c>hopNames[0]</c> hops and no <c>hopNames[1]</c> at all. <paramref name="scopeIndex"/> is <c>0</c> for
-    /// the root, or <c>k</c> (1-based) for the <c>k</c>-th nested scope. Returns <see langword="false"/> —
-    /// declining cleanly — for any chain that does not terminate exactly at <paramref name="rootParam"/>, is
-    /// empty, exceeds <paramref name="sourceCount"/> hops, or does not match either valid shape.
-    /// <paramref name="hopNames"/> must contain exactly two elements: index 0 is the outer/root-ward hop name,
-    /// index 1 is the inner/leaf-ward hop name.
+    /// <c>hopNames[0]</c> hops. <paramref name="scopeIndex"/> is <c>0</c> for the root, or <c>k</c> (1-based).
+    /// Returns <see langword="false"/> for any other shape. <paramref name="hopNames"/> is exactly
+    /// <c>[outerHop, innerHop]</c>.
     /// </summary>
     internal static bool TryResolveScopeDepth(
         Expression? scopeAccess, ParameterExpression rootParam, IReadOnlyList<string> hopNames, int sourceCount,
@@ -95,12 +88,8 @@ internal static class MongoTransparentScopeResolver
         {
             if (TryResolveScopeDepth(node.Expression, rootParam, hopNames, sourceCount, out var scope))
             {
-                // Fail-closed guard: node.Member comes from the ACTUAL transparent-identifier hop, while
-                // scopeParams[scope]'s type comes from the caller's RECORDED scope metadata. Those normally
-                // agree by construction, but if they ever don't, Expression.MakeMemberAccess throws
-                // ArgumentException at query-compile time — a hard crash rather than a decline. Decline instead
-                // by falling through to base.VisitMember, which leaves this subtree unrewritten; the caller's
-                // own ReferencesParameterOutsideHopChain-style guard then catches it as an unresolved reference.
+                // If the recorded scope type doesn't match the member's declaring type, MakeMemberAccess would
+                // throw. Leave the subtree unrewritten instead; the caller's outside-hop-chain guard then declines.
                 if (node.Member.DeclaringType?.IsAssignableFrom(scopeParams[scope].Type) != true)
                 {
                     return base.VisitMember(node);

@@ -22,15 +22,9 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <c>$cond</c>.
 /// </summary>
 /// <remarks>
-/// <see cref="Test"/> is always rendered via <c>MongoAggregationExpressionRenderer.Render</c> directly, never
-/// via <c>MongoQueryLanguageRenderer.RenderNode</c>'s query/aggregation dual-dialect dispatch — a
-/// <c>$cond.if</c> lives inside <c>$project</c>'s expression context, where the query (<c>$match</c>) dialect
-/// is never valid, the same rule that already governs everything nested inside <c>$expr</c>.
-/// <para>
-/// This node is deliberately NOT admitted by <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c> — it
-/// has no query-dialect form, and <c>$expr</c> (which is what a native <c>$project</c>/<c>$match</c> would
-/// need to wrap it in) is a hard server error inside <c>$elemMatch</c>.
-/// </para>
+/// <see cref="Test"/> is always rendered by <c>MongoAggregationExpressionRenderer</c>, never the query dialect:
+/// <c>$cond.if</c> is an expression context. Not admitted by <c>IsQueryDialectRenderable</c>, since it has no
+/// query-dialect form and <c>$expr</c> is a server error inside <c>$elemMatch</c>.
 /// </remarks>
 internal sealed class MongoConditionalExpression(MongoExpression test, MongoExpression ifTrue, MongoExpression ifFalse)
     : MongoExpression
@@ -46,12 +40,8 @@ internal sealed class MongoConditionalExpression(MongoExpression test, MongoExpr
 
     /// <inheritdoc />
     /// <remarks>
-    /// Prefers <see cref="IfFalse"/>'s type when <see cref="IfTrue"/> is a null-valued
-    /// <see cref="MongoConstantExpression"/> — that branch's own <c>.Type</c> falls back to <c>typeof(object)</c>
-    /// (it carries no other type information), which would otherwise misreport the conditional's overall type
-    /// as <c>object</c> instead of the meaningful type from the other branch. This is a live path:
-    /// <c>MongoSelectLowerer</c> reads a computed sort key's <c>KeySelector.Type</c>, and a conditional can be
-    /// a computed sort key.
+    /// Uses <see cref="IfFalse"/>'s type when <see cref="IfTrue"/> is a null constant (typed <c>object</c>);
+    /// <c>MongoSelectLowerer</c> reads a computed sort key's type.
     /// </remarks>
     public override Type Type { get; } = ifTrue is MongoConstantExpression { Value: null } ? ifFalse.Type : ifTrue.Type;
 }

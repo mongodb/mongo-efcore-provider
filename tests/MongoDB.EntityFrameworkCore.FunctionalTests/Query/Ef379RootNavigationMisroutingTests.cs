@@ -31,37 +31,25 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-379. <c>MongoQueryableMethodTranslatingExpressionVisitor.RebindInnerShaperToOuterQuery</c> resolved a
-/// join's navigation off the ROOT entity type — first by FK-property NAME, then by TARGET ENTITY TYPE alone —
-/// before ever considering that the hop might be TRANSITIVE. Both root tiers DROP the RECEIVER of the FK
-/// access, so a hop that actually reaches its target THROUGH a previously-joined intermediate could match a
-/// ROOT navigation, be treated as root-level, emit an UNPREFIXED <c>localField</c> reading the ROOT's own
-/// field, and never consult EF-372's prefix-or-decline resolver at all.
+/// <c>RebindInnerShaperToOuterQuery</c> must not resolve a transitive join hop (one reaching its target through
+/// a previously-joined intermediate) against the root entity type, by FK-property name (tier 1) or by target
+/// type alone (tier 2). Either would emit an unprefixed <c>localField</c> reading the root's own field.
 /// <para>
-/// The fix classifies the hop from <c>outerKeySelector.Body</c>'s RECEIVER before attempting either root tier:
-/// a receiver that peels back to the lambda parameter through only <c>"Outer"</c> members is a ROOT hop; one
-/// whose chain contains any <c>"Inner"</c> member is TRANSITIVE and skips both root tiers.
+/// The hop is classified from <c>outerKeySelector.Body</c>'s receiver: only <c>"Outer"</c> members back to the
+/// parameter is a root hop; any <c>"Inner"</c> member makes it transitive and skips both root tiers. Separate
+/// fixtures cover each tier, since they misfire independently.
 /// </para>
 /// <para>
-/// BOTH root tiers misfired INDEPENDENTLY, so this file covers BOTH doorways with two separate fixtures:
-/// the FK-NAME collision (<c>PRoot.LeafId</c> / <c>PMid.LeafId</c> — tier 1) and the RENAMED-FK /
-/// type-only shape (<c>RRoot.SideLeafId</c>, no name collision anywhere — tier 2). A fix scoped to the
-/// FK-name tier leaves the second one broken.
-/// </para>
-/// <para>
-/// Every data assertion here pins the navigation's VALUE (<c>"RIGHT*"</c> vs <c>"WRONG"</c> vs null), never
-/// merely <c>!= null</c>: EF's change-tracker identity fix-up can repair the object graph while the
-/// <c>$lookup</c> matched the wrong field (the header of <c>Ef372DeepReferenceIncludeTests</c> records that
-/// exact masking), so an existence-only assertion is not a discriminator. The seeds therefore make the two
-/// paths DISAGREE — the ROOT's own leaf FK points at a leaf labelled <c>"WRONG"</c>, the INTERMEDIATE's at
-/// the correct one. The measured symptom of the defect is a NULL navigation, not a wrong non-null value.
+/// Assertions pin the navigation's value (<c>"RIGHT*"</c> vs <c>"WRONG"</c> vs null), never just non-null:
+/// change-tracker fix-up can repair the graph even when the <c>$lookup</c> matched the wrong field. Seeds point
+/// the root's own leaf FK at <c>"WRONG"</c> and the intermediate's at the correct leaf.
 /// </para>
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // ---- Doorway 1: tier 1 (FK-property NAME). PRoot and PMid both declare a property named "LeafId". ----
+    // Tier 1 (FK-property name): PRoot and PMid both declare "LeafId".
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -80,10 +68,8 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.Equal(2, results.Count);
         Assert.Equal(["M1", "M2"], results.Select(r => r.Mid.Label));
 
-        // The teeth. The ROOT's own LeafId reaches the leaf labelled "WRONG"; the MID's LeafId reaches
-        // "RIGHT1"/"RIGHT2". At this branch's base the emitted localField was the root's unprefixed "LeafId",
-        // and the MEASURED symptom was Mid.Leaf == null (the wrong leaf was unwound but the shaper, which
-        // reads the mid's leaf, never picked it up). Assert the VALUE so either failure mode is caught.
+        // The root's LeafId reaches "WRONG", the mid's "RIGHT1"/"RIGHT2". A root-scoped localField shows up as
+        // a null Mid.Leaf; asserting the value catches that and a wrong non-null leaf alike.
         Assert.All(results, r => Assert.NotNull(r.Mid.Leaf));
         Assert.Equal(["RIGHT1", "RIGHT2"], results.Select(r => r.Mid.Leaf.Label));
         Assert.DoesNotContain("WRONG", results.Select(r => r.Mid.Leaf.Label));
@@ -104,18 +90,15 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.Contains("\"localField\" : \"MidId\"", mql);
         Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
 
-        // The defect's signature: the leaf $lookup matching the ROOT's own colliding field.
+        // The defect's signature: the leaf $lookup matching the root's own colliding field.
         Assert.DoesNotContain("\"localField\" : \"LeafId\"", mql);
     }
 
     [Fact]
     public void Colliding_fk_name_transitive_hop_now_goes_native_under_NativeOnly()
     {
-        // A ROUTING claim, so it needs NativeOnly — MQL shape cannot prove which path ran, and since EF-370
-        // the driver-LINQ fallback emits the same flat _lookup_<Nav> shape. EF-392 lifted the "Multi-level
-        // (ThenInclude) reference Include is a DEFERRED native shape" disposition this test used to pin —
-        // a linear 2-hop reference ThenInclude chain now goes native, reusing EF-379's own fix (this exact
-        // colliding-FK-name localField prefixing) rather than needing anything new.
+        // A routing pin, so NativeOnly: the fallback emits the same flat _lookup_<Nav> shape. A linear 2-hop
+        // reference ThenInclude chain goes native.
         using var db = CreateCollidingContext(
             nameof(Colliding_fk_name_transitive_hop_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
 
@@ -125,9 +108,8 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.All(results, r => Assert.NotNull(r.Mid.Leaf));
     }
 
-    // ---- Doorway 2: tier 2 (TARGET ENTITY TYPE only). NO name collision exists anywhere in this model —
-    // the root's FK is "SideLeafId" — yet the root still carries a navigation to the leaf TYPE, which is all
-    // the type-only fallback needs to misfire. A fix that gates only tier 1 leaves this broken. ----
+    // Tier 2 (target type only): no name collision (the root's FK is "SideLeafId"), but the root has a
+    // navigation to the leaf type.
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -166,8 +148,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.Contains("\"localField\" : \"MidId\"", mql);
         Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
 
-        // The tier-2 defect's signature: the leaf $lookup resolved off RRoot.SideLeaf and matching the
-        // root's own renamed field, under the alias derived from that wrong navigation.
+        // The tier-2 defect's signature: a leaf $lookup resolved off RRoot.SideLeaf, matching the root's field.
         Assert.DoesNotContain("\"localField\" : \"SideLeafId\"", mql);
         Assert.DoesNotContain("_lookup_SideLeaf", mql);
     }
@@ -175,12 +156,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     [Fact]
     public void Renamed_fk_transitive_hop_now_goes_native_under_NativeOnly()
     {
-        // Same caveat as the tier-1 twin above, repeated rather than cross-referenced because the NAME reads
-        // like a defect assertion and is not one: this is a ROUTING pin, NOT a guard for the EF-379 fix.
-        // EF-392 lifted the "Multi-level (ThenInclude) reference Include is a DEFERRED native shape"
-        // disposition this test used to pin — a linear 2-hop reference ThenInclude chain now goes native,
-        // reusing EF-379's own fix (this exact renamed-FK localField prefixing) rather than needing anything
-        // new.
+        // A routing pin, not a guard for the misrouting fix (see the tier-1 twin).
         using var db = CreateRenamedContext(
             nameof(Renamed_fk_transitive_hop_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
 
@@ -190,37 +166,10 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.All(results, r => Assert.NotNull(r.Mid.Leaf));
     }
 
-    // ---- The THIRD wrong-data family, and the one the two doorways above do NOT reach. Both of those give
-    // the intermediate a NAVIGATION to the leaf, so they only exercise the path where the transitive scan
-    // FINDS a candidate and swaps in an intermediate-scoped localField. Here the intermediate declares only a
-    // BARE FK PROPERTY and no navigation at all, while the ROOT declares BOTH the FK and a navigation to the
-    // joined type — so the scan finds nothing, `navigation` stays null, no $lookup is registered for this hop
-    // and the join is left to the driver, which resolves it correctly.
-    //
-    // The wrong data at base came from the OTHER end: with no classification, tier 1 matched NRoot.Leaf on the
-    // FK name "LeafId" (and tier 2 would have matched it on target type alone), registering a $lookup whose
-    // unprefixed localField reads the ROOT's own LeafId. MEASURED: base returns "WRONG", HEAD returns
-    // "RIGHT1"/"RIGHT2", in Native AND DriverLinq alike.
-    //
-    // WHY IT EARNS ITS PLACE, measured rather than asserted. The review that asked for this test predicted it
-    // would stay GREEN under mutations A/B/C, making it orthogonal to the two doorways. That prediction is
-    // FALSE for B and C and is recorded here corrected: this model's root carries BOTH baits (the colliding FK
-    // NAME and a navigation onto the leaf TYPE), so gating either tier alone leaves the other one to match.
-    // Measured red/green over the whole class, EF10:
-    //
-    //   base (2a544b7e)                                      RED  — ["WRONG","WRONG"], Native AND DriverLinq
-    //   A  force TransitiveHop unconditionally               green
-    //   B  gate tier 1 only                                  RED
-    //   C  gate tier 2 only                                  RED
-    //   D  re-add the withdrawn TransitiveHop decline        RED  (no candidate ⇒ the decline hard-fails it)
-    //   E  force the declaring-type conjunct FALSE           RED
-    //   F  force the declaring-type conjunct TRUE            green
-    //   G  "only skip the root tiers when a transitive        RED  — and it is the ONLY test in this class
-    //      candidate EXISTS"                                        that goes red under G (2 of 19)
-    //
-    // G is the discrimination that matters and the reason this is a separate test: it is exactly the plausible
-    // future tightening of the gate, it looks harmless on both doorways above (they HAVE a candidate, so they
-    // stay green), and it silently reintroduces the wrong answer here. Nothing else in the class catches it. ----
+    // The intermediate has only a bare FK property (no navigation), while the root has both the same-named FK
+    // and a navigation to the joined type. The transitive scan finds no candidate, no $lookup is registered,
+    // and the driver resolves the join correctly, as long as the root tiers are still skipped. The only test
+    // here that catches a gate tightened to "skip the root tiers only when a transitive candidate exists".
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -240,16 +189,14 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.Equal(2, rows.Count);
         Assert.Equal(["N1", "N2"], rows.Select(x => x.Name));
 
-        // The teeth: the VALUE, not merely non-null. The root's own LeafId reaches the leaf labelled "WRONG";
-        // the mid's reaches "RIGHT1"/"RIGHT2".
+        // The root's LeafId reaches "WRONG"; the mid's reaches "RIGHT1"/"RIGHT2".
         Assert.Equal(["RIGHT1", "RIGHT2"], rows.Select(x => x.Leaf));
         Assert.DoesNotContain("WRONG", rows.Select(x => x.Leaf));
     }
 
-    // ---- The control / tripwire against an OVER-BROAD transitive classification. Two SIBLING reference
-    // Includes onto DIFFERENT target types: the second hop's receiver is "s.Outer", a genuine ROOT hop at the
-    // same member-chain DEPTH as a transitive "j.Outer.Inner", which is exactly why depth cannot be the
-    // discriminator. This must keep taking the root tiers and keep emitting an UNPREFIXED localField. ----
+    // Control against over-broad transitive classification: sibling reference Includes onto different types.
+    // The second hop's receiver "s.Outer" is a root hop at the same depth as a transitive "j.Outer.Inner", so
+    // depth can't be the discriminator. Must keep unprefixed localFields.
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -287,27 +234,8 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.DoesNotContain("_lookup_Beta.AlphaId", mql);
     }
 
-    // ---- Scenario F: a SELF-REFERENCING two-hop chain. The receiver of hop 2 is "f.Inner" typed FNode —
-    // the SAME CLR type as the root — which is the counter-example to keying the classification on the
-    // receiver's CLR TYPE rather than on its member-name chain. It is classified TRANSITIVE, but the
-    // transitive resolver still cannot represent it (a self-referencing intermediate is skipped by the
-    // prior-inner-collection scan, and LookupExpression.GetLookupAlias is navigation-name-only so both hops
-    // would derive the same alias and AddLookup would de-duplicate one away).
-    //
-    // RE-BASELINED in EF-379 fix round 1, and the history matters because this test flip-flopped. The first
-    // pass of EF-379 added a decline ("a TransitiveHop that resolves no navigation returns null") that turned
-    // this shape's raw materialization crash into a clean translation failure, and this test asserted that.
-    // The decline was a MEASURED REGRESSION for a shape that has nothing to do with self-references — an
-    // owned SelectMany ALSO produces a transparent identifier, so a join off the unwound element classified
-    // as TransitiveHop at the FIRST join and hard-failed a query that works at this branch's base (pinned by
-    // Owned_SelectMany_then_join_off_the_unwound_element_still_works below) — so the decline was removed and
-    // this shape reverted to its PRE-EXISTING disposition.
-    //
-    // MEASURED at the base commit (2a544b7e) and at the fixed tree, all three modes, byte-identical: it is a
-    // LOUD failure, never silent wrong data. Native and DriverLinq crash at MATERIALIZATION with "Document
-    // element is missing for required non-nullable property 'Id'"; NativeOnly declines earlier, at the gate.
-    // The classification itself is innocent here: at base both root tiers missed anyway, so skipping them
-    // changes nothing about what this shape does. ----
+    // Self-referencing two-hop chain: hop 2's receiver "f.Inner" has the root's CLR type, which is why the
+    // classification keys on the member-name chain, not the receiver type. Classified transitive.
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -322,17 +250,9 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
             .OrderBy(n => n.Label)
             .ToList();
 
-        // This shape used to fail LOUDLY at materialization ("Document element is missing for required
-        // non-nullable property 'Id'") because both hops of a self-referencing chain collapsed onto one join:
-        // every hop resolves the same navigation against the same target entity type, so the second hop's
-        // $lookup could not be told apart from the first's. That was EF-371, fixed on the main-bound line by
-        // recording one JoinInfo per join and giving each its own uniquified _lookup_ alias.
-        //
-        // Assert the two-hop VALUES, never `!= null`: EF's change-tracker identity fix-up can repair the
-        // object graph from rows already in the change tracker even when the $lookup matched the wrong
-        // field, so a null-check passes on wrong data. The seed is a cycle, F1 -> F2 -> F3 -> F1, chosen so
-        // that a collapsed chain (Parent.Parent == Parent) is distinguishable from the correct answer at
-        // every row.
+        // Both hops resolve the same navigation, so each join needs its own JoinInfo and uniquified _lookup_
+        // alias. Assert values, never non-null: the seed cycle F1 -> F2 -> F3 -> F1 makes a collapsed chain
+        // (Parent.Parent == Parent) distinguishable at every row.
         Assert.Equal(["F1", "F2", "F3"], nodes.Select(n => n.Label).ToArray());
         Assert.Equal(["F2", "F3", "F1"], nodes.Select(n => n.Parent.Label).ToArray());
         Assert.Equal(["F3", "F1", "F2"], nodes.Select(n => n.Parent.Parent.Label).ToArray());
@@ -341,12 +261,8 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     [Fact]
     public void Self_referencing_two_hop_chain_now_goes_native_under_NativeOnly()
     {
-        // The third mode, pinned separately because its disposition used to differ: multi-level reference
-        // Include was a deferred native shape, so NativeOnly refused the driver-LINQ fallback at the gate
-        // and never reached the materialization crash the Theory above documents. EF-392 lifted that
-        // deferral for a linear ThenInclude chain — including the self-referencing case, since EF-371's own
-        // fix (one JoinInfo per join, uniquified aliases) already disambiguates the two hops correctly at
-        // join-registration time, independent of Include confirmation.
+        // A linear ThenInclude chain goes native, including the self-referencing case (per-join JoinInfo and
+        // uniquified aliases disambiguate the hops).
         using var db = CreateSelfRefContext(
             nameof(Self_referencing_two_hop_chain_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
 
@@ -357,13 +273,9 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.Equal(["F3", "F1", "F2"], nodes.Select(n => n.Parent.Parent.Label).ToArray());
     }
 
-    // ---- The regression control for EF-379 fix round 1: a transparent identifier is NOT only produced by a
-    // prior JOIN. An owned-collection SelectMany produces one too, so the FIRST TranslateJoinCore call can
-    // see a "ti.Inner" receiver and classify TransitiveHop. The transitive scan then finds nothing (there is
-    // no prior inner collection at all), and the decline the first pass of EF-379 added hard-failed this
-    // query in EVERY mode. It works at base and must keep working: PTag carries a plain ObjectId FK PROPERTY
-    // with NO navigation, so the join is user-authored rather than nav-expanded. Its absence is what let the
-    // regression through review. ----
+    // An owned-collection SelectMany also produces a transparent identifier, so the first TranslateJoinCore
+    // call can see a "ti.Inner" receiver and classify TransitiveHop with no prior inner collection. A
+    // "transitive hop with no navigation declines" rule would hard-fail this user-authored join in every mode.
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -388,8 +300,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     [Fact]
     public void Self_referencing_single_hop_still_works()
     {
-        // The control for the decline above: the SHALLOW self-reference must keep working. Without this,
-        // "declines" could be satisfied by declining every self-referencing Include.
+        // Control: a shallow self-reference must keep working.
         using var db = CreateSelfRefContext(nameof(Self_referencing_single_hop_still_works),
             MongoQueryMode.Native, out var spyLogger);
 
@@ -401,7 +312,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         spyLogger.AssertExecutedMqlContains("\"localField\" : \"ParentId\"");
     }
 
-    // ---- fixture ----
+    // Fixtures.
 
     private CollidingChainDbContext CreateCollidingContext(
         string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
@@ -411,9 +322,8 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         var mids = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "PM" + suffix;
         var leaves = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "PL" + suffix;
 
-        // The seed makes the two paths DISAGREE: the root's own LeafId reaches "WRONG", the mid's reaches
-        // "RIGHT1"/"RIGHT2". Every root points its own LeafId at the SAME wrong leaf, so a root-scoped
-        // $lookup still matches a real document (the row is not dropped) and only the VALUE discriminates.
+        // The root's LeafId reaches "WRONG", the mid's "RIGHT1"/"RIGHT2". A root-scoped $lookup still matches a
+        // real document, so only the value discriminates.
         var wrongLeaf = ObjectId.GenerateNewId();
         var rightLeaf1 = ObjectId.GenerateNewId();
         var rightLeaf2 = ObjectId.GenerateNewId();
@@ -498,9 +408,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         var mids = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "NM" + suffix;
         var leaves = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "NL" + suffix;
 
-        // Same disagreement as the two doorways: every root's own LeafId points at the SAME "WRONG" leaf (so a
-        // root-scoped $lookup still matches a real document and only the VALUE discriminates), while each
-        // mid's LeafId points at its own "RIGHT*" leaf.
+        // Same disagreement as the tier fixtures: roots point at "WRONG", mids at their own "RIGHT*" leaf.
         var wrongLeaf = ObjectId.GenerateNewId();
         var rightLeaf1 = ObjectId.GenerateNewId();
         var rightLeaf2 = ObjectId.GenerateNewId();
@@ -573,9 +481,8 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var nodes = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "FN" + suffix;
 
-        // A REQUIRED self-reference, so nav-expansion lowers both hops to Queryable.Join on every EF major
-        // (an OPTIONAL one would lower to LeftJoin, which has no dispatch case before EF10). A required FK
-        // needs a cycle: F1 -> F2 -> F3 -> F1.
+        // Required, so both hops lower to Queryable.Join on every EF major (optional would be EF10-only
+        // LeftJoin). A required FK needs a cycle: F1 -> F2 -> F3 -> F1.
         var f1 = ObjectId.GenerateNewId();
         var f2 = ObjectId.GenerateNewId();
         var f3 = ObjectId.GenerateNewId();
@@ -648,7 +555,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         public object Create(DbContext context, bool designTime) => Interlocked.Increment(ref _count);
     }
 
-    // ---- doorway 1's model: the ROOT declares a property named "LeafId", exactly like the intermediate. ----
+    // Tier-1 model: the root declares "LeafId", like the intermediate.
 
     private class PLeaf
     {
@@ -671,8 +578,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         public ObjectId MidId { get; set; }
         public PMid Mid { get; set; } = null!;
 
-        // The collision: the same property NAME the intermediate uses for its own foreign key. This is what
-        // the FK-name tier matched, resolving PRoot.Leaf for a hop that belongs to PMid.
+        // Same name as PMid's FK; the FK-name tier would resolve PRoot.Leaf for PMid's hop.
         public ObjectId LeafId { get; set; }
         public PLeaf Leaf { get; set; } = null!;
     }
@@ -709,8 +615,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         }
     }
 
-    // ---- doorway 2's model: NO name collision — the root's foreign key is "SideLeafId" — but the root
-    // still carries a navigation to the leaf TYPE, which is all the target-type-only tier needs. ----
+    // Tier-2 model: no name collision, but the root navigates to the leaf type.
 
     private class RLeaf
     {
@@ -768,10 +673,8 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         }
     }
 
-    // ---- the third family's model: the INTERMEDIATE carries only a bare FK PROPERTY (no navigation to the
-    // leaf, so the transitive scan finds no candidate), while the ROOT carries BOTH the same-named FK and a
-    // navigation to the leaf TYPE — so at base tier 1 matched on the name and tier 2 would have matched on the
-    // type. Because NMid has no navigation, the chain has to be written as a user-authored Join. ----
+    // No-intermediate-navigation model: NMid has a bare FK only (so the chain is a user-authored Join); NRoot
+    // has both the same-named FK and a navigation to the leaf type.
 
     private class NLeaf
     {
@@ -784,7 +687,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         public ObjectId Id { get; set; }
         public string Label { get; set; } = "";
 
-        // Deliberately a bare foreign-key PROPERTY with NO NLeaf navigation beside it.
+        // Deliberately no NLeaf navigation.
         public ObjectId LeafId { get; set; }
     }
 
@@ -795,8 +698,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         public ObjectId MidId { get; set; }
         public NMid Mid { get; set; } = null!;
 
-        // Both root tiers' bait: the same property NAME the intermediate uses for its own foreign key, AND a
-        // navigation onto the joined type.
+        // Bait for both root tiers: NMid's FK name and a navigation to the joined type.
         public ObjectId LeafId { get; set; }
         public NLeaf Leaf { get; set; } = null!;
     }
@@ -832,7 +734,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         }
     }
 
-    // ---- the control's model: two sibling reference navigations onto DIFFERENT target types. ----
+    // Sibling control model: two reference navigations onto different target types.
 
     private class SAlpha
     {
@@ -887,8 +789,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         }
     }
 
-    // ---- scenario F's model: a self-referencing REQUIRED navigation, so the receiver's CLR type at hop 2
-    // is the ROOT's own CLR type. ----
+    // Self-reference model: a required self-referencing navigation.
 
     private class FNode
     {
@@ -898,9 +799,8 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         public FNode Parent { get; set; } = null!;
     }
 
-    // ---- the regression control's model: an OWNED collection whose element carries a bare ObjectId foreign
-    // key PROPERTY and NO navigation, so the join onto JProduct is user-authored. The SelectMany over the
-    // owned collection is what produces the transparent identifier at the FIRST join. ----
+    // Owned-SelectMany model: owned elements carry a bare ObjectId FK (no navigation), so the join onto
+    // JProduct is user-authored.
 
     private class JProduct
     {

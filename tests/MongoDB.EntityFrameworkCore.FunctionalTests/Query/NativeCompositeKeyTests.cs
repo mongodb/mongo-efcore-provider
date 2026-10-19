@@ -47,7 +47,7 @@ public class NativeCompositeKeyTests(TemporaryDatabaseFixture database)
         db.Entities.Add(new Order { CustomerId = 2, OrderNumber = 200, Status = "Closed" });
         db.SaveChanges();
 
-        // Succeeds under NativeOnly => went native (would throw NativeTranslationNotSupportedException before the fix).
+        // Succeeds under NativeOnly => went native.
         var found = db.Entities.AsNoTracking().Single(o => o.CustomerId == 1);
         Assert.Equal(100, found.OrderNumber);
     }

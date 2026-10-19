@@ -42,12 +42,9 @@ public class NativeDispositionTests
     public void GroupBy_is_native()
         => Assert.Equal(NativeDisposition.Native, Classify(NativeRoute.GroupBy));
 
-    // NOTE: ScalarAggregate classifies as Native here — it IS native, just built by TryBuildAggregateFactory
-    // rather than the whole-entity TryBuildNativeFactory. The `|| Route == ScalarAggregate` term at the
-    // TryBuildNativeFactory call site (which declines it so it falls through to the aggregate factory) is a
-    // query-composition decision that needs a full MongoQueryExpression and so is NOT unit-pinnable here; it is
-    // covered end-to-end by the scalar-cardinality spec/functional sweep (EF-336) under NativeOnly. Do not
-    // "simplify away" that disjunct on the strength of this test.
+    // ScalarAggregate is native (built by TryBuildAggregateFactory). The `|| Route == ScalarAggregate` term at the
+    // TryBuildNativeFactory call site needs a full MongoQueryExpression, so it isn't pinnable here; it's covered
+    // by the scalar-cardinality tests under NativeOnly. Don't remove that disjunct on the strength of this test.
     [Fact]
     public void ScalarAggregate_is_native()
         => Assert.Equal(NativeDisposition.Native, Classify(NativeRoute.ScalarAggregate));
@@ -56,22 +53,14 @@ public class NativeDispositionTests
     public void Fallback_route_is_fallback()
         => Assert.Equal(NativeDisposition.Fallback, Classify(NativeRoute.Fallback));
 
-    // EF-322 VectorSearch slice. The ASSERTION is unchanged, but what it pins is not: this is no longer
-    // "vector search is never native" (it is, since Task 4) — it is the SILENT-DROP GUARD. A captured chain
-    // carrying a VectorSearch that the native slot populator did NOT bind must not classify Native, because
-    // the lowerer would then emit a pipeline with no $vectorSearch stage at all: the right ROW COUNT, in
-    // INSERTION order rather than score order, with no exception. Falling back keeps the VectorSearch in the
-    // captured chain, where driver-LINQ executes it correctly.
+    // Silent-drop guard: an unbound VectorSearch must not classify Native, or the lowerer emits no $vectorSearch
+    // stage and returns rows in insertion order without error. Falling back lets driver-LINQ execute it.
     [Fact]
     public void Unbound_vector_search_is_fallback_even_when_route_is_native()
         => Assert.Equal(NativeDisposition.Fallback, Classify(NativeRoute.WholeEntity, hasUnboundVectorSearch: true));
 
-    // The complement of the test above, kept as documentation of intent — and its weakness is stated rather
-    // than hidden: at this PURE level it is WholeEntity_is_native with an explicit `false`, so it is degenerate
-    // and is NOT the discriminator for "a bound vector search goes native". The real discrimination is
-    // end-to-end: NativeVectorSearchTests succeeding under MongoQueryMode.NativeOnly, plus the Task-4 mutation
-    // that forces NativeVectorSearchBinder.TryBind to return false and shows those tests flip to
-    // NativeTranslationNotSupportedException while default Native still returns correct, score-ordered rows.
+    // Degenerate at this level (same as WholeEntity_is_native); the real check that bound vector search goes
+    // native is NativeVectorSearchTests under MongoQueryMode.NativeOnly.
     [Fact]
     public void Bound_vector_search_is_native()
         => Assert.Equal(NativeDisposition.Native, Classify(NativeRoute.WholeEntity, hasUnboundVectorSearch: false));

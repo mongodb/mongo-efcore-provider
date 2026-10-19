@@ -19,12 +19,10 @@ using System.Collections.Generic;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Represents an ordered list of independently-resolved candidate values — each element its own
-/// <see cref="MongoConstantExpression"/> or <see cref="MongoParameterExpression"/> — used as
-/// <see cref="MongoInExpression.Values"/> when a <c>Contains</c> collection is a <c>NewArrayInit</c> whose
-/// elements are not all foldable into a single constant array or a single array-valued query parameter (e.g.
-/// <c>new[] { prm1, prm2 }.Contains(...)</c> where <c>prm1</c>/<c>prm2</c> are separately closure-captured
-/// locals that EF hoists as independently-named query parameters, rather than one array-typed parameter).
+/// An ordered list of independently-resolved values (each a <see cref="MongoConstantExpression"/> or
+/// <see cref="MongoParameterExpression"/>), used as <see cref="MongoInExpression.Values"/> when a <c>Contains</c>
+/// collection is a <c>NewArrayInit</c> that can't fold into one constant or one array parameter (e.g.
+/// <c>new[] { prm1, prm2 }.Contains(...)</c>, where EF hoists each local as its own parameter).
 /// </summary>
 internal sealed class MongoValueListExpression : MongoExpression
 {

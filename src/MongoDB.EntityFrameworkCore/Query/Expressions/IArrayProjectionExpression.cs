@@ -7,19 +7,12 @@ using Microsoft.EntityFrameworkCore.Metadata;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// What <see cref="Visitors.MongoProjectionBindingRemovingExpressionVisitor"/>'s
-/// <c>CollectionShaperExpression</c> case needs from a node describing an array of entities, regardless of
-/// how that array is addressed in the document it is read from. Two implementations:
-/// <see cref="ObjectArrayProjectionExpression"/> reads the array at the navigation's own document path;
-/// <see cref="ArrayAliasProjectionExpression"/> reads it at a <c>$project</c> output alias.
+/// An array of entities as read by <see cref="Visitors.MongoProjectionBindingRemovingExpressionVisitor"/>'s
+/// <c>CollectionShaperExpression</c> case: <see cref="ObjectArrayProjectionExpression"/> reads it at the
+/// navigation's document path, <see cref="ArrayAliasProjectionExpression"/> at a <c>$project</c> alias.
 /// <para>
-/// <b>Every implementer MUST also derive from <see cref="Expression"/>.</b> An interface cannot express that
-/// (it cannot extend a class), but the requirement is real: the consuming visitor keys its
-/// <c>_projectionBindings</c> dictionary on the node itself and therefore casts, <c>(Expression)arrayProjection</c>
-/// — see <see cref="Visitors.MongoProjectionBindingRemovingExpressionVisitor"/>'s
-/// <c>CollectionShaperExpression</c> case. A non-<see cref="Expression"/> implementer would compile fine and then
-/// fail at run time with <see cref="System.InvalidCastException"/>, so the constraint is stated here rather than
-/// enforced by the compiler. Both current implementations satisfy it.
+/// Implementers must also derive from <see cref="Expression"/>: the visitor casts the node to key
+/// <c>_projectionBindings</c>, so any other implementer throws <see cref="System.InvalidCastException"/> at run time.
 /// </para>
 /// </summary>
 internal interface IArrayProjectionExpression
@@ -27,17 +20,15 @@ internal interface IArrayProjectionExpression
     /// <summary>The collection navigation this array materializes into.</summary>
     INavigation Navigation { get; }
 
-    /// <summary>Access to the document that OWNS the array — used for the owned element's owner-key read.</summary>
+    /// <summary>Access to the document that owns the array; used for the owned element's owner-key read.</summary>
     Expression AccessExpression { get; }
 
     /// <summary>The per-element entity projection.</summary>
     EntityProjectionExpression InnerProjection { get; }
 
     /// <summary>
-    /// The BSON element name the array sits at, or <see langword="null"/> when the array is addressed by a
-    /// projection alias instead. A <see langword="null"/> here means the caller must already have resolved an
-    /// alias from the owning <see cref="ProjectionExpression"/>; see the <c>??=</c> in
-    /// <see cref="Visitors.MongoProjectionBindingRemovingExpressionVisitor"/>'s <c>VisitBinary</c>.
+    /// The BSON element name of the array, or <see langword="null"/> when it is addressed by a projection alias
+    /// (the caller must then resolve the alias from the owning <see cref="ProjectionExpression"/>).
     /// </summary>
     string? ArrayFieldName { get; }
 }

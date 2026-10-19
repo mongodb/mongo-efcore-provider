@@ -8,15 +8,12 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.Benchmarks;
 
-// Three-config headline benchmarks (EF-323: native query path):
+// Three-config headline benchmarks:
 //   DriverOnly      - raw MongoDB C# driver LINQ / aggregation, no EF Core (perf floor).
-//   EF_DriverLinq   - EF provider pinned to UseQueryMode(MongoQueryMode.DriverLinq) == the
-//                     pre-rebuild "EF-current" baseline (matches the numbers in perf-baseline.md).
-//   EF_Native       - EF provider in UseQueryMode(MongoQueryMode.Native) == the new native path.
-//                     ReferenceInclude falls back to driver-LINQ (deferred — Include is not yet
-//                     native), so EF_Native ≈ EF_DriverLinq for that shape.
-// All configs read the SAME documents seeded once in [GlobalSetup], via one shared MongoClient
-// (fairness: a per-context client would charge connection-pool + topology startup to EF numbers).
+//   EF_DriverLinq   - EF provider with UseQueryMode(MongoQueryMode.DriverLinq).
+//   EF_Native       - EF provider with UseQueryMode(MongoQueryMode.Native).
+// All configs read the same documents seeded once in [GlobalSetup], via one shared MongoClient
+// (a per-context client would charge connection-pool + topology startup to the EF numbers).
 [Config(typeof(BenchmarkConfig))]
 public class HeadlineBenchmarks
 {
@@ -67,7 +64,6 @@ public class HeadlineBenchmarks
         var driverWhere = _flatColl.AsQueryable().Where(f => f.Active).ToList().Count;
         var driverReview = DriverReviewInclude();
 
-        // Validate EF_DriverLinq
         using (var efDl = new BenchmarkDbContext(_efOptionsDriverLinq))
         {
             var efAll = efDl.FlatItems.AsNoTracking().ToList().Count;
@@ -82,7 +78,7 @@ public class HeadlineBenchmarks
                 throw new InvalidOperationException($"Review+Product mismatch (DriverLinq): driver={driverReview}, ef={efReview}, expected {N}.");
         }
 
-        // Parity: EF_Native must return the same counts as EF_DriverLinq (correctness gate).
+        // Correctness gate: native must return the same counts.
         using (var efN = new BenchmarkDbContext(_efOptionsNative))
         {
             var efAllNative = efN.FlatItems.AsNoTracking().ToList().Count;
@@ -170,8 +166,6 @@ public class HeadlineBenchmarks
     { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.FlatItems.AsNoTracking().OrderBy(f => f.Count).Take(100).ToList().Count; }
 
     // ----- Reviews.Include(r => r.Product).ToList() -----
-    // Note: ReferenceInclude falls back to driver-LINQ even in Native mode (Include is deferred —
-    // not yet native). EF_Native ≈ EF_DriverLinq for this shape.
     [Benchmark] public int ReferenceInclude_DriverOnly()
         => DriverReviewInclude();
 

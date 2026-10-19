@@ -21,29 +21,18 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 /// <summary>
-/// The two standing multi-<see cref="MongoQueryMode"/> assertions the native-translation functional tests are
-/// built on: "this shape goes native AND agrees with the driver-LINQ oracle", and "this shape declines
-/// gracefully AND the fallback it lands on is itself trustworthy".
+/// Shared multi-<see cref="MongoQueryMode"/> assertions: "goes native and agrees with the driver-LINQ oracle", and
+/// "declines gracefully and the fallback is trustworthy".
 /// </summary>
 /// <remarks>
-/// <para>
-/// These own the MODE ORCHESTRATION only — which modes to run, in what order, and what must hold between them.
-/// Each test class supplies a <c>run</c> delegate that creates its own context for a given mode and reduces the
-/// query to a comparable result list, because the entity type, model customizer and result projection differ
-/// per class. That split is deliberate: the part that was copy-pasted verbatim across test classes (and so
-/// could drift) is the semantics, not the per-class plumbing.
-/// </para>
-/// <para>
-/// Three test classes previously held byte-identical private copies of both methods, each with its own
-/// divergent explanatory comment.
-/// </para>
+/// Owns only the mode orchestration. Each test class supplies a <c>run</c> delegate that creates its own context
+/// for a mode and reduces the query to a comparable list.
 /// </remarks>
 internal static class NativeModeAssert
 {
     /// <summary>
-    /// Asserts the shape goes native — it must NOT throw under <see cref="MongoQueryMode.NativeOnly"/>, which
-    /// forbids the fallback — and that the native results match the driver-LINQ oracle exactly. Returns the
-    /// results so the caller can additionally assert them against a hand-verified expected value.
+    /// Asserts the shape goes native (doesn't throw under <see cref="MongoQueryMode.NativeOnly"/>) and matches the
+    /// driver-LINQ oracle exactly. Returns the results for further assertions.
     /// </summary>
     internal static List<T> NativeAndParity<T>(Func<MongoQueryMode, List<T>> run)
     {
@@ -55,17 +44,14 @@ internal static class NativeModeAssert
     }
 
     /// <summary>
-    /// Asserts the shape is NOT native, gracefully: it throws
-    /// <see cref="NativeTranslationNotSupportedException"/> under <see cref="MongoQueryMode.NativeOnly"/> (a
-    /// clean decline, not a crash), AND the fallback it relies on delivers results an independent oracle agrees
-    /// with (<see cref="MongoQueryMode.Native"/> == <see cref="MongoQueryMode.DriverLinq"/>).
+    /// Asserts the shape declines gracefully: <see cref="NativeTranslationNotSupportedException"/> under
+    /// <see cref="MongoQueryMode.NativeOnly"/>, and <see cref="MongoQueryMode.Native"/> results equal
+    /// <see cref="MongoQueryMode.DriverLinq"/>'s.
     /// </summary>
     /// <remarks>
-    /// Both halves matter. "Every mode throws" alone does not distinguish a graceful decline from a crash, and
-    /// "NativeOnly throws" alone does not show the fallback actually works. Where a shape has no driver-LINQ
-    /// oracle at all — the <c>SelectMany</c> / reference-collection / <c>Intersect</c> / <c>Except</c> /
-    /// correlated-reducer families — this assertion cannot be used; those test classes keep their own
-    /// no-oracle variant, with the reason recorded at that call site.
+    /// Both halves matter: throwing alone doesn't distinguish a decline from a crash, and doesn't show the fallback
+    /// works. Unusable for shapes with no driver-LINQ oracle (SelectMany over reference collections, Intersect/Except,
+    /// correlated reducers); those classes keep their own variant.
     /// </remarks>
     internal static List<T> DeclinesCleanly<T>(Func<MongoQueryMode, List<T>> run)
     {

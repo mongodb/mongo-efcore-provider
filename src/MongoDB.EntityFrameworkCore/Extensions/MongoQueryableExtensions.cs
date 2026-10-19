@@ -43,17 +43,12 @@ public static class MongoQueryableExtensions
         && genericMethod == VectorSearchMethodInfo;
 
     /// <summary>
-    /// Walks a captured <see cref="System.Linq.Queryable"/> method chain looking for a <c>VectorSearch</c> call,
-    /// descending through the source argument of each call — <c>VectorSearch</c> sits at the root, optionally
-    /// under a single pre-<c>Where</c>.
+    /// Walks a captured <see cref="System.Linq.Queryable"/> method chain through each call's source argument
+    /// looking for a <c>VectorSearch</c> call (at the root, optionally under a single pre-<c>Where</c>).
     /// </summary>
     /// <remarks>
-    /// Lives here, next to <see cref="IsVectorSearch"/>, because BOTH the compile-time gate
-    /// (<c>MongoShapedQueryCompilingExpressionVisitor</c>, whose native-disposition classification reads it) and
-    /// the method translator (<c>MongoQueryableMethodTranslatingExpressionVisitor</c>, whose set-operation
-    /// eligibility checks read it) need it, and they used to hold byte-identical private copies. Note this must
-    /// be answered from the CAPTURED CHAIN, never from a flag on the select tree — see the Query area
-    /// <c>AGENTS.md</c>.
+    /// Shared by the compile-time gate and the method translator's set-operation checks. Answered from the
+    /// captured chain, not from a flag on the select tree.
     /// </remarks>
     internal static bool ContainsVectorSearch(this Expression? captured)
     {

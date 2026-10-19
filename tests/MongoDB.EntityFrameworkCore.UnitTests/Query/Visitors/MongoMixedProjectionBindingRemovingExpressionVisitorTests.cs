@@ -26,17 +26,10 @@ using MongoDB.EntityFrameworkCore.UnitTests.TestUtilities;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.Visitors;
 
-// native-join-scope-nested-projection: MongoMixedProjectionBindingRemovingExpressionVisitor.
-// ReadDocumentConstructionMember used to unconditionally read field.Property directly off the outer
-// document, which is correct for the EF-447 root-relative shape but wrong for a join-scope-sourced
-// member (Task 1 of this ticket), whose MongoFieldExpression.ElementName is a DOTTED path relative to
-// the outer document (e.g. "_lookup_Customer.CustomerID"). These tests pin both: the new dotted-path
-// read via BsonBinding.CreateGetPropertyValueAtPath, and the pre-existing undotted read unchanged.
-//
-// MongoMixedProjectionBindingRemovingExpressionVisitor is internal sealed, so (matching this project's
-// existing pattern in MongoProjectionBindingRemovingExpressionVisitorTests of driving a protected/private
-// member directly via reflection rather than inventing a test-only subclass) ReadDocumentConstructionMember
-// is invoked here through reflection on a real instance.
+// ReadDocumentConstructionMember: a join-scope-sourced member has a dotted ElementName relative to the outer
+// document (e.g. "_lookup_Customer.CustomerID") and must be read via BsonBinding.CreateGetPropertyValueAtPath;
+// an undotted root-relative member is read directly. The visitor is internal sealed, so the method is invoked
+// via reflection (as in MongoProjectionBindingRemovingExpressionVisitorTests).
 public class MongoMixedProjectionBindingRemovingExpressionVisitorTests
 {
     private class Row
@@ -65,11 +58,8 @@ public class MongoMixedProjectionBindingRemovingExpressionVisitorTests
         }
     }
 
-    // CreateGetValueExpression(docExpr, IProperty, Type) (the single-property reader) always wraps its
-    // result in an outer Expression.Convert regardless of whether the types already agree, whereas
-    // BsonBinding.CreateGetPropertyValueAtPath (the multi-segment reader) returns its MethodCallExpression
-    // unwrapped. Unwrap a single Convert layer before inspecting the method, so the assertion is about
-    // WHICH reader ran, not an incidental wrapping difference between the two.
+    // The single-property reader always wraps in Expression.Convert; CreateGetPropertyValueAtPath doesn't.
+    // Unwrap one Convert so assertions are about which reader ran.
     private static Expression Unwrap(Expression expression)
         => expression is UnaryExpression { NodeType: ExpressionType.Convert } unary ? unary.Operand : expression;
 

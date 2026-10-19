@@ -24,11 +24,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// `e.City.AsEnumerable()`/`.ToList()`/`.ToArray()` — treating a string as its own <c>IEnumerable&lt;char&gt;</c>
-/// — has no server-side MQL form (MongoDB has no char/char-sequence BSON representation), so
-/// <see cref="NativeProjectionBinder.TryTranslateLeaf"/> admits it as a BARE field leaf (the wrapping call
-/// dropped entirely on the emit side, same as an uncast member access) — the char-sequence materialization
-/// itself happens client-side in the compiled shaper (see the projection-binding visitor tests for that half).
+/// <c>e.City.AsEnumerable()</c>/<c>.ToList()</c>/<c>.ToArray()</c> has no MQL form (no char-sequence BSON type), so
+/// <see cref="NativeProjectionBinder.TryTranslateLeaf"/> binds it as a bare field leaf; the char-sequence is
+/// materialized client-side by the shaper.
 /// </summary>
 public class NativeProjectionBinderStringSequenceTests
 {
@@ -63,10 +61,8 @@ public class NativeProjectionBinderStringSequenceTests
         var field = Assert.IsType<MongoFieldExpression>(projection.Expression);
         Assert.Equal("City", field.ElementName);
 
-        // The provenance flag the push-down gate keys off. Route == Projection alone cannot express what this
-        // leaf needs: "every leaf resolved to a bare field" is true, but this one is only correct when a shaper
-        // THIS provider built reads it back — the driver's own LINQ v3 provider cannot project an
-        // Enumerable.*-over-string call at all (EF-250/EF-231). See
+        // The push-down gate keys off this flag: the leaf is only correct when this provider's shaper reads it
+        // back, since driver LINQ v3 can't project Enumerable.*-over-string (EF-250/EF-231). See
         // MongoShapedQueryCompilingExpressionVisitor.VisitProjectedQuery's CanPushDown gate.
         Assert.True(mongoQ.Select.HasStringSequenceProjectionLeaf);
     }
@@ -121,8 +117,7 @@ public class NativeProjectionBinderStringSequenceTests
         var projection = Assert.Single(mongoQ.Select.Projection);
         Assert.IsType<MongoFieldExpression>(projection.Expression);
 
-        // The BARE-body spelling must set the provenance flag too — it reaches the binder through
-        // TryBindAsBareProjection rather than the wrapped-member loop.
+        // The bare-body spelling (via TryBindAsBareProjection) must set the flag too.
         Assert.True(mongoQ.Select.HasStringSequenceProjectionLeaf);
     }
 

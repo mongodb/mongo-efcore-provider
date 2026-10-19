@@ -28,41 +28,18 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Differential-correctness functional test (real DB) for the native join-scope nav-null-check conditional
-/// projection (EF-322; <c>docs/superpowers/specs/2026-09-23-native-join-scope-nav-null-conditional-projection-design.md</c>):
-/// a BARE (non-wrapped) <c>Select</c> body that is exactly a ternary null-checking a join scope's Inner side and
-/// dereferencing it — <c>o =&gt; o.Customer != null ? o.Customer.Name : "&lt;none&gt;"</c> — matched here against an
-/// in-memory LINQ oracle over the same (Order, Customer?) left-outer pairing, including the UNMATCHED-FK
-/// (dangling reference, no matching Customer document) case where the native null-check must actually fire.
+/// Differential test (real DB) for the native join-scope nav-null-check conditional projection: a bare
+/// <c>Select</c> body that is a ternary null-checking a join scope's Inner side —
+/// <c>o =&gt; o.Customer != null ? o.Customer.Name : "&lt;none&gt;"</c> — against an in-memory LINQ oracle,
+/// including a dangling FK where the null check must fire.
 /// </summary>
 /// <remarks>
-/// Mirrors <see cref="NativeJoinScopeNestedProjectionTests"/>'s structure (model, <c>TestServer</c>/
-/// <c>TemporaryDatabaseFixture</c> fixture, per-test unique collection names, an explicit
-/// <see cref="MongoQueryMode"/>-parameterized <c>[Theory]</c> asserting <c>NativeOnly</c> does not throw).
-/// </remarks>
-/// <remarks>
-/// <b>The ELSE branch is a non-null sentinel (<c>"&lt;none&gt;"</c>), never a typed <c>null</c> literal — this is
-/// LOAD-BEARING, not stylistic.</b> MEASURED: EF Core's own <c>NullCheckRemovingExpressionVisitor</c>
-/// (<c>QueryTranslationPreprocessor.Process</c>, universal across every provider) collapses ANY
-/// <c>caller != null ? caller.Member : null</c> ternary down to a bare <c>caller.Member</c> member access
-/// BEFORE any provider-specific translation runs, whenever the ELSE branch is exactly a null constant — this
-/// fires regardless of whether <c>caller</c> is a genuine EF navigation or a raw LINQ join-result member, and
-/// regardless of whether the ternary was written in C# source or built by hand via
-/// <see cref="System.Linq.Expressions.Expression.Condition"/> (confirmed against both). So the SPEC suite's own
-/// <c>NorthwindMiscellaneousQueryMongoTest.Manual_expression_tree_typed_null_equality</c> — whose ELSE branch
-/// IS a typed null, matching the exact upstream shape this ticket's design doc cites as the motivating case —
-/// never reaches <c>NativeJoinScopeProjectionBinder.TryBindConditionalProjection</c> as a
-/// <see cref="System.Linq.Expressions.ConditionalExpression"/> at all; it arrives already collapsed to a bare
-/// <c>ti.Inner.City</c> member access, a DIFFERENT shape THIS binder does not target — that shape is instead
-/// handled by the sibling bare-scalar-leaf arm added later in this plan
-/// (<c>MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect</c>'s <c>Levels.Count == 1</c>-restricted
-/// arm just after this one), so the gap this remark originally called out is closed. A non-null ELSE branch is
-/// not subject to that collapse (the visitor's own guard requires the ELSE
-/// branch to be exactly <c>ConstantExpression{Value: null}</c> for the <c>!=</c> case), so the
-/// <see cref="System.Linq.Expressions.ConditionalExpression"/> this binder actually targets survives
-/// preprocessing intact — exactly the shape
-/// <c>NativeJoinScopeProjectionBinderTests.Binds_a_bare_nav_null_check_ternary_over_a_left_join</c> pins at the
-/// unit level, and what these two tests below prove end-to-end against a real database.
+/// The else branch is a non-null sentinel on purpose. EF Core's <c>NullCheckRemovingExpressionVisitor</c>
+/// (run in preprocessing for every provider) collapses <c>caller != null ? caller.Member : null</c> to a bare
+/// <c>caller.Member</c>, so a typed-null else branch never reaches
+/// <c>NativeJoinScopeProjectionBinder.TryBindConditionalProjection</c>; that collapsed shape is handled by the
+/// bare-scalar-leaf arm in <c>MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect</c>. See
+/// <c>NativeJoinScopeProjectionBinderTests.Binds_a_bare_nav_null_check_ternary_over_a_left_join</c> for the unit pin.
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture database)
@@ -94,6 +71,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
     [InlineData(MongoQueryMode.NativeOnly)]
     public void Bare_nav_null_check_ternary_over_a_reference_join_matches_oracle(MongoQueryMode mode)
     {
@@ -103,9 +81,8 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         var matchedCustomerId = ObjectId.GenerateNewId();
         var matchedOrderId = ObjectId.GenerateNewId();
         var unmatchedOrderId = ObjectId.GenerateNewId();
-        // A dangling FK: generated but NEVER inserted into the Customers collection, so the $lookup this join
-        // emits genuinely finds no match for it (not merely null-CustomerId, which would be a different, less
-        // interesting case — the $lookup itself still runs and fails to match).
+        // A dangling FK, never inserted into Customers, so the $lookup finds no match (not merely a null
+        // CustomerId).
         var danglingCustomerId = ObjectId.GenerateNewId();
 
         using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
@@ -124,8 +101,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
             .Select(o => o.Customer != null ? o.Customer.Name : NoneSentinel)
             .ToList();
 
-        // The independent oracle: an ordinary LINQ-to-Objects left-outer join, sharing no code with the
-        // provider, applying the SAME null-check ternary to the (Order, Customer?) pair.
+        // Independent oracle: a LINQ-to-Objects left-outer join applying the same ternary.
         var orderSeeds = new[]
         {
             new { OrderNo = 1, CustomerId = (ObjectId?)matchedCustomerId },
@@ -145,8 +121,11 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         Assert.Contains(NoneSentinel, actual);
     }
 
+    // DriverLinq included: the flattened left-outer $unwind leaves the joined field MISSING, which the driver's
+    // `$ne: [field, null]` treats as non-null; the bridge normalizes missing -> null after a preserved forced $unwind.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
     [InlineData(MongoQueryMode.NativeOnly)]
     public void Bare_nav_null_check_ternary_over_a_two_level_chain_matches_oracle(MongoQueryMode mode)
     {
@@ -175,9 +154,8 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
 
         using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
 
-        // A genuine TWO-level join chain: level 1 (Order -> Customer) is a plain (required) Join, level 2
-        // (Customer -> Region) is a LeftJoin (via GroupJoin/SelectMany(DefaultIfEmpty)) — the null check under
-        // test targets the SECOND level's Inner side, not the first's.
+        // Two-level chain: level 1 (Order -> Customer) is a plain Join, level 2 (Customer -> Region) a LeftJoin;
+        // the null check targets the second level's Inner side.
         Func<System.Collections.Generic.List<string?>> runQuery = () => db.Set<Order>()
             .Join(db.Set<Customer>(), o => o.CustomerId, c => c.Id, (o, c) => new { o, c })
             .GroupJoin(db.Set<Region>(), x => x.c.RegionId, r => r.Id, (x, rs) => new { x.o, x.c, rs })
@@ -186,13 +164,11 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
             .Select(x => x.r != null ? x.r.Name : NoneSentinel)
             .ToList();
 
-        // NativeJoinScopeProjectionBinder.TryBindConditionalProjection is depth-agnostic (works for any
-        // scope.Levels.Count, exactly like TryBindProjection's own scalar/computed leaf arm for a chain) --
-        // this genuine two-level chain goes native in BOTH modes and produces the CORRECT oracle-matching
-        // result, the second level's null check firing for the dangling-region row.
+        // TryBindConditionalProjection is depth-agnostic, so this goes native and the second level's null check
+        // fires for the dangling-region row.
         var actual = runQuery();
 
-        // Independent in-memory oracle over the same seeded rows, sharing no code with the provider.
+        // Independent in-memory oracle.
         var orderSeeds = new[]
         {
             new { OrderNo = 1, CustomerId = matchedCustomerId },
@@ -217,53 +193,6 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         Assert.Equal(2, actual.Count);
         Assert.Equal("Western Europe", actual[0]);
         Assert.Equal(NoneSentinel, actual[1]);
-    }
-
-    [Fact]
-    public void Bare_nav_null_check_ternary_over_a_two_level_chain_under_DriverLinq_pins_known_fallback_bug()
-    {
-        // EF-322 fixed this exact shape's Native/NativeOnly path (see the Theory above): it now goes native
-        // and produces the correct oracle-matching result, so it no longer exercises the driver-LINQ fallback
-        // bridge at all. That leaves this test as the ONLY remaining coverage of a separate, pre-existing,
-        // still-unticketed data-correctness bug in that bridge for a two-level LeftJoin chain under an
-        // EXPLICIT MongoQueryMode.DriverLinq: the second level's unmatched LeftJoin row comes back as a bare
-        // `null` instead of running the ternary's ELSE branch (NoneSentinel). Pinned explicitly — asserting
-        // the CURRENT, KNOWN-WRONG value — so this goes loudly green-then-red the moment the bridge bug is
-        // fixed or changes shape, per this repo's "pin the known deviation" convention.
-        var (ordersName, customersName, regionsName) =
-            CreateCollectionNames(nameof(Bare_nav_null_check_ternary_over_a_two_level_chain_under_DriverLinq_pins_known_fallback_bug));
-
-        var matchedRegionId = ObjectId.GenerateNewId();
-        var matchedCustomerId = ObjectId.GenerateNewId();
-        var unmatchedCustomerId = ObjectId.GenerateNewId();
-        var danglingRegionId = ObjectId.GenerateNewId();
-        var orderWithRegionId = ObjectId.GenerateNewId();
-        var orderWithoutRegionId = ObjectId.GenerateNewId();
-
-        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
-        {
-            seed.Set<Region>().Add(new Region { Id = matchedRegionId, Name = "Western Europe" });
-            seed.Set<Customer>().AddRange(
-                new Customer { Id = matchedCustomerId, Name = "Alfreds", RegionId = matchedRegionId },
-                new Customer { Id = unmatchedCustomerId, Name = "Blauer", RegionId = danglingRegionId });
-            seed.Set<Order>().AddRange(
-                new Order { Id = orderWithRegionId, OrderNo = 1, CustomerId = matchedCustomerId },
-                new Order { Id = orderWithoutRegionId, OrderNo = 2, CustomerId = unmatchedCustomerId });
-            seed.SaveChanges();
-        }
-
-        using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq);
-
-        var buggyActual = db.Set<Order>()
-            .Join(db.Set<Customer>(), o => o.CustomerId, c => c.Id, (o, c) => new { o, c })
-            .GroupJoin(db.Set<Region>(), x => x.c.RegionId, r => r.Id, (x, rs) => new { x.o, x.c, rs })
-            .SelectMany(x => x.rs.DefaultIfEmpty(), (x, r) => new { x.o, x.c, r })
-            .OrderBy(x => x.o.OrderNo)
-            .Select(x => x.r != null ? x.r.Name : NoneSentinel)
-            .ToList();
-
-        Assert.Equal(["Western Europe", null], buggyActual);
-        Assert.NotEqual(NoneSentinel, buggyActual[1]);
     }
 
     [Theory]
@@ -299,7 +228,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
             .Select(o => o.OrderNo)
             .ToList();
 
-        // Independent in-memory oracle over the same seeded rows, sharing no code with the provider.
+        // Independent in-memory oracle.
         var orderSeeds = new[]
         {
             new { OrderNo = 1, CustomerId = (ObjectId?)matchedCustomerId },
@@ -318,11 +247,160 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
 
         Assert.Equal(oracle, actual);
         Assert.Equal(3, actual.Count);
-        // The sentinel "<none>" sorts BEFORE "Bravo" lexicographically ('<' is ASCII 60, 'B' is 66), so the
-        // two unmatched orders come first, tied on the sentinel and broken by OrderNo; "Bravo" (the one
-        // matched order) sorts last.
+        // "<none>" sorts before "Bravo" ('<' is 60, 'B' is 66), so the two unmatched orders come first, ordered by
+        // OrderNo.
         Assert.Equal([2, 3, 1], actual);
     }
+
+#if !EF8 && !EF9
+    // Two-level chains spelled with EF10's LeftJoin operator (the GroupJoin/SelectMany/DefaultIfEmpty spelling is
+    // above). Seed rows exercise every unmatched shape: a matched region, a dangling RegionId, a null RegionId,
+    // and (for the left-left chains) an order whose customer is dangling, so level 1 is unmatched too. Every
+    // unmatched row must read the ternary's ELSE value, never a bare null or a default. The DriverLinq rows guard
+    // the fallback's missing -> null normalization after a preserved forced $unwind
+    // (MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs): with it disabled, every explicit-LeftJoin DriverLinq
+    // row returns null for the unmatched rows.
+    [Theory]
+    [InlineData(MongoQueryMode.Native, "JoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "JoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinFirstLevelTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinFirstLevelTernary")]
+    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinWrappedTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinWrappedTernary")]
+    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryMode.Native, "JoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "JoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryMode.Native, "TwoHopNavigationTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "TwoHopNavigationTernary")]
+    [InlineData(MongoQueryMode.Native, "TwoHopNavigationWrappedTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "TwoHopNavigationWrappedTernary")]
+    public void Nav_null_check_ternary_over_a_two_level_LeftJoin_chain_matches_oracle(MongoQueryMode mode, string shape)
+    {
+        var (ordersName, customersName, regionsName) =
+            CreateCollectionNames(nameof(Nav_null_check_ternary_over_a_two_level_LeftJoin_chain_matches_oracle) + shape);
+
+        var matchedRegionId = ObjectId.GenerateNewId();
+        var danglingRegionId = ObjectId.GenerateNewId();
+        var danglingCustomerId = ObjectId.GenerateNewId();
+        var matchedCustomerId = ObjectId.GenerateNewId();
+        var danglingRegionCustomerId = ObjectId.GenerateNewId();
+        var nullRegionCustomerId = ObjectId.GenerateNewId();
+
+        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
+        {
+            seed.Set<Region>().Add(new Region { Id = matchedRegionId, Name = "Western Europe" });
+            seed.Set<Customer>().AddRange(
+                new Customer { Id = matchedCustomerId, Name = "Alfreds", RegionId = matchedRegionId },
+                new Customer { Id = danglingRegionCustomerId, Name = "Blauer", RegionId = danglingRegionId },
+                new Customer { Id = nullRegionCustomerId, Name = "Chop-suey", RegionId = null });
+            seed.Set<Order>().AddRange(
+                new Order { Id = ObjectId.GenerateNewId(), OrderNo = 1, CustomerId = matchedCustomerId },
+                new Order { Id = ObjectId.GenerateNewId(), OrderNo = 2, CustomerId = danglingRegionCustomerId },
+                new Order { Id = ObjectId.GenerateNewId(), OrderNo = 3, CustomerId = nullRegionCustomerId },
+                new Order { Id = ObjectId.GenerateNewId(), OrderNo = 4, CustomerId = danglingCustomerId });
+            seed.SaveChanges();
+        }
+
+        using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
+        var actual = RunTwoLevelLeftJoinTernary(db.Set<Order>(), db.Set<Customer>(), db.Set<Region>(), shape);
+
+        using var oracleDb = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq);
+        var expected = RunTwoLevelLeftJoinTernaryOracle(
+            oracleDb.Set<Order>().AsNoTracking().ToList(),
+            oracleDb.Set<Customer>().AsNoTracking().ToList(),
+            oracleDb.Set<Region>().AsNoTracking().ToList(),
+            shape);
+
+        Assert.Contains(expected, e => e.Contains(NoneSentinel, StringComparison.Ordinal));
+        Assert.Equal(expected, actual);
+    }
+
+    private static System.Collections.Generic.List<string> RunTwoLevelLeftJoinTernary(
+        IQueryable<Order> orders, IQueryable<Customer> customers, IQueryable<Region> regions, string shape)
+        => shape switch
+        {
+            "JoinThenLeftJoinBareTernary" => orders
+                .Join(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+                .OrderBy(x => x.o.OrderNo)
+                .Select(x => x.r != null ? x.r.Name : NoneSentinel)
+                .AsEnumerable().Select(s => s ?? "<null>").ToList(),
+            "LeftJoinThenLeftJoinBareTernary" => orders
+                .LeftJoin(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+                .OrderBy(x => x.o.OrderNo)
+                .Select(x => x.r != null ? x.r.Name : NoneSentinel)
+                .AsEnumerable().Select(s => s ?? "<null>").ToList(),
+            "LeftJoinThenLeftJoinFirstLevelTernary" => orders
+                .LeftJoin(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+                .OrderBy(x => x.o.OrderNo)
+                .Select(x => x.c != null ? x.c.Name : NoneSentinel)
+                .AsEnumerable().Select(s => s ?? "<null>").ToList(),
+            "LeftJoinThenLeftJoinWrappedTernary" => orders
+                .LeftJoin(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+                .OrderBy(x => x.o.OrderNo)
+                .Select(x => new { x.o.OrderNo, Region = x.r != null ? x.r.Name : NoneSentinel })
+                .AsEnumerable().Select(x => x.OrderNo + ":" + (x.Region ?? "<null>")).ToList(),
+            "LeftJoinThenLeftJoinResultSelectorTernary" => orders
+                .LeftJoin(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id,
+                    (x, r) => new { x.o.OrderNo, Region = r != null ? r.Name : NoneSentinel })
+                .OrderBy(x => x.OrderNo)
+                .AsEnumerable().Select(x => x.OrderNo + ":" + (x.Region ?? "<null>")).ToList(),
+            "JoinThenLeftJoinResultSelectorTernary" => orders
+                .Join(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id,
+                    (x, r) => new { x.o.OrderNo, Region = r != null ? r.Name : NoneSentinel })
+                .OrderBy(x => x.OrderNo)
+                .AsEnumerable().Select(x => x.OrderNo + ":" + (x.Region ?? "<null>")).ToList(),
+            // The same two left-outer levels reached through optional reference navigations, which EF expands
+            // into the LeftJoin chain itself.
+            "TwoHopNavigationTernary" => orders
+                .OrderBy(o => o.OrderNo)
+                .Select(o => o.Customer!.Region != null ? o.Customer.Region.Name : NoneSentinel)
+                .AsEnumerable().Select(s => s ?? "<null>").ToList(),
+            "TwoHopNavigationWrappedTernary" => orders
+                .OrderBy(o => o.OrderNo)
+                .Select(o => new { o.OrderNo, Region = o.Customer!.Region != null ? o.Customer.Region.Name : NoneSentinel })
+                .AsEnumerable().Select(x => x.OrderNo + ":" + (x.Region ?? "<null>")).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+
+    // LINQ-to-Objects spelling of the shapes above: the same operators, with `?.` where the database query's
+    // null-propagating member access would dereference an unmatched level-1 row in memory.
+    private static System.Collections.Generic.List<string> RunTwoLevelLeftJoinTernaryOracle(
+        System.Collections.Generic.List<Order> orders, System.Collections.Generic.List<Customer> customers,
+        System.Collections.Generic.List<Region> regions, string shape)
+    {
+        var innerFirst = orders
+            .Join(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c = (Customer?)c })
+            .LeftJoin(regions, x => x.c?.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+            .OrderBy(x => x.o.OrderNo)
+            .ToList();
+        var leftFirst = orders
+            .LeftJoin(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+            .LeftJoin(regions, x => x.c?.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+            .OrderBy(x => x.o.OrderNo)
+            .ToList();
+
+        return shape switch
+        {
+            "JoinThenLeftJoinBareTernary" => innerFirst.Select(x => x.r != null ? x.r.Name! : NoneSentinel).ToList(),
+            "LeftJoinThenLeftJoinBareTernary" or "TwoHopNavigationTernary" => leftFirst.Select(x => x.r != null ? x.r.Name! : NoneSentinel).ToList(),
+            "LeftJoinThenLeftJoinFirstLevelTernary" => leftFirst.Select(x => x.c != null ? x.c.Name! : NoneSentinel).ToList(),
+            "LeftJoinThenLeftJoinWrappedTernary" or "LeftJoinThenLeftJoinResultSelectorTernary" or "TwoHopNavigationWrappedTernary"
+                => leftFirst.Select(x => x.o.OrderNo + ":" + (x.r != null ? x.r.Name : NoneSentinel)).ToList(),
+            "JoinThenLeftJoinResultSelectorTernary"
+                => innerFirst.Select(x => x.o.OrderNo + ":" + (x.r != null ? x.r.Name : NoneSentinel)).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+    }
+#endif
 
     private static (string Orders, string Customers, string Regions) CreateCollectionNames(string testName)
     {

@@ -21,11 +21,9 @@ using Xunit;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query;
 
 /// <summary>
-/// BCL <c>Enumerable.Sum</c> is checked (throws <see cref="System.OverflowException"/> the moment the
-/// running total overflows). Mongo's <c>$sum</c> accumulator instead silently widens (int32 -&gt; int64 -&gt;
-/// double), so <c>DeserializeScalar</c> can be asked to narrow a widened accumulator value back down to
-/// TResult. These tests pin the accepted divergence: narrowing never throws, even though the returned value
-/// does not reproduce BCL's per-element checked semantics.
+/// BCL <c>Enumerable.Sum</c> is checked, but <c>$sum</c> silently widens (int32 -&gt; int64 -&gt; double), so
+/// <c>DeserializeScalar</c> may narrow a widened value back to TResult. Pins the accepted divergence: narrowing
+/// never throws, though it doesn't reproduce BCL's checked semantics.
 /// </summary>
 public class DeserializeScalarOverflowTests
 {
@@ -42,9 +40,8 @@ public class DeserializeScalarOverflowTests
     [Fact]
     public void Sum_int_narrowing_from_widened_int64_does_not_throw()
     {
-        // A $sum over int32 fields that overflows int32 is widened by the server to int64; the widened
-        // total here (4_000_000_000) is itself outside int's range. long -> int narrowing is a well-defined
-        // (modulo 2^32) unchecked conversion, so the expected value can be pinned exactly.
+        // An int32 $sum overflow widens to int64; long -> int narrowing is unchecked (modulo 2^32), so the
+        // value can be pinned exactly.
         long widened = 4_000_000_000L;
         var result = DeserializeScalar<int>(new BsonInt64(widened));
 
@@ -62,10 +59,8 @@ public class DeserializeScalarOverflowTests
     [Fact]
     public void Sum_long_narrowing_from_widened_double_does_not_throw()
     {
-        // A $sum over int64 fields that overflows int64 is widened by the server to double; a double this
-        // far outside long's range would throw OverflowException via Convert.ChangeType. The exact returned
-        // value is not part of the contract here (BCL Sum's per-element checked semantics are not
-        // reproduced) — only that narrowing completes without throwing.
+        // An int64 $sum overflow widens to double; Convert.ChangeType would throw for this value. Only
+        // "doesn't throw" is pinned, not the returned value.
         var exception = Record.Exception(() => DeserializeScalar<long>(new BsonDouble(1e20)));
 
         Assert.Null(exception);

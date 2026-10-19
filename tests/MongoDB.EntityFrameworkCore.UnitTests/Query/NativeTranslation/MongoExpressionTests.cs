@@ -21,8 +21,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 public class MongoExpressionTests
 {
-    // --- Entity model used across tests ---
-
     private class Customer
     {
         public MongoDB.Bson.ObjectId Id { get; set; }

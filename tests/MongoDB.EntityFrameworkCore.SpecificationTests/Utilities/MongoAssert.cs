@@ -22,10 +22,9 @@ internal static class MongoAssert
 {
     /// <summary>
     /// Assert that the query fails because it involves a correlated subquery
-    /// across collections that cannot be translated by the MongoDB provider. Driver-LINQ mode raises this
-    /// via a Mongo-specific guard with a message reporting "Unsupported cross-DbSet query"; native-only mode
-    /// rejects the same shape earlier, as <see cref="NativeTranslationNotSupportedException"/>. Both signal
-    /// the identical unsupported-shape condition, so either is accepted.
+    /// across collections that cannot be translated by the MongoDB provider. Accepts either the driver-LINQ
+    /// guard's "Unsupported cross-DbSet query" or, under native-only, the earlier
+    /// <see cref="NativeTranslationNotSupportedException"/>.
     /// </summary>
     public static async Task AssertUnsupportedCrossDbSetQuery(Func<Task> query)
     {

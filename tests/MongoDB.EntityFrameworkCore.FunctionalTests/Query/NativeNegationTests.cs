@@ -27,11 +27,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-396 coverage: <c>Not</c> over a subtree with no query-dialect form (e.g. a field-to-field
-/// comparison) used to hard-decline in <see cref="MongoQueryLanguageRenderer.RenderUnary"/>
-/// (<c>NativeTranslationNotSupportedException</c>), forcing a fallback to driver-LINQ. It now renders via
-/// <c>{ $expr: { $not: [...] } }</c> whenever <see cref="MongoAggregationExpressionRenderer.CanRender"/>
-/// admits the operand — see <see cref="MongoQueryLanguageRenderer.RenderUnary"/>'s new fallback branch.
+/// <c>Not</c> over a subtree with no query-dialect form (e.g. a field-to-field comparison) renders via
+/// <c>{ $expr: { $not: [...] } }</c> when <see cref="MongoAggregationExpressionRenderer.CanRender"/> admits the
+/// operand; see <see cref="MongoQueryLanguageRenderer.RenderUnary"/>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -71,17 +69,13 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
     private static string Mql(List<string> logs)
         => Assert.Single(logs, l => l.Contains("Executed MQL query"));
 
-    // Not over a field-to-field comparison has no query-dialect form at all (RenderComparison's
-    // IsQueryNativeComparison requires a bare-field/constant-or-parameter shape) — before this task,
-    // RenderUnary's final decline branch threw for this operand shape. It now falls to $expr via
-    // MongoAggregationExpressionRenderer, whose own Not arm renders it as { $not: [ { $eq: [...] } ] }.
+    // A field-to-field comparison has no query-dialect form, so Not over it renders via $expr.
     [Fact]
     public void NativeOnly_not_over_field_to_field_comparison_succeeds_with_expected_mql()
     {
         var (collection, logs) = Seed(nameof(NativeOnly_not_over_field_to_field_comparison_succeeds_with_expected_mql));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // !(A == B): excludes Row1 (A==B==1), includes Row2 (1,2) and Row3 (3,2).
         var result = db.Entities.AsNoTracking().Where(x => !(x.A == x.B)).ToList();
 
         Assert.Equal(2, result.Count);
@@ -107,34 +101,26 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal(driverIds, nativeIds);
     }
 
-    // Same operand shape, but composed inside a larger conjunction, to confirm the mixed-dialect
-    // combination (an indexable clause alongside the $expr-wrapped Not) still renders and executes.
+    // Mixed dialect: an indexable clause alongside the $expr-wrapped Not.
     [Fact]
     public void NativeOnly_not_over_field_to_field_comparison_composed_with_and_succeeds()
     {
         var (collection, logs) = Seed(nameof(NativeOnly_not_over_field_to_field_comparison_composed_with_and_succeeds));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // A > 0 (true for all three rows) && !(A == B) (excludes Row1) -> Row2, Row3.
         var result = db.Entities.AsNoTracking().Where(x => x.A > 0 && !(x.A == x.B)).ToList();
 
         Assert.Equal(2, result.Count);
     }
 
-    // EF-322 (Where_ternary_boolean_condition_negated): !(test ? false : true), a boolean-typed ternary used
-    // as a PREDICATE. MongoExpressionTranslator.TranslateNode (the predicate-position dispatcher Where uses)
-    // had no case for ConditionalExpression at all — only TranslateOperand (the VALUE-position ternary
-    // translator, for computed sort keys/projections) did — so this always declined to driver-LINQ, even
-    // though the render pipeline already supported it end to end (MongoAggregationExpressionRenderer's
-    // existing $cond support, and MongoQueryLanguageRenderer.RenderUnary's $expr fallback for a Not operand
-    // CanRender admits).
+    // A boolean ternary in predicate position (!(test ? false : true)), handled by TranslateNode and rendered
+    // as $cond under the $expr Not fallback.
     [Fact]
     public void NativeOnly_not_over_boolean_ternary_succeeds_with_expected_mql()
     {
         var (collection, logs) = Seed(nameof(NativeOnly_not_over_boolean_ternary_succeeds_with_expected_mql));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // !(A >= 2 ? false : true) == (A >= 2): only Row3 (A=3) satisfies A >= 2.
         var result = db.Entities.AsNoTracking().Where(x => !(x.A >= 2 ? false : true)).ToList();
 
         Assert.Single(result);
@@ -159,21 +145,9 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal(driverIds, nativeIds);
     }
 
-    // ── Whole-branch-review fix (EF-396): Not over a conjunction/disjunction of BARE fields ──────────
-    //
-    // The reviewer reproduced a silent-wrong-data regression: RenderUnary's new fallback branch (above)
-    // was the first Where-predicate caller of MongoAggregationExpressionRenderer.CanRender/Render.
-    // CanRender's MongoBinaryExpression{AndAlso/OrElse} arm recursed into CanRender(Left)/CanRender(Right),
-    // which for a bare MongoFieldExpression operand unconditionally answered `true` — with NO check that
-    // the field uses default BSON serialization. $and/$or evaluate a bare operand by TRUTHINESS, not CLR
-    // boolean value, so `!(x.Flag && x.Other)` where `Flag` is value-converted (e.g. HasConversion<string>()
-    // storing "Y"/"N", both non-empty/truthy strings) rendered successfully via
-    // `{ $expr: { $not: [ { $and: ["$Flag", "$Other"] } ] } }` and silently answered the WRONG boolean for
-    // any row where the converted Flag string doesn't happen to be falsy.
-    //
-    // Mirrors NativeComputedSortTests.Computed_sort_key_using_Not_over_a_value_converted_bool_declines_
-    // instead_of_answering_wrong's fixture/rigor: a custom converter maps BOTH true and false to non-empty
-    // ("Y"/"N") strings, so a raw-field $and is wrong for a false-Flag row, not just some of them.
+    // Not over $and/$or of bare fields: one $expr truthiness test would be unsafe for a value-converted bool stored as
+    // "Y"/"N" (both truthy). MongoExpressionNegator's De Morgan complement pushes the negation to each field, and a
+    // per-field Not renders as a converter-aware $ne in the query dialect, safe for any stored representation.
 
     public class LogicalFlagItem
     {
@@ -194,9 +168,8 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         bson.InsertMany([
             // p1: Flag=true (stored "Y", truthy), Other=true  -> Flag&&Other CLR-true  -> !(...) = false
             new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "p1" }, { "Flag", "Y" }, { "Other", true } },
-            // p2: Flag=false (stored "N", ALSO truthy), Other=true -> Flag&&Other CLR-false -> !(...) = true
-            // — this is the row the pre-fix code silently dropped: MQL's $and sees "N" as truthy, so it
-            // computed Flag&&Other = true and excluded p2, when the CLR-correct answer is true (include).
+            // p2: Flag=false (stored "N", also truthy), Other=true -> Flag&&Other CLR-false -> !(...) = true
+            // — a raw $and would see "N" as truthy and wrongly exclude this row.
             new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "p2" }, { "Flag", "N" }, { "Other", true } },
             // p3: Flag=false (stored "N"), Other=false -> Flag&&Other CLR-false -> !(...) = true
             new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "p3" }, { "Flag", "N" }, { "Other", false } },
@@ -218,23 +191,19 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
             });
 
     [Fact]
-    public void Not_over_and_of_a_value_converted_bare_bool_field_declines_instead_of_answering_wrong()
+    public void Not_over_and_of_a_value_converted_bare_bool_field_negates_exactly_via_per_field_ne()
     {
         var (collection, logs) = SeedLogicalFlag(
-            nameof(Not_over_and_of_a_value_converted_bare_bool_field_declines_instead_of_answering_wrong));
+            nameof(Not_over_and_of_a_value_converted_bare_bool_field_negates_exactly_via_per_field_ne));
 
-        // NativeOnly: a clean decline (NativeTranslationNotSupportedException), NEVER silently-wrong data —
-        // this is the load-bearing assertion the whole-branch review flagged. Before the fix, this line
-        // succeeded and silently returned only ["p3"], dropping "p2" (see the seed comment above).
+        // De Morgan's to !Flag || !Other (each a converter-aware $ne); never the truthiness-hazard answer a raw $and gives (only ["p3"]).
         using (var nativeOnly = CreateLogicalFlagContext(collection, logs, MongoQueryMode.NativeOnly))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => nativeOnly.Entities.AsNoTracking().Where(x => !(x.Flag && x.Other)).ToList());
+            var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking().Where(x => !(x.Flag && x.Other))
+                .ToList().Select(x => x.Label).OrderBy(l => l).ToList();
+            Assert.Equal(["p2", "p3"], nativeOnlyLabels);
         }
 
-        // Native falls back and must agree with DriverLinq, and both must equal the CLR-correct answer
-        // (["p2", "p3"]) — asserted as real rows, so a decline that silently returned nothing, everything,
-        // or the wrong subset fails here rather than passing vacuously.
         using (var native = CreateLogicalFlagContext(collection, [], MongoQueryMode.Native))
         using (var driver = CreateLogicalFlagContext(collection, [], MongoQueryMode.DriverLinq))
         {
@@ -248,23 +217,22 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         }
     }
 
-    // Same hazard, OrElse form: !(x.Flag || x.Other). Truth table over the same seed:
+    // Same shape, OrElse form: !(x.Flag || x.Other). Truth table over the same seed:
     // p1 Flag=true,Other=true  -> Flag||Other CLR-true  -> !(...) = false
     // p2 Flag=false,Other=true -> Flag||Other CLR-true  -> !(...) = false
     // p3 Flag=false,Other=false -> Flag||Other CLR-false -> !(...) = true
-    // A raw-field $or over "N" (truthy) would compute Flag||Other = true for EVERY row (since "N" is
-    // always truthy regardless of the CLR value), so !(...) would be false for every row — silently
-    // returning an EMPTY result instead of the correct ["p3"].
+    // De Morgan's to !Flag && !Other; a raw $or would return no rows ("N" is truthy too) instead of ["p3"].
     [Fact]
-    public void Not_over_or_of_a_value_converted_bare_bool_field_declines_instead_of_answering_wrong()
+    public void Not_over_or_of_a_value_converted_bare_bool_field_negates_exactly_via_per_field_ne()
     {
         var (collection, logs) = SeedLogicalFlag(
-            nameof(Not_over_or_of_a_value_converted_bare_bool_field_declines_instead_of_answering_wrong));
+            nameof(Not_over_or_of_a_value_converted_bare_bool_field_negates_exactly_via_per_field_ne));
 
         using (var nativeOnly = CreateLogicalFlagContext(collection, logs, MongoQueryMode.NativeOnly))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => nativeOnly.Entities.AsNoTracking().Where(x => !(x.Flag || x.Other)).ToList());
+            var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking().Where(x => !(x.Flag || x.Other))
+                .ToList().Select(x => x.Label).OrderBy(l => l).ToList();
+            Assert.Equal(["p3"], nativeOnlyLabels);
         }
 
         using (var native = CreateLogicalFlagContext(collection, [], MongoQueryMode.Native))
@@ -278,5 +246,48 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
             Assert.Equal(driverLabels, nativeLabels);
             Assert.Equal(["p3"], nativeLabels);
         }
+    }
+
+    public class NullableItem
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public int? NullableInt { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    // De Morgan'd per operand in the query dialect: {$not: {$lt: 5}} matches null/missing, as .NET's lifted
+    // `!(null < 5)` is true. An aggregation $not wrap would instead order null below 5 and answer false.
+    [Fact]
+    public void Negated_conjunction_over_nullable_relational_matches_linq_to_objects()
+    {
+        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Negated_conjunction_over_nullable_relational_matches_linq_to_objects)) + Guid.NewGuid().ToString("N")[..8];
+        var bson = database.MongoDatabase.GetCollection<BsonDocument>(name);
+        bson.InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "1a" }, { "NullableInt", 1 }, { "Name", "a" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "7a" }, { "NullableInt", 7 }, { "Name", "a" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "null-a" }, { "NullableInt", BsonNull.Value }, { "Name", "a" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "missing-a" }, { "Name", "a" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "1b" }, { "NullableInt", 1 }, { "Name", "b" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "null-b" }, { "NullableInt", BsonNull.Value }, { "Name", "b" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "missing-b" }, { "Name", "b" } },
+        ]);
+        var collection = database.MongoDatabase.GetCollection<NullableItem>(name);
+
+        using var nativeOnly = SingleEntityDbContext.Create(collection, optionsBuilderAction: b =>
+        {
+            b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+            new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+        });
+
+        var oracle = nativeOnly.Entities.AsNoTracking().ToList()
+            .Where(x => !(x.NullableInt < 5 && x.Name == "a")).Select(x => x.Label).OrderBy(l => l, StringComparer.Ordinal);
+        var result = nativeOnly.Entities.AsNoTracking()
+            .Where(x => !(x.NullableInt < 5 && x.Name == "a")).Select(x => x.Label).ToList()
+            .OrderBy(l => l, StringComparer.Ordinal);
+
+        Assert.Equal(oracle, result);
+        Assert.Equal(["1b", "7a", "missing-a", "missing-b", "null-a", "null-b"], result);
     }
 }

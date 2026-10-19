@@ -22,30 +22,23 @@ using MongoDB.Bson.Serialization.Serializers;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// The one-pass "deserialize IS materialize" output serializer. Supplied to <c>IMongoCollection.Aggregate</c>
-/// as the pipeline's output serializer so that each cursor row is materialized into a finished (and, on the
-/// tracked path, tracked) <typeparamref name="TEntity"/> in a single forward <see cref="IBsonReader"/> pass —
-/// the driver's own deserialization pass — rather than being read into a <c>RawBsonDocument</c> and
-/// materialized again in a second pass.
+/// The one-pass "deserialize IS materialize" output serializer: supplied to <c>IMongoCollection.Aggregate</c> so
+/// each cursor row is materialized (and, if tracked, tracked) into <typeparamref name="TEntity"/> during the
+/// driver's own deserialization pass, instead of reading a <c>RawBsonDocument</c> and materializing again.
 /// </summary>
 /// <remarks>
-/// <paramref name="shaper"/> is the compiled EF materializer produced by
-/// <see cref="MongoStreamingEntityMaterializerRewriter"/>, rewritten to read exactly one document off the
-/// reader it is handed (<c>ReadStartDocument</c> … fill loop … <c>ReadEndDocument</c>), with no open and no
-/// dispose — the driver cursor owns the reader. It is compiled with EF's <c>QueryContext</c>-typed materializer
-/// parameter, so the first argument is typed <see cref="QueryContext"/>; the captured
-/// <paramref name="queryContext"/> is the concrete <see cref="MongoQueryContext"/> (a <see cref="QueryContext"/>)
-/// for this execution, carrying the initialized state manager the tracked materializer needs.
+/// <paramref name="shaper"/> comes from <see cref="MongoStreamingEntityMaterializerRewriter"/> and reads exactly
+/// one document off the reader without opening or disposing it (the cursor owns the reader).
+/// <paramref name="queryContext"/> is this execution's <see cref="MongoQueryContext"/>, carrying the initialized
+/// state manager the tracked materializer needs.
 /// </remarks>
 internal sealed class MongoEntityMaterializerSerializer<TEntity>(
     Func<QueryContext, IBsonReader, BsonDeserializationContext, TEntity> shaper,
     MongoQueryContext queryContext)
     : SerializerBase<TEntity>
 {
-    // The incoming per-document context is threaded into the compiled shaper so per-property typed reads
-    // reuse ONE deserialization context (its Reader is the reader we read from) — no BsonDeserializationContext
-    // is allocated per property per row. This mirrors the driver's own class-map serializer, which reuses one
-    // context for every member of a document.
+    // The per-document context is passed into the shaper so every typed property read reuses it, as the
+    // driver's class-map serializer does, rather than allocating one per property per row.
     public override TEntity Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
         => shaper(queryContext, context.Reader, context);
 }

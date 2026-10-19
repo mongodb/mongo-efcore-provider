@@ -28,26 +28,13 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-358, the STREAMING half. <see cref="ProjectedCollectionNormalizationTests"/> covers the DOM shaper;
-/// this class covers the one-pass streaming materializer
-/// (<see cref="MongoStreamingEntityMaterializerRewriter"/>), which is a completely separate materialization
-/// path and needed its own fix for the same bug.
+/// Missing/null owned-collection normalization to an empty collection on the streaming materializer
+/// (<see cref="MongoStreamingEntityMaterializerRewriter"/>); <see cref="ProjectedCollectionNormalizationTests"/>
+/// covers the DOM shaper.
 /// <para>
-/// Every other fixture on the EF-358 branch is MASKED against this path, which is how the gap survived nine
-/// review rounds: <see cref="ProjectedCollectionNormalizationTests"/>' Blog declares
-/// <c>Posts { get; set; } = []</c> AND its Post owns Comments (a navigation on the collection element, which
-/// makes the shape streaming-INELIGIBLE, so it routes to the DOM shaper); the OwnedEntityTests cases all use
-/// <c>First()</c>, and a reducer is compiled DOM-only (<c>allowStreaming: false</c>); StoredDataStillReadableTests
-/// likewise uses <c>First(...)</c>. The ONE shape that actually streams is a whole-entity <c>ToList()</c> over a
-/// FLAT owned collection — hence <see cref="FlatBlog"/> below.
-/// </para>
-/// <para>
-/// The model is written to be un-masked in both ways that matter, and each is load-bearing rather than
-/// stylistic: <see cref="FlatBlog.Posts"/> carries NO <c>= []</c> field initializer (with one, the CLR default
-/// is already an empty collection and the test cannot tell provider normalization from initializer masking),
-/// and <see cref="FlatPost"/> carries NO navigation of its own (with one, StreamingEligibility routes the
-/// query to the DOM shaper and the test would be vacuously green — asserted explicitly in each test rather
-/// than assumed).
+/// Only a whole-entity <c>ToList()</c> over a flat owned collection streams: reducers (<c>First()</c>) compile
+/// DOM-only, and an element navigation makes the shape streaming-ineligible. So <see cref="FlatBlog.Posts"/>
+/// has no <c>= []</c> initializer (which would mask the fix) and <see cref="FlatPost"/> has no navigations.
 /// </para>
 /// </summary>
 [XUnitCollection("QueryTests")]
@@ -59,14 +46,13 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
         public ObjectId Id { get; set; }
         public string Title { get; set; } = "";
 
-        // NO `= []` initializer, ON PURPOSE — see the class doc comment. The CLR default is null, so an
-        // empty collection here can only have come from the provider.
+        // No `= []` initializer on purpose: an empty collection here can only come from the provider.
         public List<FlatPost> Posts { get; set; }
     }
 
     public class FlatPost
     {
-        // NO navigation of its own, ON PURPOSE — an element navigation makes the shape streaming-ineligible.
+        // No navigations on purpose: an element navigation makes the shape streaming-ineligible.
         public string Heading { get; set; }
     }
 
@@ -86,7 +72,7 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    // A null `posts` means the FIELD IS ABSENT; BsonNull.Value means the field is present and explicitly null.
+    // A null `posts` means the field is absent; BsonNull.Value means present and explicitly null.
     private static BsonDocument Row(string title, BsonValue? posts)
     {
         var doc = new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", title } };
@@ -111,10 +97,8 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
         return database.MongoDatabase.GetCollection<FlatBlog>(coll.CollectionNamespace.CollectionName);
     }
 
-    // Proves the shape this class relies on genuinely takes the streaming path. Asserted, not assumed: a
-    // navigation added to FlatPost (or a composite PK, or a TPH base type) would silently route these queries
-    // to the DOM shaper and make every test below vacuous — exactly how the streaming gap survived nine
-    // review rounds on this branch.
+    // Guards against the model drifting (a FlatPost navigation, composite PK, TPH base) and silently routing
+    // these queries to the DOM shaper, which would make every test here vacuous.
     private static void AssertStreamingEligible(DbContext db)
     {
         var entityType = db.Model.FindEntityType(typeof(FlatBlog))!;
@@ -126,11 +110,9 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
     [Fact]
     public void Streamed_whole_entity_normalizes_a_missing_or_null_array_to_an_empty_collection()
     {
-        // THE MUTATION PIN for the streaming half of EF-358. Revert the post-loop normalization in
-        // MongoStreamingEntityMaterializerRewriter.BuildFillLoop and the `missing` and `null` rows come back
-        // with Posts == null. NativeOnly is used deliberately: it is the only reliable "went native" signal,
-        // AND it makes an un-streamable shape throw instead of silently degrading to the DOM shaper (which
-        // would hide a regression in the very path under test).
+        // Pins the post-loop normalization in MongoStreamingEntityMaterializerRewriter.BuildFillLoop; without it
+        // the `missing` and `null` rows come back with Posts == null. NativeOnly so a non-streamable shape
+        // throws rather than silently using the DOM shaper.
         var collection = Seed(nameof(Streamed_whole_entity_normalizes_a_missing_or_null_array_to_an_empty_collection));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
@@ -146,9 +128,7 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
     [Fact]
     public void Streamed_whole_entity_agrees_with_driver_linq_for_every_array_state()
     {
-        // Restoring this agreement is the point of the fix: at branch base every path answered null, and the
-        // first two EF-358 edits moved only the DOM path, so Native (streaming) and DriverLinq diverged for a
-        // SUPPORTED query. Asserted across all three modes so a future change to either path is caught.
+        // Native (streaming), NativeOnly and DriverLinq must agree for a supported query.
         var collection = Seed(nameof(Streamed_whole_entity_agrees_with_driver_linq_for_every_array_state));
 
         int?[] Counts(MongoQueryMode mode)
@@ -173,9 +153,8 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
     [Fact]
     public void Streamed_and_reduced_paths_agree_for_a_missing_or_null_array()
     {
-        // ToList() streams; First() is compiled DOM-only (allowStreaming: false), so the same document read
-        // through the two paths is the cheapest cross-path check that the streaming fix and the DOM fix agree.
-        // Pre-fix these disagreed: ToList() answered null and First() answered an empty collection.
+        // ToList() streams while First() is compiled DOM-only (allowStreaming: false), so this checks the two
+        // materialization paths agree on the same document.
         var collection = Seed(nameof(Streamed_and_reduced_paths_agree_for_a_missing_or_null_array));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);

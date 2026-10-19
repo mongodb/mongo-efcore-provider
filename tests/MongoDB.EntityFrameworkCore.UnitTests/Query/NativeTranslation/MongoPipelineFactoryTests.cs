@@ -45,7 +45,7 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // Test 1 (headline): same factory, different parameter values, template NOT mutated
+    // Same factory, different parameter values, template not mutated
     // ------------------------------------------------------------------
 
     [Fact]
@@ -74,9 +74,8 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // Test 1b: `args[i]`-shaped query-parameter array element extraction (EF-322's
-    // Query_with_array_parameter gap) — Build extracts the element from the raw ARRAY parameter value,
-    // per execution, before serializing it.
+    // `args[i]` array-parameter element: Build extracts the element from the raw array value per execution
+    // before serializing it.
     // ------------------------------------------------------------------
 
     [Fact]
@@ -118,7 +117,7 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // Test 2: constant value baked into template — Build with empty dict works
+    // Constant value baked into template — Build with empty dict works
     // ------------------------------------------------------------------
 
     [Fact]
@@ -139,7 +138,7 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // Test 3: $sort stage — ascending + descending orderings
+    // $sort stage — ascending + descending orderings
     // ------------------------------------------------------------------
 
     [Fact]
@@ -164,7 +163,7 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // Test 4: multi-stage canonical pipeline: match + sort + skip + limit
+    // Multi-stage canonical pipeline: match + sort + skip + limit
     // ------------------------------------------------------------------
 
     [Fact]
@@ -203,13 +202,12 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // Test 5: $skip with a parameterized count (forSerialization: null) — BsonValue.Create path
+    // $skip with a parameterized count (forSerialization: null) — BsonValue.Create path
     // ------------------------------------------------------------------
 
     [Fact]
     public void Null_serializer_placeholder_substitutes_BsonValue_Create()
     {
-        // $skip with a PARAMETERIZED count (forSerialization: null)
         var skipParam = new MongoParameterExpression("skip_count", forSerialization: null);
         var stages = new List<MongoPipelineStage> { new MongoSkipStage(skipParam) };
         var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
@@ -227,9 +225,7 @@ public class MongoPipelineFactoryTests
     [Fact]
     public void Build_rewrites_limit_zero_constant_to_an_always_false_match()
     {
-        // A baked constant $limit: 0 is meaningless to MongoDB's own $limit stage, so it is rewritten to an
-        // always-false $match (mirroring the driver-LINQ bridge's Take(0) -> Where(false) rewrite, EF-254)
-        // instead of throwing before reaching MongoDB.
+        // MongoDB rejects $limit: 0, so it is rewritten to an always-false $match (as driver-LINQ does for Take(0)).
         var ageProperty = GetProperty<Customer>("Age");
         var stages = new List<MongoPipelineStage>
         {
@@ -260,8 +256,7 @@ public class MongoPipelineFactoryTests
     [Fact]
     public void Build_rewrites_limit_zero_parameter_to_an_always_false_match()
     {
-        // A parameterized Take that binds to 0 at execution time is rewritten to an always-false $match, the
-        // same as a baked constant zero.
+        // A parameterized Take binding to 0 is rewritten the same way as a constant zero.
         var limitParam = new MongoParameterExpression("take_count", forSerialization: null);
         var stages = new List<MongoPipelineStage> { new MongoLimitStage(limitParam) };
         var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
@@ -315,7 +310,6 @@ public class MongoPipelineFactoryTests
         var stages = new List<MongoPipelineStage> { new MongoSkipStage(skipParam) };
         var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
 
-        // Should NOT throw
         var result = factory.Build(new Dictionary<string, object?> { ["skip_count"] = 0 });
         Assert.Equal(BsonDocument.Parse("{ $skip: 0 }"), result[0]);
     }
@@ -462,9 +456,8 @@ public class MongoPipelineFactoryTests
     [Fact]
     public void Operand_parameterized_predicate_shares_the_outer_placeholder_table()
     {
-        // Proves operand stages render into the SAME PlaceholderTable as the outer pipeline:
-        // the parameter substitutes correctly at Build time even though it originates inside
-        // the nested $unionWith pipeline.
+        // Operand stages share the outer pipeline's PlaceholderTable, so a parameter inside $unionWith
+        // substitutes at Build time.
         var ageProperty = GetProperty<Customer>("Age");
         var pred = new MongoBinaryExpression(
             MongoBinaryOperator.GreaterThan,
@@ -484,8 +477,7 @@ public class MongoPipelineFactoryTests
     [Fact]
     public void Operand_limit_zero_is_rewritten_to_an_always_false_match_inside_Build()
     {
-        // Proves NormalizePagingStages recurses into the union operand's own stages for $limit: 0, the same
-        // as the top-level case, rewriting rather than throwing.
+        // NormalizePagingStages recurses into union operand stages for $limit: 0.
         var ageProperty = GetProperty<Customer>("Age");
         var operand = new List<MongoPipelineStage>
         {
@@ -503,9 +495,7 @@ public class MongoPipelineFactoryTests
     [Fact]
     public void Operand_skip_negative_throws_ArgumentOutOfRangeException_from_Build()
     {
-        // Mirrors Operand_limit_zero_throws_ArgumentOutOfRangeException_from_Build, but for $skip:
-        // proves ValidatePagingStages recurses into the union operand's stages for $skip too,
-        // symmetric with $limit.
+        // NormalizePagingStages recurses into union operand stages for $skip too.
         var ageProperty = GetProperty<Customer>("Age");
         var operand = new List<MongoPipelineStage>
         {
@@ -521,11 +511,8 @@ public class MongoPipelineFactoryTests
     [Fact]
     public void Outer_and_operand_parameterized_predicates_each_substitute_their_own_value()
     {
-        // Strengthens Operand_parameterized_predicate_shares_the_outer_placeholder_table: that test
-        // proves a fresh/empty placeholder table still resolves a single operand parameter. This test
-        // proves the shared table indexes TWO DIFFERENT parameters correctly — one bound in the OUTER
-        // pipeline and a DIFFERENT one nested inside the union OPERAND — guarding against an
-        // index-collision regression (not just a fresh-empty-table one).
+        // Two different parameters, one outer and one inside the union operand, must each get their own slot in
+        // the shared placeholder table (guards against index collisions).
         var ageProperty = GetProperty<Customer>("Age");
 
         var outerPred = new MongoBinaryExpression(
@@ -559,7 +546,7 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // MongoUnwindFieldStage — owned-collection SelectMany unwind (EF-347 slice 3)
+    // MongoUnwindFieldStage — owned-collection SelectMany unwind
     // ------------------------------------------------------------------
 
     [Fact]
@@ -575,9 +562,8 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // MongoUnwindFieldStage.IncludeArrayIndex + MongoReplaceRootStage — bare whole-element owned
-    // SelectMany (EF-347 bare-owned spike): $unwind carries the array ordinal via includeArrayIndex,
-    // and $replaceRoot merges the owner key + ordinal into the re-rooted element.
+    // MongoUnwindFieldStage.IncludeArrayIndex + MongoReplaceRootStage — bare whole-element owned SelectMany:
+    // $unwind carries the ordinal, and $replaceRoot merges owner key + ordinal into the re-rooted element.
     // ------------------------------------------------------------------
 
     [Fact]
@@ -606,8 +592,7 @@ public class MongoPipelineFactoryTests
         var result = factory.Build(new Dictionary<string, object?>());
 
         Assert.Single(result);
-        // The two sentinels are nested one level under the single reserved wrapper field (EF-428) so that no
-        // ordinary top-level stored property can ever be overwritten by the merge.
+        // Sentinels are nested under one reserved wrapper field so the merge can't overwrite a stored property.
         Assert.Equal(
             BsonDocument.Parse(
                 "{ $replaceRoot: { newRoot: { $mergeObjects: [ \"$Items\", "
@@ -633,9 +618,8 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // MongoUnwindStage — preserveNullAndEmptyArrays (EF-347 slice 5, Task 3): the reference-Include
-    // $unwind (LEFT-join, unchanged) must keep preserve:true; the NEW ForceUnwind-collection SelectMany
-    // flatten (INNER-join) must render preserve:false.
+    // MongoUnwindStage — preserveNullAndEmptyArrays: reference-Include $unwind (left join) keeps
+    // preserve:true; ForceUnwind collection SelectMany (inner join) renders preserve:false.
     // ------------------------------------------------------------------
 
     private class LookupChild
@@ -717,7 +701,7 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // MongoAddFieldsStage / MongoUnsetStage / RenderSort widening — EF-401 (slice B)
+    // MongoAddFieldsStage / MongoUnsetStage / RenderSort computed keys
     // ------------------------------------------------------------------
 
     [Fact]
@@ -741,10 +725,8 @@ public class MongoPipelineFactoryTests
             pipeline[0]);
     }
 
-    // EF-401 Task 4, carried item (b): the $literal wrap around a BARE parameter body had ZERO coverage.
-    // The case that was cited for it (NativeComputedSortTests' `x.A * factor`) has a MongoBinaryExpression
-    // key, so its sentinel is never wrapped at all. This pins the wrapped-parameter path directly: the
-    // sentinel sits one level down, inside { "$literal": ... }, and Build must still find and replace it.
+    // A bare parameter body is $literal-wrapped, putting the sentinel one level down; Build must still find
+    // and replace it.
     [Fact]
     public void Build_substitutes_a_parameter_sentinel_nested_inside_a_literal_wrap()
     {
@@ -759,9 +741,8 @@ public class MongoPipelineFactoryTests
         var first = factory.Build(new Dictionary<string, object?> { ["p0"] = 5 });
         var second = factory.Build(new Dictionary<string, object?> { ["p0"] = "$Label" });
 
-        // Both halves matter. The "$literal" wrap is what stops a '$'-prefixed STRING value being read as a
-        // field path (silent wrong order); the substituted VALUE inside it is what proves the wrap did not
-        // hide the sentinel from Build's SubstituteValue walk. An unwrapped body would be { "__sort0" : 5 }.
+        // The wrap stops a '$'-prefixed string being read as a field path (silent wrong order); the substituted
+        // value proves the wrap didn't hide the sentinel from SubstituteValue.
         Assert.Equal(BsonDocument.Parse("""{ "$set" : { "__sort0" : { "$literal" : 5 } } }"""), first[0]);
         Assert.Equal(BsonDocument.Parse("""{ "$set" : { "__sort0" : { "$literal" : "$Label" } } }"""), second[0]);
     }
@@ -787,13 +768,13 @@ public class MongoPipelineFactoryTests
 
         var pipeline = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()).Build(new Dictionary<string, object?>());
 
-        // "__sort0", NOT "$__sort0" — $sort takes field PATHS, not aggregation field references.
+        // "__sort0", not "$__sort0" — $sort takes field paths, not aggregation field references.
         Assert.Equal(BsonDocument.Parse("""{ "$sort" : { "__sort0" : 1 } }"""), pipeline[0]);
     }
 
     // ------------------------------------------------------------------
-    // MongoRegexExpression with a PARAMETERIZED term — the escape+anchor transform must run at
-    // Build (per-execution) time, not render (compile) time, since the value isn't known yet.
+    // MongoRegexExpression with a parameterized term — escape+anchor must run at Build time, since the
+    // value isn't known at render time.
     // ------------------------------------------------------------------
 
     [Fact]
@@ -885,24 +866,20 @@ public class MongoPipelineFactoryTests
             new MongoSortStage([new MongoOrdering(new MongoConstantExpression(1, forSerialization: null), Ascending: true)])
         };
 
-        // The lowerer is what turns a computed key into an element ref; a raw non-field key reaching the
-        // renderer means that rewrite did not happen, and must stay loud rather than emit a wrong $sort.
+        // A raw non-field key here means the lowerer didn't rewrite it; stay loud rather than emit a wrong $sort.
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()));
     }
 
     // ------------------------------------------------------------------
-    // MongoLookupStage rendering with pipeline stages (EF-449)
+    // MongoLookupStage rendering with pipeline stages
     // ------------------------------------------------------------------
 
     [Fact]
     public void Lookup_stage_includes_pipeline_field_when_HasPipeline()
     {
-        // EF-450: RenderLookup's localField/foreignField+pipeline shape is now specific to
-        // LookupPipelineKind.CorrelatedReducer — a bare HasPipeline lookup with no kind tagged (which no
-        // real registration path produces any more) renders via the let+pipeline shape instead (see
-        // Lookup_stage_uses_let_pipeline_shape_for_NestedInclude below). Tag the kind explicitly so this
-        // test still exercises the shape it names.
+        // The localField/foreignField+pipeline shape is specific to LookupPipelineKind.CorrelatedReducer;
+        // untagged lookups use let+pipeline (see Lookup_stage_uses_let_pipeline_shape_for_NestedInclude).
         var navigation = ChildrenNavigation();
         var lookup = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.CorrelatedReducer };
         lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
@@ -916,7 +893,6 @@ public class MongoPipelineFactoryTests
         var lookupDoc = result[0]["$lookup"].AsBsonDocument;
         Assert.True(lookupDoc.Contains("pipeline"));
         Assert.Equal(new BsonArray { new BsonDocument("$limit", 1) }, lookupDoc["pipeline"]);
-        // Also verify that the standard fields are still present
         Assert.Equal("LookupChild", lookupDoc["from"].AsString);
         Assert.Equal("_id", lookupDoc["localField"].AsString);
         Assert.Equal("ParentId", lookupDoc["foreignField"].AsString);
@@ -926,10 +902,8 @@ public class MongoPipelineFactoryTests
     [Fact]
     public void Lookup_stage_uses_let_pipeline_shape_for_NestedInclude()
     {
-        // EF-450: a NestedInclude-kind lookup (a collection-then-collection/reference ThenInclude) renders
-        // via LookupExpression.ToLookupStageDocument()'s let+pipeline shape — the SAME shape the driver-LINQ
-        // fallback bridge already emits for this kind — not the CorrelatedReducer localField/foreignField
-        // +pipeline shape.
+        // NestedInclude lookups render via LookupExpression.ToLookupStageDocument()'s let+pipeline shape (as
+        // the driver-LINQ bridge does), not the CorrelatedReducer localField/foreignField+pipeline shape.
         var navigation = ChildrenNavigation();
         var lookup = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.NestedInclude };
         lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
@@ -969,10 +943,8 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
-    // EF-322 SP1 fix-pass: a $-prefixed string constant/parameter GROUP KEY must render $literal-wrapped,
-    // exactly like every other constant/parameter rendering site in this file (RenderAddFields, the
-    // accumulator-operand branch inside RenderKeyedGroup itself) already does — otherwise the server
-    // silently reinterprets it as a field path, giving a WRONG grouping rather than a decline.
+    // A $-prefixed string constant/parameter group key must be $literal-wrapped; otherwise the server reads
+    // it as a field path and silently groups wrong.
     // ------------------------------------------------------------------
 
     [Fact]

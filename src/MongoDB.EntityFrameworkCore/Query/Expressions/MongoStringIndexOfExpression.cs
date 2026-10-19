@@ -18,24 +18,24 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// The single-argument, ordinal <c>string.IndexOf(string)</c> overload — the character index of
-/// <see cref="Needle"/>'s first occurrence in <see cref="Haystack"/>, or -1 if absent — rendered in the
-/// aggregation-expression dialect as <c>$indexOfCP</c>.
+/// Ordinal <c>string.IndexOf(string|char)</c> and <c>IndexOf(string|char, int startIndex)</c>, rendered as
+/// <c>$indexOfCP</c> in the aggregation-expression dialect.
 /// </summary>
 /// <remarks>
-/// Both operands are the general <see cref="MongoExpression"/> type, not a bare field — <c>$indexOfCP</c>
-/// accepts any string-valued EXPRESSION for either argument, matching <see cref="MongoDateAddExpression"/>'s
-/// own operand shape. Like <see cref="MongoDatePartExpression"/> and <see cref="MongoDateAddExpression"/>,
-/// this node has no query-dialect form (it produces an integer VALUE, not a predicate) and must never be
-/// admitted by <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>.
+/// Integer-valued with no query-dialect form, so <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>
+/// must never admit it.
 /// </remarks>
-internal sealed class MongoStringIndexOfExpression(MongoExpression haystack, MongoExpression needle) : MongoExpression
+internal sealed class MongoStringIndexOfExpression(
+    MongoExpression haystack, MongoExpression needle, MongoExpression? start = null) : MongoExpression
 {
     /// <summary>The string-valued expression searched.</summary>
     public MongoExpression Haystack { get; } = haystack;
 
     /// <summary>The string-valued expression searched for.</summary>
     public MongoExpression Needle { get; } = needle;
+
+    /// <summary>Code-point start index (<c>IndexOf(value, startIndex)</c>), or <see langword="null"/>.</summary>
+    public MongoExpression? Start { get; } = start;
 
     /// <inheritdoc />
     public override Type Type { get; } = typeof(int);

@@ -22,14 +22,9 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// An enum-to-enum CAST projection leaf (<c>(TargetEnum)c.SourceEnum</c> — mapping an entity enum onto an
-/// unrelated DTO enum) has no <c>$toX</c> form (<see cref="MongoDB.EntityFrameworkCore.Query.Expressions.MongoConvertExpression.ToOperatorFor"/>
-/// only maps <c>int</c>/<c>long</c>/<c>double</c>/<c>decimal</c>), so it used to decline the WHOLE projecting
-/// <c>Select</c> outright — the gap behind
-/// <c>BuiltInDataTypesMongoTest.Can_filter_projection_with_captured_enum_variable</c>/<c>_inline_enum_variable</c>.
-/// It needs no server-side computation: the cast only changes the leaf's DECLARED CLR type, never the stored
-/// value, so <c>NativeProjectionBinder.TryTranslateLeaf</c> now admits it as a bare field leaf (dropping the
-/// cast entirely) and the existing per-property DOM read materializes the target enum correctly.
+/// An enum-to-enum cast projection leaf (<c>(TargetEnum)c.SourceEnum</c>) has no <c>$toX</c> form but needs
+/// none: it changes only the declared CLR type, so <c>NativeProjectionBinder.TryTranslateLeaf</c> binds it as a
+/// bare field leaf and the DOM read materializes the target enum.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeEnumCastProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>

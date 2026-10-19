@@ -15,10 +15,7 @@
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-/// <summary>
-/// Represents a single ordering key in a MongoDB query, carrying the key selector
-/// expression and the sort direction.
-/// </summary>
-/// <param name="KeySelector">The expression whose value determines the sort key.</param>
-/// <param name="Ascending"><see langword="true"/> for ascending order; <see langword="false"/> for descending.</param>
+/// <summary>A single ordering key: selector plus direction.</summary>
+/// <param name="KeySelector">The sort key expression.</param>
+/// <param name="Ascending"><see langword="true"/> for ascending order.</param>
 internal readonly record struct MongoOrdering(MongoExpression KeySelector, bool Ascending);

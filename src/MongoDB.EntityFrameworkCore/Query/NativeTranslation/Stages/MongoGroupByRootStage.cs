@@ -16,13 +16,9 @@
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// EF-322: <c>{ "$group": { "_id": "$$ROOT" } }</c> — groups by the WHOLE document, the first half of the
-/// whole-entity <c>Distinct()</c> dedup pattern (paired with a following <see cref="MongoReplaceRootStage"/>
-/// reading <c>"$_id"</c> back out). Mirrors the literal BSON <c>MongoPipelineFactory.RenderUnionWith</c> already
-/// emits for <c>Union</c>'s own dedup — a dedicated marker type here (rather than stretching
-/// <see cref="MongoGroupStage"/>/<see cref="Expressions.MongoGrouping"/>, which model a NAMED key plus
-/// accumulators) because this stage has neither: no key parts, no accumulators, nothing dialect-specific to
-/// carry. A marker record — carries no data of its own.
+/// <c>{ "$group": { "_id": "$$ROOT" } }</c> — the first half of whole-entity <c>Distinct()</c> dedup, paired
+/// with a following <see cref="MongoReplaceRootStage"/> reading <c>"$_id"</c> back out. A data-less marker
+/// rather than a <see cref="MongoGroupStage"/>, which models a named key plus accumulators.
 /// </summary>
 internal sealed class MongoGroupByRootStage : MongoPipelineStage
 {

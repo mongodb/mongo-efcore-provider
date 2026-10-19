@@ -21,11 +21,9 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// Represents an <c>$unset</c> aggregation stage that removes one or more top-level fields from each document.
 /// </summary>
 /// <remarks>
-/// Removes the synthetic sort fields <see cref="MongoAddFieldsStage"/> added.
-/// <b>Required for set-op correctness, not just shaper hygiene:</b> a set-op operand is allowed to carry a
-/// sort, but <c>Union</c>'s dedup (<c>$group {_id: "$$ROOT"}</c>) and <c>Intersect</c>/<c>Except</c>'s source
-/// tagging (<c>$group {_id: "$_doc"}</c>) compare WHOLE documents downstream. Without this <c>$unset</c> the
-/// synthetic sort field would fold into that comparison key and silently change set semantics.
+/// Removes the synthetic sort fields <see cref="MongoAddFieldsStage"/> added. Required for set-op correctness:
+/// <c>Union</c>/<c>Intersect</c>/<c>Except</c> compare whole documents, so a leftover sort field would silently
+/// change set semantics.
 /// </remarks>
 internal sealed class MongoUnsetStage : MongoPipelineStage
 {

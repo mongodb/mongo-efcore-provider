@@ -31,13 +31,8 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Generalizes <c>MongoExpressionTranslator.EntityEquality.cs</c>'s <c>TryTranslateEntityListContains</c>
-/// (<c>customers.Contains(c)</c>, root entity as the Contains item) to the shape EF Core's own
-/// <c>Where_navigation_contains</c> spec test exercises: <c>customer.Orders.Contains(od.Order)</c>, where the
-/// Contains item is a TO-ONE REFERENCE NAVIGATION off the root entity, not the root entity itself. Unlike a
-/// two-sided <c>Join</c>, this needs no <c>$lookup</c> at all — the navigation's own foreign-key property,
-/// already present on the root document, stands in for the target's principal-key value, so the rewrite is a
-/// primary-key-vs-foreign-key <c>$in</c> exactly like the whole-entity case, just keyed off the FK field.
+/// Entity-list <c>Contains</c> where the item is a reference navigation (<c>parents.Contains(c.Parent)</c>, as in
+/// EF's <c>Where_navigation_contains</c>): translated without <c>$lookup</c> as an <c>$in</c> on the root's FK.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeReferenceNavigationEntityListContainsTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -98,9 +93,7 @@ public class NativeReferenceNavigationEntityListContainsTests(TemporaryDatabaseF
 
         List<Parent?> parents = seed.Parents.Where(p => p.Name == "Alice").ToList<Parent?>();
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves `parents.Contains(c.Parent)` went through the native FK-based $in path rather than
-        // driver-LINQ.
+        // NativeOnly: success proves the native FK-based $in path was taken.
         var results = db.Children.AsNoTracking().Where(c => parents.Contains(c.Parent)).ToList();
 
         Assert.Equal(2, results.Count);

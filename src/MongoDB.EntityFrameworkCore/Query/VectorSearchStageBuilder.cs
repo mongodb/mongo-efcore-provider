@@ -31,55 +31,41 @@ using MongoDB.EntityFrameworkCore.Metadata;
 namespace MongoDB.EntityFrameworkCore.Query;
 
 /// <summary>
-/// Builds the driver's <c>$vectorSearch</c> pipeline stage for a
-/// <c>MongoQueryableExtensions.VectorSearch</c> call.
+/// Builds the driver's <c>$vectorSearch</c> stage for a <c>MongoQueryableExtensions.VectorSearch</c> call.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Extracted verbatim from <c>MongoEFToLinqTranslatingExpressionVisitor.ProcessVectorSearch</c> so that the
-/// driver-LINQ bridge and (later) the native translator run the SAME validation, index resolution, diagnostics
-/// and driver call, in the same order, across the same reflection boundary. One implementation, two callers —
-/// duplicating any of it is how the two paths drift on the observable exceptions and warnings.
+/// Shared by the driver-LINQ bridge and the native translator so both run the same validation, index resolution,
+/// diagnostics and driver call, and can't drift on observable exceptions and warnings.
 /// </para>
 /// <para>
-/// <b>The three-way split is load-bearing, not decoration.</b> <see cref="Resolve"/> contains NO reflection, so
-/// the exceptions it throws surface unwrapped, exactly as they do today: in particular the
-/// <c>Exact</c>+<c>NumberOfCandidates</c> guard throws <see cref="InvalidOperationException"/> from ordinary
-/// code BEFORE <see cref="CreateStage"/>'s reflection <see cref="MethodBase.Invoke(object,object[])"/>. Moving
-/// that guard (or the member/index resolution) inside the reflection-invoked generic would wrap it in
-/// <see cref="TargetInvocationException"/> and change the observable exception on BOTH paths.
+/// <see cref="Resolve"/> has no reflection, so its exceptions (notably the <c>Exact</c>+<c>NumberOfCandidates</c>
+/// <see cref="InvalidOperationException"/>) surface unwrapped. Moving them into the reflection-invoked generic
+/// would wrap them in <see cref="TargetInvocationException"/> on both paths.
 /// </para>
 /// <para>
-/// <b>Do NOT add <see cref="BindingFlags.DoNotWrapExceptions"/> to <see cref="CreateStage"/>'s
-/// <c>Invoke</c>.</b> Today a non-positive <c>limit</c> surfaces as <see cref="TargetInvocationException"/>
-/// wrapping <see cref="ArgumentOutOfRangeException"/> (<c>Parameter 'limit'</c>) — thrown by the driver's own
-/// builder, before any I/O — and that is reachable on released packages. Unwrapping it would be observable to
-/// an upgrading consumer. For the same reason, do NOT teach
-/// <c>MongoPipelineFactory.ValidatePagingStages</c> to look inside a <c>$vectorSearch</c> body: that would
-/// produce the <c>Take(0)</c>-style <see cref="ArgumentOutOfRangeException"/> (<c>Parameter 'count'</c>)
-/// instead, i.e. it would CREATE a divergence where none exists.
+/// Don't add <see cref="BindingFlags.DoNotWrapExceptions"/> to <see cref="CreateStage"/>'s <c>Invoke</c>: a
+/// non-positive <c>limit</c> surfacing as <see cref="TargetInvocationException"/> wrapping
+/// <see cref="ArgumentOutOfRangeException"/> (<c>Parameter 'limit'</c>) is shipped behavior. Likewise, don't make
+/// <c>MongoPipelineFactory.ValidatePagingStages</c> inspect <c>$vectorSearch</c>; that would throw the
+/// <c>Take(0)</c>-style <c>Parameter 'count'</c> exception instead and create a divergence.
 /// </para>
 /// </remarks>
 internal static class VectorSearchStageBuilder
 {
     /// <summary>
-    /// Resolves the member the vector search targets and the index it will use, applies the
-    /// <c>Exact</c>+<c>NumberOfCandidates</c> guard, and logs the <c>VectorSearchNeedsIndex</c> warning when the
-    /// requested index is not in the EF model. Contains NO reflection — see the remarks on
-    /// <see cref="VectorSearchStageBuilder"/> for why that matters.
+    /// Resolves the target member and index, applies the <c>Exact</c>+<c>NumberOfCandidates</c> guard, and logs
+    /// <c>VectorSearchNeedsIndex</c> when the requested index isn't in the model. Must stay reflection-free (see
+    /// type remarks).
     /// </summary>
     /// <param name="entityType">
-    /// The entity type the vector search is rooted on. Each caller passes its own authoritative value rather
-    /// than having one re-derived here. May be <see langword="null" /> when the source CLR type is not mapped,
-    /// in which case member resolution throws using <paramref name="sourceType" /> for the message.
+    /// The root entity type, or <see langword="null" /> when the source CLR type isn't mapped (member resolution
+    /// then throws using <paramref name="sourceType" />).
     /// </param>
-    /// <param name="sourceType">
-    /// The CLR type of the query source, used only to build the "could not create a vector query" message when
-    /// <paramref name="entityType" /> is <see langword="null" />.
-    /// </param>
-    /// <param name="propertyLambda">The property selector, already unwrapped from its quote.</param>
-    /// <param name="options">The <see cref="VectorQueryOptions"/> supplied by the query, if any.</param>
-    /// <param name="queryLogger">The query logger the <c>VectorSearchNeedsIndex</c> warning is raised on.</param>
+    /// <param name="sourceType">Used only for the error message when <paramref name="entityType" /> is null.</param>
+    /// <param name="propertyLambda">The property selector, already unquoted.</param>
+    /// <param name="options">The query's <see cref="VectorQueryOptions"/>, if any.</param>
+    /// <param name="queryLogger">Logger for the <c>VectorSearchNeedsIndex</c> warning.</param>
     /// <returns>The resolved member and the options with the index name filled in.</returns>
     internal static ResolvedVectorSearch Resolve(
         IEntityType? entityType,
@@ -152,21 +138,19 @@ internal static class VectorSearchStageBuilder
     }
 
     /// <summary>
-    /// Builds the driver's <c>$vectorSearch</c> <c>PipelineStageDefinition&lt;T, T&gt;</c> via reflection, using
-    /// the same call shape and the same (default) <see cref="BindingFlags"/> as the driver-LINQ bridge always
-    /// has — so the exception wrapping for a bad <c>limit</c> is identical on both paths.
+    /// Builds the driver's <c>$vectorSearch</c> <c>PipelineStageDefinition&lt;T, T&gt;</c> via reflection with default
+    /// <see cref="BindingFlags"/>, so a bad <c>limit</c> is wrapped identically on both paths.
     /// </summary>
-    /// <param name="entityType">The entity type the vector search is rooted on.</param>
-    /// <param name="propertyLambda">The property selector, already unwrapped from its quote.</param>
+    /// <param name="entityType">The root entity type.</param>
+    /// <param name="propertyLambda">The property selector, already unquoted.</param>
     /// <param name="resolved">The result of <see cref="Resolve"/>.</param>
     /// <param name="filterDefinition">
-    /// The pre-filter, or <see langword="null" /> when the query has none. An
-    /// <c>ExpressionFilterDefinition&lt;T&gt;</c> on the driver-LINQ bridge; a
-    /// <c>BsonDocumentFilterDefinition&lt;T&gt;</c> on the native path.
+    /// The pre-filter, or <see langword="null" />: an <c>ExpressionFilterDefinition&lt;T&gt;</c> on the driver-LINQ
+    /// bridge, a <c>BsonDocumentFilterDefinition&lt;T&gt;</c> on the native path.
     /// </param>
     /// <param name="queryVector">The query vector.</param>
-    /// <param name="limit">The limit. Non-positive values are rejected by the driver's builder, inside the reflection call.</param>
-    /// <returns>The driver's pipeline stage definition, as an untyped object.</returns>
+    /// <param name="limit">The limit; non-positive values are rejected by the driver inside the reflection call.</param>
+    /// <returns>The driver's pipeline stage definition, untyped.</returns>
     internal static object CreateStage(
         IEntityType entityType,
         LambdaExpression propertyLambda,
@@ -201,14 +185,11 @@ internal static class VectorSearchStageBuilder
     }
 
     /// <summary>
-    /// Renders a stage built by <see cref="CreateStage"/> to its <see cref="BsonDocument"/> form.
+    /// Renders a stage from <see cref="CreateStage"/> to a <see cref="BsonDocument"/>. Native path only; the
+    /// driver-LINQ bridge lets the driver render it via <c>MongoQueryable.AppendStage</c>.
     /// </summary>
-    /// <remarks>
-    /// Native path only — the driver-LINQ bridge hands the stage to <c>MongoQueryable.AppendStage</c> and lets
-    /// the driver render it. Nothing calls this yet.
-    /// </remarks>
     /// <param name="stage">The stage returned by <see cref="CreateStage"/>.</param>
-    /// <param name="entityType">The entity type the vector search is rooted on.</param>
+    /// <param name="entityType">The root entity type.</param>
     /// <param name="entitySerializer">The provider's serializer for <paramref name="entityType"/>.</param>
     /// <returns>The rendered <c>$vectorSearch</c> stage document.</returns>
     internal static BsonDocument RenderStage(object stage, IEntityType entityType, IBsonSerializer entitySerializer)
@@ -225,8 +206,7 @@ internal static class VectorSearchStageBuilder
         => stage.Render(new RenderArgs<TDocument>(entitySerializer, BsonSerializer.SerializerRegistry)).Document;
 
     /// <summary>
-    /// The outcome of <see cref="Resolve"/>: the member the vector search targets, and the options with the
-    /// index name resolved.
+    /// The outcome of <see cref="Resolve"/>.
     /// </summary>
     /// <param name="Member">The mapped member the query vector is compared against.</param>
     /// <param name="Options">The query options, with <see cref="VectorQueryOptions.IndexName"/> always set.</param>

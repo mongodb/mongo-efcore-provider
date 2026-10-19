@@ -7,68 +7,43 @@ adjacent-areas: [all areas — every test mirrors src/ structure]
 
 # Spec conformance & test infra — AGENTS.md
 
-Cross-cutting test infrastructure and the EF Core specification-tests project. `FunctionalTests/CLAUDE.md`
-re-points here for the shared fixtures; per-area test folders under `FunctionalTests/` belong to the matching
-`src/` area reviewer.
+EF Core's provider-conformance suite plus shared functional-test infrastructure (`FunctionalTests/Utilities/`:
+`TestServer`, `TemporaryDatabaseFixture(Base)`, `TestDatabaseNamer`, `DatabaseCleaner`, `NativeModeAssert`;
+`TestMqlLoggerFactory` is in `SpecificationTests/Utilities/`). Per-area test folders belong to the matching `src/`
+area. Connection and encryption env vars: see root `AGENTS.md`.
 
-## Scope
+## Conventions
 
-**In:**
-
-- **SpecificationTests** — EF Core's provider-conformance suite. Classes inherit upstream bases and override
-  methods to assert MQL via `AssertMql(...)`. Fixtures are `*MongoFixture<TModelCustomizer>`; tests are
-  `*MongoTest`.
-- **Test infrastructure** — `SpecificationTests` no longer references `FunctionalTests`; each project carries its
-  own copy of the server bootstrap and database namer (`TestServer`, `TestContainersTestServer`,
-  `ExternalDatabaseTestServer`, `TestDatabaseNamer`, …) — keep the copies in sync when changing one. In
-  `FunctionalTests/Utilities/`: `TestServer` (connection bootstrap),
-  `TemporaryDatabaseFixture(Base)` (per-test DB isolation), `TestDatabaseNamer`, `DatabaseCleaner` (manual
-  `[Fact(Skip)]` opt-in, not automatic), `NativeModeAssert`. `TestMqlLoggerFactory` lives in
-  `SpecificationTests/Utilities/`. `ModuleInitialization` registers driver BSON serializers at load.
-- **Parallelism** — `SpecificationTests/Usings.cs` (xUnit v2) declares
-  `[assembly: CollectionBehavior(DisableTestParallelization = true)]`; `FunctionalTests` (xUnit v3) does not and
-  relies on unique per-fixture databases. On MongoDB 5.0/6.0 CI additionally runs the test projects, and their
-  collections, one at a time (`evergreen/run-tests.sh`) because overlapping writes cause intermittent snapshot
-  errors.
-
-**Out:** per-area test classes themselves (`Query/`, `Storage/`, …).
-
-## Test infrastructure
-
-- **Connection bootstrap** (`Utilities/TestServer.cs`). Default server: `MONGODB_URI`, else a
-  `TestContainersTestServer`. Atlas (`IsAtlas`) server: `ATLAS_URI`, else likewise. Image is
-  `mongodb/mongodb-atlas-local` (Atlas-capable, Search Index Management), so Atlas tests run for real. Cached
-  with double-checked locking — each test *process* boots its own container on a random port.
-  **Recommended: leave both vars unset** so the run is self-contained and separate processes stay isolated.
-  `ATLAS_URI="Disabled"` skips Atlas tests. A plain `mongod` can't run Atlas Search.
-- **Per-test isolation.** `TemporaryDatabaseFixtureBase.InitializeAsync()` gets a unique name from
-  `TestDatabaseNamer.GetUniqueDatabaseName()` (an assembly- and EF-version-specific prefix such as
-  `EF10-FunctionalTest-` / `EF10-SpecTest-`; the startup cleanup only drops databases with its own assembly's
-  prefix). `DisposeAsync` is a no-op — no automatic teardown; stale
-  `Test*` databases are removed only by manually running `DatabaseCleaner.CleanDatabase`. Test methods get a
-  collection name via `[CallerMemberName]`, with a counter fallback for CI.
-- **Fixture sharing** — heavy fixtures use `[CollectionDefinition("name")]` + `[XUnitCollection("name")]`;
-  encryption and compatibility tests each get their own collection to serialize cleanly.
-
-| Variable | Effect |
-|---|---|
-| `MONGODB_URI` / `ATLAS_URI` | Point at an external server instead of a container. |
-| `MONGODB_EF_NATIVE_ONLY=1` | Flips every spec context to `MongoQueryMode.NativeOnly`, so a would-be fallback throws instead. A full run is a "what actually goes native" report. |
-| `CRYPT_SHARED_LIB_PATH` | Required for CSFLE/Queryable Encryption tests; unset ⇒ skip silently. |
-| `EF_TEST_REWRITE_BASELINES=1` | Regenerates `AssertMql` baselines in place (see below). |
-| `DRIVER_VERSION` | Overrides the C# driver version (CI forward-compat testing). |
-
-## Specification-tests anchor
-
-- **Upstream package** `Microsoft.EntityFrameworkCore.Specification.Tests`, matched to `Versions.props`.
-- **Inheritance** — fixtures inherit `*FixtureBase<TModelCustomizer>`; tests inherit `*TestBase<TFixture>`.
-- **EF-version-conditional fixtures** — upstream renamed `IModelCustomizer` → `ITestModelCustomizer` between
-  EF8 and EF9+, and `Seed()` → `SeedAsync()`; fixtures `#if EF8` between them.
-- **Override the test method and assert MQL; don't re-implement the upstream body.** Permanently unsupported
-  → `Skip` with a clear reason, never a silent return.
-- **Two comment conventions, different meanings.** `// Fails:` = durable known gap with a ticket. `// Failed:`
-  = transitional marker (EF-117 Include work) for tests not yet re-baselined — removed as fixed. Don't add new
-  `// Failed:`.
+- **Test infrastructure is duplicated**: `SpecificationTests` no longer references `FunctionalTests`; each project
+  carries its own copy of the server bootstrap and database namer (`TestServer`, `TestContainersTestServer`,
+  `ExternalDatabaseTestServer`, `TestDatabaseNamer`, …) — keep the copies in sync when changing one.
+- **Specification tests** inherit upstream `*TestBase<TFixture>`/`*FixtureBase<TModelCustomizer>` (package
+  `Microsoft.EntityFrameworkCore.Specification.Tests`, matched to `Versions.props`); fixtures are
+  `*MongoFixture<T>`, tests `*MongoTest`. Override the test method and assert MQL with `AssertMql(...)`; don't
+  re-implement the upstream body. Permanently unsupported → `Skip` with a reason, never a silent return.
+- **Known-failing spec tests** carry `// Fails:` (durable gap with a ticket). `// Failed:` is a legacy transitional
+  marker; don't add new ones.
+- **EF-version `#if`s**: upstream renamed `IModelCustomizer` → `ITestModelCustomizer` and `Seed()` → `SeedAsync()`
+  between EF8 and EF9+. CI runs all three versions; use `/test-all` locally.
+- **Isolation**: `TemporaryDatabaseFixtureBase.InitializeAsync()` takes a unique name from
+  `TestDatabaseNamer.GetUniqueDatabaseName()` (assembly- and EF-version-specific prefix such as
+  `EF10-FunctionalTest-` / `EF10-SpecTest-`; startup cleanup only drops its own assembly's prefix); collection
+  names come from `[CallerMemberName]`. Never use fixed names. `DisposeAsync` is a no-op; stale `Test*` databases are removed only by manually running
+  `DatabaseCleaner.CleanDatabase`.
+- **Never make the Specification tests parallel** (`SpecificationTests/Usings.cs`, xUnit v2, disables it; tests share
+  global MongoDB state). `FunctionalTests` (xUnit v3) does not disable it and relies on unique per-fixture
+  databases. On MongoDB 5.0/6.0 CI runs the test projects, and their collections, one at a time
+  (`evergreen/run-tests.sh`), because overlapping writes cause `Unable to read from a snapshot due to pending
+  collection catalog changes` (code 246); don't run the projects concurrently against such a server. Heavy fixtures
+  use `[CollectionDefinition]` + `[XUnitCollection]`; encryption and compatibility tests get their own collections.
+- The container server is cached per test process (random port). `ATLAS_URI="Disabled"` skips Atlas tests.
+- `MONGODB_EF_NATIVE_ONLY=1` flips every spec context to `MongoQueryMode.NativeOnly`, so any fallback throws.
+  MQL shape alone does not prove a query went native.
+- MQL assertions are field-order-sensitive; a new translator branch often needs baselines updated across many tests.
+- After a `Mongo:*` annotation change, regenerate design-time compiled-model output under
+  `FunctionalTests/Design/Generated/EF{8,9,10}/`. `Encryption/` is gated on `CRYPT_SHARED_LIB_PATH` (tests skip silently, with
+  a run warning, when unset; enable via `eval "$(tests/tools/fetch-crypt-shared.sh)"`, see `CONTRIBUTING.md`); `Compatibility/`
+  round-trips stored data across provider versions.
 
 ## Regenerating MQL baselines
 
@@ -77,71 +52,27 @@ EF_TEST_REWRITE_BASELINES=1 dotnet test tests/MongoDB.EntityFrameworkCore.Specif
   -c "Debug EF10" --no-build --filter "FullyQualifiedName~<Class>.<Method>"
 ```
 
-When an `AssertMql` assertion fails with the var set, `TestMqlLoggerFactory.AssertBaseline` rewrites that
-override in place from captured MQL. **The test still reports failed** — that's the signal a rewrite happened;
-rebuild and rerun without the var to confirm green. Caveats:
+When an `AssertMql` fails with the var set, `TestMqlLoggerFactory.AssertBaseline` rewrites that override in place
+from captured MQL. **The test still reports failed** (the signal a rewrite happened); rebuild and rerun without the
+var to confirm green.
 
-- **Data-gated by construction** — `AssertMql(...)` is the last call, after `await base.SomeTest(...)`, so a
-  data/behavior failure never reaches the rewriter. But it will happily record MQL for a test whose only
-  remaining failure is the baseline mismatch, including a partial pipeline before an expected throw.
-- **Scope the run** with a tight `--filter`, then diff — a whole-suite rewrite touches everything it reaches.
-- Truncates at 9 statements; only works when it can resolve the test's source file+line from the stack trace.
-- **Can corrupt files or mis-place output** — always `git diff` and rebuild before trusting it.
+- `AssertMql` runs after `await base.Test(...)`, so data/behavior failures never reach the rewriter — but it will
+  record MQL for a test whose only remaining failure is the baseline, including a partial pipeline before an
+  expected throw.
+- Always scope with a tight `--filter`, then `git diff` and rebuild before trusting it: it can corrupt files or
+  mis-place output, truncates at 9 statements, and needs to resolve source file+line from the stack trace.
 
-## EF multi-version targeting
+## Test folder mirror
 
-Define constants: `EF8`, `EF9`, `EF10`. Common patterns: `#if EF8` (legacy seeding/customizer interface),
-`#if EF8 || EF9`, `#if !EF8` / `#if !EF8 && !EF9`. EF8/EF9 target `net8.0`, EF10 targets `net10.0`. `/test-all`
-builds and tests all three in parallel.
+Test folders mirror `src/` (`UnitTests/`, `FunctionalTests/`, `SpecificationTests/` each have `Query/`, `Storage/`,
+`Metadata/`, `Serializers/`, ... as applicable). Exceptions: `Storage/` functional tests also use `Update/`;
+`Serializers/` and `ChangeTracking/` functional tests use `Mapping/`/`Serialization/`; `Extensions/` +
+`Infrastructure/` functional tests use `Design/`; `ValueGeneration/` convention coverage is in
+`SpecificationTests/Metadata/Conventions/`.
 
-## Test-area subfolder mirror
-
-Test folders mirror `src/`. When you touch an area, check the matching folder:
-
-| `src/` area | UnitTests | FunctionalTests | SpecificationTests |
-|---|---|---|---|
-| `Query/` | `Query/` | `Query/` | `Query/` |
-| `Storage/` | `Storage/` | `Storage/`, `Update/` | — |
-| `Metadata/` | `Metadata/` (+`Conventions/`, `BsonAttributes/`) | `Metadata/` (+`Conventions/`) | `Metadata/` |
-| `Serializers/` | `Serializers/` | `Mapping/`, `Serialization/` | — |
-| `ChangeTracking/` | `ChangeTracking/` | `Mapping/` | — |
-| `Extensions/` + `Infrastructure/` | `Extensions/`, `Infrastructure/` | `Design/` | `Extensions/` |
-| `Diagnostics/` | — (via fixtures) | — (via `TestMqlLoggerFactory`) | — |
-| `ValueGeneration/` | `ValueGeneration/` | `ValueGeneration/` | `Metadata/Conventions/` |
-
-Special concerns under `FunctionalTests/`: `Encryption/` (gated on `CRYPT_SHARED_LIB_PATH`), `Compatibility/`
-(stored-data round-trip across provider versions), `Design/` (compiled-model output under
-`Design/Generated/EF{8,9,10}/`).
-
-## Common pitfalls
-
-- **Don't make the Specification tests parallel, and don't run the test projects concurrently against a MongoDB
-  5.0/6.0 server** — tests share global MongoDB state, and overlapping writes on 5.0/6.0 produce `Unable to read
-  from a snapshot due to pending collection catalog changes` (code 246).
-- **Don't drop per-test isolation** — a fixed collection name collides with anything else using it
-  (intermittent leaks).
-- **MQL assertions are field-order-sensitive** — a new translator branch often needs baselines updated across
-  many spec tests.
-- **MQL shape does not prove a query went native** — see `Query/AGENTS.md`. Use `NativeOnly`.
-- **Unit tests use plain xUnit `Assert.*`** — no FluentAssertions.
-- **Encryption tests skip silently** when `CRYPT_SHARED_LIB_PATH` is unset; the run prints a warning. To enable
-  them, run `eval "$(tests/tools/fetch-crypt-shared.sh)"` (exports `CRYPT_SHARED_LIB_PATH` and `MONGODB_BINARIES`;
-  see `CONTRIBUTING.md`).
-- **EF-version `#if`s in tests are easy to miss locally** — CI runs all three; `/test-all` is the local
-  equivalent.
-- **Compiled-model generated output** regenerates from design-time tests; check `Design/Generated/EF{8,9,10}/`
-  after a `Mongo:*` annotation change.
-
-## How to test
-
-Run with `MONGODB_URI` and `ATLAS_URI` unset (Docker required) for an isolated container per run.
+## Running
 
 ```bash
-# Full functional suite for one EF version
-dotnet test tests/MongoDB.EntityFrameworkCore.FunctionalTests/MongoDB.EntityFrameworkCore.FunctionalTests.csproj \
-  -c "Debug EF10" --no-build
-
-# One spec suite
 dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityFrameworkCore.SpecificationTests.csproj \
   -c "Debug EF10" --no-build --filter "FullyQualifiedName~NorthwindWhere"
 ```

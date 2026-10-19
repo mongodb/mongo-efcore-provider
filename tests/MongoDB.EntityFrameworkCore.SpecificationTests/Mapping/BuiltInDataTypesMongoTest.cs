@@ -35,8 +35,6 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
     public override Task Can_read_back_bool_mapped_as_int_through_navigation()
         => base.Can_read_back_bool_mapped_as_int_through_navigation();
 
-    // EF-449: a reference-collection-nav FirstOrDefault() reduced to a non-nullable value-type member (here an
-    // enum) is now natively translated, so this no longer fails to translate.
     public override Task Can_read_back_mapped_enum_from_collection_first_or_default()
         => base.Can_read_back_mapped_enum_from_collection_first_or_default();
 
@@ -56,9 +54,6 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
     public override void Can_read_back_bool_mapped_as_int_through_navigation()
         => base.Can_read_back_bool_mapped_as_int_through_navigation();
 
-    // EF-449: a reference-collection-nav FirstOrDefault() reduced to a non-nullable value-type member (here an
-    // enum) is now natively translated. The fix carries no `#if`, so it applies on EF8 too — verified by running
-    // this override under `-c "Debug EF8"`, not inferred from the EF9/EF10 result.
     public override void Can_read_back_mapped_enum_from_collection_first_or_default()
         => base.Can_read_back_mapped_enum_from_collection_first_or_default();
 

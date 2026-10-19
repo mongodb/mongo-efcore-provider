@@ -78,31 +78,23 @@ public class NativeGroupByBinderTests
         public ParamAndRegionKey(int a, string region) { A = a; Region = region; }
     }
 
-    // Note: deliberately does NOT use a member literally named "Id" — the driver's own
-    // NamedIdMemberConvention (DefaultConventionPack) treats ANY class's "Id"/"id"/"_id"-named member as the
-    // document's id member and forces its stored element name to "_id" regardless of the CLR member name,
-    // which would make this fixture collide with Finding C1's own renamed-element guard for reasons unrelated
-    // to what these tests are pinning.
+    // No member named "Id": the driver's NamedIdMemberConvention would force its element name to "_id" and trip
+    // the renamed-element guard for unrelated reasons.
     private class MemberInitKeyDto
     {
         public int Year { get; set; }
         public string Country { get; set; } = "";
     }
 
-    // EF-322 SP7 fix-wave (Finding C1): a MemberInitExpression key DTO whose bound member's stored BSON
-    // element name (via [BsonElement]) differs from its own CLR member name — the exact shape that crashes
-    // g.Key's readback (FormatException: element "C" does not match any field or property) if TryBindGroupKey
-    // ever admitted it, since $group._id would be written under the CLR name ("C") while the DTO's own driver
-    // class-map deserializer expects the element name ("cc").
+    // A MemberInit key DTO whose [BsonElement] name differs from its CLR name. Admitting it would write
+    // $group._id under "Country" while the DTO's class map reads "cc", so g.Key readback throws FormatException.
     private class RenamedElementKeyDto
     {
         [BsonElement("cc")]
         public string Country { get; set; } = "";
     }
 
-    // EF-322 SP7 fix-wave round-2 (re-review coverage gap): same C1 shape as RenamedElementKeyDto, but the
-    // renamed member is the SECOND bound member, not the first — proves the guard's class-map lookup checks
-    // every binding, not just binding[0].
+    // Like RenamedElementKeyDto, but the renamed member is the second binding — the guard must check every one.
     private class TwoMemberSecondRenamedKeyDto
     {
         public string Country { get; set; } = "";
@@ -111,10 +103,7 @@ public class NativeGroupByBinderTests
         public string Region { get; set; } = "";
     }
 
-    // A DTO combining a parameterized ctor with an object initializer — the shape
-    // MemberInit_dto_key_with_parameterized_ctor_and_initializer_declines needs a SETTABLE second member,
-    // since ParamAndRegionKey above has only get-only properties set by its ctor and is unusable with
-    // Expression.Bind.
+    // A parameterized ctor plus an object initializer; needs a settable second member for Expression.Bind.
     private class ParamCtorWithSettableInitializerDto
     {
         public string Country { get; }
@@ -122,10 +111,8 @@ public class NativeGroupByBinderTests
         public ParamCtorWithSettableInitializerDto(string country) { Country = country; }
     }
 
-    // EF-322 SP3 final-review fix regression: an entity whose own member happens to be literally named
-    // "Key" — proving TryTranslateAccumulatorCondition's fallback declines a mixed element/g.Key predicate
-    // rather than letting the ordinary (name-based, parameter-blind) translator silently resolve "Key"
-    // against THIS entity instead of the grouping's g.Key.
+    // An entity member literally named "Key": a mixed element/g.Key accumulator condition must decline rather
+    // than let the name-based translator resolve "Key" against the entity instead of g.Key.
     private class KeyNamedFieldEntity
     {
         public ObjectId Id { get; set; }
@@ -134,8 +121,8 @@ public class NativeGroupByBinderTests
         public int Value { get; set; }
     }
 
-    // EF-322: a nested-construction GroupBy projection member — `Container = new NestedContainer { Name = "x",
-    // Value = g.Sum(...) } }` — the last SP7-descoped Odata_groupby_empty_key shape.
+    // A nested-construction GroupBy projection member: `Container = new NestedContainer { Name = "x",
+    // Value = g.Sum(...) }` (Odata_groupby_empty_key).
     private class NestedContainer
     {
         public string Name { get; set; } = "";
@@ -205,11 +192,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Computed_key_binds_via_TryTranslateValue()
     {
-        // EF-322 SP1: a computed key part (a DateTime.Year extraction here) is no longer a hard decline —
-        // TryBindGroupKey now falls through to the same TryTranslateValue every accumulator operand already
-        // uses, which resolves this to a MongoDatePartExpression. There is no backing IProperty for a computed
-        // key part, so HasDefaultKeySerialization's converter/BsonRepresentation check does not apply here —
-        // same reasoning as the pre-existing literal-constant key case.
+        // A computed key part resolves through TryTranslateValue. It has no backing IProperty, so
+        // HasDefaultKeySerialization's converter/BsonRepresentation check does not apply.
         var mongoQ = TestQuery();
         Expression<Func<Order, int>> key = x => x.OrderDate.Year;
 
@@ -270,8 +254,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Constructor_call_key_with_two_arguments_does_not_bind_as_empty_key()
     {
-        // NewExpression.Members is null for EVERY non-anonymous-type constructor call, not just new{} — this
-        // must NOT be mistaken for a zero-part key, or a genuine 2-part key silently collapses to one group.
+        // NewExpression.Members is null for every non-anonymous constructor call, not just new{}; treating this
+        // as a zero-part key would silently collapse a 2-part key to one group.
         var mongoQ = TestQuery();
         Expression<Func<Order, OrderKeyDto>> key = x => new OrderKeyDto(x.Country, x.Region);
 
@@ -297,13 +281,9 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Captured_parameter_key_binds_as_parameter()
     {
-        // A plain `x => a` over a compiler-captured local does NOT reach TryBindGroupKey in this shape: EF
-        // Core's own ParameterExtractingExpressionVisitor rewrites a captured variable into an EF query
-        // parameter node (a prefixed ParameterExpression on EF8/EF9, a QueryParameterExpression on EF10)
-        // BEFORE the provider's translator ever sees it — a hand-built lambda skips that rewrite entirely.
-        // Build the POST-extraction shape directly, mirroring MongoExpressionTranslatorTests'
-        // Query_parameter_becomes_MongoParameterExpression_not_constant, which hand-builds the identical node
-        // for the same reason.
+        // A captured local reaches the provider only after EF's ParameterExtractingExpressionVisitor rewrites it
+        // (a prefixed ParameterExpression on EF8/EF9, QueryParameterExpression on EF10), so hand-build that
+        // post-extraction node, as MongoExpressionTranslatorTests does.
         var mongoQ = TestQuery();
         var xParam = Expression.Parameter(typeof(Order), "x");
 #if EF8 || EF9
@@ -343,11 +323,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Composite_key_with_parameter_and_member_parts_binds()
     {
-        // Same hand-built-shape reasoning as Captured_parameter_key_binds_as_parameter above: a genuine
-        // anonymous-type composite key compiles to Expression.New(ctor, args, members) with EF's
-        // post-extraction parameter node as one of the args — reproduced here with a named DTO instead of a
-        // compiler-generated anonymous type (Expression.New doesn't care which; NewExpression.Members is
-        // populated identically either way).
+        // Hand-built for the same reason as Captured_parameter_key_binds_as_parameter; a named DTO stands in for
+        // the anonymous type (NewExpression.Members is populated identically).
         var mongoQ = TestQuery();
         var xParam = Expression.Parameter(typeof(Order), "x");
         var regionMember = Expression.Property(xParam, nameof(Order.Region));
@@ -380,10 +357,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Non_default_serialized_property_key_still_declines()
     {
-        // A GroupBy key over a property with a non-default BsonRepresentation has no safe generic _id
-        // readback (same reasoning HasDefaultKeySerialization's own doc comment gives for the ordinary member
-        // case) — TryTranslateValue's AllFieldsDefaultSerialized check must still catch this once the
-        // dispatch broadens, not just the narrower TryTranslateField path it replaces.
+        // A key over a property with a non-default BsonRepresentation has no safe generic _id readback;
+        // TryTranslateValue's AllFieldsDefaultSerialized check must catch it.
         using var db = SingleEntityDbContext.Create<OrderWithRepresentedKey>(builder =>
             builder.Entity<OrderWithRepresentedKey>().Property(o => o.Country).HasBsonRepresentation(BsonType.String));
         var entityType = db.Model.FindEntityType(typeof(OrderWithRepresentedKey))!;
@@ -397,12 +372,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void MemberInit_dto_key_binds_named_parts()
     {
-        // EF-322 SP7: a MemberInitExpression DTO key (new NominalType { A = ..., B = ... }) is no longer a
-        // hard decline — TryBindGroupKey now has its own MemberInitExpression case, binding each
-        // MemberAssignment through TryBindKeyPartValue exactly like the anonymous-type NewExpression
-        // composite-key case, so each part carries its own bound member's Name and readback happens the SAME
-        // way a genuine named composite key already reads back (never as a single unnamed
-        // MongoDocumentConstructionExpression scalar the way a MemberInitExpression VALUE operand would).
+        // Each MemberAssignment binds through TryBindKeyPartValue like an anonymous composite key, so parts
+        // carry their member names and read back as a named composite key.
         var mongoQ = TestQuery();
         Expression<Func<Order, MemberInitKeyDto>> key = x => new MemberInitKeyDto { Year = x.OrderDate.Year, Country = x.Country };
 
@@ -419,11 +390,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void MemberInit_dto_key_with_parameterized_ctor_and_initializer_declines()
     {
-        // Review Focus edge case: a MemberInitExpression whose base NewExpression takes a non-zero number of
-        // constructor arguments (a DTO combining a parameterized ctor WITH an object initializer) has no
-        // established key-part-naming convention in this codebase — TryBindGroupKey's own case guard requires
-        // NewExpression.Arguments.Count == 0, so this must decline the WHOLE key rather than silently
-        // dropping the ctor argument.
+        // A parameterized ctor with an object initializer has no key-part naming convention; the whole key must
+        // decline rather than silently drop the ctor argument.
         var mongoQ = TestQuery();
         var xParam = Expression.Parameter(typeof(Order), "x");
         var countryArg = Expression.Property(xParam, nameof(Order.Country));
@@ -440,17 +408,14 @@ public class NativeGroupByBinderTests
     [Fact]
     public void MemberInit_dto_key_with_nested_member_binding_declines()
     {
-        // Review Focus edge case: a binding that is a MemberMemberBinding (a nested initializer, e.g.
-        // `new Foo { Bar = { Baz = 1 } }`) rather than a plain MemberAssignment has no single translatable
-        // VALUE — TryBindGroupKey's own loop must decline the WHOLE key, not just that one part.
+        // A MemberMemberBinding (`new Foo { Bar = { Baz = 1 } }`) has no single translatable value; the whole
+        // key must decline.
         var mongoQ = TestQuery();
         var xParam = Expression.Parameter(typeof(Order), "x");
         var ctor = typeof(MemberInitKeyDto).GetConstructor(Type.EmptyTypes)!;
         var newExpr = Expression.New(ctor);
         var yearMember = typeof(MemberInitKeyDto).GetProperty(nameof(MemberInitKeyDto.Year))!;
-        // MemberBind only needs the outer member's own MemberInfo to construct a MemberMemberBinding — it
-        // doesn't require the member's TYPE to itself expose any settable sub-members, since TryBindGroupKey
-        // never inspects a binding's contents; it only checks whether the binding IS a MemberAssignment.
+        // TryBindGroupKey only checks whether a binding is a MemberAssignment, so an empty MemberBind suffices.
         var nestedBinding = Expression.MemberBind(yearMember, Array.Empty<MemberBinding>());
         var memberInit = Expression.MemberInit(newExpr, nestedBinding);
         var key = Expression.Lambda<Func<Order, MemberInitKeyDto>>(memberInit, xParam);
@@ -462,11 +427,9 @@ public class NativeGroupByBinderTests
     [Fact]
     public void MemberInit_dto_key_with_renamed_element_declines()
     {
-        // EF-322 SP7 fix-wave (Finding C1): key parts are named after the bound CLR member, but g.Key is read
-        // back through the DTO's OWN driver class-map serializer, which honors [BsonElement]/naming
-        // conventions rather than the CLR member name — admitting this shape would write $group._id as
-        // {Country: ...} while the DTO's class map expects the stored element "cc", crashing readback with a
-        // FormatException. Must decline the whole key (fall back to driver-LINQ) instead.
+        // Key parts are named after CLR members, but g.Key reads back through the DTO's class map, which honors
+        // [BsonElement]. Admitting this writes {Country: ...} where "cc" is expected (FormatException on
+        // readback), so the whole key must decline.
         var mongoQ = TestQuery();
         Expression<Func<Order, RenamedElementKeyDto>> key = x => new RenamedElementKeyDto { Country = x.Country };
 
@@ -477,9 +440,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void MemberInit_dto_key_with_second_member_renamed_declines()
     {
-        // EF-322 SP7 fix-wave round-2 (re-review coverage gap): the renamed member is the SECOND binding, not
-        // the first — pins that the class-map lookup loop checks every MemberAssignment, not just the first
-        // one it encounters.
+        // The renamed member is the second binding: the class-map check must cover every MemberAssignment.
         var mongoQ = TestQuery();
         Expression<Func<Order, TwoMemberSecondRenamedKeyDto>> key =
             x => new TwoMemberSecondRenamedKeyDto { Country = x.Country, Region = x.Region };
@@ -491,11 +452,9 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Parameter_key_of_an_unmappable_CLR_type_declines_instead_of_throwing()
     {
-        // Final-review fix: a captured-parameter key whose declared CLR type BsonValue.Create cannot map
-        // (e.g. System.Guid) used to bind successfully (TryTranslateValue only checks translatability, not
-        // renderability) and then throw ArgumentException at pipeline-BUILD time instead of declining
-        // cleanly — the same "probe before admitting" gate NativeSlotPopulator.TryProbeBareValueRenders
-        // already applies to a bare value/parameter SORT key must apply here too.
+        // TryTranslateValue checks translatability, not renderability: a parameter of a type BsonValue.Create
+        // can't map (Guid) would throw ArgumentException at pipeline build. Same probe-before-admitting rule as
+        // NativeSlotPopulator.TryProbeBareValueRenders for sort keys.
         var mongoQ = TestQuery();
         var xParam = Expression.Parameter(typeof(Order), "x");
 #if EF8 || EF9
@@ -514,10 +473,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Computed_key_part_flows_through_PriorGrouping_for_nested_GroupBy()
     {
-        // Mirrors GroupBy_aggregate_followed_another_GroupBy_aggregate: the FIRST GroupBy's key has a computed
-        // part; a second GroupBy nests on the first's flattened projection via PriorGrouping. This only
-        // proves the binder-level plumbing accepts a computed first-level key alongside PriorGrouping — the
-        // full nested-GroupBy shape is proven end-to-end by the spec suite (Task 2 of the SP1 plan).
+        // Binder-level plumbing only: a computed first-level key alongside PriorGrouping. The full nested
+        // GroupBy is covered by GroupBy_aggregate_followed_another_GroupBy_aggregate in the spec suite.
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> key = x => new { x.Country, Yr = x.OrderDate.Year };
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -536,11 +493,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void HAVING_on_first_GroupBy_survives_nesting_a_second_GroupBy()
     {
-        // Final-review fix: SnapshotPriorGroupingForNestedGroupBy moved Grouping/Projection aside into
-        // PriorGrouping/PriorGroupingProjection but NOT GroupHavingPredicate — the outer GroupBy's own
-        // TryBindGroupProjection then unconditionally overwrote GroupHavingPredicate with its own (here,
-        // absent) HAVING, silently dropping the FIRST GroupBy's filter entirely (every group returned,
-        // not just the ones that passed HAVING). Mirrors the reviewer's repro:
+        // SnapshotPriorGroupingForNestedGroupBy must carry GroupHavingPredicate aside too; otherwise the outer
+        // GroupBy's TryBindGroupProjection overwrites it and the first GroupBy's HAVING is silently dropped.
         // GroupBy(Country).Where(g => g.Count() > 1).Select(g => new{g.Key, C=g.Count()})
         //   .GroupBy(x => x.C).Select(g => new{g.Key, N=g.Count()})
         var mongoQ = BoundScalarKeyQuery();
@@ -556,8 +510,7 @@ public class NativeGroupByBinderTests
 
         // The snapshot must have carried the first HAVING into PriorGroupHavingPredicate...
         Assert.NotNull(mongoQ.Select.PriorGroupHavingPredicate);
-        // ...and cleared the live slot, so the OUTER GroupBy (which has no HAVING of its own here) doesn't
-        // inherit a stale value.
+        // ...and cleared the live slot so the outer GroupBy doesn't inherit it.
         Assert.Null(mongoQ.Select.GroupHavingPredicate);
 
         Expression<Func<object, int>> secondKey = x => 0; // outer key shape is irrelevant to this regression
@@ -569,8 +522,7 @@ public class NativeGroupByBinderTests
 
         // The outer GroupBy has no HAVING of its own — GroupHavingPredicate stays null...
         Assert.Null(mongoQ.Select.GroupHavingPredicate);
-        // ...but the FIRST GroupBy's HAVING must still be there, ready for MongoSelectLowerer to emit
-        // alongside PriorGrouping's own $group.
+        // ...but the first GroupBy's HAVING is still there for MongoSelectLowerer to emit with PriorGrouping.
         Assert.NotNull(mongoQ.Select.PriorGroupHavingPredicate);
     }
 
@@ -595,9 +547,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Empty_key_with_bare_g_Key_readback_goes_native()
     {
-        // EF-322 SP7 (Task 2): g.Key over a zero-part key now flattens to "_id" — the group's own empty
-        // document is itself the correct readback for an empty anonymous-type key, so this no longer needs to
-        // decline. Superseded name/premise of this test's previous form (Empty_key_with_bare_g_Key_readback_declines).
+        // g.Key over a zero-part key flattens to "_id": the group's empty document is the correct readback.
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> key = x => new { };
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -655,8 +605,7 @@ public class NativeGroupByBinderTests
             g => new { g.Key, Count = g.Count() };
         Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
-        // TWO accumulators: the HAVING's own ("__agg0") and the Select's own ("Count") — a harmless
-        // redundant $group field, same precedent as this file's existing orderAccumulators handling.
+        // Two accumulators: the HAVING's ("__agg0") and the Select's ("Count") — a harmless redundant field.
         Assert.Equal(2, mongoQ.Select.Grouping!.Accumulators.Count);
         Assert.Equal("__agg0", mongoQ.Select.Grouping.Accumulators[0].OutputField);
         Assert.Equal("Count", mongoQ.Select.Grouping.Accumulators[1].OutputField);
@@ -679,7 +628,7 @@ public class NativeGroupByBinderTests
             g => new { g.Key, c = g.Count() };
         Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
-        // Only the Select's OWN accumulator ("c") — the HAVING key comparison needed none of its own.
+        // Only the Select's own accumulator ("c"); the key comparison needs none.
         var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
         Assert.Equal("c", acc.OutputField);
 
@@ -692,13 +641,9 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Compound_HAVING_where_predicate_still_declines()
     {
-        // Final-review coverage gap: TryBindGroupPredicateComparison only ever recognizes a SINGLE binary
-        // comparison (its own pattern match requires Unwrap(body) to BE a BinaryExpression with one of the
-        // six comparison NodeTypes) — an AndAlso/OrElse compound HAVING predicate doesn't match that pattern
-        // at all and must still decline (fall back), not silently apply only half the filter. Mirrors
-        // TryBindGroupTerminalAggregate's own existing Compound_predicate_returns_false, but for the
-        // Where-then-Select HAVING path specifically (a materially different code path — TryBindGroupWherePredicate
-        // / TryBindGroupProjection's own PendingGroupPredicate consumption — not previously covered here).
+        // TryBindGroupPredicateComparison recognizes only a single binary comparison; an AndAlso/OrElse HAVING
+        // must decline rather than apply half the filter. Where-then-Select counterpart of
+        // Compound_predicate_returns_false.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, bool>> wherePred = g => g.Count() > 4 && g.Count() < 10;
 
@@ -724,10 +669,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Distinct_then_Select_Distinct_Max_treats_leading_Distinct_hop_as_a_no_op()
     {
-        // GroupBy_group_Distinct_Select_Distinct_aggregate's exact shape: g.Distinct() immediately before
-        // .Select(selector).Distinct() is a provable no-op for ANY subsequent reduction (deduping whole rows
-        // first can only ever match or exceed the final distinct-mapped set's size, never change it) — must
-        // bind with NO condition at all, not a trivially-true one.
+        // g.Distinct() before .Select(selector).Distinct() cannot change the final distinct set, so it must bind
+        // with no condition at all, not a trivially-true one.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Max = g.Distinct().Select(e => e.OrderDate).Distinct().Max() };
@@ -743,14 +686,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_then_Select_Distinct_Max_binds_conditional_addToSet_with_REMOVE_else()
     {
-        // GroupBy_group_Where_Select_Distinct_aggregate's exact shape: a genuine per-element filter before
-        // Select(...).Distinct().Max() — this one DOES need a $cond, unlike the Distinct-hop case above.
-        // Selects ShippedDate (nullable — matching the real Northwind model's own OrderDate: DateTime?, this
-        // test fixture's own OrderDate is non-nullable for simplicity elsewhere in this file) so Max()'s
-        // result type is nullable: a non-nullable result here would trip the final-review empty-filtered-
-        // group guard (a filter CAN legitimately empty out a group's contribution, and a non-nullable
-        // Min/Max/Avg has no way to represent that safely) for a shape this specific unit test isn't trying
-        // to exercise.
+        // A genuine per-element filter before Select(...).Distinct().Max() needs a $cond. Uses nullable
+        // ShippedDate so Max() is nullable; a non-nullable result would trip the empty-filtered-group guard.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Max = g.Where(e => e.Amount > 0).Select(e => e.ShippedDate).Distinct().Max() };
@@ -786,9 +723,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Two_counts_with_different_predicates_bind_two_independent_accumulators()
     {
-        // GroupBy_multiple_Count_with_predicate's exact shape: TWO differently-thresholded Count(pred) calls
-        // in the SAME Select must bind to DIFFERENT output fields with DIFFERENT conditions, not collapse
-        // into one.
+        // Two differently-thresholded Count(pred) calls must bind to separate fields with separate conditions.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { TenK = g.Count(e => e.Amount < 100), EleventK = g.Count(e => e.Amount < 200) };
@@ -828,11 +763,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_on_group_key_then_Min_resolves_key_via_its_own_raw_expression_not_id()
     {
-        // GroupBy_constant_with_where_on_grouping_with_aggregate_operators's exact shape: the predicate
-        // references g.Key, not the per-element parameter at all. Must resolve to the key's OWN stored
-        // FieldRef (here a literal MongoConstantExpression, since the key is GroupBy(o => 1)) — NEVER
-        // MongoElementRefExpression("_id"), which does not exist yet inside this accumulator's own $group
-        // stage (referencing "_id" here would be a circular reference to that stage's own output).
+        // The predicate references g.Key only. It must resolve to the key's own FieldRef (here a constant, from
+        // GroupBy(o => 1)), never "_id", which doesn't exist yet inside this accumulator's own $group stage.
         var mongoQ = TestQuery();
         Expression<Func<Order, int>> constantKey = x => 1;
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, constantKey));
@@ -854,9 +786,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_predicate_mixing_element_and_key_reference_declines()
     {
-        // Deliberately out of scope: TryTranslateAccumulatorCondition only recognizes a predicate that is
-        // EITHER purely a g.Key comparison OR purely an ordinary per-element expression, never both combined
-        // in one condition. Must decline cleanly (fall back), not crash or silently drop half the condition.
+        // TryTranslateAccumulatorCondition handles a pure g.Key comparison or a pure per-element predicate, never
+        // both combined; must decline rather than crash or drop half the condition.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Total = g.Where(e => e.Amount > 5 && g.Key == "ALFKI").Sum(e => e.Amount) };
@@ -867,8 +798,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_then_Count_binds_conditional_sum_accumulator()
     {
-        // LongCount_after_GroupBy_aggregate's inner Select shape (as a NAMED member here; the bare-body
-        // variant, matching the real test exactly, is proven by the next test).
+        // LongCount_after_GroupBy_aggregate's inner shape as a named member; the next test covers the bare body.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Filtered = g.Where(e => e.Amount < 250).Count() };
@@ -880,11 +810,8 @@ public class NativeGroupByBinderTests
         Assert.Equal("$sum", acc.Operator);
         var cond = Assert.IsType<MongoConditionalExpression>(acc.Operand);
         Assert.IsType<MongoBinaryExpression>(cond.Test);
-        // Unlike the Sum/Min/Max filtered arm's $$REMOVE else-branch, a filtered COUNT sums 0/1 either way —
-        // an unmatched element must contribute 0, not $$REMOVE (which would be wrong for $sum: it silently
-        // drops the summand, but 0 is exactly what an unmatched element should contribute here anyway; this
-        // assertion pins that the constant 0 is actually emitted, not the $$REMOVE sentinel some OTHER
-        // accumulator kind uses).
+        // A filtered count emits constant 0 for unmatched elements, not the $$REMOVE sentinel other accumulators
+        // use.
         Assert.Equal(1, Assert.IsType<MongoConstantExpression>(cond.IfTrue).Value);
         Assert.Equal(0, Assert.IsType<MongoConstantExpression>(cond.IfFalse).Value);
     }
@@ -892,7 +819,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Bare_body_Where_then_Count_binds_under_synthetic_alias()
     {
-        // LongCount_after_GroupBy_aggregate's EXACT shape: a bare (non-`new{}`) Select body.
+        // LongCount_after_GroupBy_aggregate's exact shape: a bare (non-`new{}`) Select body.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, int>> proj =
             g => g.Where(e => e.Amount < 250).Count();
@@ -922,9 +849,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_then_Count_mixing_element_and_key_reference_declines()
     {
-        // Review Focus: the SAME mixed-reference guard the Sum/Min/Max filtered arm already relies on must
-        // also gate the new Count/LongCount arm — proven separately, since it is easy to wire the new arm
-        // past TryTranslateAccumulatorCondition's guard by accident (e.g. by not routing through it at all).
+        // The Count/LongCount arm must route through TryTranslateAccumulatorCondition's mixed-reference guard
+        // too.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Filtered = g.Where(e => e.Amount > 5 && g.Key == "ALFKI").Count() };
@@ -935,13 +861,9 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Mixed_element_and_key_predicate_declines_even_when_entity_has_a_Key_named_member()
     {
-        // Final-review fix: TryTranslateAccumulatorCondition's fallback used to delegate a predicate that
-        // mixes a per-element condition with a g.Key reference straight to the ordinary translator, which
-        // resolves members by NAME against the entity type regardless of which parameter they hang off. When
-        // the entity itself happens to have a member literally named "Key", `e.Value > 0 && g.Key == "A"`
-        // would silently resolve g.Key as if it were e.Key — wrong data, not the intended decline. Proven
-        // here with an entity that actually has a "Key" member (Order does not, so this shape used to
-        // decline "successfully" for the wrong reason).
+        // The ordinary translator resolves members by name, so with an entity member named "Key",
+        // `e.Value > 0 && g.Key == "A"` would silently resolve g.Key as e.Key. Must decline. (Order has no
+        // "Key" member, so it can't exercise this.)
         var mongoQ = TestQueryFor<KeyNamedFieldEntity>();
         Expression<Func<KeyNamedFieldEntity, string>> keySelector = x => x.Category;
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, keySelector));
@@ -955,18 +877,14 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Count_with_predicate_key_comparison_constant_serializes_through_the_keys_own_property()
     {
-        // Final-review fix: the accumulator-condition key-access arm used to translate its comparison
-        // constant with forSerialization: null (mirrors the exact bug SP2 already fixed once for HAVING —
-        // see HAVING_key_comparison_constant_serializes_through_the_keys_own_property) — fine for a
-        // string/int key, but throws ArgumentException at render time for a type like Guid that
-        // BsonValue.Create cannot map directly.
+        // The key comparison constant must serialize through the key's property (ForSerialization); with null,
+        // a Guid constant throws ArgumentException at render time. See also
+        // HAVING_key_comparison_constant_serializes_through_the_keys_own_property.
         var mongoQ = TestQuery();
         Expression<Func<Order, Guid>> key = x => x.ExternalId;
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
 
-        // Hand-built rather than `g => g.Key == guidValue` over a captured local: the C# compiler lowers a
-        // captured Guid to a closure-field MemberExpression, not a ConstantExpression — same lesson as SP1's
-        // parameter-key tests and SP2's own Guid HAVING test.
+        // Hand-built: the compiler lowers a captured Guid to a closure-field MemberExpression, not a constant.
         var groupParam = Expression.Parameter(typeof(IGrouping<Guid, Order>), "g");
         var elementParam = Expression.Parameter(typeof(Order), "o");
         var keyAccess = Expression.Property(groupParam, nameof(IGrouping<Guid, Order>.Key));
@@ -987,8 +905,7 @@ public class NativeGroupByBinderTests
         Assert.NotNull(constant.ForSerialization);
         Assert.Equal("ExternalId", constant.ForSerialization!.Name);
 
-        // Rendering must not throw (ArgumentException: ".NET type System.Guid cannot be mapped to a
-        // BsonValue") — the actual observable bug when ForSerialization was null.
+        // Must not throw ArgumentException (".NET type System.Guid cannot be mapped to a BsonValue").
         var rendered = MongoAggregationExpressionRenderer.Render(cond, new PlaceholderTable());
         Assert.NotNull(rendered);
     }
@@ -996,19 +913,14 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Ternary_over_Guid_key_comparison_constant_serializes_through_the_keys_own_property()
     {
-        // SP4 final-review fix: TryTranslateGroupProjectionConditionOrValue's key-vs-constant comparison arms
-        // used to translate the constant with forSerialization: null (the exact bug class SP3's final review
-        // already fixed once for TryTranslateAccumulatorCondition — see
-        // Count_with_predicate_key_comparison_constant_serializes_through_the_keys_own_property above) — fine
-        // for a string/int key, but throws ArgumentException at render time for a type like Guid that
-        // BsonValue.Create cannot map directly.
+        // Same ForSerialization requirement as
+        // Count_with_predicate_key_comparison_constant_serializes_through_the_keys_own_property, for
+        // TryTranslateGroupProjectionConditionOrValue's key-vs-constant comparison.
         var mongoQ = TestQuery();
         Expression<Func<Order, Guid>> key = x => x.ExternalId;
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
 
-        // Hand-built rather than `g => g.Key == guidValue ? "A" : "other"` over a captured local: the C#
-        // compiler lowers a captured Guid to a closure-field MemberExpression, not a ConstantExpression — same
-        // lesson as the Count-predicate Guid test above.
+        // Hand-built: a captured Guid would be a closure-field MemberExpression, not a constant.
         var groupParam = Expression.Parameter(typeof(IGrouping<Guid, Order>), "g");
         var keyAccess = Expression.Property(groupParam, nameof(IGrouping<Guid, Order>.Key));
         var guidConstant = Expression.Constant(Guid.NewGuid(), typeof(Guid));
@@ -1025,8 +937,7 @@ public class NativeGroupByBinderTests
         Assert.NotNull(constant.ForSerialization);
         Assert.Equal("ExternalId", constant.ForSerialization!.Name);
 
-        // Rendering must not throw (ArgumentException: ".NET type System.Guid cannot be mapped to a
-        // BsonValue") — the actual observable bug when ForSerialization was null.
+        // Must not throw ArgumentException (".NET type System.Guid cannot be mapped to a BsonValue").
         var rendered2 = MongoAggregationExpressionRenderer.Render(cond, new PlaceholderTable());
         Assert.NotNull(rendered2);
     }
@@ -1034,10 +945,9 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_then_Min_over_non_nullable_result_declines_to_avoid_silent_default_on_empty_group()
     {
-        // Final-review fix: if every element in a group fails the filter, $$REMOVE leaves the $min/$max/$avg
-        // accumulator null, and the native shaper would read that as default(T) for a non-nullable result —
-        // silently wrong (both LINQ-to-objects and the driver-LINQ fallback throw InvalidOperationException
-        // for an empty sequence instead). Must decline so the query falls back rather than risk this.
+        // If every element fails the filter, $$REMOVE leaves $min/$max/$avg null and the shaper would read
+        // default(T) for a non-nullable result — silently wrong (LINQ and driver-LINQ throw on an empty
+        // sequence). Must decline.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Min = g.Where(e => e.Amount > 999999).Min(e => e.Amount) };
@@ -1048,8 +958,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_then_Select_Distinct_Max_over_non_nullable_result_declines_to_avoid_silent_default_on_empty_group()
     {
-        // Same risk as the direct-accumulator case above, but via the $addToSet-then-external-reduce path
-        // TryBindDistinctAccumulator's Where-hop uses.
+        // Same risk via TryBindDistinctAccumulator's $addToSet-then-reduce path.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Max = g.Where(e => e.Amount > 999999).Select(e => e.Amount).Distinct().Max() };
@@ -1075,10 +984,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Ternary_over_nullable_key_comparison_binds_conditional_projection()
     {
-        // GroupBy_aggregate_projecting_conditional_expression_based_on_group_key's exact shape:
-        // .GroupBy(o => o.OrderDate).Select(g => new { Key = g.Key == null ? "is null" : "is not null", ... }).
-        // Uses ShippedDate here (nullable, like the real Northwind OrderDate: DateTime?) so the comparison is
-        // meaningful.
+        // GroupBy_aggregate_projecting_conditional_expression_based_on_group_key's shape, using nullable
+        // ShippedDate so the null comparison is meaningful.
         var mongoQ = TestQuery();
         Expression<Func<Order, DateTime?>> key = x => x.ShippedDate;
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -1088,9 +995,7 @@ public class NativeGroupByBinderTests
 
         Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
-        // Two flatten projections: the computed Label and the ordinary Sum accumulator. Flatten output
-        // aliases live on MongoSelectDefinition's own Projection list (set via AddProjection), not on
-        // MongoGrouping itself — see this file's other tests' own `mongoQ.Select.Projection` usage.
+        // Two flatten projections (Label and Sum); flatten aliases live on MongoSelectDefinition.Projection.
         Assert.Equal(2, mongoQ.Select.Projection.Count);
         var labelProjection = mongoQ.Select.Projection.Single(p => p.Alias == "Label");
         var cond = Assert.IsType<MongoConditionalExpression>(labelProjection.Expression);
@@ -1101,16 +1006,14 @@ public class NativeGroupByBinderTests
         Assert.Equal("is null", Assert.IsType<MongoConstantExpression>(cond.IfTrue).Value);
         Assert.Equal("is not null", Assert.IsType<MongoConstantExpression>(cond.IfFalse).Value);
 
-        // The Sum accumulator itself still binds normally — this plan doesn't touch that path.
         Assert.Single(mongoQ.Select.Grouping!.Accumulators);
     }
 
     [Fact]
     public void Ternary_leaf_referencing_an_accumulator_declines()
     {
-        // Review Focus: neither target test needs an accumulator inside a computed projection leaf — must
-        // decline cleanly, not silently bind wrong (ReferencesParameter's existing guard catches g.Count()
-        // the same way it already catches a mixed g.Key reference).
+        // An accumulator inside a computed projection leaf must decline (ReferencesParameter's guard catches
+        // g.Count() like a mixed g.Key reference).
         var mongoQ = TestQuery();
         Expression<Func<Order, DateTime?>> key = x => x.ShippedDate;
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -1124,8 +1027,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Ternary_test_mixing_element_and_key_reference_declines()
     {
-        // Review Focus: a per-element reference in the ternary's TEST (not the key) must decline via the
-        // SAME ReferencesParameter guard SP3 established, not attempt a mixed resolution.
+        // A per-element reference in the ternary's test must decline via ReferencesParameter.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Label = g.Where(o => o.Amount > 0).Any() ? g.Key : "none" };
@@ -1136,14 +1038,9 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Ternary_over_composite_key_null_comparison_admits_whole_key_read()
     {
-        // Review Focus: TryGetKeyMemberPath's allowWholeKeyRead:true (already-tested, pre-existing behavior)
-        // resolves even a composite key's bare g.Key to "_id" wholesale. Comparing a composite sub-document to
-        // a scalar null has no realistic query meaning, but this plan doesn't special-case a decline nobody
-        // asked for — it stays structurally admitted, matching the flatten loop's own existing default. Built
-        // by hand (not a typed `g => g.Key == null ? ... : ...` lambda) because the composite key's CLR type
-        // is a compiler-generated anonymous type with no literal spelling available here; uses the bare-body
-        // path (no `new {}` wrapper) the SAME way `TryBindGroupProjection`'s own `isBareBody`/
-        // `SyntheticBareProjectionAlias` handling already supports elsewhere in this file.
+        // allowWholeKeyRead resolves a composite key's bare g.Key to "_id"; comparing that to null is
+        // meaningless but stays structurally admitted, like the flatten loop. Hand-built because the composite
+        // key's anonymous type has no literal spelling; uses the bare-body path.
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> key = x => new { x.Country, x.Region };
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -1167,20 +1064,11 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Ternary_over_empty_key_null_comparison_binds_without_crashing()
     {
-        // Fix-round addition (review gap): pins ResolveKeyMemberSerializationProperty's own
-        // `keyParts.Count == 0` guard, which had no test reaching it with an empty keyParts list.
-        // TryTranslateGroupProjectionConditionOrValue (the Select-projection ternary/coalesce CONDITION
-        // path, reached from a computed leaf in the flatten $project) is a DIFFERENT call site than
-        // TryBindGroupSideOperand's Where-clause path already covered by
-        // Where_key_comparison_over_empty_key_binds_direct_comparison_with_no_accumulator. For a zero-part
-        // key, TryGetKeyMemberPath resolves g.Key == null's left side to a non-null "_id" path (isComposite
-        // is false for a zero-part key, and allowWholeKeyRead defaults to true), so
-        // ResolveKeyMemberSerializationProperty("_id", keyParts: [], isComposite: false) is invoked to
-        // serialize the null constant. Before this task's fix that method read
-        // `isComposite ? null : keyParts[0]...` — with isComposite false here, it would index keyParts[0] on
-        // an empty list and throw IndexOutOfRangeException. Built by hand (not a typed lambda) for the same
-        // reason as Ternary_over_composite_key_null_comparison_admits_whole_key_read: the empty anonymous-
-        // type key has no literal C# spelling here.
+        // Pins ResolveKeyMemberSerializationProperty's `keyParts.Count == 0` guard on the Select-projection
+        // ternary path (TryTranslateGroupProjectionConditionOrValue); the Where path is covered by
+        // Where_key_comparison_over_empty_key_binds_direct_comparison_with_no_accumulator. Without the guard,
+        // g.Key == null over a zero-part key indexes keyParts[0] and throws IndexOutOfRangeException.
+        // Hand-built: the empty anonymous key has no literal spelling.
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> key = x => new { };
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -1205,13 +1093,9 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Ternary_over_empty_key_non_null_comparison_declines_whole_projection()
     {
-        // EF-322 SP7 fix-wave (Finding I1): the OTHER comparison call site (this one runs in the
-        // Select-projection ternary CONDITION path, TryTranslateGroupProjectionConditionOrValue, vs. the
-        // Where/HAVING path covered by Where_key_comparison_over_empty_key_against_non_null_value_declines).
-        // A non-null comparison in a g.Key == x ? a : b shape over a zero-part key must decline the WHOLE
-        // projection (TryBindGroupProjection returns false) — not admit the comparison and defer the crash to
-        // render time, and not silently mis-fall-through to treating `g.Key == x` as an ordinary per-element
-        // value (which ReferencesParameter's own guard would ALSO reject, but for the wrong reason).
+        // Select-projection ternary counterpart of Where_key_comparison_over_empty_key_against_non_null_value_declines:
+        // a non-null comparison over a zero-part key must decline the whole projection rather than defer a
+        // crash to render time.
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> key = x => new { };
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -1229,7 +1113,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Coalesce_over_key_binds_coalesce_projection()
     {
-        // GroupBy_orderby_projection_with_coalesce_operation's exact shape:
+        // GroupBy_orderby_projection_with_coalesce_operation's shape:
         // .GroupBy(c => c.City).Select(x => new { Locality = x.Key ?? "Unknown", Count = x.Count() }).
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
@@ -1243,15 +1127,13 @@ public class NativeGroupByBinderTests
         Assert.Equal("_id", keyRef.Path);
         Assert.Equal("Unknown", Assert.IsType<MongoConstantExpression>(coalesce.Right).Value);
 
-        // The Count accumulator itself still binds normally.
         Assert.Single(mongoQ.Select.Grouping!.Accumulators);
     }
 
     [Fact]
     public void Chained_coalesce_over_key_binds_right_nested_coalesce()
     {
-        // Review Focus: a ?? b ?? c is right-associative (a ?? (b ?? c)) — the recursive function must walk
-        // into the RIGHT operand when it is itself a Coalesce, not just handle two flat operands.
+        // a ?? b ?? c is right-associative (a ?? (b ?? c)): the right operand is itself a Coalesce.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Locality = g.Key ?? "Fallback1" ?? "Fallback2" };
@@ -1336,7 +1218,6 @@ public class NativeGroupByBinderTests
 
         Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
-        // Only the Count accumulator; the key member is not an accumulator.
         var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
         Assert.Equal("Count", acc.OutputField);
     }
@@ -1374,10 +1255,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Bare_projection_body_with_no_accumulator_returns_false()
     {
-        // A bare (unwrapped) g.Key over a COMPOSITE key declines at a different site than the scalar-key case
-        // (Bare_g_Key_with_no_aggregate_still_declines, which covers a SCALAR key) — TryGetKeyMemberPath's
-        // "keyPath == null" branch for a composite key that can't flatten to one field, not the guard this plan
-        // touches.
+        // A bare g.Key over a composite key declines in TryGetKeyMemberPath (no single field to flatten to); the
+        // scalar-key case is Bare_g_Key_with_no_aggregate_still_declines.
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> key = x => new { x.Country, x.Region };
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -1391,10 +1270,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Ctor_dto_composite_key_sub_member_with_no_aggregate_binds_group()
     {
-        // A composite-key sub-member projected back through a ctor-wrapped DTO (g.Key.Country, not the whole
-        // g.Key) with no aggregate — resolves via TryGetKeyMemberPath's composite-sub-member branch, has zero
-        // accumulators, and is not bare (ctor-wrapped), so it now reaches the admitted branch. One row per
-        // distinct (Country, Region) pair, matching LINQ's own GroupBy semantics.
+        // A composite-key sub-member (g.Key.Country) through a ctor-wrapped DTO with no aggregate: zero
+        // accumulators, one row per distinct (Country, Region) pair.
         var mongoQ = TestQuery();
 
         Assert.True(BindCompositeKeyAndProjection(mongoQ,
@@ -1407,10 +1284,8 @@ public class NativeGroupByBinderTests
         Assert.Equal("_id.Country", Assert.IsType<MongoElementRefExpression>(projection.Expression).Path);
     }
 
-    // Binds a composite GroupBy key and its result projection with the SAME compiler-synthesized anonymous
-    // TKey shared across both lambdas via generic type inference — the only way to write `g.Key.<Sub>`
-    // against a composite key from a separately-declared projection lambda (IGrouping<TKey, TElement>'s TKey
-    // can't otherwise be named from outside the key-selector expression that created it).
+    // Binds a composite key and projection sharing the compiler-synthesized anonymous TKey via type inference —
+    // the only way to write `g.Key.<Sub>` in a separately-declared projection lambda.
     private static bool BindCompositeKeyAndProjection<TKey>(
         MongoQueryExpression mongoQ,
         Expression<Func<Order, TKey>> keySelector,
@@ -1450,8 +1325,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Bare_g_Key_with_no_aggregate_still_declines()
     {
-        // A bare (unwrapped) g.Key projection is a plain-Distinct-equivalent shape this plan does not attempt —
-        // must keep declining, unchanged.
+        // A bare g.Key projection is a plain-Distinct-equivalent shape that isn't attempted.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj = g => g.Key;
 
@@ -1462,8 +1336,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Wrapped_key_only_combined_with_pending_ordering_aggregate_still_declines()
     {
-        // A zero-Select-accumulator projection combined with a pending-ordering aggregate is an untested,
-        // explicitly out-of-scope combination — must keep declining, unchanged.
+        // A zero-accumulator projection combined with a pending-ordering aggregate is out of scope.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, int>> orderKey = g => g.Count();
         mongoQ.Select.PendingGroupOrderings = [(true, orderKey)];
@@ -1477,9 +1350,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Aggregate_over_non_grouping_source_returns_false()
     {
-        // The accumulator's SOURCE is a DIFFERENT sequence (an in-scope array), not the grouping parameter g.
-        // Binding it to a $group accumulator would silently drop the real computation and return the group's
-        // row count instead, diverging from driver-LINQ. It must NOT bind → the projection falls back.
+        // The accumulator's source is an in-scope array, not g. Binding it would silently return the group's
+        // row count instead; must fall back.
         var mongoQ = BoundScalarKeyQuery();
         var others = new[] { 1, 2, 3, 4, 5, 6 };
         Expression<Func<IGrouping<string, Order>, object>> proj =
@@ -1504,10 +1376,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Accumulator_output_field_named_id_returns_false()
     {
-        // An accumulator whose result member is literally "_id" would emit a second "_id" element into the
-        // $group document (which already carries the grouping key under "_id"), throwing a BsonDocument
-        // duplicate-key exception at pipeline build rather than falling back cleanly. Reject it here so the
-        // shape falls back to driver-LINQ (and throws only under NativeOnly).
+        // An accumulator named "_id" would duplicate the $group key element and throw at pipeline build; reject
+        // it so the shape falls back.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { _id = g.Count() };
@@ -1519,8 +1389,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Key_member_projected_to_id_alias_still_binds()
     {
-        // A KEY member projected to an "_id" alias reads the group's own "_id" back and does NOT collide with
-        // the reserved field, so it must remain natively representable — the guard is scoped to accumulators.
+        // A key member aliased "_id" reads the group's own "_id" and doesn't collide; the guard is
+        // accumulator-only.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { _id = g.Key, Count = g.Count() };
@@ -1572,8 +1442,7 @@ public class NativeGroupByBinderTests
             g => new { g.Key, Count = g.Count() };
         Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
-        // Two SEPARATE $sum:1 accumulators — one for the ordering, one for the projection. Deliberately not
-        // de-duplicated (see this task's Architecture note).
+        // Two separate $sum:1 accumulators (ordering and projection), deliberately not de-duplicated.
         Assert.Equal(2, mongoQ.Select.Grouping!.Accumulators.Count);
         Assert.Contains(mongoQ.Select.Grouping.Accumulators, a => a.OutputField == "Count" && a.Operator == "$sum" && a.Operand == null);
         Assert.Contains(mongoQ.Select.Grouping.Accumulators, a => a.OutputField == "_orderAgg0" && a.Operator == "$sum" && a.Operand == null);
@@ -1660,12 +1529,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Pending_order_by_g_Key_over_empty_key_goes_native()
     {
-        // EF-322 SP7 (Task 2): OrderBy(g => g.Key) composed BEFORE an empty-key GroupBy reaches
-        // TryGetKeyMemberPath through the PENDING-ORDERING call site (allowWholeKeyRead: false) — a zero-part
-        // key is never "isComposite", so this call site's own composite-only decline no longer applies to it
-        // either; it now resolves to "_id" and sorts on the group's own empty document, exactly like the
-        // terminal-Select path. Superseded name/premise of this test's previous form
-        // (Pending_order_by_g_Key_over_empty_key_declines).
+        // OrderBy(g => g.Key) before an empty-key GroupBy resolves through the pending-ordering call site
+        // (allowWholeKeyRead: false); a zero-part key is never composite, so it sorts on "_id".
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> key = x => new { };
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -1717,16 +1582,14 @@ public class NativeGroupByBinderTests
     }
 
     // ── TryBindGroupTerminalAggregate ──────────────────────────────────────────────
-    // GroupBy(key).{Count()|LongCount()|Any()|Any(pred)|All(pred)|Count(pred)|LongCount(pred)} with NO
-    // intervening Select — the "GroupBy_without_aggregate" family (EF-449).
+    // GroupBy(key).{Count()|LongCount()|Any()|Any(pred)|All(pred)|Count(pred)|LongCount(pred)} with no
+    // intervening Select — the "GroupBy_without_aggregate" family.
 
     [Fact]
     public void Pending_paging_declines_terminal_aggregate_instead_of_dropping_it()
     {
-        // EF-322 fix round: a Skip/Take already recorded into PendingGroupPaging (e.g.
-        // GroupBy(key).Skip(1).Count()) has no mechanism here to apply the paging before the aggregate — this
-        // bare-terminal-aggregate path never runs a Select/flatten stage for GroupPagingOps to attach to — so
-        // it must decline rather than silently aggregate over every group and drop the paging entirely.
+        // Pending Skip/Take (GroupBy(key).Skip(1).Count()) has no flatten stage to attach to on this path, so it
+        // must decline rather than aggregate every group and drop the paging.
         var mongoQ = BoundScalarKeyQuery();
         mongoQ.Select.PendingGroupPaging = [new MongoSkipOp(new MongoConstantExpression(1, forSerialization: null))];
 
@@ -1883,11 +1746,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_key_comparison_then_bare_Any_applies_filter_with_no_accumulator()
     {
-        // Regression for the accumulator-nullability trap: TryBindGroupWherePredicate's key-access arm
-        // produces a PendingGroupPredicate with a NULL accumulator (a key comparison needs no $group
-        // accumulator of its own); TryBindGroupTerminalAggregate must still emit it as the $match predicate,
-        // not silently discard it because accumulator is null — that would return every group instead of
-        // the filtered subset, a correctness regression, not just a missed capability.
+        // A key comparison yields a PendingGroupPredicate with a null accumulator; it must still be emitted as
+        // the $match, not discarded (which would return every group).
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, bool>> wherePred = g => g.Key == "ALFKI";
 
@@ -1906,9 +1766,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_key_comparison_over_composite_key_still_declines()
     {
-        // A bare g.Key over a COMPOSITE key has no single field to compare against a scalar constant — same
-        // "no single field" reasoning every other key-flatten call site in this file applies. Must still
-        // decline (fall back), not crash or silently compare the wrong thing.
+        // A composite g.Key has no single field to compare to a constant; must decline.
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> key = x => new { x.Country, x.Region };
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -1922,10 +1780,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_key_comparison_over_empty_key_binds_direct_comparison_with_no_accumulator()
     {
-        // EF-322 SP7 (Task 2): a zero-part key's g.Key reaching the HAVING/terminal-predicate path
-        // (TryBindGroupSideOperand) with an EMPTY keyParts list must not crash (IndexOutOfRangeException) —
-        // it resolves to "_id" like any other key, with no single backing property to serialize against
-        // (keySerializationProperty stays null, mirroring the composite-key case).
+        // A zero-part key's g.Key on the HAVING/terminal path (TryBindGroupSideOperand) resolves to "_id" with
+        // no backing property, rather than indexing an empty keyParts (IndexOutOfRangeException).
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> key = x => new { };
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -1945,13 +1801,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Where_key_comparison_over_empty_key_against_non_null_value_declines()
     {
-        // EF-322 SP7 fix-wave (Finding I1): a zero-part key's g.Key resolves to "_id" (Task 2) with no single
-        // backing property. Admitting a comparison against anything other than a literal null here would
-        // hand the OTHER (non-null) operand to TryTranslateComparisonConstant with forSerialization: null,
-        // which succeeds at BIND time regardless of the constant's CLR type and only crashes later, at
-        // render time, when MongoValueRenderer.RenderValue falls back to the generic BsonValue.Create for a
-        // non-BSON-mappable type — a decline that should happen HERE, not a downstream crash. Must decline
-        // (fall back to driver-LINQ) instead of admitting the comparison.
+        // With no backing property, a non-null comparison operand would get forSerialization: null, bind fine,
+        // and crash at render time in BsonValue.Create for a non-BSON-mappable type. Must decline at bind time.
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> key = x => new { };
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
@@ -1969,21 +1820,14 @@ public class NativeGroupByBinderTests
     [Fact]
     public void HAVING_key_comparison_constant_serializes_through_the_keys_own_property()
     {
-        // Final-review fix: the key-access arm's comparison constant used to translate with
-        // forSerialization: null (TryTranslateComparisonConstant's old, fixed signature) — fine for a
-        // string/int key, but MongoValueRenderer.RenderValue falls back to the generic BsonValue.Create for a
-        // null ForSerialization, which throws ArgumentException for a type like Guid that BsonValue.Create
-        // cannot map directly. The key's own IProperty (already known-safe — a value-converted/non-default-
-        // represented key already declined when the key itself was bound) must flow through to the
-        // comparison's constant/parameter side so it renders via the SAME property serializer the key's
-        // stored value itself uses.
+        // The comparison constant must serialize through the key's own IProperty (already known-safe, since a
+        // converted/non-default-represented key declines at key binding). With null ForSerialization,
+        // BsonValue.Create throws ArgumentException for Guid.
         var mongoQ = TestQuery();
         Expression<Func<Order, Guid>> key = x => x.ExternalId;
         Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
 
-        // Hand-built rather than `g => g.Key == guidValue` over a captured local: the C# compiler lowers a
-        // captured Guid to a closure-field MemberExpression, not a ConstantExpression — same lesson as SP1's
-        // parameter-key tests. This constructs a genuine ConstantExpression directly.
+        // Hand-built: a captured Guid would be a closure-field MemberExpression, not a ConstantExpression.
         var groupParam = Expression.Parameter(typeof(IGrouping<Guid, Order>), "g");
         var keyAccess = Expression.Property(groupParam, nameof(IGrouping<Guid, Order>.Key));
         var guidConstant = Expression.Constant(Guid.NewGuid(), typeof(Guid));
@@ -1997,19 +1841,16 @@ public class NativeGroupByBinderTests
         Assert.NotNull(constant.ForSerialization);
         Assert.Equal("ExternalId", constant.ForSerialization!.Name);
 
-        // Rendering must not throw — this is the actual observable bug (ArgumentException: ".NET type
-        // System.Guid cannot be mapped to a BsonValue") when ForSerialization was null.
+        // Must not throw ArgumentException (".NET type System.Guid cannot be mapped to a BsonValue").
         var rendered = MongoAggregationExpressionRenderer.Render(comparison, new PlaceholderTable());
         Assert.NotNull(rendered);
     }
 
     // ── NativeCardinalityBinder.TryBindAggregate composed after GroupBy(key).Select(aggregate) ─────────────
     // All_after_GroupBy_aggregate2: Orders.GroupBy(o => o.CustomerID).Select(g => g.Sum(...)).All(v => v >= 0).
-    // The predicate's bare parameter (v) is the Select's OWN flattened scalar output — the accumulator — NOT
-    // the GroupBy key, even though the key is ALSO a single field-backed part (the same shape
-    // MongoExpressionTranslator's EF-322 gap-3 carve-out uses for a genuine bare-scalar Distinct). Regression
-    // for a bug where TryResolveMember matched the carve-out on the key regardless of Accumulators, binding the
-    // predicate's constant against the KEY property's serializer (a string) instead of the accumulator's.
+    // The predicate's parameter is the Select's flattened accumulator, not the key — even though the key is a
+    // single field-backed part (the shape MongoExpressionTranslator's bare-scalar Distinct carve-out matches).
+    // Binding against the key would serialize the constant with the key's (string) serializer.
 
     [Fact]
     public void All_predicate_after_GroupBy_Select_scalar_aggregate_binds_against_accumulator_not_key()
@@ -2030,12 +1871,12 @@ public class NativeGroupByBinderTests
         Assert.Equal(MongoUnaryOperator.Not, negated.Operator);
         var comparison = Assert.IsType<MongoBinaryExpression>(negated.Operand);
 
-        // The comparison must read the accumulator's OWN flattened alias, never the GroupBy key's field.
+        // Must read the accumulator's flattened alias, never the key's field.
         var left = Assert.IsType<MongoElementRefExpression>(comparison.Left);
         Assert.Equal(bareLeafAlias, left.Path);
     }
 
-    // ── TryBindNestedGroupProjectionConstruction (EF-322 follow-on to SP7) ─────────────────────────────────
+    // ── TryBindNestedGroupProjectionConstruction ──────────────────────────────────────────────
 
     [Fact]
     public void Nested_construction_projection_member_binds_group()
@@ -2059,12 +1900,9 @@ public class NativeGroupByBinderTests
         Assert.Equal("Value", construction.Members[1].MemberName);
         var elementRef = Assert.IsType<MongoElementRefExpression>(construction.Members[1].Value);
 
-        // "_nestedAgg1", not "_nestedAgg0": TryBindNestedGroupProjectionConstruction allocates a synthetic
-        // field name (incrementing nestedAccumulatorCounter) BEFORE attempting TryBindAccumulator for every
-        // non-key member, including "Name" (a plain constant, which fails accumulator binding and falls
-        // through to TryTranslateGroupProjectionExpression) — so "Name" consumes index 0 even though it never
-        // becomes an accumulator. Harmless (still globally unique — see the two-sibling test below for the
-        // no-collision guarantee this is actually pinning), just not contiguous per-accumulator.
+        // "_nestedAgg1": a synthetic name is allocated before TryBindAccumulator for every non-key member,
+        // including the constant "Name", so indices aren't contiguous. Only uniqueness matters (see the
+        // two-sibling test).
         Assert.Equal("_nestedAgg1", elementRef.Path);
 
         Assert.Contains(mongoQ.Select.Grouping!.Accumulators, a => a.OutputField == "_nestedAgg1");
@@ -2073,9 +1911,8 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Nested_construction_member_referencing_per_element_value_declines_whole_projection()
     {
-        // A per-element (non-`g`) reference mixed into the SAME nested construction as an accumulator — the
-        // outer `o` is NOT the grouping parameter, so TryBindGroupProjection must decline the WHOLE outer
-        // projection (return false), never a partial/wrong nested read.
+        // A per-element reference (g.First()) mixed into a nested construction with an accumulator must decline
+        // the whole projection, never produce a partial read.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new NestedWrapper
@@ -2090,8 +1927,7 @@ public class NativeGroupByBinderTests
     [Fact]
     public void Two_sibling_nested_constructions_use_distinct_synthetic_accumulator_field_names()
     {
-        // Two DIFFERENT top-level members, each with its own nested accumulator — the synthetic field-name
-        // counter must not collide between them.
+        // Two top-level members, each with a nested accumulator: synthetic field names must not collide.
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new TwoNestedWrapper
@@ -2110,11 +1946,8 @@ public class NativeGroupByBinderTests
         var firstRef = Assert.IsType<MongoElementRefExpression>(firstConstruction.Members[1].Value);
         var secondRef = Assert.IsType<MongoElementRefExpression>(secondConstruction.Members[1].Value);
 
-        // The counter is shared across BOTH sibling constructions (threaded via the outer loop's own
-        // `nestedAccumulatorCounter`) and also advances once for each construction's non-accumulator "Name"
-        // constant member (see the single-construction test's own remarks) — so the two actual accumulator
-        // fields land on "_nestedAgg1"/"_nestedAgg3", not "_nestedAgg0"/"_nestedAgg1". What this test actually
-        // pins is the no-collision guarantee, not the specific indices.
+        // The counter is shared across siblings and also advances for each "Name" constant, so the paths are
+        // "_nestedAgg1"/"_nestedAgg3"; only non-collision is pinned.
         Assert.NotEqual(firstRef.Path, secondRef.Path);
         Assert.Equal(2, mongoQ.Select.Grouping!.Accumulators.Count);
     }

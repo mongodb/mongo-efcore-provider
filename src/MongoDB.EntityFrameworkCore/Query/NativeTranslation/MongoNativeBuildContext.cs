@@ -25,31 +25,15 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <see cref="MongoPipelineFactory.Build(in MongoNativeBuildContext)"/>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Most of a native pipeline is rendered once, at compile time, into an immutable template whose only
-/// per-execution variability is parameter <em>values</em> — for those, the parameter dictionary alone is
-/// enough (see <see cref="MongoPipelineFactory.Build(IReadOnlyDictionary{string, object})"/>). A
-/// <em>deferred</em> stage slot is one whose BSON <em>shape</em> — not merely its values — depends on
-/// runtime state, so the stage document has to be constructed at execution time. This record carries
-/// everything such a slot may need.
-/// </para>
-/// <para>
-/// No EF-version-conditional code appears here or in <see cref="MongoPipelineFactory"/>:
-/// <see cref="ParameterValues"/> is already bridged by the caller (EF10's
-/// <c>QueryContext.Parameters</c> vs. EF8/EF9's <c>QueryContext.ParameterValues</c>).
-/// </para>
+/// Needed by <em>deferred</em> stage slots, whose BSON shape (not just parameter values) depends on runtime
+/// state. <see cref="ParameterValues"/> is already bridged across EF versions by the caller, so no
+/// version-conditional code is needed here or in <see cref="MongoPipelineFactory"/>.
 /// </remarks>
-/// <param name="ParameterValues">
-/// The named parameter values for this execution, already bridged to a version-agnostic dictionary.
-/// </param>
+/// <param name="ParameterValues">The named parameter values for this execution.</param>
 /// <param name="SerializerFactory">The serializer factory for this <c>DbContext</c>.</param>
-/// <param name="QueryLogger">
-/// The query logger, for a deferred slot that raises a diagnostic (e.g. a missing vector index) while
-/// it builds.
-/// </param>
+/// <param name="QueryLogger">For deferred slots that raise a diagnostic (e.g. a missing vector index).</param>
 /// <param name="AdditionalState">
-/// The mutable state dictionary that will be handed to <c>MongoExecutableQuery.AdditionalState</c>; a
-/// deferred slot may record entries here for later use by the executor.
+/// Handed to <c>MongoExecutableQuery.AdditionalState</c>; deferred slots may record entries for the executor.
 /// </param>
 internal readonly record struct MongoNativeBuildContext(
     IReadOnlyDictionary<string, object?> ParameterValues,
