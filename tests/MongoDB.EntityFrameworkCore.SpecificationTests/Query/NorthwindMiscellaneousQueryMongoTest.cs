@@ -4650,17 +4650,9 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
             return;
         }
 
-        try
-        {
-            await base.Random_next_is_not_funcletized_1(async);
-        }
-        catch
-        {
-            Assert.Fail("Exception is expected here, so this bug may have been fixed.");
-        }
-
-        // No MQL assertion since the query contains randomness.
-        // AssertMql();
+        // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
+        // so the provider throws instead of returning silently wrong rows.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_1(async));
     }
 
     public override async Task Random_next_is_not_funcletized_2(bool async)
@@ -4673,17 +4665,9 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
             return;
         }
 
-        try
-        {
-            await base.Random_next_is_not_funcletized_2(async);
-        }
-        catch
-        {
-            Assert.Fail("Exception is expected here, so this bug may have been fixed.");
-        }
-
-        // No MQL assertion since the query contains randomness.
-        // AssertMql();
+        // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
+        // so the provider throws instead of returning silently wrong rows.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_2(async));
     }
 
     public override async Task Random_next_is_not_funcletized_3(bool async)
@@ -4696,17 +4680,9 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
             return;
         }
 
-        try
-        {
-            await base.Random_next_is_not_funcletized_3(async);
-        }
-        catch
-        {
-            Assert.Fail("Exception is expected here, so this bug may have been fixed.");
-        }
-
-        // No MQL assertion since the query contains randomness.
-        // AssertMql();
+        // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
+        // so the provider throws instead of returning silently wrong rows.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_3(async));
     }
 
     public override async Task Random_next_is_not_funcletized_4(bool async)
@@ -4719,17 +4695,9 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
             return;
         }
 
-        try
-        {
-            await base.Random_next_is_not_funcletized_4(async);
-        }
-        catch
-        {
-            Assert.Fail("Exception is expected here, so this bug may have been fixed.");
-        }
-
-        // No MQL assertion since the query contains randomness.
-        // AssertMql();
+        // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
+        // so the provider throws instead of returning silently wrong rows.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_4(async));
     }
 
     public override async Task Random_next_is_not_funcletized_5(bool async)
@@ -4742,12 +4710,9 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
             return;
         }
 
-        await base.Random_next_is_not_funcletized_5(async);
-
-        AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : { "$gt" : 2 } } }
-            """);
+        // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
+        // so the provider throws instead of returning silently wrong rows.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_5(async));
     }
 
     public override async Task Random_next_is_not_funcletized_6(bool async)
@@ -4760,12 +4725,9 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
             return;
         }
 
-        await base.Random_next_is_not_funcletized_6(async);
-
-        AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : { "$gt" : 5 } } }
-            """);
+        // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
+        // so the provider throws instead of returning silently wrong rows.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_6(async));
     }
 
 #endif

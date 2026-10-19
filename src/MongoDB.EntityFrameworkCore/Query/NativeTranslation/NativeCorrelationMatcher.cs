@@ -20,6 +20,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -144,12 +145,42 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Matches the <c>Queryable.Where(root, correlationPredicate)</c> EF Core's nav-expansion wraps around a
-    /// reference-collection <c>Count</c>/<c>LongCount</c> (see
-    /// <see cref="MongoExpressionTranslator.TryMatchCountExpression"/>) and resolves its navigation. Shared by
+    /// Matches the correlated subquery EF Core's nav-expansion leaves of a reference-collection navigation,
+    /// <c>Queryable.Where(EntityQueryRootExpression&lt;Target&gt;, predicate)</c> with a single-parameter predicate.
+    /// Structural only: the predicate isn't checked to be an FK correlation.
+    /// </summary>
+    internal static bool TryMatchRootWhere(
+        Expression expression,
+        [NotNullWhen(true)] out EntityQueryRootExpression? root,
+        [NotNullWhen(true)] out LambdaExpression? predicate)
+    {
+        if (expression is MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
+                Arguments: [EntityQueryRootExpression rootExpression, var predicateArg]
+            }
+            && whereDeclaring == typeof(Queryable)
+            && predicateArg.UnwrapLambdaFromQuote() is { Parameters.Count: 1 } predicateLambda)
+        {
+            root = rootExpression;
+            predicate = predicateLambda;
+            return true;
+        }
+
+        root = null;
+        predicate = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Matches <see cref="TryMatchRootWhere"/>'s <c>Queryable.Where(root, correlationPredicate)</c> as the FK
+    /// correlation of <paramref name="outerParameter"/> (the query's root entity) with a non-embedded collection
+    /// navigation, and resolves that navigation. This is the shape nav-expansion wraps around a reference-collection
+    /// <c>Count</c>/<c>LongCount</c> (see <see cref="MongoExpressionTranslator.TryMatchCountExpression"/>), list
+    /// (<c>c.Orders.ToList()</c>) or reducer (<c>c.Orders.FirstOrDefault()</c>). Shared by
     /// <see cref="NativeProjectionBinder"/> and <see cref="NativeReferenceCollectionCountPredicateBinder"/>.
     /// </summary>
-    internal static bool TryMatchReferenceCollectionCountNavigation(
+    internal static bool TryMatchCorrelatedRootWhere(
         MongoQueryExpression mongoQ,
         ParameterExpression outerParameter,
         Expression whereArg,
@@ -157,32 +188,64 @@ internal static class NativeCorrelationMatcher
     {
         navigation = null;
 
-        if (whereArg is not MethodCallExpression
-            {
-                Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
-                Arguments: [Microsoft.EntityFrameworkCore.Query.EntityQueryRootExpression rootExpression, var predicateArg]
-            }
-            || whereDeclaring != typeof(Queryable))
-        {
-            return false;
-        }
-
-        var predicate = predicateArg.UnwrapLambdaFromQuote();
-        if (predicate.Parameters.Count != 1)
-            return false;
-
-        var outerEntityType = mongoQ.CollectionExpression.EntityType;
-        var targetEntityType = rootExpression.EntityType;
-
-        return TryMatchCorrelatedCollection(
-            predicate.Body, outerEntityType, outerParameter, targetEntityType, requireEmbedded: false, out navigation!);
+        return TryMatchRootWhere(whereArg, out var rootExpression, out var predicate)
+               && TryMatchCorrelatedCollection(
+                   predicate.Body, mongoQ.CollectionExpression.EntityType, outerParameter, rootExpression.EntityType,
+                   requireEmbedded: false, out navigation!);
     }
 
     /// <summary>
+    /// Stages <paramref name="lookup"/> (a reference-collection <c>$lookup</c> a projection leaf needs) into
+    /// <paramref name="pendingLookups"/>, or reuses an existing lookup at the same alias, staged or already pending on
+    /// the query, if it is the same kind; <paramref name="stagedLookup"/> is whichever backs the leaf. A lookup that
+    /// isn't a plain native collection lookup (TPH-derived target: discriminator <c>$match</c> staged,
+    /// <see cref="LookupPipelineKind.FallbackOnly"/>) declines, as does a collision with a different kind (e.g. a
+    /// filtered Include, or a <see cref="LookupPipelineKind.CorrelatedReducer"/> lookup, which unwinds to one
+    /// document): reading it would silently read the wrong shape.
+    /// </summary>
+    internal static bool TryStageNativeCollectionLookup(
+        MongoQueryExpression mongoQ,
+        LookupExpression lookup,
+        List<LookupExpression> pendingLookups,
+        [NotNullWhen(true)] out LookupExpression? stagedLookup)
+    {
+        stagedLookup = null;
+
+        if (!lookup.IsNativeCollectionLookup)
+            return false;
+
+        var collidingLookup = FindStagedOrPendingLookup(mongoQ, pendingLookups, lookup.As);
+        if (collidingLookup is null)
+        {
+            pendingLookups.Add(lookup);
+            stagedLookup = lookup;
+        }
+        else if (collidingLookup.PipelineKind != lookup.PipelineKind)
+        {
+            return false;
+        }
+        else
+        {
+            stagedLookup = collidingLookup;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The lookup at <paramref name="alias"/> already staged in <paramref name="pendingLookups"/> or pending on
+    /// <paramref name="mongoQ"/> (staged first), or <see langword="null"/>.
+    /// </summary>
+    internal static LookupExpression? FindStagedOrPendingLookup(
+        MongoQueryExpression mongoQ, List<LookupExpression> pendingLookups, string alias)
+        => pendingLookups.FirstOrDefault(l => l.As == alias)
+           ?? mongoQ.GetPendingLookups().FirstOrDefault(l => l.As == alias);
+
+    /// <summary>
     /// Builds (or reuses) the <c>$lookup</c> a reference-collection <c>Count</c> needs and stages it into
-    /// <paramref name="pendingLookups"/>. An existing lookup at the same alias is reused only if it is the same
-    /// kind; a <see cref="LookupPipelineKind.CorrelatedReducer"/> lookup unwinds to one document, so colliding
-    /// with one declines rather than emit a <c>$size</c> over the wrong shape.
+    /// <paramref name="pendingLookups"/> via <see cref="TryStageNativeCollectionLookup"/>; colliding with a
+    /// <see cref="LookupPipelineKind.CorrelatedReducer"/> lookup declines rather than emit a <c>$size</c> over the
+    /// wrong shape.
     /// </summary>
     /// <remarks>
     /// The backing lookup must be stamped <see cref="LookupExpression.IsBareCountSizeSource"/> so a later paged
@@ -201,26 +264,13 @@ internal static class NativeCorrelationMatcher
         result = null;
         lookupToStamp = null;
 
-        var lookup = new LookupExpression(navigation) { InjectAfterRoot = true };
-        if (!lookup.IsNativeCollectionLookup)
-            return false;
-
-        var collidingLookup = pendingLookups.FirstOrDefault(l => l.As == lookup.As)
-            ?? mongoQ.GetPendingLookups().FirstOrDefault(l => l.As == lookup.As);
-        if (collidingLookup is null)
-        {
-            pendingLookups.Add(lookup);
-            lookupToStamp = lookup;
-        }
-        else if (collidingLookup.PipelineKind != lookup.PipelineKind)
+        if (!TryStageNativeCollectionLookup(
+                mongoQ, new LookupExpression(navigation) { InjectAfterRoot = true }, pendingLookups, out var stagedLookup))
         {
             return false;
         }
-        else
-        {
-            lookupToStamp = collidingLookup;
-        }
 
+        lookupToStamp = stagedLookup;
         result = new MongoSizeExpression(LookupExpression.GetLookupAlias(navigation), resultType);
         return true;
     }

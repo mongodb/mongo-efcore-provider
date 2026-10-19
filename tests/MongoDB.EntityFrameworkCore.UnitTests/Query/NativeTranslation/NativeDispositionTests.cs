@@ -42,7 +42,7 @@ public class NativeDispositionTests
     public void GroupBy_is_native()
         => Assert.Equal(NativeDisposition.Native, Classify(NativeRoute.GroupBy));
 
-    // ScalarAggregate is native (built by TryBuildAggregateFactory). The `|| Route == ScalarAggregate` term at the
+    // ScalarAggregate is native (built by TryBuildPipeline in VisitProjectedQuery's ScalarAggregate arm). The `|| Route == ScalarAggregate` term at the
     // TryBuildNativeFactory call site needs a full MongoQueryExpression, so it isn't pinnable here; it's covered
     // by the scalar-cardinality tests under NativeOnly. Don't remove that disjunct on the strength of this test.
     [Fact]
