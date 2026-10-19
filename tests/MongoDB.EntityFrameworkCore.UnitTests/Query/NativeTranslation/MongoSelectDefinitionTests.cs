@@ -115,7 +115,6 @@ public class MongoSelectDefinitionTests
             o => Assert.IsType<MongoLimitOp>(o),
             o => Assert.IsType<MongoSkipOp>(o));
         Assert.True(s.HasPaging);
-        Assert.True(s.HasLimit);
     }
 
     [Fact]

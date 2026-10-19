@@ -21,10 +21,8 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
-#if !EF8
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-#endif
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
@@ -718,15 +716,28 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
     }
 
-    // Runs a native scalar-aggregate pipeline with the empty-input contract. Returns SingleValueEnumerable (sync + async) because EF picks
-    // Single or SingleAsync by IsAsync and SingleAsync needs an IAsyncEnumerable<TResult>.
-    private static SingleValueEnumerable<TResult> ExecuteAggregate<TEntity, TResult>(
+    // Runs a native scalar-aggregate pipeline with the empty-input contract. Returns ScalarAggregateEnumerable (sync + async) because EF picks
+    // Single or SingleAsync by IsAsync and SingleAsync needs an IAsyncEnumerable<TResult>. Nothing runs until the first MoveNext, where the
+    // cancellation token, concurrency detector and QueryCanceled/QueryIterationFailed logging apply as they do for QueryingEnumerable.
+    private static ScalarAggregateEnumerable<TResult> ExecuteAggregate<TEntity, TResult>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
         BsonSerializerFactory bsonSerializerFactory,
         MongoQueryExpression queryExpression,
         Type contextType,
         bool threadSafetyChecksEnabled,
+        MongoCardinality cardinality,
+        MongoPipelineFactory nativeFactory,
+        IBsonSerializer? kindAwareScalarSerializer)
+        => new((MongoQueryContext)queryContext, contextType, threadSafetyChecksEnabled,
+            () => ComputeAggregate<TEntity, TResult>(
+                queryContext, entityType, bsonSerializerFactory, queryExpression, cardinality, nativeFactory, kindAwareScalarSerializer));
+
+    private static TResult ComputeAggregate<TEntity, TResult>(
+        QueryContext queryContext,
+        IReadOnlyEntityType entityType,
+        BsonSerializerFactory bsonSerializerFactory,
+        MongoQueryExpression queryExpression,
         MongoCardinality cardinality,
         MongoPipelineFactory nativeFactory,
         IBsonSerializer? kindAwareScalarSerializer)
@@ -786,22 +797,98 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             log();
         }
 
-        return new SingleValueEnumerable<TResult>(value);
+        return value;
     }
 
-    private sealed class SingleValueEnumerable<T>(T value) : IEnumerable<T>, IAsyncEnumerable<T>
+    private sealed class ScalarAggregateEnumerable<T>(
+        MongoQueryContext queryContextArg,
+        Type contextTypeArg,
+        bool threadSafetyChecksEnabledArg,
+        Func<T> computeArg) : IEnumerable<T>, IAsyncEnumerable<T>
     {
+        private readonly MongoQueryContext queryContext = queryContextArg;
+        private readonly Type contextType = contextTypeArg;
+        private readonly bool threadSafetyChecksEnabled = threadSafetyChecksEnabledArg;
+        private readonly Func<T> compute = computeArg;
+
         public IEnumerator<T> GetEnumerator()
-        {
-            yield return value;
-        }
+            => new Enumerator(this, default, isAsync: false);
 
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 
-        public async IAsyncEnumerator<T> GetAsyncEnumerator(System.Threading.CancellationToken cancellationToken = default)
+        public IAsyncEnumerator<T> GetAsyncEnumerator(System.Threading.CancellationToken cancellationToken = default)
+            => new Enumerator(this, cancellationToken, isAsync: true);
+
+        private sealed class Enumerator(ScalarAggregateEnumerable<T> owner, System.Threading.CancellationToken cancellationToken, bool isAsync)
+            : IEnumerator<T>, IAsyncEnumerator<T>
         {
-            await Task.CompletedTask.ConfigureAwait(false);
-            yield return value;
+            private readonly IConcurrencyDetector? _concurrencyDetector =
+                owner.threadSafetyChecksEnabled ? owner.queryContext.ConcurrencyDetector : null;
+
+            private bool _done;
+
+            public T Current { get; private set; } = default!;
+
+            object? System.Collections.IEnumerator.Current => Current;
+
+            public bool MoveNext()
+            {
+                try
+                {
+                    using var _ = _concurrencyDetector?.EnterCriticalSection();
+
+                    if (isAsync)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+
+                    if (_done)
+                    {
+                        Current = default!;
+                        return false;
+                    }
+
+                    _done = true;
+                    Current = owner.compute();
+                    return true;
+                }
+                catch (Exception exception)
+                {
+                    var logger = owner.queryContext.QueryLogger;
+                    if (isAsync
+                            ? owner.queryContext.ExceptionDetector.IsCancellation(exception, cancellationToken)
+                            : owner.queryContext.ExceptionDetector.IsCancellation(exception))
+                    {
+                        logger.QueryCanceled(owner.contextType);
+                    }
+                    else
+                    {
+                        logger.QueryIterationFailed(owner.contextType, exception);
+                    }
+
+                    throw;
+                }
+            }
+
+            public ValueTask<bool> MoveNextAsync()
+            {
+                try
+                {
+                    return new ValueTask<bool>(MoveNext());
+                }
+                catch (Exception exception)
+                {
+                    return new ValueTask<bool>(Task.FromException<bool>(exception));
+                }
+            }
+
+            public void Reset() => throw new NotSupportedException();
+
+            public void Dispose()
+            {
+            }
+
+            public ValueTask DisposeAsync() => default;
         }
     }
 
@@ -1075,15 +1162,16 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 ? null
                 : qc => new MongoEntityMaterializerSerializer<TResult>(onePassShaper, qc);
 
-        var (mongoQueryContext, executableQuery) = TranslateQuery<TEntity>(
-            queryContext, entityType, bsonSerializerFactory, queryExpression, resultCardinality,
-            nativeFactory, streaming,
-            (translator, expression) => translator.Translate(expression, resultCardinality),
-            outputSerializerFactory);
+        var mongoQueryContext = (MongoQueryContext)queryContext;
 
+        // Translated (and, natively, the pipeline built) at first MoveNext, so failures surface at enumeration and are logged.
         return new QueryingEnumerable<TSource, TResult>(
             mongoQueryContext,
-            executableQuery,
+            () => TranslateQuery<TEntity>(
+                queryContext, entityType, bsonSerializerFactory, queryExpression, resultCardinality,
+                nativeFactory, streaming,
+                (translator, expression) => translator.Translate(expression, resultCardinality),
+                outputSerializerFactory).Item2,
             shaper,
             contextType,
             standAloneStateManager,

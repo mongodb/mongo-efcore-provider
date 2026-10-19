@@ -57,17 +57,4 @@ internal sealed class MongoBinaryExpression : MongoExpression
     /// <inheritdoc />
     public override Type Type
         => IsArithmetic ? Left.Type : typeof(bool);
-
-    public MongoBinaryExpression Update(MongoExpression left, MongoExpression right)
-        => ReferenceEquals(left, Left) && ReferenceEquals(right, Right)
-            ? this
-            : new MongoBinaryExpression(Operator, left, right);
-
-    /// <inheritdoc />
-    protected override Expression VisitChildren(ExpressionVisitor visitor)
-    {
-        var newLeft = (MongoExpression)visitor.Visit(Left);
-        var newRight = (MongoExpression)visitor.Visit(Right);
-        return Update(newLeft, newRight);
-    }
 }

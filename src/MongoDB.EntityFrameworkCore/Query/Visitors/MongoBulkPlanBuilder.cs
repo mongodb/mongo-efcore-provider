@@ -19,6 +19,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 #if !EF8
@@ -49,9 +50,23 @@ internal static class MongoBulkPlanBuilder
     /// <summary>Builds the plan for a bulk delete or update: filter, update and target-id queries are translated at execution time; only the definitions cross to the executor.</summary>
     internal static MongoBulkPlan Create(
         IReadOnlyEntityType entityType, BsonSerializerFactory bsonSerializerFactory, MongoNonQueryExpression nonQuery)
-        => (MongoBulkPlan)CreateBulkPlanMethodInfo
-            .MakeGenericMethod(entityType.ClrType)
-            .Invoke(null, [entityType, bsonSerializerFactory, nonQuery])!;
+        => (MongoBulkPlan)InvokeUnwrapped(
+            CreateBulkPlanMethodInfo.MakeGenericMethod(entityType.ClrType), [entityType, bsonSerializerFactory, nonQuery])!;
+
+    // MethodInfo.Invoke wraps whatever the target throws in TargetInvocationException, whose message ("Exception has been thrown by the
+    // target of an invocation") hides the real failure (e.g. the driver's "Expression not supported: ..."). Rethrow the original.
+    private static object? InvokeUnwrapped(MethodInfo method, object?[] arguments)
+    {
+        try
+        {
+            return method.Invoke(null, arguments);
+        }
+        catch (TargetInvocationException exception) when (exception.InnerException != null)
+        {
+            ExceptionDispatchInfo.Capture(exception.InnerException).Throw();
+            throw;
+        }
+    }
 
     // Generic over TSource so the deferred translation delegates close over the correctly-typed serializer/queryable;
     // invoked once via reflection from VisitNonQuery. Only the resulting definitions cross to the executor.
@@ -265,7 +280,7 @@ internal static class MongoBulkPlanBuilder
 
         var resultType = setter.Property.ClrType;
         var renderer = RenderAggregateExpressionMethodInfo.MakeGenericMethod(typeof(TSource), resultType);
-        return (BsonValue)renderer.Invoke(null, [entityParameter, translatedBody, efSerializer])!;
+        return (BsonValue)InvokeUnwrapped(renderer, [entityParameter, translatedBody, efSerializer])!;
     }
 
     private static BsonValue RenderAggregateExpression<TSource, TResult>(
