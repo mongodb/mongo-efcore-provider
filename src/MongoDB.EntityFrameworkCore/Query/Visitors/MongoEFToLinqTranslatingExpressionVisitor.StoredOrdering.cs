@@ -39,7 +39,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     private enum StoredOrderingUse
     {
         Comparison,
-        SortOrAggregate
+        SortOrAggregate,
+
+        // A server-side function of the value (EF-465): a string method, Length, a date part, arithmetic.
+        Computation
     }
 
     // Lambda parameter -> the sequence(s) whose elements it ranges over; collected once per query root.
@@ -135,8 +138,14 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     private void ThrowIfReadsStoredOrdering(Expression expression, StoredOrderingUse use, string operation)
         => new StoredOrderingWalker(this, use, operation).Walk(expression);
 
-    private void ThrowStoredOrdering(IProperty property, string operation)
-        => throw new NotSupportedException(
+    private void ThrowStoredOrdering(IProperty property, string operation, StoredOrderingUse use)
+        => throw new NotSupportedException(use == StoredOrderingUse.Computation
+            ? $"'{operation}' over the property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be "
+              + "translated to a MongoDB query: the property is stored through a value converter or a BsonRepresentation, "
+              + "so the server would compute it from the stored value rather than the .NET value and return wrong "
+              + "results. Only reading the property and comparing it for equality are supported on such a property; "
+              + "evaluate this operation on the client, for example after AsEnumerable()."
+            :
             $"'{operation}' over the property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be "
             + "translated to a MongoDB query: the property is stored through a value converter or a BsonRepresentation "
             + "whose stored values do not compare, sort or aggregate like the .NET values, so the server would return "
@@ -152,14 +161,127 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         finder.Visit(scope);
         if (finder.Found is { } property)
         {
-            ThrowStoredOrdering(property, operation);
+            ThrowStoredOrdering(property, operation, use);
         }
     }
 
     private bool PreservesStoredOrdering(IProperty property, StoredOrderingUse use)
-        => use == StoredOrderingUse.Comparison
-            ? StoredOrdering.PreservesClrOrdering(property)
-            : StoredOrdering.PreservesClrOrderingForAggregateAndSort(property);
+        => use switch
+        {
+            StoredOrderingUse.Comparison => StoredOrdering.PreservesClrOrdering(property),
+            StoredOrderingUse.Computation => StoredOrdering.PreservesClrValueForComputation(property),
+            _ => StoredOrdering.PreservesClrOrderingForAggregateAndSort(property)
+        };
+
+    // EF-465: a member, method or operator the server computes from a property's stored value (x.Name.Length, x.Name.Contains("x"),
+    // x.Num % 2, Math.Abs(x.Num)). Reading the property itself, equality, `in` lists and ??/?: pass-throughs are exact and left alone.
+    // Called for every node of the query as it is visited; the walker resolves each value operand through projections and g.Key.
+    private void ThrowIfComputedFromStoredValue(Expression node)
+    {
+        switch (node)
+        {
+            case BinaryExpression
+            {
+                NodeType: ExpressionType.Add or ExpressionType.AddChecked or ExpressionType.Subtract or ExpressionType.SubtractChecked
+                or ExpressionType.Multiply or ExpressionType.MultiplyChecked or ExpressionType.Divide or ExpressionType.Modulo
+                or ExpressionType.Power or ExpressionType.And or ExpressionType.Or or ExpressionType.ExclusiveOr
+                or ExpressionType.LeftShift or ExpressionType.RightShift
+            } binary when binary.Type != typeof(bool):
+                ThrowIfReadsStoredOrdering(binary.Left, StoredOrderingUse.Computation, binary.NodeType.ToString());
+                ThrowIfReadsStoredOrdering(binary.Right, StoredOrderingUse.Computation, binary.NodeType.ToString());
+                break;
+
+            case UnaryExpression
+            {
+                NodeType: ExpressionType.Negate or ExpressionType.NegateChecked or ExpressionType.OnesComplement
+            } unary when unary.Type != typeof(bool):
+                ThrowIfReadsStoredOrdering(unary.Operand, StoredOrderingUse.Computation, unary.NodeType.ToString());
+                break;
+
+            case MemberExpression { Expression: { } memberOwner, Member: var member }
+                when IsComputedMember(memberOwner, member):
+                ThrowIfReadsStoredOrdering(memberOwner, StoredOrderingUse.Computation, member.Name);
+                break;
+
+            case MethodCallExpression call when IsComputingMethod(call):
+                if (call.Object is { } receiver)
+                {
+                    ThrowIfReadsStoredOrdering(receiver, StoredOrderingUse.Computation, call.Method.Name);
+                }
+
+                foreach (var argument in call.Arguments)
+                {
+                    ThrowIfReadsStoredOrdering(argument, StoredOrderingUse.Computation, call.Method.Name);
+                }
+
+                break;
+        }
+    }
+
+    // A member of a scalar value type (string.Length, DateTime.Year, TimeSpan.TotalMinutes): the server computes it. The members of an
+    // entity, an anonymous projection or a grouping (Key), and the Nullable accessors, only select a stored value.
+    private bool IsComputedMember(Expression owner, MemberInfo member)
+    {
+        var ownerType = StripConverts(owner).Type;
+        if (IsMappedEntityType(ownerType) || (Nullable.GetUnderlyingType(ownerType) != null && member.Name is "Value" or "HasValue"))
+        {
+            return false;
+        }
+
+        ownerType = Nullable.GetUnderlyingType(ownerType) ?? ownerType;
+        return ownerType == typeof(string) || ownerType == typeof(Guid) || ownerType == typeof(decimal)
+               || ownerType == typeof(DateTime) || ownerType == typeof(DateTimeOffset) || ownerType == typeof(TimeSpan)
+               || ownerType == typeof(DateOnly) || ownerType == typeof(TimeOnly) || ownerType.IsPrimitive;
+    }
+
+    // Sequence operators (their lambdas are visited on their own), EF.Property, equality, the collection Contains behind an `in` list,
+    // the ordering methods (Compare/CompareTo: checked by the relational comparison) and `ToString()` of a property stored as that very
+    // string read or compare a stored value without computing from it; any other method (string members, Math, Like) computes.
+    private bool IsComputingMethod(MethodCallExpression call)
+    {
+        var method = call.Method;
+        if (IsQueryableOrEnumerable(method) || method.IsEFPropertyMethod()
+            || method.Name is nameof(string.Compare) or nameof(IComparable.CompareTo))
+        {
+            return false;
+        }
+
+        if (method.Name == nameof(object.Equals))
+        {
+            return call.Arguments.Any(a => a.Type == typeof(StringComparison));
+        }
+
+        if (method.Name == nameof(Enumerable.Contains) && method.DeclaringType != typeof(string))
+        {
+            return false;
+        }
+
+        if (method.Name == nameof(ToString) && call.Arguments.Count == 0 && call.Object is { } receiver && IsStoredAsToStringRead(receiver))
+        {
+            return false;
+        }
+
+        return !(Nullable.GetUnderlyingType(method.DeclaringType ?? typeof(object)) != null
+                 && method.Name is nameof(Nullable<int>.GetValueOrDefault));
+    }
+
+    // A bare property read (x.P / EF.Property) whose stored value is exactly its ToString().
+    private bool IsStoredAsToStringRead(Expression receiver)
+        => TryFindDirectProperties(StripConverts(receiver)) is { Count: > 0 } properties
+           && properties.All(StoredOrdering.IsStoredAsToString);
+
+    // The mapped properties a bare `x.P` / EF.Property(x, "P") reads, or null for anything else.
+    private List<IProperty>? TryFindDirectProperties(Expression expression)
+        => expression switch
+        {
+            MemberExpression { Expression: { } owner, Member: PropertyInfo or FieldInfo } member
+                when IsMappedEntityType(StripConverts(owner).Type)
+                => FindMappedProperties(StripConverts(owner).Type, member.Member.Name).ToList(),
+            MethodCallExpression { Method: var efProperty, Arguments: [{ } source, ConstantExpression { Value: string name }, ..] }
+                when efProperty.IsEFPropertyMethod() && IsMappedEntityType(source.Type)
+                => FindMappedProperties(source.Type, name).ToList(),
+            _ => null
+        };
 
     // A mapped scalar property `name` of an entity type with this CLR type, or null.
     private IEnumerable<IProperty> FindMappedProperties(Type ownerType, string name)
@@ -421,7 +543,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                         // supported by the provider: the model fails validation).
                         if (!owner.PreservesStoredOrdering(collection, use))
                         {
-                            owner.ThrowStoredOrdering(collection, operation);
+                            owner.ThrowStoredOrdering(collection, operation, use);
                         }
                     }
 
@@ -467,6 +589,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                     }
 
                     return;
+                // `x.P.ToString()` of a property stored as that very string is the stored field itself (EF-465).
+                case MethodCallExpression { Method.Name: nameof(ToString), Object: { } toStringReceiver, Arguments.Count: 0 }
+                    when use == StoredOrderingUse.Computation && owner.IsStoredAsToStringRead(toStringReceiver):
+                    return;
+
 
                 case MethodCallExpression call
                     when IsQueryableOrEnumerable(call.Method):
@@ -743,7 +870,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             {
                 if (!owner.PreservesStoredOrdering(property, use))
                 {
-                    owner.ThrowStoredOrdering(property, operation);
+                    owner.ThrowStoredOrdering(property, operation, use);
                 }
             }
         }

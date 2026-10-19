@@ -40,11 +40,14 @@ internal sealed partial class MongoExpressionTranslator
     /// <summary>
     /// Whether a string property can be searched by a regex (<c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>/
     /// <c>Like</c>/<c>Regex.IsMatch</c>/case-folded equality). A regex runs on the STORED value, so only a BSON string
-    /// qualifies; with an <c>ObjectId</c> representation a regex silently matches nothing. A value converter is
-    /// deliberately NOT gated: converted-but-string-stored properties already behave identically on every path.
+    /// qualifies; with an <c>ObjectId</c> representation a regex silently matches nothing. A value converter is gated too
+    /// (EF-465): the regex would search the converted text (<c>"pfx-" + v</c>), not the CLR value. It was
+    /// once left ungated on the grounds that converted-but-string-stored properties behave identically on every path.
     /// </summary>
     internal static bool IsRegexSearchableString(IReadOnlyProperty property)
         => property.ClrType == typeof(string)
+           && property.GetValueConverter() is null
+           && property.FindTypeMapping()?.Converter is null
            && (property.GetBsonRepresentation() is null or { BsonType: BsonType.String });
 
     private bool TryTranslateRegexIsMatch(MethodCallExpression call, out MongoExpression? result)

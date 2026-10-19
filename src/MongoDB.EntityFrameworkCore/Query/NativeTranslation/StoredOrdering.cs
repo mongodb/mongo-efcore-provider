@@ -81,6 +81,56 @@ internal static class StoredOrdering
         => ClassifyNumericConversion(property) == NumericConversion.IntegralNarrowing;
 
     /// <summary>
+    /// Whether a server-side function of the property (a string method or <c>Length</c>, a date part, arithmetic, <c>Math</c>) computed
+    /// from its stored value gives the CLR answer (EF-465): stored as itself (a <c>BsonRepresentation</c> equal to the type's default
+    /// included), or a number the server holds exactly (EF's numeric casting / enum-to-number converter, a numeric
+    /// <c>BsonRepresentation</c> that represents every value). A custom converter, a string stored as an <c>ObjectId</c> or any
+    /// non-numeric representation fails: the function would run over the stored text, not the .NET value.
+    /// </summary>
+    internal static bool PreservesClrValueForComputation(IProperty property)
+    {
+        if (StoredSerialization.HasDefaultKeySerialization(property) || IsIdentityRepresentation(property))
+        {
+            return true;
+        }
+
+        var clrType = property.ClrType.UnwrapNullableType();
+        if (clrType.IsEnum)
+        {
+            clrType = Enum.GetUnderlyingType(clrType);
+        }
+
+        return (IsIntegral(clrType) || clrType == typeof(float) || clrType == typeof(double) || clrType == typeof(decimal))
+               && (IsExactlyOrderedRepresentation(property) || ClassifyNumericConversion(property) != NumericConversion.None);
+    }
+
+    /// <summary>
+    /// Whether the stored value is exactly what <c>ToString()</c> of the CLR value produces: a non-nullable property with EF's built-in
+    /// Guid/Number/EnumToStringConverter and no <c>BsonRepresentation</c>. So <c>x.P.ToString()</c> is the stored field itself. (A floating-point
+    /// number is formatted by the converter with the invariant culture where <c>ToString()</c> uses the current one; the stored form is what the
+    /// driver compared too.) Shared by the native stored-<c>ToString</c> comparison and the driver-LINQ bridge's computation refusal (EF-465).
+    /// </summary>
+    internal static bool IsStoredAsToString(IProperty property)
+    {
+        if (property.ClrType.IsNullableValueType() || property.GetBsonRepresentation() != null)
+        {
+            return false;
+        }
+
+        var converter = property.GetValueConverter() ?? property.GetTypeMapping().Converter;
+        if (converter is null || converter.ProviderClrType != typeof(string))
+        {
+            return false;
+        }
+
+        var converterType = converter.GetType();
+        return converterType == typeof(GuidToStringConverter)
+               || (converterType.IsGenericType
+                   && converterType.GetGenericTypeDefinition() is var definition
+                   && (definition == typeof(NumberToStringConverter<>) || definition == typeof(EnumToStringConverter<>)));
+    }
+
+    /// <summary>
     /// Whether <c>$sum</c>/<c>$avg</c> over the stored value gives the CLR answer: stored as itself, or via EF's numeric casting converter
     /// (including integral narrowing). A <c>BsonRepresentation</c> is excluded: the server-side sum comes back as the represented BSON
     /// type (<c>Decimal128</c>, string, ...) and is not read back as the CLR type.
