@@ -332,7 +332,7 @@ The same applied wherever such a comparison, key or aggregate appeared: inside a
 
 #### New behavior
 
-These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`). This includes computed shapes over the property (a member or method computed from its stored value, such as `p.Name.Length`, `p.When.Year` or `p.Price.ToString()`; a converted `bool` used for its truth in a key, such as `OrderBy(p => !p.Flag)`), and a key or operand the provider cannot trace back to its properties when such a property flows into it. Filters, equality comparisons and projections elsewhere in the query don't count, and a default-stored primitive collection (`p.Scores.Any(s => s > 5)`) is unaffected. It applies to **every custom value converter**, whether or not it happens to preserve order, so the following now throw for comparisons, sorting and aggregates:
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`). This includes computed shapes over the property (a member or method computed from its stored value, such as `p.Name.Length`, `p.When.Year` or `p.Price.ToString()`; a converted `bool` used for its truth in a key, such as `OrderBy(p => !p.Flag)`), and a key or operand the provider cannot trace back to its properties when such a property flows into it. Filters, equality comparisons and projections elsewhere in the query don't count, and a default-stored primitive collection (`p.Scores.Any(s => s > 5)`) is unaffected. It applies to **every custom value converter** not declared order-preserving (see Mitigations), whether or not it happens to preserve order, so the following now throw for comparisons, sorting and aggregates:
 
 * strongly-typed ID value objects stored through a converter (`OrderBy(x => x.Id)` over `HasConversion(id => id.Value, v => new OrderId(v))`);
 * enums stored as their names (`HasConversion<string>()` or `HasBsonRepresentation(BsonType.String)`);
@@ -344,6 +344,7 @@ These queries throw `NotSupportedException` naming the property (default and `Dr
 Unchanged:
 
 * Equality (`==`, `!=`, `Contains`) over any such property.
+* A property the model declares order-preserving (see Mitigations), and EF Core's stateless `DateTimeToTicksConverter`, `TimeSpanToTicksConverter` and `BoolToZeroOneConverter`, whose stored order is the .NET order.
 * Properties whose stored value is exactly the .NET value in a BSON type the server orders the same way:
     * a `BsonRepresentation` equal to the type's default (for example `[BsonRepresentation(BsonType.String)]` on a `string`);
     * a numeric (or enum) property stored as a numeric `BsonRepresentation` that holds every value exactly (for example `int` as `Int64`, `Double` or `Decimal128`; `decimal` as `Decimal128`);
@@ -353,7 +354,18 @@ Unchanged:
 
 #### Mitigations
 
-Store the property in a form that orders like the .NET value (for example remove `HasConversion<string>()` from an enum or number, or use a numeric `BsonRepresentation`), or sort, compare or aggregate on the client: `context.Products.AsEnumerable().OrderBy(p => p.Price)`.
+If the stored form does order like the .NET value (a strongly-typed id over a number, a scaling converter), declare it and the comparison, sort and `Min`/`Max` run on the server again:
+
+```c#
+modelBuilder.Entity<Order>().Property(o => o.Id).HasOrderPreservingStorage();
+
+// or for every property of a type:
+configurationBuilder.Properties<OrderId>().HaveConversion<OrderIdConverter>().HaveOrderPreservingStorage();
+```
+
+The declaration is a promise the provider cannot check: `a < b` must imply `Convert(a) < Convert(b)` in BSON order, or the results are wrong. It covers the bare property compared with a value, used as an `OrderBy`/`ThenBy` key, or passed to `Min`/`Max`. It does not cover `Sum`/`Average`, a function of the property, or a key that mixes the property with another value (`p.Id > p.Other`, `cond ? p.Id : 0`, `(long)p.Id`); those still throw.
+
+Otherwise store the property in a form that orders like the .NET value (for example remove `HasConversion<string>()` from an enum or number, or use a numeric `BsonRepresentation`), or sort, compare or aggregate on the client: `context.Products.AsEnumerable().OrderBy(p => p.Price)`.
 
 ### String, member and arithmetic functions over a value-converted or represented property now throw
 
@@ -387,7 +399,7 @@ Unchanged:
 
 #### Mitigations
 
-Store the property in a form the function can run over, or bring the rows to the client first: `context.Items.AsEnumerable().Where(x => x.Name.Contains("x"))`. A property whose converter is order-preserving cannot opt in yet (see EF-472).
+Store the property in a form the function can run over, or bring the rows to the client first: `context.Items.AsEnumerable().Where(x => x.Name.Contains("x"))`. `HasOrderPreservingStorage()` does not apply to these functions: a converter that preserves order still changes the value the function would compute from.
 
 ### A value-converted `bool` tested by truthiness in a conditional now throws
 

@@ -40,9 +40,10 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// their result is read back through a generic serializer, not the property's.
 /// </para>
 /// <para>
-/// A custom value converter is opaque (even <c>v =&gt; v * 2</c> can't be proven order-preserving) and refused. Admitted: a
-/// <c>BsonRepresentation</c> (<see cref="IsExactlyOrderedRepresentation"/>, or equal to the type's default BSON type) or EF's built-in
-/// numeric casting / enum-to-number converter (<see cref="ClassifyNumericConversion"/>).
+/// A custom value converter is opaque (even <c>v =&gt; v * 2</c> can't be proven order-preserving) and refused unless the model declares it
+/// order-preserving (<see cref="IsDeclaredOrderPreserving"/>, EF-472: <c>HasOrderPreservingStorage()</c>, or EF's ticks / zero-one
+/// converters). Admitted: a <c>BsonRepresentation</c> (<see cref="IsExactlyOrderedRepresentation"/>, or equal to the type's default BSON
+/// type) or EF's built-in numeric casting / enum-to-number converter (<see cref="ClassifyNumericConversion"/>).
 /// </para>
 /// <para>
 /// Two strengths: <see cref="PreservesClrOrdering"/> (comparison against a value) also needs the constant to survive serialization, so
@@ -55,10 +56,53 @@ internal static class StoredOrdering
 {
     /// <summary>Whether a relational comparison of <paramref name="property"/> against a (serialized) value gives the CLR answer.</summary>
     internal static bool PreservesClrOrdering(IProperty property)
+        => PreservesClrOrderingByConstruction(property) || IsDeclaredOrderPreserving(property);
+
+    /// <summary><see cref="PreservesClrOrdering"/> without a model declaration (<see cref="IsDeclaredOrderPreserving"/>).</summary>
+    internal static bool PreservesClrOrderingByConstruction(IProperty property)
         => StoredSerialization.HasDefaultKeySerialization(property)
            || IsIdentityRepresentation(property)
            || IsExactlyOrderedRepresentation(property)
            || ClassifyNumericConversion(property) == NumericConversion.Widening;
+
+    /// <summary>
+    /// <see cref="PreservesClrOrderingForAggregateAndSort"/> without a model declaration (EF-472). The driver-LINQ bridge uses it for
+    /// <c>Sum</c>/<c>Average</c> (a declared order-preserving converter says nothing about the sum of the stored values: <c>v =&gt; v * 2</c>
+    /// sums to twice the answer) and for any key that mixes the property with another value, where only a bare read is declared safe.
+    /// </summary>
+    internal static bool PreservesClrOrderingForAggregateAndSortByConstruction(IProperty property)
+        => PreservesClrOrderingByConstruction(property) || ClassifyNumericConversion(property) == NumericConversion.IntegralNarrowing;
+
+    /// <summary>
+    /// The model declares the stored form order-preserving (EF-472): <c>HasOrderPreservingStorage()</c>, or one of EF's stateless built-in
+    /// converters whose stored order is the CLR order (<c>DateTime</c> or <c>TimeSpan</c> to ticks, <c>bool</c> to zero/one). Orders and
+    /// compares like the CLR value, nothing more: <see cref="PreservesClrValueForComputation"/> and the numeric reductions ignore it.
+    /// </summary>
+    internal static bool IsDeclaredOrderPreserving(IProperty property)
+    {
+        if (property.IsOrderPreservingStorage())
+        {
+            return true;
+        }
+
+        if (property.GetBsonRepresentation() != null)
+        {
+            return false;
+        }
+
+        var configured = property.GetValueConverter();
+        var mapped = property.GetTypeMapping().Converter;
+        var converter = configured ?? mapped;
+        if (converter is null || (configured != null && mapped != null && !ReferenceEquals(configured, mapped)))
+        {
+            return false;
+        }
+
+        var converterType = converter.GetType();
+        return converterType == typeof(DateTimeToTicksConverter)
+               || converterType == typeof(TimeSpanToTicksConverter)
+               || (converterType.IsGenericType && converterType.GetGenericTypeDefinition() == typeof(BoolToZeroOneConverter<>));
+    }
 
     /// <summary>Whether sorting or aggregating gives the CLR answer: <see cref="PreservesClrOrdering"/> plus integral narrowing.</summary>
     internal static bool PreservesClrOrderingForAggregateAndSort(IProperty property)
