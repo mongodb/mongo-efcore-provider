@@ -42,20 +42,14 @@ internal sealed class MongoSelectLowerer
         var stages = new List<MongoPipelineStage>();
         var sortFields = new SyntheticSortFieldAllocator(ReservedElementNames(query));
 
-        // $vectorSearch must be the first stage (server error Location40602 otherwise), so it has a dedicated
-        // slot rather than living in PipelineOps. The score $addFields follows it, matching the driver-LINQ MQL.
-        if (select.VectorSearch is { } vectorSearch)
-        {
-            stages.Add(new MongoVectorSearchStage(vectorSearch));
-            stages.Add(new MongoVectorSearchScoreStage());
-        }
+        AppendVectorSearchStages(select, stages);
 
         AppendSelectOpStages(select.PipelineOps, stages, sortFields);
 
         // Lookups follow filter/sort/page ops and precede $project so a projected collection-nav Count's _lookup_<Nav> exists for $size.
         // A set-op query defers lookups until after the combine: the operand's nested pipeline carries none, so joining here
         // would leave every operand row with an empty joined array. With a set op, only a projected source1 over a confirmed
-        // join scope can carry PostJoinOps/PostLookupPagingOps; the OperandsProjected branch below emits them.
+        // join scope can carry PostJoinOps/PostLookupPagingOps; the OperandsProjected branch in AppendSetOperationStages emits them.
         if (select.SetOperation == null)
         {
             AppendLookupAndPostJoinStages(query, stages, sortFields);
@@ -63,67 +57,13 @@ internal sealed class MongoSelectLowerer
 
         if (select.SetOperation is { } setOp)
         {
-            // Projected operands: each operand's own $group (projected Distinct only) and $project run before the combine so
-            // dedup/Intersect/Except compare projected values. A trailing projection over the combined result has OperandsProjected false.
-            if (setOp.OperandsProjected)
-            {
-                // source1's pre-combine lookup must precede its $project and not apply to the other operand's rows, so it's emitted here.
-                // A join-scope source1 (MQTEV.IsPreCombineJoinScope) also runs its inner-side filter/sort/paging and deferred paging here;
-                // dropping them would silently return source1's unfiltered joined rows.
-                AppendLookupAndPostJoinStages(query, stages, sortFields);
-
-                // A GroupBy composed after this set op over a Grouping-bearing source1: SnapshotPriorGroupingForNestedGroupBy moved
-                // source1's $group/$project into the Prior* slots, so Grouping/Projection are the outer GroupBy's and are emitted by the Grouping block below.
-                if (select.PriorGrouping is { } source1PriorGrouping)
-                {
-                    AppendPriorGroupingStages(select, source1PriorGrouping, stages, sortFields);
-                }
-                else
-                {
-                    // source1's own $group/$project. Ops composed on source1's projected Distinct/GroupBy output
-                    // before the set op (Distinct().Where(..).Union(..)) belong to source1, ahead of the combine.
-                    AppendProjectedOperandStages(select, stages, sortFields);
-                }
-            }
-
-            AppendSetOpChainStages(select, stages, sortFields);
-
-            // Post-set-op ops act on the combined result; control falls through to the Projection/Grouping/Cardinality blocks.
-            AppendSelectOpStages(select.TrailingOps, stages, sortFields);
-
-            // Deferred lookups run over the combined stream, after dedup/source tagging: those compare whole documents, so a joined
-            // array present then would change the comparison key. Skipped when OperandsProjected. OperandSelect has no lookup
-            // plumbing, so a right-hand operand with its own lookup is unsupported.
-            if (!setOp.OperandsProjected)
-            {
-                AppendLookupStages(query, stages);
-            }
+            AppendSetOperationStages(query, setOp, stages, sortFields);
         }
 
         // Terminal native SelectMany: owned elements are $unwound here; a reference's $lookup+$unwind came from AppendLookupStages.
         if (select.UnwindSource is { } unwind)
         {
-            if (unwind.Kind == MongoUnwindSourceKind.Owned)
-                stages.Add(new MongoUnwindFieldStage(
-                    unwind.InnerScopePath,
-                    includeArrayIndex: unwind.WholeElement ? MongoReplaceRootStage.OrdinalField : null));
-
-            // Inner-element filter (o.Refs.Where(pred)) runs after $unwind; the binder already scope-prefixed its paths.
-            if (unwind.Filter is { } filter)
-                stages.Add(new MongoMatchStage(filter));
-
-            if (unwind.WholeElement)
-            {
-                // Promote the unwound element to root. Owned elements also merge the owner key and array ordinal as sentinel fields
-                // so their shadow key materializes non-null.
-                stages.Add(new MongoReplaceRootStage(
-                    unwind.InnerScopePath,
-                    mergeOwnerKeySentinels: unwind.Kind == MongoUnwindSourceKind.Owned));
-                return stages;
-            }
-
-            if (select.Projection.Count > 0)
-                stages.Add(new MongoProjectStage(select.Projection));
+            AppendUnwindSourceStages(select, unwind, stages);
             return stages;
         }
 
@@ -143,46 +83,7 @@ internal sealed class MongoSelectLowerer
         if (select.Grouping is { } grouping
             && (select.SetOperation is not { OperandsProjected: true } || select.PriorGrouping != null))
         {
-            stages.Add(new MongoGroupStage(grouping));
-
-            // A scalar aggregate directly on a bare GroupBy(key) also sets Cardinality; its post-group predicate emits here, then
-            // control falls through to the aggregate-terminal switch below.
-            if (select.PostGroupPredicate is { } postGroupPredicate)
-            {
-                stages.Add(new MongoMatchStage(postGroupPredicate));
-            }
-
-            // HAVING: before the group sort (it decides which groups exist) and before the flatten $project
-            // (it may reference a field the Select doesn't project).
-            if (select.GroupHavingPredicate is { } havingPredicate)
-            {
-                stages.Add(new MongoMatchStage(havingPredicate));
-            }
-
-            // Group ordering precedes the flatten $project, which may drop an ordering aggregate the Select doesn't project.
-            if (select.GroupOrderOp is { } groupOrderOp)
-            {
-                AppendSortStages(groupOrderOp, stages, sortFields);
-            }
-
-            // Group paging: after the group sort, before the flatten $project. $limit: 0 is normalized later
-            // by MongoPipelineFactory.NormalizePagingStages.
-            if (select.GroupPagingOps.Count > 0)
-            {
-                AppendSelectOpStages(select.GroupPagingOps, stages, sortFields);
-            }
-
-            if (select.Projection.Count > 0)
-            {
-                stages.Add(new MongoProjectStage(select.Projection));
-            }
-
-            // Ops after a projected Distinct act on its output. Emitted regardless of Cardinality: a trailing aggregate falls through
-            // to the terminal switch and a Where would be silently dropped. With PriorGrouping, PostGroupOps was already emitted above.
-            if (select.PriorGrouping == null)
-                AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
-
-            if (select.Cardinality?.Aggregate is null)
+            if (!AppendGroupingStages(select, grouping, stages, sortFields))
             {
                 return stages;
             }
@@ -196,6 +97,148 @@ internal sealed class MongoSelectLowerer
             stages.Add(new MongoProjectStage(select.Projection));
         }
 
+        AppendCardinalityStages(select, stages);
+
+        return stages;
+    }
+
+    // $vectorSearch must be the first stage (server error Location40602 otherwise), so it has a dedicated
+    // slot rather than living in PipelineOps. The score $addFields follows it, matching the driver-LINQ MQL.
+    private static void AppendVectorSearchStages(MongoSelectDefinition select, List<MongoPipelineStage> stages)
+    {
+        if (select.VectorSearch is { } vectorSearch)
+        {
+            stages.Add(new MongoVectorSearchStage(vectorSearch));
+            stages.Add(new MongoVectorSearchScoreStage());
+        }
+    }
+
+    // Source1's pre-combine stages (projected operands only), the set-op chain, the ops composed after it, and the deferred lookups.
+    // Control falls through to the Projection/Grouping/Cardinality blocks of Lower.
+    private void AppendSetOperationStages(
+        MongoQueryExpression query,
+        MongoSetOperation setOp,
+        List<MongoPipelineStage> stages,
+        SyntheticSortFieldAllocator sortFields)
+    {
+        var select = query.Select;
+
+        // Projected operands: each operand's own $group (projected Distinct only) and $project run before the combine so
+        // dedup/Intersect/Except compare projected values. A trailing projection over the combined result has OperandsProjected false.
+        if (setOp.OperandsProjected)
+        {
+            // source1's pre-combine lookup must precede its $project and not apply to the other operand's rows, so it's emitted here.
+            // A join-scope source1 (MQTEV.IsPreCombineJoinScope) also runs its inner-side filter/sort/paging and deferred paging here;
+            // dropping them would silently return source1's unfiltered joined rows.
+            AppendLookupAndPostJoinStages(query, stages, sortFields);
+
+            // A GroupBy composed after this set op over a Grouping-bearing source1: SnapshotPriorGroupingForNestedGroupBy moved
+            // source1's $group/$project into the Prior* slots, so Grouping/Projection are the outer GroupBy's and are emitted by the Grouping block of Lower.
+            if (select.PriorGrouping is { } source1PriorGrouping)
+            {
+                AppendPriorGroupingStages(select, source1PriorGrouping, stages, sortFields);
+            }
+            else
+            {
+                // source1's own $group/$project. Ops composed on source1's projected Distinct/GroupBy output
+                // before the set op (Distinct().Where(..).Union(..)) belong to source1, ahead of the combine.
+                AppendProjectedOperandStages(select, stages, sortFields);
+            }
+        }
+
+        AppendSetOpChainStages(select, stages, sortFields);
+
+        // Post-set-op ops act on the combined result.
+        AppendSelectOpStages(select.TrailingOps, stages, sortFields);
+
+        // Deferred lookups run over the combined stream, after dedup/source tagging: those compare whole documents, so a joined
+        // array present then would change the comparison key. Skipped when OperandsProjected. OperandSelect has no lookup
+        // plumbing, so a right-hand operand with its own lookup is unsupported.
+        if (!setOp.OperandsProjected)
+        {
+            AppendLookupStages(query, stages);
+        }
+    }
+
+    private static void AppendUnwindSourceStages(
+        MongoSelectDefinition select, MongoUnwindSource unwind, List<MongoPipelineStage> stages)
+    {
+        if (unwind.Kind == MongoUnwindSourceKind.Owned)
+            stages.Add(new MongoUnwindFieldStage(
+                unwind.InnerScopePath,
+                includeArrayIndex: unwind.WholeElement ? MongoReplaceRootStage.OrdinalField : null));
+
+        // Inner-element filter (o.Refs.Where(pred)) runs after $unwind; the binder already scope-prefixed its paths.
+        if (unwind.Filter is { } filter)
+            stages.Add(new MongoMatchStage(filter));
+
+        if (unwind.WholeElement)
+        {
+            // Promote the unwound element to root. Owned elements also merge the owner key and array ordinal as sentinel fields
+            // so their shadow key materializes non-null.
+            stages.Add(new MongoReplaceRootStage(
+                unwind.InnerScopePath,
+                mergeOwnerKeySentinels: unwind.Kind == MongoUnwindSourceKind.Owned));
+            return;
+        }
+
+        if (select.Projection.Count > 0)
+            stages.Add(new MongoProjectStage(select.Projection));
+    }
+
+    // The keyed $group, its post-group filters, ordering and paging, the flatten $project and the ops after a projected Distinct.
+    // Returns whether a scalar aggregate follows (Cardinality.Aggregate), so the caller continues into the aggregate stages.
+    private static bool AppendGroupingStages(
+        MongoSelectDefinition select,
+        MongoGrouping grouping,
+        List<MongoPipelineStage> stages,
+        SyntheticSortFieldAllocator sortFields)
+    {
+        stages.Add(new MongoGroupStage(grouping));
+
+        // A scalar aggregate directly on a bare GroupBy(key) also sets Cardinality; its post-group predicate emits here, then
+        // control falls through to the aggregate stages.
+        if (select.PostGroupPredicate is { } postGroupPredicate)
+        {
+            stages.Add(new MongoMatchStage(postGroupPredicate));
+        }
+
+        // HAVING: before the group sort (it decides which groups exist) and before the flatten $project
+        // (it may reference a field the Select doesn't project).
+        if (select.GroupHavingPredicate is { } havingPredicate)
+        {
+            stages.Add(new MongoMatchStage(havingPredicate));
+        }
+
+        // Group ordering precedes the flatten $project, which may drop an ordering aggregate the Select doesn't project.
+        if (select.GroupOrderOp is { } groupOrderOp)
+        {
+            AppendSortStages(groupOrderOp, stages, sortFields);
+        }
+
+        // Group paging: after the group sort, before the flatten $project. $limit: 0 is normalized later
+        // by MongoPipelineFactory.NormalizePagingStages.
+        if (select.GroupPagingOps.Count > 0)
+        {
+            AppendSelectOpStages(select.GroupPagingOps, stages, sortFields);
+        }
+
+        if (select.Projection.Count > 0)
+        {
+            stages.Add(new MongoProjectStage(select.Projection));
+        }
+
+        // Ops after a projected Distinct act on its output. Emitted regardless of Cardinality: a trailing aggregate falls through
+        // to the aggregate stages and a Where would be silently dropped. With PriorGrouping, PostGroupOps was already emitted above.
+        if (select.PriorGrouping == null)
+            AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
+
+        return select.Cardinality?.Aggregate is not null;
+    }
+
+    // The terminal scalar aggregate (Count/Sum/Min/Max/Average/Any/All) and the unordered Last()/LastOrDefault() collapse.
+    private static void AppendCardinalityStages(MongoSelectDefinition select, List<MongoPipelineStage> stages)
+    {
         var cardinality = select.Cardinality;
         if (cardinality?.Aggregate is { } aggregate)
         {
@@ -227,8 +270,6 @@ internal sealed class MongoSelectLowerer
             stages.Add(new MongoLastRowStage());
             stages.Add(new MongoReplaceRootStage("_last", mergeOwnerKeySentinels: false));
         }
-
-        return stages;
     }
 
     private static void AppendPriorGroupingStages(

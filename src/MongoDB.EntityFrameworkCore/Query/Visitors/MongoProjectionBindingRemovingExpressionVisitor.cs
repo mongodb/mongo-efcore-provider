@@ -57,6 +57,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// <summary>
     /// Create a <see cref="MongoProjectionBindingRemovingExpressionVisitor"/>.
     /// </summary>
+    /// <param name="rootEntityType">The <see cref="IEntityType"/> this projection relates to.</param>
+    /// <param name="queryExpression">The <see cref="MongoQueryExpression"/> this visitor should use.</param>
+    /// <param name="docParameter">The parameter that will hold the <see cref="BsonDocument"/> input parameter to the shaper.</param>
+    /// <param name="trackingBehavior">The <see cref="QueryTrackingBehavior"/> for this query.</param>
     public MongoProjectionBindingRemovingExpressionVisitor(
         IEntityType rootEntityType,
         MongoQueryExpression queryExpression,
@@ -288,7 +292,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                         var valueExpression = (_queryExpression.Select.Route == NativeRoute.Projection
                                                || _queryExpression.Select is { Route: NativeRoute.GroupBy, IsDistinct: true, IsGroupBy: false }
-                                               && NativeGroupByBinder.HasDefaultKeySerialization(fieldAccess.Property))
+                                               && StoredSerialization.HasDefaultKeySerialization(fieldAccess.Property))
                             && !ReadsUnprojectedDocuments
                             && fieldAccess.Property.ClrType.UnwrapNullableType() != typeof(BsonDocument)
                             && fieldAccess.Property.ClrType.UnwrapNullableType() != typeof(BsonArray)
@@ -470,8 +474,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     /// <summary>
-    /// Replaces empty ProjectionBindingExpressions; passes all others through.
+    /// Visits a <see cref="BinaryExpression"/> replacing empty ProjectionBindingExpressions
+    /// while passing through visitation of all others.
     /// </summary>
+    /// <param name="binaryExpression">The <see cref="BinaryExpression"/> to visit.</param>
+    /// <returns>A <see cref="BinaryExpression"/> with any necessary adjustments.</returns>
     protected override Expression VisitBinary(BinaryExpression binaryExpression)
     {
         if (binaryExpression.NodeType == ExpressionType.Assign)
@@ -613,8 +620,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     /// <summary>
-    /// Replaces <see cref="ValueBuffer"/> reads with reads from the <see cref="BsonDocument"/>.
+    /// Visits a <see cref="MethodCallExpression"/> replacing calls to <see cref="ValueBuffer"/>
+    /// with replacement alternatives from <see cref="BsonDocument"/>.
     /// </summary>
+    /// <param name="methodCallExpression">The <see cref="MethodCallExpression"/> to visit.</param>
+    /// <returns>A <see cref="Expression"/> to replace the original method call with.</returns>
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
         var method = methodCallExpression.Method;
@@ -773,27 +783,36 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     /// <summary>
-    /// Whether an <see cref="ObjectAccessExpression"/> refers to a cross-collection Include result (a document joined in
-    /// via the driver's LeftJoin or $lookup + $unwind, living at the root of the joined BsonDocument) as opposed to an
-    /// embedded sub-document nested under its containing element.
+    /// Whether an <see cref="ObjectAccessExpression"/> refers to a cross-collection Include result
+    /// (a separate document joined in via the driver's native LeftJoin or via $lookup + $unwind),
+    /// as opposed to an embedded sub-document accessed in place. Cross-collection results live at the
+    /// root of the joined BsonDocument; embedded navigations are nested under their containing element.
     /// </summary>
     private static bool IsCrossCollectionAccess(ObjectAccessExpression accessExpression)
         => accessExpression.AccessExpression is RootReferenceExpression
            && (accessExpression.Navigation is null || !accessExpression.Navigation.IsEmbedded());
 
     /// <summary>
-    /// The root-level field a cross-collection Include result is read from, decided by the projection node plus
-    /// <see cref="MongoQueryExpression.UsesDriverJoinFields"/>, not mutable per-translation state: "_inner" in driver-native
-    /// LeftJoin mode, else the node's own "_lookup_&lt;Navigation&gt;" alias.
+    /// Determine the root-level BsonDocument field a cross-collection Include result is read from.
+    /// The decision comes from the projection node itself plus the query's computed
+    /// <see cref="MongoQueryExpression.UsesDriverJoinFields"/> flag — the single source of truth —
+    /// not from any mutable per-translation state:
+    /// <list type="bullet">
+    /// <item>driver-native LeftJoin mode: the lone joined reference is under "_inner";</item>
+    /// <item>flat $lookup + $unwind mode: each join is under its own "_lookup_&lt;Navigation&gt;" alias,
+    /// which is exactly the alias baked into the access expression's <see cref="ObjectAccessExpression.Name"/>.</item>
+    /// </list>
     /// </summary>
     private string GetCrossCollectionFieldName(ObjectAccessExpression accessExpression)
         => _queryExpression.UsesDriverJoinFields ? "_inner" : accessExpression.Name;
 
     /// <summary>
-    /// The <see cref="BsonDocument"/> a cross-collection Include result is read from: the query root
-    /// (<see cref="DocParameter"/>), except for a reference nested under a collection Include
-    /// (<c>Product.OrderDetails.ThenInclude(od =&gt; od.Order)</c>), whose <c>_lookup_&lt;RefNav&gt;</c> lives on the bound
-    /// per-element document.
+    /// Determine the <see cref="BsonDocument"/> a cross-collection Include result is read from. For a
+    /// top-level cross-collection Include this is the query root document (<see cref="DocParameter"/>).
+    /// For a cross-collection reference nested under a collection Include (e.g.
+    /// <c>Product.OrderDetails.ThenInclude(od =&gt; od.Order)</c>), the parent <see cref="RootReferenceExpression"/>
+    /// is bound to the per-element document of the enclosing collection; the joined field
+    /// (<c>_lookup_&lt;RefNav&gt;</c>) lives on that element, so read from the bound element document instead.
     /// </summary>
     private Expression GetCrossCollectionRootDocument(ObjectAccessExpression accessExpression)
     {
@@ -809,7 +828,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         return DocParameter;
     }
 
-    /// <summary>Gets the registered <see cref="ProjectionExpression"/> for a <see cref="ProjectionBindingExpression"/>.</summary>
+    /// <summary>
+    /// Obtain the registered <see cref="ProjectionExpression"/> for a given <see cref="ProjectionBindingExpression"/>.
+    /// </summary>
+    /// <param name="projectionBindingExpression">The <see cref="ProjectionBindingExpression"/> to look-up.</param>
+    /// <returns>The registered <see cref="ProjectionExpression"/> this <paramref name="projectionBindingExpression"/> relates to.</returns>
     protected ProjectionExpression GetProjection(ProjectionBindingExpression projectionBindingExpression)
         => _queryExpression.Projection[GetProjectionIndex(projectionBindingExpression)];
 
@@ -1141,8 +1164,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         => BsonBinding.CreateGetPropertyValueAtPath(DocParameter, [alias, memberName], field.Property, memberType);
 
     /// <summary>
-    /// Creates a compilable <see cref="Expression"/> the shaper uses to obtain the value from the <see cref="BsonDocument"/>.
+    /// Create a new compilable <see cref="Expression"/> the shaper can use to obtain the value from the <see cref="BsonDocument"/>.
     /// </summary>
+    /// <param name="docExpression">The <see cref="Expression"/> used to access the <see cref="BsonDocument"/>.</param>
+    /// <param name="propertyName">The name of the property.</param>
+    /// <param name="required"><see langword="true"/> if the field is required, <see langword="false"/> if it is optional.</param>
+    /// <param name="type">The <see cref="Type"/> of the value as it is within the document.</param>
+    /// <param name="declaredType">The optional <see cref="ITypeBase"/> this element comes from.</param>
+    /// <param name="typeMapping">Any associated <see cref="CoreTypeMapping"/> to be used in mapping the value.</param>
+    /// <returns>A compilable <see cref="Expression"/> to obtain the desired value as the correct type.</returns>
     protected Expression CreateGetValueExpression(
         Expression docExpression,
         string? propertyName,
@@ -1341,8 +1371,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     /// <summary>
-    /// Builds the nested-document read for an embedded (owned) *reference* navigation hop, or <see langword="null"/>.
-    /// Collection navigations are excluded: their container is a BSON array, not a <see cref="BsonDocument"/>.
+    /// Builds the nested-document read for an embedded (owned) *reference* navigation hop, or
+    /// <see langword="null"/> to let callers fall through to other resolution paths. Collection
+    /// navigations are excluded: their container is a BSON array, not a <see cref="BsonDocument"/>.
     /// </summary>
     private (IEntityType EntityType, Expression DocumentExpression)? TryResolveEmbeddedNavigationDocument(
         (IEntityType? EntityType, Expression? DocumentExpression) navSource, INavigation? navigation)

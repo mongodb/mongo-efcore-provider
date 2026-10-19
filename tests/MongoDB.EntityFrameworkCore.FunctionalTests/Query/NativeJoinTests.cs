@@ -283,7 +283,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Chained_join_scalar_leaf_projection_with_trailing_paging_goes_native_under_NativeOnly()
     {
         // Chain-scalar projection then Skip/Take (Join_Customers_Orders_Orders_Skip_Take_Same_Properties shape). EF hoists
-        // Skip/Take ahead of the pending selector, so it reaches IsSingleEligibleNativeJoinScope's HasPaging branch
+        // Skip/Take ahead of the pending selector, so it reaches TryAdmitSingleEligibleNativeJoinScope's HasPaging branch
         // pre-confirmation and is deferred past the $lookup/$unwind.
         var seed = SeedOwnersOrdersAndLines();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
@@ -372,7 +372,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         // PostJoinOps (Where on a required reference nav's Inner side) and PostLookupPagingOps (deferred Skip/Take) can
         // both be populated. Page-then-filter (Skip/Take before a Where on Order.Owner) must not defer the paging, or
-        // MongoSelectLowerer would emit filter-then-page and return zero rows; IsSingleEligibleNativeJoinScope declines
+        // MongoSelectLowerer would emit filter-then-page and return zero rows; TryAdmitSingleEligibleNativeJoinScope declines
         // it (JoinInnerAccessConfirmed guard). No explicit Select: nav-expansion synthesizes `Select(ti => ti.Outer)`.
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
@@ -773,7 +773,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal(30m, Assert.Single(result).Total);
     }
 
-    // Pins the shape behind IsSingleEligibleNativeJoinScope's `!HasUnsupportedOperator` conjunct: a join-scope Where on
+    // Pins the shape behind TryAdmitSingleEligibleNativeJoinScope's `!HasUnsupportedOperator` conjunct: a join-scope Where on
     // the Inner side with a predicate the native translator can't represent declines, and without the conjunct the
     // trailing `Select(x => x.r)` would still confirm the join and move the fallback onto the flattened shape. No test
     // currently fails with the conjunct removed (kept as defence in depth); these pin the results in every mode, and the
@@ -2174,7 +2174,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     // Must decline (and the fallback must be right). "PagingBetweenJoins": paging recorded BETWEEN two joins of the chain
-    // would be deferred past every $lookup; IsSingleEligibleNativeJoinScope's HasPagingRecordedBetweenJoins already
+    // would be deferred past every $lookup; TryAdmitSingleEligibleNativeJoinScope's HasPagingRecordedBetweenJoins already
     // declines it (the arm's own paging guard is defence in depth there). "PagingAfterTheChain" is what pins that guard,
     // the conservative mirror of the chained bare-leaf arm: paging recorded after the last join declines over a chain too.
     [Theory]

@@ -36,6 +36,7 @@ public static class MongoEntityTypeBuilderExtensions
     /// </summary>
     /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
     /// <param name="name">The name of the collection in MongoDB.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static EntityTypeBuilder ToCollection(
         this EntityTypeBuilder entityTypeBuilder,
         string? name)
@@ -54,6 +55,7 @@ public static class MongoEntityTypeBuilderExtensions
     /// <typeparam name="TEntity">The entity type being configured.</typeparam>
     /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
     /// <param name="name">The name of the collection in MongoDB.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static EntityTypeBuilder<TEntity> ToCollection<TEntity>(
         this EntityTypeBuilder<TEntity> entityTypeBuilder,
         string? name)
@@ -102,6 +104,7 @@ public static class MongoEntityTypeBuilderExtensions
     /// </summary>
     /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
     /// <param name="name">The name of the parent element.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static OwnedNavigationBuilder HasElementName(
         this OwnedNavigationBuilder entityTypeBuilder,
         string? name)
@@ -116,6 +119,7 @@ public static class MongoEntityTypeBuilderExtensions
     /// </summary>
     /// <param name="entityTypeBuilder">The builder for the entity type being configured.</param>
     /// <param name="name">The name of the parent element.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> HasElementName<TOwnerEntity, TDependentEntity>(
         this OwnedNavigationBuilder<TOwnerEntity, TDependentEntity> entityTypeBuilder,
         string? name)

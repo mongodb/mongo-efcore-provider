@@ -138,7 +138,7 @@ internal static class NativeSlotPopulator
         // lower before the $lookup/$unwind: over a 1:N $unwind it pages/filters the un-joined outer rows against the stale outer entity type. Decline. Not
         // folded into HasTerminalOperator, which is also evaluated at join-recording time and would break reference-Include confirmation.
         //
-        // Defence in depth: nav-expansion normally visits slot operators before the confirming Select (closed by IsSingleEligibleNativeJoinScope's
+        // Defence in depth: nav-expansion normally visits slot operators before the confirming Select (closed by TryAdmitSingleEligibleNativeJoinScope's
         // HasPaging/Cardinality conjuncts); kept in case that changes. Reverse needs no arm (a sort before a confirmed join translates against the root scope
         // only, so it commutes). Reducers are gated in TryBindReducer; scalar aggregates follow the lookup block.
         //
@@ -214,7 +214,7 @@ internal static class NativeSlotPopulator
                          predicate.Parameters[0], predicate.Body, containsNavigation, out var innerListContainsNode))
                 mongoQ.Select.AddPredicateConjunct(innerListContainsNode);
             // Outer-side only: $match ops lower before the $lookup, so a Where reaching Inner is left to the arms below (deferring into PostJoinOps). Deliberately
-            // shorter than IsSingleEligibleNativeJoinScope: those conjuncts protect registering a $lookup, and this arm registers nothing (an unconfirmed join
+            // shorter than TryAdmitSingleEligibleNativeJoinScope: those conjuncts protect registering a $lookup, and this arm registers nothing (an unconfirmed join
             // routes to Fallback). Don't copy this shorter set to a registering call site.
             else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } singleLevelScope
                      && !NativeJoinScopeTranslator.ReferencesInnerScope(predicate.Parameters[0], predicate.Body)
