@@ -95,12 +95,14 @@ public class HeadlineBenchmarks
     }
 
     // Hand-written $lookup + $unwind equivalent of Reviews.Include(r => r.Product).
-    private int DriverReviewInclude()
+    private int DriverReviewInclude() => DriverReviewInclude(_reviewColl, _productColl);
+
+    internal static int DriverReviewInclude(IMongoCollection<Review> reviewColl, IMongoCollection<Product> productColl)
     {
-        var joined = _reviewColl
+        var joined = reviewColl
             .Aggregate()
             .Lookup<Review, Product, ReviewWithProduct>(
-                foreignCollection: _productColl,
+                foreignCollection: productColl,
                 localField: r => r.ProductId,
                 foreignField: p => p.Id,
                 @as: rp => rp.Products)
@@ -114,7 +116,7 @@ public class HeadlineBenchmarks
         return count;
     }
 
-    private sealed class ReviewWithProduct
+    internal sealed class ReviewWithProduct
     {
         public ObjectId Id { get; set; }
         public int Stars { get; set; }
@@ -174,4 +176,20 @@ public class HeadlineBenchmarks
 
     [Benchmark] public int ReferenceInclude_EF_Native()
     { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count; }
+
+    // ----- Async twins (new): most applications call ToListAsync -----
+    [Benchmark] public async Task<int> WhereToList_DriverOnly_Async()
+        => (await MongoQueryable.ToListAsync(_flatColl.AsQueryable().Where(f => f.Active))).Count;
+
+    [Benchmark] public async Task<int> WhereToList_EF_Native_Async()
+    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return (await EntityFrameworkQueryableExtensions.ToListAsync(ctx.FlatItems.AsNoTracking().Where(f => f.Active))).Count; }
+
+    [Benchmark] public async Task<int> WholeEntityToList_DriverOnly_Async()
+        => (await MongoQueryable.ToListAsync(_flatColl.AsQueryable())).Count;
+
+    [Benchmark] public async Task<int> WholeEntityToList_EF_Native_NoTracking_Async()
+    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return (await EntityFrameworkQueryableExtensions.ToListAsync(ctx.FlatItems.AsNoTracking())).Count; }
+
+    [Benchmark] public async Task<int> ReferenceInclude_EF_Native_Async()
+    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return (await EntityFrameworkQueryableExtensions.ToListAsync(ctx.Reviews.AsNoTracking().Include(r => r.Product))).Count; }
 }

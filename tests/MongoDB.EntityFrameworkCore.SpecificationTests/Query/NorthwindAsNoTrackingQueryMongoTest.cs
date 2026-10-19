@@ -102,7 +102,7 @@ Customers.
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : { "$ne" : "London" } } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "_lookup_Customer.City" : { "$ne" : "London" } } }
 """);
     }
 
@@ -113,7 +113,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }
 """);
     }
 

@@ -141,9 +141,9 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor
     /// <c>ThenInclude</c> levels are also recorded in <paramref name="transitiveLevels"/>.
     /// </summary>
     /// <remarks>
-    /// An embedded navigation in a <c>ThenInclude</c> chain is transparent, provided nothing non-embedded is nested past it
-    /// (<see cref="HasNonEmbeddedThenInclude"/>); an embedded sibling rejects the chain (see
-    /// <see cref="IsOwnedEmbeddedIncludeSelector"/>). The base must be a pure <c>.Outer</c>* chain reaching the
+    /// An embedded navigation, as a sibling on the spine or in a <c>ThenInclude</c> chain, is transparent, provided nothing
+    /// non-embedded is nested past it (<see cref="HasNonEmbeddedThenInclude"/>); a selector of embedded siblings only is
+    /// <see cref="IsOwnedEmbeddedIncludeSelector"/>'s, and yields no levels here. The base must be a pure <c>.Outer</c>* chain reaching the
     /// <c>TransparentIdentifier</c> parameter.
     /// </remarks>
     private static bool TryWalkIncludeChain(
@@ -169,7 +169,16 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor
         {
             if (navigation.IsEmbedded())
             {
-                return false;
+                // An owned auto-include sibling lives in the root document, so it is transparent to the chain, as an embedded
+                // ThenInclude hop is below, provided no non-embedded include is nested past it on its own ThenInclude axis. The
+                // sibling spine continues through EntityExpression, so a non-embedded sibling listed beside it is walked next.
+                if (HasNonEmbeddedThenInclude(include.NavigationExpression))
+                {
+                    return false;
+                }
+
+                body = include.EntityExpression;
+                continue;
             }
 
             if (navigation.IsCollection)

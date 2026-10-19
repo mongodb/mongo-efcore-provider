@@ -118,7 +118,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "Seattle" } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "_lookup_Customer.City" : "Seattle" } }
 """);
     }
 

@@ -182,7 +182,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
     // Left-outer twin: an optional navigation lowers to LeftJoin via TranslateLeftJoin. Row count can't
-    // discriminate (left-outer $unwind keeps the row), so assert navigations and MQL (preserveNullAndEmptyArrays).
+    // discriminate (left-outer $unwind keeps the row), so assert navigations and MQL (no inner $match on the lookup array).
 
     [Fact]
     public void Three_hop_OPTIONAL_reference_ThenInclude_prefixes_the_third_localField()
@@ -206,7 +206,9 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
         Assert.Contains("\"localField\" : \"_lookup_Leaf.TipId\"", mql);
-        Assert.Contains("\"preserveNullAndEmptyArrays\" : true", mql);
+        // Left-outer: the lookups keep their outer rows (no inner-join $match on the lookup array).
+        Assert.Contains("\"$set\" : { \"_lookup_Tip\" : { \"$arrayElemAt\"", mql);
+        Assert.DoesNotContain("\"$exists\" : true", mql);
     }
 
     // Two same-typed navigations (Order.Buyer / Order.Approver): prefix resolution reads the navigation a prior
@@ -376,14 +378,23 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal("OA", results[0].PrimaryMid!.Leaf!.Label);
         Assert.Equal("OB", results[0].SecondaryMid!.Leaf!.Label);
 
-        // Plus the MQL, against fix-up repairing a crossed pair and to pin preserveNullAndEmptyArrays.
+        // Plus the MQL, against fix-up repairing a crossed pair and to pin the left-outer shape (no inner $match).
         var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("\"localField\" : \"_lookup_PrimaryMid.LeafId\"", mql);
         Assert.Contains("\"localField\" : \"_lookup_SecondaryMid.LeafId\"", mql);
         Assert.Contains("\"as\" : \"_lookup_Leaf\"", mql);
         Assert.Contains("\"as\" : \"_lookup_Leaf_1\"", mql);
-        Assert.Contains("\"preserveNullAndEmptyArrays\" : true", mql);
-        Assert.DoesNotContain("\"preserveNullAndEmptyArrays\" : false", mql);
+        if (mode == MongoQueryMode.DriverLinq)
+        {
+            Assert.Contains("\"preserveNullAndEmptyArrays\" : true", mql);
+            Assert.DoesNotContain("\"preserveNullAndEmptyArrays\" : false", mql);
+        }
+        else
+        {
+            // Native lowers the single-match unwind to $set (left-outer) or $match + $set (inner).
+            Assert.Contains("\"$set\" : { \"_lookup_Leaf_1\" : { \"$arrayElemAt\"", mql);
+            Assert.DoesNotContain("\"$exists\" : true", mql);
+        }
     }
 
     // Same optional model, one branch (the first same-typed navigation), on the left-outer route.

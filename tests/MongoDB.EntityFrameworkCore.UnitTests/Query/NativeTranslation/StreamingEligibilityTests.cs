@@ -167,9 +167,9 @@ public class StreamingEligibilityTests
     }
 
     [Fact]
-    public void Entity_WithOwnedCollectionNavigation_WhoseElementHasOwnedCollection_IsNotEligible()
+    public void Entity_WithOwnedCollectionNavigation_WhoseElementHasOwnedCollection_IsEligible()
     {
-        // An element that itself owns a collection makes the root ineligible.
+        // An element that owns a collection streams: the rewriter threads the enclosing collection plans through.
         var entityType = GetEntityType<EntityWithNestedOwnedCollection>(mb =>
         {
             mb.Entity<EntityWithNestedOwnedCollection>().OwnsMany(e => e.Inner, inner =>
@@ -177,7 +177,7 @@ public class StreamingEligibilityTests
                 inner.OwnsMany(i => i.Nested);
             });
         });
-        Assert.False(StreamingEligibility.IsEligible(entityType));
+        Assert.True(StreamingEligibility.IsEligible(entityType));
     }
 
     private class RefType
@@ -198,15 +198,108 @@ public class StreamingEligibilityTests
     }
 
     [Fact]
-    public void Entity_WithOwnedCollectionNavigation_WhoseElementHasOwnedReference_IsNotEligible()
+    public void Entity_WithOwnedCollectionNavigation_WhoseElementHasOwnedReference_IsEligible()
     {
-        // Any navigation on a collection element (not just a nested collection) makes the root ineligible: the
-        // streaming reader has no IncludeExpression case for a collection element, so it must use the DOM shaper.
+        // An owned navigation on a collection element (reference or collection) streams.
         var entityType = GetEntityType<EntityWithOwnedCollectionOfOwnedReference>(mb =>
         {
             mb.Entity<EntityWithOwnedCollectionOfOwnedReference>().OwnsMany(e => e.Outer, o => o.OwnsOne(x => x.Ref));
         });
+        Assert.True(StreamingEligibility.IsEligible(entityType));
+    }
+
+    private class Principal
+    {
+        public int Id { get; set; }
+    }
+
+    private class OuterWithPrincipal
+    {
+        public string Label { get; set; } = "";
+        public Principal? Principal { get; set; }
+    }
+
+    private class EntityWithOwnedCollectionOfNonOwnedReference
+    {
+        public int Id { get; set; }
+        public IList<OuterWithPrincipal> Outer { get; set; } = [];
+    }
+
+    [Fact]
+    public void Entity_WithOwnedCollectionNavigation_WhoseElementHasNonOwnedNavigation_IsNotEligible()
+    {
+        // Only owned subtrees stream inside an element: a non-owned navigation there has no $lookup plan.
+        var entityType = GetEntityType<EntityWithOwnedCollectionOfNonOwnedReference>(mb =>
+        {
+            mb.Entity<Principal>();
+            mb.Entity<EntityWithOwnedCollectionOfNonOwnedReference>().OwnsMany(e => e.Outer, o => o.HasOne(x => x.Principal).WithMany());
+        });
         Assert.False(StreamingEligibility.IsEligible(entityType));
+    }
+
+    private class HomeWithNotes
+    {
+        public string Street { get; set; } = "";
+        public IList<OwnedCollectionItem> Notes { get; set; } = [];
+    }
+
+    private class EntityWithOwnedReferenceOwningCollection
+    {
+        public int Id { get; set; }
+        public HomeWithNotes Home { get; set; } = null!;
+    }
+
+    [Fact]
+    public void Entity_WithOwnedReference_WhoseTypeOwnsCollection_IsNotEligible()
+    {
+        // RewriteOwnedNavigation reads only single owned references beneath an owned reference.
+        var entityType = GetEntityType<EntityWithOwnedReferenceOwningCollection>(mb =>
+        {
+            mb.Entity<EntityWithOwnedReferenceOwningCollection>().OwnsOne(e => e.Home, h => h.OwnsMany(x => x.Notes));
+        });
+        Assert.False(StreamingEligibility.IsEligible(entityType));
+    }
+
+    private class EntityWithNestedCollectionAndReferenceOwningCollection
+    {
+        public int Id { get; set; }
+        public IList<InnerWithCollection> Inner { get; set; } = [];
+        public HomeWithNotes Home { get; set; } = null!;
+    }
+
+    [Fact]
+    public void Entity_WithNestedOwnedCollection_AndOwnedReferenceOwningCollection_IsNotEligible()
+    {
+        var entityType = GetEntityType<EntityWithNestedCollectionAndReferenceOwningCollection>(mb =>
+        {
+            var e = mb.Entity<EntityWithNestedCollectionAndReferenceOwningCollection>();
+            e.OwnsMany(x => x.Inner, i => i.OwnsMany(y => y.Nested));
+            e.OwnsOne(x => x.Home, h => h.OwnsMany(y => y.Notes));
+        });
+        Assert.False(StreamingEligibility.IsEligible(entityType));
+    }
+
+    private class ShipWithOwnerBackReference
+    {
+        public string Carrier { get; set; } = "";
+        public EntityWithBackReferencingOwnedReference Order { get; set; } = null!;
+    }
+
+    private class EntityWithBackReferencingOwnedReference
+    {
+        public int Id { get; set; }
+        public ShipWithOwnerBackReference Ship { get; set; } = null!;
+    }
+
+    [Fact]
+    public void Entity_WithOwnedReference_ThatNavigatesBackToItsOwner_IsEvaluatedWithoutRecursingForever()
+    {
+        // An owned type's navigation back to its owner makes the navigation graph cyclic: the eligibility walk must terminate.
+        var entityType = GetEntityType<EntityWithBackReferencingOwnedReference>(mb =>
+        {
+            mb.Entity<EntityWithBackReferencingOwnedReference>().OwnsOne(e => e.Ship, s => s.WithOwner(x => x.Order));
+        });
+        Assert.True(StreamingEligibility.IsEligible(entityType));
     }
 
     private static IEntityType GetEntityType<T>(Action<ModelBuilder>? configure = null) where T : class
