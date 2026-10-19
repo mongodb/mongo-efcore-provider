@@ -1046,19 +1046,19 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle", "$lt" : "Toro
     }
 
     public override Task Join_over_non_nullable_column()
-        // Fails: depends on native GroupBy (other agent's work) EF-149
+        // Fails: string.Join / Concat over a GroupBy aggregate is not translated (GroupBy issue) EF-149
         => AssertTranslationFailed(() => base.Join_over_non_nullable_column());
 
     public override Task Join_over_nullable_column()
-        // Fails: depends on native GroupBy (other agent's work) EF-149
+        // Fails: string.Join / Concat over a GroupBy aggregate is not translated (GroupBy issue) EF-149
         => AssertTranslationFailed(() => base.Join_over_nullable_column());
 
     public override Task Join_with_predicate()
-        // Fails: depends on native GroupBy (other agent's work) EF-149
+        // Fails: string.Join / Concat over a GroupBy aggregate is not translated (GroupBy issue) EF-149
         => AssertTranslationFailed(() => base.Join_with_predicate());
 
     public override Task Join_with_ordering()
-        // Fails: depends on native GroupBy (other agent's work) EF-149
+        // Fails: string.Join / Concat over a GroupBy aggregate is not translated (GroupBy issue) EF-149
         => AssertTranslationFailed(() => base.Join_with_ordering());
 
     public override async Task Join_non_aggregate()
@@ -1082,7 +1082,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull
     }
 
     public override Task Concat_aggregate()
-        // Fails: depends on native GroupBy (other agent's work) EF-149
+        // Fails: string.Join / Concat over a GroupBy aggregate is not translated (GroupBy issue) EF-149
         => AssertTranslationFailed(() => base.Concat_aggregate());
 
     public override async Task Concat_string_int_comparison1()

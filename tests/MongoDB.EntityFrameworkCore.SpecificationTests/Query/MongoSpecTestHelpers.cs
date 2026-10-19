@@ -38,10 +38,28 @@ internal static class MongoSpecTestHelpers
         => FunctionalTests.Utilities.TestQueryMode.IsNativeOnly;
 
     /// <summary>
+    /// True for the exceptions a not-yet-translatable query legitimately throws: the native translator's
+    /// <see cref="NativeTranslationNotSupportedException"/>, the driver's <see cref="ExpressionNotSupportedException"/>,
+    /// or an <see cref="InvalidOperationException"/> that is EF's "The LINQ expression ... could not be translated"
+    /// failure, EF's "Calling 'ShapedQueryExpression.VisitChildren' is not allowed" (the projection binder could not
+    /// handle a shaper) or the provider's "Unsupported cross-DbSet query" guard. Any other
+    /// <see cref="InvalidOperationException"/> (e.g. a materialization bug) is not accepted.
+    /// </summary>
+    private static bool IsTranslationFailure(Exception exception)
+        => exception is NativeTranslationNotSupportedException or ExpressionNotSupportedException
+            || exception is InvalidOperationException
+            {
+                Message: var message
+            }
+            && (message.StartsWith("The LINQ expression ", StringComparison.Ordinal)
+                || message.Contains("ShapedQueryExpression.VisitChildren", StringComparison.Ordinal)
+                || message.Contains("Unsupported cross-DbSet query", StringComparison.Ordinal));
+
+    /// <summary>
     /// Asserts that <paramref name="query"/> fails as a translation failure rather than returning (possibly wrong)
-    /// data: <see cref="NativeTranslationNotSupportedException"/> under <c>NativeOnly</c>; an EF
-    /// <see cref="InvalidOperationException"/> or driver <see cref="ExpressionNotSupportedException"/> under
-    /// <c>Native</c>. <paramref name="additionalAcceptedTypes"/> adds types a suite's fallback genuinely throws (e.g.
+    /// data: <see cref="NativeTranslationNotSupportedException"/> under <c>NativeOnly</c>; EF's translation-failure
+    /// <see cref="InvalidOperationException"/> (see <see cref="IsTranslationFailure"/>) or driver
+    /// <see cref="ExpressionNotSupportedException"/> under <c>Native</c>. <paramref name="additionalAcceptedTypes"/> adds types a suite's fallback genuinely throws (e.g.
     /// <see cref="ArgumentException"/>/<see cref="FormatException"/> for GroupBy). xUnit assertion exceptions are never
     /// accepted, so a wrong-data regression still fails.
     /// </summary>
@@ -49,9 +67,7 @@ internal static class MongoSpecTestHelpers
         Func<Task> query, params Type[] additionalAcceptedTypes)
     {
         var exception = await Assert.ThrowsAnyAsync<Exception>(query);
-        if (exception is NativeTranslationNotSupportedException
-            or InvalidOperationException
-            or ExpressionNotSupportedException)
+        if (IsTranslationFailure(exception))
         {
             return;
         }
@@ -75,9 +91,7 @@ internal static class MongoSpecTestHelpers
     internal static void AssertNativeTranslationFailed(Action query, params Type[] additionalAcceptedTypes)
     {
         var exception = Assert.ThrowsAny<Exception>(query);
-        if (exception is NativeTranslationNotSupportedException
-            or InvalidOperationException
-            or ExpressionNotSupportedException)
+        if (IsTranslationFailure(exception))
         {
             return;
         }
