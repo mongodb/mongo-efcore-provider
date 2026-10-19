@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Linq.Expressions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -134,7 +135,18 @@ internal sealed partial class MongoExpressionTranslator
             operands[i] = operand;
         }
 
+        if (MayAbsorbNull(function, operands))
+            return false;
+
         result = new MongoMathExpression(function, operands, call.Method.ReturnType);
         return true;
     }
+
+    // Sign's $switch orders null below 0 and $max/$min skip null: over a possibly-null operand they answer a non-null
+    // value where C# throws, and the relational null guard cannot see the null. Decline, as released driver-LINQ (which
+    // translates none of the three) did. Null-propagating functions are unaffected; a parameter is judged by its CLR
+    // type, so Math.Max(x.A, capturedInt) and Math.Max(x.A ?? 0, 1) stay native.
+    private static bool MayAbsorbNull(MongoMathFunction function, params MongoExpression[] operands)
+        => !MongoGroupElementTranslator.IsNullPropagatingMathFunction(function)
+           && operands.Any(MongoAggregationExpressionRenderer.MayBeNullOperand);
 }

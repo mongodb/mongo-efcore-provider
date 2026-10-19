@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
@@ -55,6 +56,24 @@ internal sealed class PlaceholderTable
     /// A read-only view of all accumulated placeholder entries, in insertion order.
     /// </summary>
     public IReadOnlyList<Entry> Entries => _entries;
+
+    private Dictionary<string, Func<IReadOnlyDictionary<string, object?>, object?>>? _runtimeEvaluators;
+
+    /// <summary>
+    /// Evaluators for runtime-computed parameters (<see cref="Expressions.MongoParameterExpression.RuntimeEvaluator"/>),
+    /// keyed by parameter name; <see langword="null"/> when there are none.
+    /// <see cref="MongoPipelineFactory"/> evaluates each once per Build, before substitution.
+    /// </summary>
+    public IReadOnlyDictionary<string, Func<IReadOnlyDictionary<string, object?>, object?>>? RuntimeEvaluators
+        => _runtimeEvaluators;
+
+    /// <summary>
+    /// Records the evaluator computing <paramref name="parameterName"/>'s value per execution. Idempotent: the same
+    /// parameter node may be rendered more than once (e.g. by a trial render).
+    /// </summary>
+    public void RegisterRuntimeEvaluator(string parameterName, Func<IReadOnlyDictionary<string, object?>, object?> evaluator)
+        => (_runtimeEvaluators ??= new Dictionary<string, Func<IReadOnlyDictionary<string, object?>, object?>>())[parameterName]
+            = evaluator;
 
     /// <summary>
     /// Appends a value placeholder and returns its sentinel.

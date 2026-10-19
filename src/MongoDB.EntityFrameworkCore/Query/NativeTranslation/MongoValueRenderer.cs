@@ -45,10 +45,15 @@ internal static class MongoValueRenderer
         {
             case MongoConstantExpression constant:
                 return constant.ForSerialization is null
-                    ? BsonValue.Create(constant.Value)
+                    ? CreateBsonValue(constant.Value)
                     : ToBsonValue(constant.ForSerialization, constant.Value);
 
             case MongoParameterExpression parameter:
+                // A runtime-evaluated value (a closed clock subtree) is computed per Build, then serialized like any
+                // other parameter below.
+                if (parameter.RuntimeEvaluator is { } evaluator)
+                    placeholders.RegisterRuntimeEvaluator(parameter.Name, evaluator);
+
                 if (parameter.ArrayElementIndex is int elementIndex)
                     return placeholders.CreateArrayElementPlaceholder(
                         parameter.Name,
@@ -126,6 +131,21 @@ internal static class MongoValueRenderer
         }
     }
 
+    // A property-less constant has only its CLR type to go on; BsonValue.Create throws ArgumentException for one it
+    // cannot map (a Guid, ...). Scoped to this one call so it cannot mask other ArgumentExceptions.
+    private static BsonValue CreateBsonValue(object? value)
+    {
+        try
+        {
+            return BsonValue.Create(value);
+        }
+        catch (ArgumentException)
+        {
+            throw new NativeTranslationNotSupportedException(
+                $"Native translation cannot serialize a property-less constant of type '{value?.GetType().Name}'.");
+        }
+    }
+
     // Coerces to the property's CLR type before serializing so the serializer's hard cast succeeds (the factory
     // coerces to the serializer's ValueType, which differs for value-converted properties). Serializer failures
     // become NativeTranslationNotSupportedException so the query falls back rather than crashing on a raw cast.
@@ -135,7 +155,7 @@ internal static class MongoValueRenderer
         try
         {
             value = BsonValueSerializer.Coerce(property.ClrType, value);
-            return BsonValueSerializer.SerializeThroughWriter(info.Serializer, value);
+            return BsonValueSerializer.SerializeNullAware(info.Serializer, value);
         }
         catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException
                                        or InvalidOperationException)
