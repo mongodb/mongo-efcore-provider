@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
 
@@ -121,6 +122,16 @@ internal sealed partial class MongoQueryExpression
     /// <summary>
     /// Register a $lookup stage for a cross-collection collection Include.
     /// </summary>
+    /// <remarks>
+    /// Lookups are deduplicated by <see cref="LookupExpression.As"/>: a second registration under an existing alias is dropped, except that a
+    /// pipelined lookup is folded into an existing bare one (<see cref="LookupExpression.PipelineStages"/> and
+    /// <see cref="LookupExpression.PipelineKind"/> only). That merge exists for navigation lookups (an Include meeting a join or a
+    /// filtered Include on one navigation). The other lookup state (<see cref="LookupExpression.InnerPredicate"/>, element filters, sort,
+    /// limit, skip, outer conditions, <see cref="LookupExpression.ExcludesNullLocalKey"/>) is only set on correlated-array lookups, whose alias
+    /// encodes target, key paths, null exclusion and an <c>_f&lt;N&gt;</c> filter suffix, so two with one alias are the same lookup and
+    /// dropping the second is correct; re-registering the same instance (a join's lookup that an Include path registered) is a no-op. A caller that could produce a different lookup under an existing alias must pick a free alias with
+    /// <see cref="GetUnusedLookupAlias"/> first.
+    /// </remarks>
     public void AddLookup(LookupExpression lookup)
     {
         var existingIndex = _pendingLookups.FindIndex(l => l.As == lookup.As);
@@ -131,6 +142,22 @@ internal sealed partial class MongoQueryExpression
         }
 
         var existing = _pendingLookups[existingIndex];
+
+        // Re-registering the very same instance (a join's lookup that an Include path already registered) is a no-op.
+        if (ReferenceEquals(existing, lookup))
+        {
+            return;
+        }
+
+        Debug.Assert(
+            existing.IsCorrelatedArraySource == lookup.IsCorrelatedArraySource
+            && (lookup.IsCorrelatedArraySource
+                || (lookup.InnerPredicate is null
+                    && lookup.ElementFilters.Count == 0
+                    && !lookup.HasElementStages
+                    && !lookup.HasOuterConditions
+                    && !lookup.ExcludesNullLocalKey)),
+            $"AddLookup would drop state of '{lookup.As}': only navigation lookups merge, and a correlated-array lookup must get a unique alias.");
         if (!existing.HasPipeline && lookup.HasPipeline)
         {
             existing.PipelineStages.AddRange(lookup.PipelineStages);

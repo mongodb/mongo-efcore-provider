@@ -269,6 +269,33 @@ public class ExecuteUpdateTests(TemporaryDatabaseFixture database)
         Assert.Contains("Only mapped root scalar properties can be updated", ex.Message);
     }
 
+    private static int Foo(int quantity) => quantity + 1;
+
+    [Fact]
+    public void ExecuteUpdate_unsupported_setter_method_reports_the_expression_not_a_reflection_wrapper()
+    {
+        using var db = CreateSeededContext();
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => db.Entities.ExecuteUpdate(s => s.SetProperty(o => o.Quantity, o => Foo(o.Quantity))));
+
+        Assert.DoesNotContain("target of an invocation", ex.Message);
+        Assert.Contains("Foo", ex.Message);
+        Assert.Equal(3, db.Entities.Count(o => o.Quantity > 0)); // nothing updated
+    }
+
+    [Fact]
+    public void ExecuteUpdate_unsupported_setter_GetHashCode_reports_the_expression_not_a_reflection_wrapper()
+    {
+        using var db = CreateSeededContext();
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => db.Entities.ExecuteUpdate(s => s.SetProperty(o => o.Quantity, o => o.Status.GetHashCode())));
+
+        Assert.DoesNotContain("target of an invocation", ex.Message);
+        Assert.Contains("GetHashCode", ex.Message);
+    }
+
     [Fact]
     public void ExecuteUpdate_self_referencing_value_converter_property_throws()
     {

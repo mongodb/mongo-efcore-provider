@@ -28,7 +28,7 @@ namespace MongoDB.EntityFrameworkCore.Query;
 internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TTarget>, IEnumerable<TTarget>
 {
     private readonly MongoQueryContext _queryContext;
-    private readonly MongoExecutableQuery _executableQuery;
+    private readonly Func<MongoExecutableQuery> _executableQueryFactory;
     private readonly Func<MongoQueryContext, TSource, TTarget> _shaper;
     private readonly Type _contextType;
     private readonly bool _standAloneStateManager;
@@ -43,9 +43,23 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         bool standAloneStateManager,
         bool threadSafetyChecksEnabled,
         Action<MongoQueryContext, MongoExecutableQuery>? onZeroResults)
+        : this(queryContext, () => executableQuery, shaper, contextType, standAloneStateManager, threadSafetyChecksEnabled, onZeroResults)
+    {
+    }
+
+    // The factory runs at first MoveNext, so a translation or pipeline-build failure surfaces at enumeration (where it is
+    // logged and covered by the concurrency detector) rather than when the query is created.
+    public QueryingEnumerable(
+        MongoQueryContext queryContext,
+        Func<MongoExecutableQuery> executableQueryFactory,
+        Func<MongoQueryContext, TSource, TTarget> shaper,
+        Type contextType,
+        bool standAloneStateManager,
+        bool threadSafetyChecksEnabled,
+        Action<MongoQueryContext, MongoExecutableQuery>? onZeroResults)
     {
         _queryContext = queryContext;
-        _executableQuery = executableQuery;
+        _executableQueryFactory = executableQueryFactory;
         _contextType = contextType;
         _shaper = shaper;
         _standAloneStateManager = standAloneStateManager;
@@ -72,7 +86,8 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         private readonly CancellationToken _cancellationToken;
         private readonly IConcurrencyDetector? _concurrencyDetector;
         private readonly IExceptionDetector _exceptionDetector;
-        private readonly MongoExecutableQuery _executableQuery;
+        private readonly Func<MongoExecutableQuery> _executableQueryFactory;
+        private MongoExecutableQuery? _executableQuery;
         private readonly Action<MongoQueryContext, MongoExecutableQuery>? _onZeroResults;
         private bool _gotResults;
 
@@ -81,7 +96,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         public Enumerator(QueryingEnumerable<TSource, TTarget> queryingEnumerable, CancellationToken cancellationToken = default)
         {
             _queryContext = queryingEnumerable._queryContext;
-            _executableQuery = queryingEnumerable._executableQuery;
+            _executableQueryFactory = queryingEnumerable._executableQueryFactory;
             _contextType = queryingEnumerable._contextType;
             _shaper = queryingEnumerable._shaper;
             _queryLogger = _queryContext.QueryLogger;
@@ -170,6 +185,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 
                 try
                 {
+                    _executableQuery = _executableQueryFactory();
                     _enumerator = _queryContext.MongoClient.Execute<TSource>(_executableQuery, out logAction).GetEnumerator();
                 }
                 catch
@@ -204,7 +220,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 
                 if (!_gotResults && _onZeroResults != null)
                 {
-                    _onZeroResults(_queryContext, _executableQuery);
+                    _onZeroResults(_queryContext, _executableQuery!);
                 }
             }
 
