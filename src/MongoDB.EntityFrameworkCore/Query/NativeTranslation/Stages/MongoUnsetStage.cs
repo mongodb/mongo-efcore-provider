@@ -18,26 +18,16 @@ using System.Collections.Generic;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// Represents an <c>$unset</c> aggregation stage that removes one or more top-level fields from each document.
+/// An <c>$unset</c> stage removing the synthetic sort fields <see cref="MongoAddFieldsStage"/> added. Required for
+/// set-op correctness: <c>Union</c>/<c>Intersect</c>/<c>Except</c> compare whole documents, so a leftover sort field
+/// would change set semantics.
 /// </summary>
-/// <remarks>
-/// Removes the synthetic sort fields <see cref="MongoAddFieldsStage"/> added. Required for set-op correctness:
-/// <c>Union</c>/<c>Intersect</c>/<c>Except</c> compare whole documents, so a leftover sort field would silently
-/// change set semantics.
-/// </remarks>
 internal sealed class MongoUnsetStage : MongoPipelineStage
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MongoUnsetStage"/> class.
-    /// </summary>
-    /// <param name="fieldNames">The top-level field names to remove.</param>
     public MongoUnsetStage(IReadOnlyList<string> fieldNames)
     {
         FieldNames = fieldNames;
     }
 
-    /// <summary>
-    /// Gets the top-level field names to remove.
-    /// </summary>
     public IReadOnlyList<string> FieldNames { get; }
 }

@@ -31,7 +31,6 @@ internal sealed partial class MongoQueryExpression : Expression
     private readonly List<ProjectionExpression> _projection = [];
 
     /// <summary>Creates a <see cref="MongoQueryExpression"/> for the given entity type.</summary>
-    /// <param name="entityType">The entity type this collection relates to.</param>
     public MongoQueryExpression(IEntityType entityType)
     {
         CollectionExpression = new MongoCollectionExpression(entityType);
@@ -42,11 +41,7 @@ internal sealed partial class MongoQueryExpression : Expression
     /// <summary>The collection this query is bound to.</summary>
     public MongoCollectionExpression CollectionExpression { get; private set; }
 
-    /// <summary>
-    /// The native-translation logical query IR (filter / sort / paging / projection) for this collection.
-    /// <c>NativeSlotPopulator</c> / <c>NativeProjectionBinder</c> populate its slots; the gate and lowerer
-    /// read them. Get-only — callers mutate the <see cref="MongoSelectDefinition"/>'s members, never reassign it.
-    /// </summary>
+    /// <summary>The native-translation logical query IR for this collection. Get-only: callers mutate its members, never reassign it.</summary>
     public MongoSelectDefinition Select { get; } = new();
 
     /// <summary>The expression captured from the original EF-bound LINQ query.</summary>
@@ -61,10 +56,9 @@ internal sealed partial class MongoQueryExpression : Expression
         => ExpressionType.Extension;
 
     /// <summary>
-    /// Clears the read-side projection list (<see cref="AddToProjection"/>'s store) when a GroupBy composes on an
-    /// already-finalized prior grouping (called alongside <c>SnapshotPriorGroupingForNestedGroupBy</c>). The
-    /// prior stage's entries are dead, and left in place they collide with the second stage's identically-named
-    /// aliases ("Key"), so the de-dup renames them to "Key0" — a field the pipeline never emits.
+    /// Clears the read-side projection list when a GroupBy composes on an already-finalized prior grouping. The prior
+    /// stage's entries are dead, and left in place they collide with the second stage's identically-named aliases
+    /// ("Key"), so the de-dup renames them to "Key0", a field the pipeline never emits.
     /// </summary>
     internal void ClearReadProjectionForNestedGroupBy()
         => _projection.Clear();
@@ -94,17 +88,12 @@ internal sealed partial class MongoQueryExpression : Expression
     public Expression GetMappedProjection(ProjectionMember projectionMember)
         => _projectionMapping[projectionMember];
 
-    /// <summary>
-    /// Re-points the query's ROOT <see cref="ProjectionMember"/> at a fresh
-    /// <see cref="EntityProjectionExpression"/>/<see cref="RootReferenceExpression"/> pair for
-    /// <paramref name="entityType"/> — built exactly the way the constructor builds the query root's own pair,
-    /// but for a different entity type.
-    /// </summary>
+    /// <summary>Re-points the query's ROOT <see cref="ProjectionMember"/> at a fresh root pair for <paramref name="entityType"/>.</summary>
     /// <remarks>
     /// For the bare whole-inner-element <c>SelectMany</c> (<c>MongoUnwindSource.WholeElement</c>): after
-    /// <c>$unwind</c> + <c>$replaceRoot</c> the element is the root document. Left mapped to the outer entity,
-    /// member bindings resolve against the wrong type and <c>BindNavigation</c> throws. Must be called before
-    /// <c>MongoProjectionBindingExpressionVisitor.Translate</c> runs for the trailing selector.
+    /// <c>$unwind</c> + <c>$replaceRoot</c> the element is the root document; left mapped to the outer entity,
+    /// <c>BindNavigation</c> throws. Call before <c>MongoProjectionBindingExpressionVisitor.Translate</c> runs for
+    /// the trailing selector.
     /// </remarks>
     public void ReRootProjectionAt(IEntityType entityType)
         => _projectionMapping[new ProjectionMember()] =
@@ -115,15 +104,11 @@ internal sealed partial class MongoQueryExpression : Expression
 
     public void ApplyProjection()
     {
-        // Not a plain "if (Projection.Any()) return;": some native routes call AddToProjection directly at
-        // translate time yet leave ordinary _projectionMapping entries unflattened, and GetProjectionIndex then
-        // throws on the non-constant entry. Those routes:
-        //  - Route == Projection: a reference-collection-nav list leaf (`new { c.CustomerID, Orders =
-        //    c.Orders.ToList() }`) registers its own array shaper. Native wrapped-join projections also take this
-        //    route; their shaper is built entirely by index, so flattening the constructor-seeded root entry
-        //    is inert (AddToProjection dedupes it if already present).
-        //  - HasClientWrappedWholeEntityShaper: a client method's whole-entity operand is registered directly,
-        //    but a scalar sibling (e.g. `e.Manager != null`) still needs flattening.
+        // Not a plain "if (Projection.Any()) return;": some native routes call AddToProjection directly yet leave
+        // ordinary _projectionMapping entries unflattened, and GetProjectionIndex then throws on the non-constant entry:
+        //  - Route == Projection (a reference-collection-nav list leaf registers its own array shaper; native
+        //    wrapped-join projections build their shaper by index, so flattening is inert).
+        //  - HasClientWrappedWholeEntityShaper: a scalar sibling of the whole-entity operand still needs flattening.
         // Don't widen to other routes: under Fallback (e.g. Custom_projection_reference_navigation_PK_to_FK_
         // optimization) flattening lets a query that must fail translation silently succeed.
         if (Projection.Any()
@@ -136,11 +121,9 @@ internal sealed partial class MongoQueryExpression : Expression
         Dictionary<ProjectionMember, Expression> result = new();
         foreach (var (projectionMember, expression) in _projectionMapping)
         {
-            // Honor an alias override (MongoSelectDefinition.AddProjectionAliasOverride) so the emitted $project
-            // key matches what the shaper reads — notably for a bare selector body, whose ProjectionMember has no
-            // name. Also under IsDistinct (Route == GroupBy via TryBindDistinctFromProjection): the flatten
-            // $project re-emits the original aliases unchanged, so skipping the override would null a bare
-            // body's alias and crash the shaper.
+            // Honor an alias override so the emitted $project key matches what the shaper reads (a bare selector body's
+            // member has no name). Also under IsDistinct: the flatten $project re-emits the original aliases, so skipping
+            // the override would null a bare body's alias and crash the shaper.
             var memberName = projectionMember.Last?.Name;
             var alias = _explicitProjectionAliases.TryGetValue(projectionMember, out var explicitAlias)
                 ? explicitAlias
@@ -157,9 +140,8 @@ internal sealed partial class MongoQueryExpression : Expression
     }
 
     /// <summary>
-    /// Alias for a <c>_projectionMapping</c> entry with no member name (e.g. EmptyProjectionMember), such as a
-    /// plain member read inside a client-only conditional that EF's generic fold left behind. A null alias means
-    /// "read the whole document" and would collide with the query's whole-entity operand, mis-aliasing the field.
+    /// Alias for a <c>_projectionMapping</c> entry with no member name (e.g. a plain member read inside a client-only
+    /// conditional). A null alias means "read the whole document" and would collide with the whole-entity operand.
     /// </summary>
     private static string? TryGetNaturalMemberAlias(Expression expression)
     {
@@ -175,10 +157,10 @@ internal sealed partial class MongoQueryExpression : Expression
     }
 
     /// <summary>
-    /// Projection members at which a member-less construction's arguments were each registered under that one member
-    /// (see <c>MongoProjectionBindingExpressionVisitor.VisitNew</c>), keyed to the constructed type. Read back from
-    /// whole documents, every such argument would read as the last one registered, so the mixed reader declines
-    /// them (<c>MongoMixedProjectionBindingRemovingExpressionVisitor</c>). Replaced by every projection binding.
+    /// Projection members under which a member-less construction's arguments were each registered (see
+    /// <c>MongoProjectionBindingExpressionVisitor.VisitNew</c>), keyed to the constructed type. Read from whole
+    /// documents every such argument would read as the last one registered, so the mixed reader declines them.
+    /// Replaced by every projection binding.
     /// </summary>
     internal IReadOnlyDictionary<ProjectionMember, Type> AliasedConstructionMembers { get; private set; }
         = new Dictionary<ProjectionMember, Type>();
@@ -207,9 +189,8 @@ internal sealed partial class MongoQueryExpression : Expression
     }
 
     /// <summary>
-    /// Aliases <see cref="ApplyProjection"/> uses for these projection members instead of deriving one from the member
-    /// name: a client-evaluated ternary's branch reads, whose alias the emit side chose
-    /// (<c>MongoSelectDefinition.TryGetClientConditionalReadAlias</c>). Replaced by every projection binding.
+    /// Aliases <see cref="ApplyProjection"/> uses instead of deriving one from the member name: a client-evaluated
+    /// ternary's branch reads, whose alias the emit side chose. Replaced by every projection binding.
     /// </summary>
     internal void ReplaceExplicitProjectionAliases(IReadOnlyDictionary<ProjectionMember, string> explicitAliases)
         => _explicitProjectionAliases = new Dictionary<ProjectionMember, string>(explicitAliases);

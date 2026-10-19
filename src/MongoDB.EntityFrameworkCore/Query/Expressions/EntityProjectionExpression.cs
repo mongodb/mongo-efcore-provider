@@ -21,11 +21,6 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
 {
     private readonly Dictionary<INavigation, IAccessExpression> _navigationExpressionsMap = new();
 
-    /// <summary>
-    /// Create a <see cref="EntityProjectionExpression"/>.
-    /// </summary>
-    /// <param name="entityType">The <see cref="IEntityType"/> being projected.</param>
-    /// <param name="parentAccessExpression">The <see cref="Expression"/> used to access the parent tree.</param>
     public EntityProjectionExpression(
         IEntityType entityType,
         Expression parentAccessExpression)
@@ -35,14 +30,10 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
         Name = (parentAccessExpression as IAccessExpression)?.Name;
     }
 
-    /// <summary>
-    /// The <see cref="Expression"/> used to access the parent for this entity.
-    /// </summary>
+    /// <summary>The expression used to access the parent for this entity.</summary>
     public Expression ParentAccessExpression { get; }
 
-    /// <summary>
-    /// The name or alias assigned to this projection.
-    /// </summary>
+    /// <summary>The name or alias assigned to this projection.</summary>
     public string? Name { get; }
 
     /// <inheritdoc />
@@ -87,7 +78,6 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
             }
             else
             {
-                // Cross-collection navigation: use lookup alias as the field name
                 var lookupAlias = LookupExpression.GetLookupAlias(navigation);
                 expression = navigation.IsCollection
                     ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression, lookupAlias)
@@ -102,26 +92,14 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
         return (Expression)expression;
     }
 
-    /// <summary>
-    /// Bind a member for this entity projection by name.
-    /// </summary>
-    /// <param name="name">The name of the member to be bound.</param>
-    /// <param name="entityType">The <see cref="IEntityType"/> being bound to.</param>
-    /// <param name="propertyBase">An <see cref="IPropertyBase"/> that may be returned if the member is bound.</param>
-    /// <returns>An <see cref="Expression"/> containing the member binding expression.</returns>
+    /// <summary>Binds a member of this entity projection by name.</summary>
     public Expression? BindMember(
         string name,
         Type entityType,
         out IPropertyBase? propertyBase)
         => BindMember(MemberIdentity.Create(name), entityType, out propertyBase);
 
-    /// <summary>
-    /// Bind a member for this entity projection by <see cref="MemberInfo"/>.
-    /// </summary>
-    /// <param name="memberInfo">The <see cref="MemberInfo"/> identifying the member to be bound.</param>
-    /// <param name="entityType">The <see cref="IEntityType"/> being bound to.</param>
-    /// <param name="propertyBase">An <see cref="IPropertyBase"/> that may be returned if the member is bound.</param>
-    /// <returns>An <see cref="Expression"/> containing the member binding expression.</returns>
+    /// <summary>Binds a member of this entity projection by <see cref="MemberInfo"/>.</summary>
     public Expression? BindMember(
         MemberInfo memberInfo,
         Type entityType,
@@ -164,7 +142,6 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
             return BindNavigation(navigation);
         }
 
-        // Entity member not found
         propertyBase = null;
         return null;
     }

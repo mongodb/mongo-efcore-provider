@@ -45,8 +45,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         public bool IsPremium { get; set; }
     }
 
-    // ── Test fixtures ───────────────────────────────────────────────────────────────────────────
-
     private (IMongoCollection<Customer> collection, List<string> logs) SeedCustomers(string name)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
@@ -75,8 +73,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     private static string Mql(List<string> logs)
         => Assert.Single(logs, l => l.Contains("Executed MQL query"));
 
-    // ── Native mode (default): filter renders a native $match ───────────────────────────────────
-
     [Fact]
     public void Native_mode_filter_uses_native_match_pipeline()
     {
@@ -93,8 +89,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"Score\"", mql);
         Assert.Contains("$gt", mql);
     }
-
-    // ── Parameterized across executions (compiled-query cache correctness) ───────────────────────
 
     [Fact]
     public void Native_parameterized_query_returns_correct_rows_for_each_value()
@@ -118,9 +112,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // ── Sort + paging → native $sort / $skip / $limit ─────────────────────────────────────────────
-    // Both paths emit the same stages, so NativeOnly (a fallback would throw) is the proof of native.
-
     [Fact]
     public void Native_sort_skip_take_uses_native_pipeline()
     {
@@ -132,8 +123,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Bob", "Carol"], page.Select(c => c.Name).ToArray());
     }
 
-    // ── DriverLinq mode never goes native (even a representable Where) ────────────────────────────
-
     [Fact]
     public void DriverLinq_mode_never_uses_native_pipeline()
     {
@@ -144,12 +133,9 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["Bob", "Carol", "Dave"], results.Select(c => c.Name).ToArray());
 
-        // Both paths emit $match, so MQL can't discriminate; this only confirms correctness and logging.
         var mql = Mql(logs);
         Assert.Contains("aggregate", mql);
     }
-
-    // ── Native fallback: a non-representable query returns correct results via the driver path ────
 
     [Fact]
     public void Native_mode_falls_back_for_unrepresentable_query()
@@ -171,8 +157,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["Bob", "Carol", "Dave"], names.ToArray());
     }
-
-    // ── NativeOnly: representable shapes succeed, non-representable ones throw at compile time ────
 
     [Fact]
     public void NativeOnly_mode_allows_arithmetic_computed_projection()
@@ -214,7 +198,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         Assert.Contains("$match", Mql(logs));
     }
 
-    // ── Non-canonical order: paging-then-filter / paging-then-sort go native ──────────────────────
     // PipelineOps are emitted in arrival order, so a $match/$sort after paging runs after it, matching
     // LINQ's sequential semantics.
 
@@ -224,7 +207,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         var (collection, logs) = SeedCustomers(nameof(Native_where_after_skip_returns_correct_rows));
         using var db = CreateContext(collection, logs, MongoQueryMode.Native);
 
-        // Skip(1) drops Alice; the Where then keeps Carol and Dave.
         var results = db.Entities.OrderBy(c => c.Score).Skip(1).Where(c => c.Score > 25).ToList();
 
         Assert.Equal(["Carol", "Dave"], results.Select(c => c.Name).ToArray());
@@ -247,7 +229,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         var (collection, logs) = SeedCustomers(nameof(Native_order_after_skip_returns_correct_rows));
         using var db = CreateContext(collection, logs, MongoQueryMode.Native);
 
-        // Skip(1) in insertion order drops Alice; the $sort then orders the remaining rows.
         var results = db.Entities.Skip(1).OrderByDescending(c => c.Score).ToList();
 
         Assert.Equal(["Dave", "Carol", "Bob"], results.Select(c => c.Name).ToArray());
@@ -270,7 +251,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         var (collection, logs) = SeedCustomers(nameof(Native_order_after_take_returns_correct_rows));
         using var db = CreateContext(collection, logs, MongoQueryMode.Native);
 
-        // Take(2) in insertion order keeps Alice and Bob; the $sort then orders just those.
         var results = db.Entities.Take(2).OrderByDescending(c => c.Score).ToList();
 
         Assert.Equal(["Bob", "Alice"], results.Select(c => c.Name).ToArray());
@@ -286,8 +266,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["Bob", "Alice"], results.Select(c => c.Name).ToArray());
     }
-
-    // ── Take-before-Skip and repeated paging go native (same arrival-order mechanism) ─────────────
 
     [Fact]
     public void NativeOnly_take_before_skip_succeeds()
@@ -311,7 +289,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Carol"], results.Select(c => c.Name).ToArray());
     }
 
-    // ── A predicate-injecting aggregate after paging goes native ──────────────────────────────────
     // The injected $match (All's negated predicate, a Count/Any predicate) is appended after any recorded
     // $skip/$limit, so it evaluates over only the paged rows.
 
@@ -333,7 +310,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         var logs = new List<string>();
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // Take(2) keeps Alice and Bob; Bob isn't premium, so All must be false.
         var result = db.Entities.OrderBy(c => c.Score).Take(2).All(c => c.IsPremium);
 
         Assert.False(result);
@@ -345,13 +321,10 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_take_then_count_with_predicate_succeeds));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // Take(2) keeps Alice and Bob; only Bob has Score > 15.
         var result = db.Entities.OrderBy(c => c.Score).Take(2).Count(c => c.Score > 15);
 
         Assert.Equal(1, result);
     }
-
-    // ── Nullable equality / `== null` are natively representable ─────────────────────────────────
 
     [Fact]
     public void NativeOnly_nullable_equality_does_not_throw()
@@ -359,7 +332,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_nullable_equality_does_not_throw));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // All seeded documents omit NullableScore, so the correct result is empty.
         var results = db.Entities.Where(c => c.NullableScore == 5).ToList();
 
         Assert.Empty(results);
@@ -377,7 +349,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         Assert.Equal(4, results.Count);
     }
 
-    // ── `!=` on nullable: lifted C# `!=` treats null/missing as satisfying `x != 5`, so the native rendering
     // must include those rows. Seeds an equal value, a different value, and a missing field, and compares
     // against LINQ-to-objects over the same data.
 
@@ -396,7 +367,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         var logs = new List<string>();
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // In-memory oracle (missing field ~ null).
         var seeded = new List<Customer>
         {
             new() { Name = "Alice", Score = 10, NullableScore = 5 },
@@ -441,8 +411,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Alice"], expectedNames);
     }
 
-    // ── Collection Contains → $in / $nin, both inline-literal and parameterized ───────────────────
-
     [Fact]
     public void NativeOnly_inline_collection_contains_uses_in()
     {
@@ -481,7 +449,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         Assert.Contains("$nin", Mql(logs));
     }
 
-    // ── string.StartsWith/EndsWith/Contains → $regularExpression ────────────────────────────────────
     // The asserted shape (`options: "s"`, anchored per kind) matches what the driver-LINQ path emits.
 
     [Fact]

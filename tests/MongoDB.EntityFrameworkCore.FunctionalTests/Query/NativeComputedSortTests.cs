@@ -113,7 +113,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         public int X { get; set; }
     }
 
-    // ── The main fixture ────────────────────────────────────────────────────────────────────────
     //
     // Chosen so the five orders below are mutually distinct; if two coincided, a dropped $sort or a sort on the
     // wrong key could still pass:
@@ -152,16 +151,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     // label-ascending expectation for MainRows; also Label.ToUpper() ascending over these labels.
     private static readonly string[] MainLabelOrderLabels = ["pA", "pB", "pC", "pD"];
 
-    // ── The tie fixture (cases 6, 7, 8) ─────────────────────────────────────────────────────────
-    //
     // Two deliberate ties, so each secondary key is actually exercised: T2/T4 tie on A (=3, case 6) and T1/T3 tie
     // on A+B (=10, cases 7/8).
-    //
-    //   Row   A    B    Label   A+B   A*B
-    //   T1    6    4    tC      10    24
-    //   T2    3    8    tD      11    24
-    //   T3    9    1    tA      10     9
-    //   T4    3    2    tB       5     6
     private static readonly (int A, int B, string Label)[] TieRows =
     [
         (6, 4, "tC"),
@@ -169,8 +160,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         (9, 1, "tA"),
         (3, 2, "tB")
     ];
-
-    // ── 1. Computed sort over a whole entity, whole-entity streaming shaper ────────────────────────
 
     [Fact]
     public void Computed_sort_over_a_whole_entity_streams()
@@ -187,8 +176,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(MainSumOrderLabels, result.Select(x => x.Label));
     }
 
-    // ── 2. Computed sort over a TPH (DOM-shaper) entity ────────────────────────────────────────────
-
     [Fact]
     public void Computed_sort_over_a_DOM_entity()
     {
@@ -204,8 +191,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         Assert.Equal(MainSumOrderLabels, result.Select(x => x.Label));
     }
-
-    // ── 3. Computed sort then projection — order survives, values right, no synthetic leak ────────
 
     [Fact]
     public void Computed_sort_then_projection()
@@ -230,8 +215,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.DoesNotContain("__sort", projectStage);
     }
 
-    // ── 4. Computed sort then paging — the sum-ordered page, a different pair from insertion's ────
-
     [Fact]
     public void Computed_sort_then_paging()
     {
@@ -250,8 +233,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal([9, 14], result.Select(x => x.A));
         Assert.NotEqual(MainInsertionOrderLabels.Skip(1).Take(2), labels);
     }
-
-    // ── 5. Tracking round trip — identity resolution, and no __sort* element written back ──────────
 
     [Fact]
     public void Computed_sort_tracking_round_trip()
@@ -284,8 +265,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(mutated.Label, rawDoc["Label"].AsString);
     }
 
-    // ── 6. Mixed sort: OrderBy(field).ThenBy(computed) — ties on the field make the secondary load-bearing ──
-
     [Fact]
     public void Mixed_sort_keeps_the_field_key_as_a_plain_path()
     {
@@ -300,8 +279,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         // A ascending: {T2,T4} tie at 3, then T1(6), T3(9). Tie broken by A+B ascending: T4(5) before T2(11).
         Assert.Equal(["tB", "tD", "tC", "tA"], result.Select(x => x.Label));
     }
-
-    // ── 7. Computed primary then field secondary — ties on the primary; order differs from case 6 ──
 
     [Fact]
     public void Computed_primary_then_field_secondary()
@@ -322,8 +299,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.NotEqual(["tB", "tD", "tC", "tA"], order);
     }
 
-    // ── 8. Two computed keys chained — the secondary is genuinely exercised by a tie on the primary ──
-
     [Fact]
     public void Two_computed_keys()
     {
@@ -339,8 +314,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(["tB", "tC", "tA", "tD"], result.Select(x => x.Label));
     }
 
-    // ── 9. Constant sort key goes native ──────────────────────────────────────────────────────────
-
     [Fact]
     public void Constant_sort_key_goes_native()
     {
@@ -355,8 +328,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(MainLabelOrderLabels, result.Select(x => x.Label));
     }
 
-    // ── 10. Parameterized sort key goes native — the placeholder table is threaded through RenderAddFields ──
-
     [Fact]
     public void Parameterized_sort_key_goes_native()
     {
@@ -370,8 +341,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(MainLabelOrderLabels, result.Select(x => x.Label));
     }
 
-    // ── 11. Field sort emits no $set — a STAGE-SHAPE pin, not a routing proof ──────────────────────
-
     [Fact]
     public void Field_sort_emits_no_set()
     {
@@ -383,8 +352,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
         Assert.DoesNotContain("$set", mql);
     }
-
-    // ── 12. Unsupported computed key declines and returns correct rows ────────────────────────────
 
     [Fact]
     public void Unsupported_computed_key_declines_and_returns_correct_rows()
@@ -399,8 +366,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label.ToUpper()).ToList());
     }
-
-    // ── 13. Parameterized Where leg alongside a computed sort ─────────────────────────────────────
 
     [Fact]
     public void Parameterized_where_leg()
@@ -422,7 +387,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(MainSumOrderA, result.Select(x => x.A));
     }
 
-    // ── 14. A "$"-prefixed string constant sort key ties, it does not sort by the named field ──────
     // (the $literal wrap in MongoPipelineFactory.RenderAddFields)
 
     [Fact]
@@ -440,7 +404,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.NotEqual(MainLabelOrderLabels, labels);
     }
 
-    // ── 15. A bare constant whose CLR type has no BSON representation declines instead of throwing ──
     // (BsonValue.Create throws ArgumentException for a custom struct; an enum is fine)
 
     [Fact]
@@ -466,7 +429,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             () => Queryable.OrderBy(nativeOnly.Entities.AsNoTracking(), keySelector).ToList());
     }
 
-    // ── 16. A value-sensitive parameterized computed key — pins substitution AND the rendered value ──
     // (cases 9/10's ThenBy(Label) would mask a parameter sentinel that was never substituted)
 
     [Fact]
@@ -486,8 +448,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(expected, labels);
         Assert.NotEqual(MainInsertionOrderLabels, labels);
     }
-
-    // ── 17. An unfiltered owned-collection Count as a computed sort key ────────────────────────────
 
     [Fact]
     public void Unfiltered_owned_collection_count_sort_key_goes_native()
@@ -514,7 +474,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(["pA", "pC", "pB"], result.Select(x => x.Label));
     }
 
-    // ── 18. A parameterized Where leg over the projection shape ────────────────────────────────────
     // A projection is where an alias miss fails silently (see NativeBareProjectionTests), so the
     // computed-sort-then-projection shape gets its own late-decline leg alongside case 13.
 
@@ -535,7 +494,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(MainSumOrderA, result.Select(r => r.A));
     }
 
-    // ── 19. A reference-type parameter sort key declines instead of throwing at execution time ─────
     // The probe guard can't see a parameter's runtime value, so a Uri/Version/custom-class parameter would reach
     // MongoPipelineFactory.SerializeParameter -> BsonValue.Create and throw ArgumentException at execution, past
     // any fallback. The guard declines a bare reference-type parameter unless it's a string (or BsonValue).
@@ -565,8 +523,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
                     .Select(x => x.Label).ToList());
         }
 
-        // Control: a string parameter is allowlisted and still goes native, so the guard can't silently widen
-        // to "decline every reference type".
         var label = "zz";
         using (var stringNativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
@@ -577,7 +533,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         }
     }
 
-    // ── 20. OrderByDescending with a computed PRIMARY key ─────────────────────────────────────────
     // Breadth: the only other descending case is case 8's ThenByDescending.
 
     [Fact]
@@ -597,7 +552,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.NotEqual(MainInsertionOrderLabels, labels);
     }
 
-    // ── 21. A FILTERED owned-collection Count over a string-represented operand is refused ───────────
     // The element predicate `p.Code > 5` would compare the raw stored strings ("10" < "5"), so both server paths
     // used to return [cA, cB, cC] where C# answers [cB, cC, cA]. That was once accepted as a Native == DriverLinq
     // divergence; EF-337 (StoredOrdering) refuses the relational comparison on every path instead.
@@ -642,13 +596,11 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             seedDb.SaveChanges();
         }
 
-        // Premise: Code really is stored as a BSON string, otherwise the test passes vacuously.
         var raw = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName);
         var storedCodes = raw.Find(Builders<BsonDocument>.Filter.Empty).ToList()
             .SelectMany(d => d["Posts"].AsBsonArray.Select(p => p["Code"])).ToList();
         Assert.All(storedCodes, c => Assert.Equal(BsonType.String, c.BsonType));
 
-        // Leg 1 — NativeOnly declines (no stored-form answer).
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, CodeOwnerModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnly.Entities.AsNoTracking()
@@ -666,7 +618,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             Assert.Contains("CodeItem.Code'", ex.Message);
         }
 
-        // Leg 4 — the C# answer, which the old stored-form order ([cA, cB, cC]) contradicted.
         using (var oracleDb = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
         {
             var inMemory = oracleDb.Entities.AsNoTracking().ToList()
@@ -677,7 +628,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         }
     }
 
-    // ── 22-24. MongoInExpression / MongoUnaryExpression{Not} computed sort keys ─────────────────────
     // Require MongoAggregationExpressionRenderer arms for both, or TryTranslateComputedSortKey's CanRender gate
     // declines.
 
@@ -741,12 +691,9 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(["pX", "pZ", "pW", "pY"], result.Select(x => x.Label));
     }
 
-    // ── 25. Not over a value-converted bool must decline, never answer wrong ──────────────────────────
     // A raw-field { $not: [...] } is truthiness-based and both converted values ("Y"/"N") are truthy, so rendering
     // it natively would tie every row on a wrong constant. MongoExpressionTranslator.AllFieldsDefaultSerialized
     // therefore declines a MongoUnaryExpression over a non-default-serialized field. Driver-LINQ would render the same
-    // raw { $not: "$Flag" }, so the bridge refuses it too (EF-337: a converted bool used for its truth in a key).
-    // In-memory the answer is [p2, p3, p1, p4]; both server paths used to return label order.
 
     public class ConvertedFlagItem
     {
@@ -801,8 +748,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             oracleDb.Entities.AsNoTracking().ToList().OrderBy(x => !x.Flag).ThenBy(x => x.Label).Select(x => x.Label));
     }
 
-    // ── Seeds and helpers ───────────────────────────────────────────────────────────────────────
-
     private IMongoCollection<SortItem> Seed(string name)
     {
         var collection = database.MongoDatabase.GetCollection<SortItem>(UniqueCollectionName(name));
@@ -831,7 +776,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         return database.MongoDatabase.GetCollection<SortDomItem>(collectionName);
     }
 
-    // ── The synthetic $set sort field must not clobber a real mapped element ────────────────────────
     //
     // $set silently overwrites a same-named field (and the trailing $unset removes it), so
     // SyntheticSortFieldAllocator must avoid every reachable element name. Both tests run under NativeOnly;
@@ -887,8 +831,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
         Assert.Contains("__sort1", mql);
     }
-
-    // ── Gap 1: a set-op operand of a DIFFERENT entity type ──────────────────────────────────────────
 
     public class SetOpMain
     {

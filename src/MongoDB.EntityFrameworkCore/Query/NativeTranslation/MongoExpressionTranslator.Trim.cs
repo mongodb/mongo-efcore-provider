@@ -20,13 +20,10 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// <see cref="MongoExpressionTranslator"/> — <c>string.Trim()</c>/<c>TrimStart()</c>/<c>TrimEnd()</c> and
-/// their <c>char</c>/<c>char[]</c>-arg overloads.
+/// <see cref="MongoExpressionTranslator"/> — <c>string.Trim()</c>/<c>TrimStart()</c>/<c>TrimEnd()</c> and their
+/// <c>char</c>/<c>char[]</c> overloads. Driver-LINQ only translates zero-arg <c>Trim</c> and <c>char[]</c>
+/// <c>TrimStart</c>/<c>TrimEnd</c>, so the other overloads have no fallback.
 /// </summary>
-/// <remarks>
-/// Driver-LINQ only translates zero-arg <c>Trim</c> and <c>char[]</c>-arg <c>TrimStart</c>/<c>TrimEnd</c>; the
-/// other overloads have no driver fallback.
-/// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
     private bool TryTranslateTrim(MethodCallExpression call, out MongoExpression? result)

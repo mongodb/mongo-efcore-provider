@@ -37,8 +37,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // ── Shared helpers ────────────────────────────────────────────────────────────────────────────
-
     private static SingleEntityDbContext<T> CreateContext<T>(
         IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
@@ -51,10 +49,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    /// <summary>
-    /// Asserts <paramref name="query"/> returns equal (order-sensitive) results under
-    /// <see cref="MongoQueryMode.Native"/> and <see cref="MongoQueryMode.DriverLinq"/>.
-    /// </summary>
+    /// <summary>Asserts <paramref name="query"/> returns equal (order-sensitive) results under Native and DriverLinq.</summary>
     private void AssertParity<T, TResult>(
         IMongoCollection<T> collection,
         Func<IQueryable<T>, IEnumerable<TResult>> query,
@@ -72,10 +67,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
         Assert.Equal(driver, native);
     }
 
-    /// <summary>
-    /// Returns whether <paramref name="query"/> runs under <see cref="MongoQueryMode.NativeOnly"/> (false if it
-    /// throws <see cref="NativeTranslationNotSupportedException"/>).
-    /// </summary>
+    /// <summary>Whether <paramref name="query"/> runs under NativeOnly (false on <see cref="NativeTranslationNotSupportedException"/>).</summary>
     private bool WentNative<T, TResult>(
         IMongoCollection<T> collection,
         Func<IQueryable<T>, IEnumerable<TResult>> query,
@@ -97,12 +89,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Shape A — value-converter / BsonRepresentation-backed properties in Where / OrderBy
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-
-    // A.1 — string property stored as ObjectId. The constant must serialize through the property serializer so
-    //       the $match compares an ObjectId, not a string.
+    // A.1 string stored as ObjectId: the constant must serialize through the property serializer.
 
     private class StringIdEntity
     {
@@ -138,11 +125,10 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void A_string_as_objectId_where_equals_routing()
     {
         var collection = SeedStringId(nameof(A_string_as_objectId_where_equals_routing), out var target);
-        // Locked routing: a string-as-ObjectId equality predicate over the whole entity goes native.
         Assert.True(WentNative(collection, q => q.Where(e => e.StringId == target).ToList(), StringIdModel));
     }
 
-    // A.2 — enum stored as string via HasConversion<string>(), in Where and OrderBy.
+    // A.2 enum stored as string via HasConversion<string>().
 
     private enum Status { Active, Suspended, Closed }
 
@@ -208,10 +194,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     }
 
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Shape B — owned / nested navigation sub-property predicate (e.Address.City)
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-
     private class PersonWithAddress
     {
         public ObjectId Id { get; set; }
@@ -271,7 +253,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void B_owned_subproperty_where_equals_routing()
     {
         var collection = SeedAddress(nameof(B_owned_subproperty_where_equals_routing));
-        // An owned sub-property resolves to a dotted path ("Address.City") via TryResolveOwnedFieldPath.
         Assert.True(WentNative(collection, q => q.Where(e => e.Address.City == "NYC").ToList(), AddressModel));
     }
 
@@ -279,7 +260,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void B_owned_subproperty_order_by_routing()
     {
         var collection = SeedAddress(nameof(B_owned_subproperty_order_by_routing));
-        // An owned sub-property sort key goes native, same mechanism as the predicate.
         Assert.True(WentNative(collection,
             q => q.OrderBy(e => e.Address.City).ThenBy(e => e.Name).ToList(), AddressModel));
     }
@@ -307,7 +287,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    // `new { e.Address }` goes native under NativeOnly once AsNoTracking sidesteps the EF Core tracking guard.
     public void B_owned_entity_projection_no_tracking_goes_native_under_NativeOnly()
     {
         var collection = SeedAddress(nameof(B_owned_entity_projection_no_tracking_goes_native_under_NativeOnly));
@@ -319,16 +298,11 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void B_owned_subproperty_projection_parity()
     {
         var collection = SeedAddress(nameof(B_owned_subproperty_projection_parity));
-        // Results must match driver LINQ.
         AssertParity(collection,
             q => q.OrderBy(e => e.Name).Select(e => new { e.Name, e.Address.City }), AddressModel);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Shape C — TPH discriminator filtering
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Highest mis-routing risk: if the native pipeline drops the implicit discriminator $match for a
-    //  derived-type query, it returns sibling-type rows.
+    // Highest mis-routing risk: dropping the implicit discriminator $match for a derived-type query returns sibling rows.
 
     private class Animal
     {
@@ -384,7 +358,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void C_tph_base_predicate_routing()
     {
         var collection = SeedTph(nameof(C_tph_base_predicate_routing));
-        // A base-set predicate carries no implicit discriminator, so the native $match on Name is faithful.
         Assert.True(WentNative(collection,
             q => q.Where(b => b.Name == "Felix").OrderBy(b => b.Id).ToList(), TphModel));
     }
@@ -404,14 +377,9 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void C_tph_oftype_derived_routing()
     {
         var collection = SeedTph(nameof(C_tph_oftype_derived_routing));
-        // OfType<TDerived>() builds a discriminator $eq/$in into the native predicate (TryBuildDiscriminatorPredicate).
         Assert.True(WentNative(collection,
             q => q.OfType<Cat>().OrderBy(c => c.Name).ToList(), TphModel));
     }
-
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Shape D — native projection pushdown: terminal anonymous member-access Select
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class Customer
     {
@@ -436,7 +404,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedCustomer(nameof(D_anonymous_member_projection_runs_native_under_NativeOnly));
 
-        // Under NativeOnly a driver-LINQ fallback throws; success proves the $project went native.
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
         var results = db.Entities
             .Where(c => c.Age > 21)
@@ -450,7 +417,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void D_arithmetic_computed_projection_runs_native_under_NativeOnly()
     {
-        // A numeric arithmetic leaf (c.Age * 2) renders as a computed $project; values prove the doubled result.
         var collection = SeedCustomer(nameof(D_arithmetic_computed_projection_runs_native_under_NativeOnly));
 
         Assert.True(WentNative(collection, q => q.Select(c => new { c.Name, Doubled = c.Age * 2 })));
@@ -479,7 +445,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void D_renamed_alias_projection_runs_native_under_NativeOnly_and_carries_correct_values()
     {
-        // The alias -> element indirection ({ Renamed: "$Name" }) reads back under the renamed member.
         var collection = SeedCustomer(nameof(D_renamed_alias_projection_runs_native_under_NativeOnly_and_carries_correct_values));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
@@ -504,7 +469,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void D_member_init_dto_projection_runs_native_under_NativeOnly_and_carries_correct_values()
     {
-        // The MemberInitExpression (named DTO) arm, distinct from the anonymous-type arm.
         var collection = SeedCustomer(nameof(D_member_init_dto_projection_runs_native_under_NativeOnly_and_carries_correct_values));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
@@ -520,9 +484,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
         Assert.Contains(results, r => r.Name == "Carol" && r.Age == 45);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Shape E — native projection that emits the _id output field
-    // ════════════════════════════════════════════════════════════════════════════════════════════
     //  RenderProject suppresses the default _id ({ _id: 0 }) unless the projection emits an "_id" output
     //  field. Projecting the key member (element name "_id") is the only test of the non-suppress branch.
 
@@ -548,7 +509,6 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedKeyedDoc(nameof(E_projected_id_member_runs_native_under_NativeOnly_and_preserves_id), out var ids);
 
-        // The projected key emits an "_id" field, skipping suppression; the values prove _id round-trips.
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
         var results = db.Entities
             .OrderBy(e => e.Name)

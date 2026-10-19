@@ -38,15 +38,10 @@ internal sealed class MongoDocumentConstructionExpression : MongoExpression
         Members = members;
     }
 
-    /// <summary>
-    /// The original <see cref="NewExpression"/> or <see cref="MemberInitExpression"/>, used to rebuild the CLR
-    /// object once member values are read back.
-    /// </summary>
+    /// <summary>The original construction, used to rebuild the CLR object once member values are read back.</summary>
     public Expression OriginalExpression { get; }
 
-    /// <summary>
-    /// Member names paired with their translated values, in the original construction's declaration order.
-    /// </summary>
+    /// <summary>Member names paired with their translated values, in declaration order.</summary>
     public IReadOnlyList<(string MemberName, MongoExpression Value)> Members { get; }
 
     /// <inheritdoc />

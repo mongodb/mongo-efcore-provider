@@ -128,7 +128,6 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
     [Fact]
     public void Streamed_whole_entity_agrees_with_driver_linq_for_every_array_state()
     {
-        // Native (streaming), NativeOnly and DriverLinq must agree for a supported query.
         var collection = Seed(nameof(Streamed_whole_entity_agrees_with_driver_linq_for_every_array_state));
 
         int?[] Counts(MongoQueryMode mode)

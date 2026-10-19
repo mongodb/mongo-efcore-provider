@@ -158,13 +158,19 @@ public class ReferenceIncludeRecognizerTests
     }
 
     [Fact]
-    public void Rejects_a_ThenInclude_reached_through_an_embedded_hop()
+    public void Recognizes_a_ThenInclude_reached_through_an_embedded_hop()
     {
-        // Buyer.Address (owned) -> Region (real): a real navigation reached through an embedded hop stays
-        // declined (the driver-LINQ fallback handles it).
+        // Buyer.Address (owned) -> Region (real): a reference declared on an owned type, reached through a
+        // single-reference owned hop. The walker only recognizes the structure; the confirm step verifies that the
+        // Region lookup's localField reads through exactly that owned path (OwnedHopLocalFieldMatches).
         var selector = ReferenceIncludeTestTrees.BuildThenIncludeChain(embeddedHopInBetween: true);
 
-        Assert.Null(MongoQueryableMethodTranslatingExpressionVisitor.TryGetReferenceIncludeChain(selector));
+        var chain = MongoQueryableMethodTranslatingExpressionVisitor.TryGetReferenceIncludeChain(
+            selector, out var transitiveLevels);
+
+        Assert.NotNull(chain);
+        Assert.Equal(2, chain.Count);
+        Assert.Single(transitiveLevels);
     }
 
     [Fact]

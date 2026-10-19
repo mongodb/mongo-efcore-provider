@@ -36,8 +36,6 @@ internal class FinalPredicateHoistingVisitor : ExpressionVisitor
     /// Hoist a predicate from a final query-executing method call up one level so
     /// it can be translated before being passed to the LINQ v3 provider.
     /// </summary>
-    /// <param name="expression">The full LINQ query expression.</param>
-    /// <returns>A hoisted version of the LINQ query expression if required, otherwise the original expression.</returns>
     public static Expression Hoist(Expression expression)
     {
         return Instance.Visit(expression);

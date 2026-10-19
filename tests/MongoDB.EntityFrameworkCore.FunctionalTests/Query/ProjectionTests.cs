@@ -400,7 +400,6 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Sum_with_ef_property_and_field()
     {
-        // Sum of (orderFromSun + orderFromSun) across all 8 planets: (1+2+3+4+5+6+7+8)*2 = 72
         var result = _db.Planets.Sum(p => EF.Property<int>(p, "orderFromSun") + p.orderFromSun);
         Assert.Equal(72, result);
     }
@@ -408,7 +407,6 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Sum_with_mql_field_and_field()
     {
-        // Sum of (orderFromSun + orderFromSun) across all 8 planets: (1+2+3+4+5+6+7+8)*2 = 72
         var result = _db.Planets.Sum(p => Mql.Field(p, "orderFromSun", Int32Serializer.Instance) + p.orderFromSun);
         Assert.Equal(72, result);
     }
@@ -549,11 +547,20 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
         public bool hasRings { get; set; }
     }
 
-    private SingleEntityDbContext<PlanetWithLongOrder> CreateLongOrderContext()
+    private SingleEntityDbContext<PlanetWithLongOrder> CreateLongOrderContext(
+        MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode? mode = null, string collectionName = "planets")
     {
-        var collection = database.MongoDatabase.GetCollection<PlanetWithLongOrder>("planets");
-        return SingleEntityDbContext.Create(collection, mb =>
-            mb.Entity<PlanetWithLongOrder>().Property(e => e.orderFromSun).HasConversion<int>());
+        var collection = database.MongoDatabase.GetCollection<PlanetWithLongOrder>(collectionName);
+        return SingleEntityDbContext.Create(
+            collection,
+            mb => mb.Entity<PlanetWithLongOrder>().Property(e => e.orderFromSun).HasConversion<int>(),
+            optionsBuilderAction: mode is null
+                ? null
+                : b =>
+                {
+                    b.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+                    new MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder(b).UseQueryMode(mode.Value);
+                });
     }
 
     private class PlanetWithStringOrder
@@ -692,15 +699,45 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
         Assert.Equal(4.5, result);
     }
 
-    [Fact]
-    public void Count_with_value_converter_in_predicate_is_refused()
+    [Theory]
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native)]
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly)]
+    public void Count_with_value_converter_in_predicate(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode mode)
     {
-        // long stored as int (narrowing): a relational comparison against a constant is refused (EF-337), because a
-        // constant outside the int range would wrap. Sort and aggregates above stay supported; equality below works.
-        using var db = CreateLongOrderContext();
+        // long stored as int (narrowing): the native comparison serializes the constant by its CLR type (Int64), so it
+        // can't wrap, and the server compares it numerically with the stored Int32 (D-EF337).
+        using var db = CreateLongOrderContext(mode);
+        Assert.Equal(4, db.Entities.Count(p => p.orderFromSun > 4L));
+        Assert.Equal(1, db.Entities.Count(p => p.orderFromSun == 4L));
+    }
+
+    [Fact]
+    public void Count_with_value_converter_in_predicate_is_refused_by_driver_linq()
+    {
+        // The driver-LINQ bridge keeps refusing (EF-337): it would serialize the constant through the unchecked
+        // narrowing converter, so a constant outside the int range would wrap. Equality is exact and works.
+        using var db = CreateLongOrderContext(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.DriverLinq);
         var ex = Assert.Throws<NotSupportedException>(() => db.Entities.Count(p => p.orderFromSun > 4L));
         Assert.Contains("PlanetWithLongOrder.orderFromSun'", ex.Message);
         Assert.Equal(1, db.Entities.Count(p => p.orderFromSun == 4L));
+    }
+
+    [Theory]
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native)]
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly)]
+    public void Equality_against_out_of_int_range_constant_does_not_wrap(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode mode)
+    {
+        // 3_000_000_000L wraps to -1294967296 through an unchecked long -> int converter; that stored value must not match.
+        var collection = database.MongoDatabase.GetCollection<BsonDocument>("planets_wrap_" + mode);
+        collection.InsertOne(new BsonDocument
+        {
+            { "_id", ObjectId.GenerateNewId() }, { "name", "Wrapped" }, { "orderFromSun", -1294967296 }, { "hasRings", false }
+        });
+
+        using var db = CreateLongOrderContext(mode, "planets_wrap_" + mode);
+        Assert.Equal(0, db.Entities.Count(p => p.orderFromSun == 3_000_000_000L));
+        Assert.Equal(0, db.Entities.Count(p => p.orderFromSun > 3_000_000_000L));
+        Assert.Equal(1, db.Entities.Count(p => p.orderFromSun < 3_000_000_000L));
     }
 
     [Fact]
@@ -1289,7 +1326,6 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Select_projection_owned_type()
     {
-        // Projecting owned entities without the owner requires AsNoTracking
         var results = _db.Planets.AsNoTracking().Select(p => new { p.name, Car = p.parkingCar }).ToList();
 
         Assert.Equal(8, results.Count);

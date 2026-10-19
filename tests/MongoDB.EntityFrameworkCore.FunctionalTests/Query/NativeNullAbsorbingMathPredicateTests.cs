@@ -27,7 +27,7 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// F6: <c>Math.Sign/Max/Min</c> over a nullable operand in a predicate. Sign's <c>$switch</c> orders null below 0 and
+/// <c>Math.Sign/Max/Min</c> over a nullable operand in a predicate. Sign's <c>$switch</c> orders null below 0 and
 /// <c>$max/$min</c> skip null, so native matched null rows where driver-LINQ (the released path) threw
 /// <c>ExpressionNotSupportedException</c>. Native now declines such shapes (NativeOnly throws
 /// <see cref="NativeTranslationNotSupportedException"/>; Native falls back and so matches main). Null-propagating
@@ -81,7 +81,6 @@ public class NativeNullAbsorbingMathPredicateTests(TemporaryDatabaseFixture data
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
 
-        // Main parity: the fallback (and driver-LINQ itself) throws the driver's ExpressionNotSupportedException.
         Assert.Equal("ExpressionNotSupportedException", Assert.ThrowsAny<Exception>(() => Run(MongoQueryMode.Native)).GetType().Name);
         Assert.Equal("ExpressionNotSupportedException", Assert.ThrowsAny<Exception>(() => Run(MongoQueryMode.DriverLinq)).GetType().Name);
     }

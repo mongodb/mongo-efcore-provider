@@ -58,7 +58,6 @@ public class AnalyzerSearchIndexBuilder(SearchIndexDefinition indexDefinition, s
     /// <param name="nestedBuilder">
     /// A <see cref="CharacterFilterSearchIndexBuilder"/> delegate to configure character filters.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AnalyzerSearchIndexBuilder WithCharacterFilters(Action<CharacterFilterSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(WithCharacterFilters());
@@ -76,7 +75,6 @@ public class AnalyzerSearchIndexBuilder(SearchIndexDefinition indexDefinition, s
     /// </remarks>
     /// <param name="minGram">Number of characters to include in the shortest token created.</param>
     /// <param name="maxGram">Number of characters to include in the longest token created.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AnalyzerSearchIndexBuilder UseEdgeGramTokenizer(int minGram, int maxGram)
     {
         _definition.SearchIndexTokenizerDefinition = new SearchIndexGramTokenizerDefinition("edgeGram", minGram, maxGram);
@@ -91,7 +89,6 @@ public class AnalyzerSearchIndexBuilder(SearchIndexDefinition indexDefinition, s
     /// For more information about tokenization, see
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/tokenizers/"/>.
     /// </remarks>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AnalyzerSearchIndexBuilder UseKeywordTokenizer()
     {
         _definition.SearchIndexTokenizerDefinition = new SearchIndexTokenizerDefinition { Name = "keyword" };
@@ -109,7 +106,6 @@ public class AnalyzerSearchIndexBuilder(SearchIndexDefinition indexDefinition, s
     /// </remarks>
     /// <param name="minGram">Number of characters to include in the shortest token created.</param>
     /// <param name="maxGram">Number of characters to include in the longest token created.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AnalyzerSearchIndexBuilder UseNGramTokenizer(int minGram, int maxGram)
     {
         _definition.SearchIndexTokenizerDefinition = new SearchIndexGramTokenizerDefinition("nGram", minGram, maxGram);
@@ -129,7 +125,6 @@ public class AnalyzerSearchIndexBuilder(SearchIndexDefinition indexDefinition, s
     /// Index of the character group within the matching expression to extract into tokens. Use <c>0</c> to extract all character
     /// groups.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AnalyzerSearchIndexBuilder UseRegexCaptureGroupTokenizer(string pattern, int characterGroup)
     {
         _definition.SearchIndexTokenizerDefinition = new RegexCaptureGroupTokenizerDefinition(pattern, characterGroup);
@@ -145,7 +140,6 @@ public class AnalyzerSearchIndexBuilder(SearchIndexDefinition indexDefinition, s
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/tokenizers/"/>.
     /// </remarks>
     /// <param name="pattern">Regular expression to match against.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AnalyzerSearchIndexBuilder UseRegexSplitTokenizer(string pattern)
     {
         _definition.SearchIndexTokenizerDefinition = new RegexSplitTokenizerDefinition(pattern);
@@ -164,7 +158,6 @@ public class AnalyzerSearchIndexBuilder(SearchIndexDefinition indexDefinition, s
     /// Maximum length for a single token. Tokens greater than this length are split at this length into multiple tokens. If not
     /// specified, then the default is 255.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AnalyzerSearchIndexBuilder UseStandardTokenizer(int? maxTokenLength = null)
     {
         _definition.SearchIndexTokenizerDefinition = new MaxTokenLengthTokenizerDefinition("standard", maxTokenLength);
@@ -185,7 +178,6 @@ public class AnalyzerSearchIndexBuilder(SearchIndexDefinition indexDefinition, s
     /// Maximum length for a single token. Tokens greater than this length are split at this length into multiple tokens. If not
     /// specified, then the default is 255.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AnalyzerSearchIndexBuilder UseUaxUrlEmailTokenizer(int? maxTokenLength = null)
     {
         _definition.SearchIndexTokenizerDefinition = new MaxTokenLengthTokenizerDefinition("uaxUrlEmail", maxTokenLength);
@@ -204,7 +196,6 @@ public class AnalyzerSearchIndexBuilder(SearchIndexDefinition indexDefinition, s
     /// Maximum length for a single token. Tokens greater than this length are split at this length into multiple tokens. If not
     /// specified, then the default is 255.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AnalyzerSearchIndexBuilder UseWhitespaceTokenizer(int? maxTokenLength = null)
     {
         _definition.SearchIndexTokenizerDefinition = new MaxTokenLengthTokenizerDefinition("whitespace", maxTokenLength);
@@ -234,7 +225,6 @@ public class AnalyzerSearchIndexBuilder(SearchIndexDefinition indexDefinition, s
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/"/>.
     /// </remarks>
     /// <param name="nestedBuilder">A <see cref="TokenFilterSearchIndexBuilder"/> delegate to configure token filters.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AnalyzerSearchIndexBuilder WithTokenFilters(Action<TokenFilterSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(WithTokenFilters());

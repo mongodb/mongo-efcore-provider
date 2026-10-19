@@ -169,7 +169,6 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
 
         var actual = RunInterleavedTransparentIdentifierShape(db.Roots, db.Mids, db.Others, shape);
 
-        // Oracle: LINQ-to-Objects over the whole collections read back untracked.
         var expected = RunInterleavedTransparentIdentifierShape(
             db.Roots.AsNoTracking().ToList().AsQueryable(),
             db.Mids.AsNoTracking().ToList().AsQueryable(),
@@ -230,7 +229,6 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
             .Skip(1)
             .ToList();
 
-        // Joined rows by name: N2, N3 (N1 has no Other); Skip(1) leaves N3.
         Assert.Equal(["N3/O1"], actual.Select(x => x.Name + "/" + x.Label));
     }
 
@@ -334,7 +332,6 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
             new BsonDocument { { "_id", m1 }, { "tag", "M1" } }
         ]);
 
-        // Inserted N6..N1, the reverse of the asserted order, so an unsorted pipeline fails.
         var roots = new List<BsonDocument>();
         var leaves = new List<BsonDocument>();
         for (var i = 6; i >= 1; i--)
@@ -373,7 +370,6 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
             new BsonDocument { { "_id", o1 }, { "label", "O1" } }
         ]);
         database.MongoDatabase.GetCollection<BsonDocument>(rootsName).InsertMany([
-            // N1 has no Other, so the second (inner) join drops it.
             new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "N1" }, { "mid_id", m1 } },
             new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "N2" }, { "mid_id", m1 }, { "other_id", o1 } },
             new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "N3" }, { "mid_id", m1 }, { "other_id", o1 } }

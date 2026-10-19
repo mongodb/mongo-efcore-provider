@@ -74,8 +74,6 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
         var collection = SeedCustomers(nameof(Select_with_context_based_client_method_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the whole-entity client-method wrap went native (NativeRoute.WholeEntity, no $project).
         var results = db.Entities.Select(c => ClientMethod(c)).ToList();
 
         Assert.Equal(2, results.Count);

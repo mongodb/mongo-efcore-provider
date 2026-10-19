@@ -32,7 +32,6 @@ public class Ef369MultiJoinComposedTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
 #if !EF8 && !EF9
-    // ---- SHAPE 1..: composed Where over a ThenInclude (the reported bug) ----
     [Fact]
     public void ThenInclude_with_composed_nav_Where()
     {

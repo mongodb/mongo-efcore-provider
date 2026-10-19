@@ -63,7 +63,6 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         public int Price { get; set; }
     }
 
-    // Composite primary key: both components live under `_id`.
     private class Slot
     {
         public int Zone { get; set; }
@@ -107,7 +106,6 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         public Kind K2 { get; set; }
     }
 
-    // Default storage: K and Code as ints.
     private class KindQ
     {
         public int Id { get; set; }
@@ -116,7 +114,6 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         public int Code { get; set; }
     }
 
-    // K stored as a string, like KindP.
     private class KindR
     {
         public int Id { get; set; }
@@ -277,16 +274,12 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 (s, r) => (S: s.Id, R: r.Id))
             .OrderBy(x => x).ToList();
 
-        // Pins that the oracle actually exercises null == null and null == missing.
         Assert.Equal([(1, 10), (1, 11), (2, 12), (3, 13), (4, 14), (4, 15)], expected);
         Assert.Equal(expected, actual);
 
-        // Every mode reads the registered composite $lookup (a confirmed join registers it at translation time).
         spy.AssertExecutedMqlContains("\"$and\"");
-        // A nullable pair (Region) is null-normalized on both sides so null and missing compare equal.
         spy.AssertExecutedMqlContains("\"k0\" : { \"$ifNull\" : [\"$Region\", null] }");
         spy.AssertExecutedMqlContains("\"$eq\" : [{ \"$ifNull\" : [\"$Region\", null] }, \"$$k0\"]");
-        // A non-nullable pair (Zone) is compared bare so an index on it stays usable.
         spy.AssertExecutedMqlContains("\"$eq\" : [\"$Zone\", \"$$k1\"]");
     }
 
@@ -479,22 +472,18 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 .Join(rates, s => new { s.Region, s.Zone, s.Bay }, r => new { r.Region, r.Zone, r.Bay }, (s, r) => new { s, r })
                 .Join(slots, x => new { x.s.Zone, x.r.Bay }, sl => new { sl.Zone, Bay = (int?)sl.Bay },
                     (x, sl) => $"{x.s.Id}:{x.r.Id}:{sl.Label}"),
-            // Reference equality: a plain class key never matches in LINQ-to-objects.
             "NonAnonymousKey" => shipments
                 .Join(rates, s => new KeyHolder { Region = s.Region }, r => new KeyHolder { Region = r.Region },
                     (s, r) => $"{s.Id}:{r.Id}"),
             "NestedAnonymous" => shipments
                 .Join(rates, s => new { s.Zone, N = new { s.Region } }, r => new { r.Zone, N = new { r.Region } },
                     (s, r) => $"{s.Id}:{r.Id}"),
-            // List<int> compares by reference: no match, although the stored arrays overlap or are equal.
             "PrimitiveCollection" => tagPs
                 .Join(tagQs, p => new { p.Tags }, q => new { q.Tags }, (p, q) => $"{p.Id}:{q.Id}"),
             "PrimitiveCollectionWithScalar" => tagPs
                 .Join(tagQs, p => new { p.Zone, p.Tags }, q => new { q.Zone, q.Tags }, (p, q) => $"{p.Id}:{q.Id}"),
-            // K is "B" (string) on one side and 1 (int) on the other: equal in C#, never equal as stored.
             "OneSideConverted" => kindPs
                 .Join(kindQs, p => new { p.Zone, p.K }, q => new { q.Zone, q.K }, (p, q) => $"{p.Id}:{q.Id}"),
-            // Code is "7" on one side and 7 on the other.
             "RepresentationMismatch" => kindPs
                 .Join(kindQs, p => new { p.Zone, p.Code }, q => new { q.Zone, q.Code }, (p, q) => $"{p.Id}:{q.Id}"),
             // Code 7 is stored "7" on one side and "70" on the other; Flag true is "Y" vs "T".
@@ -602,22 +591,477 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         spy.AssertExecutedMqlContains("\"$and\"");
     }
 
-    // The genuine blocker of the EF-436 spec tests GroupJoin_aggregate_anonymous_key_selectors(2/_one_argument) is the
-    // g.Sum(...) over the GroupJoin grouping (a correlated reducer), not the key: it fails in every mode even with a
-    // simple key. Pinned so a future fix of that gap is noticed.
+    // g.Sum(...) over a GroupJoin grouping is an aggregate over the keyed array lookup (native and bridge); a missing/null outer key
+    // matches nothing, as the rewrite's `outerKey != null` guard says.
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void GroupJoin_with_Sum_over_the_grouping_matches_the_in_memory_oracle(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        var actual = db.Shipments
+            .GroupJoin(db.Rates, s => s.Id, r => r.Zone, (s, g) => new { s.Id, Sum = g.Sum(r => r.Price) })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .GroupJoin(rates, s => s.Id, r => r.Zone, (s, g) => new { s.Id, Sum = g.Sum(r => r.Price) })
+            .OrderBy(x => x.Id).ToList();
+
+        Assert.Equal(expected, actual);
+        Assert.Contains(actual, x => x.Sum > 0);
+    }
+
+    // ---- an aggregate over a GroupJoin group (or an explicit subquery) correlated on SEVERAL properties ----
+    // EF10 rewrites a GroupJoin with an aggregate into a correlated subquery that guards EVERY outer part with `!= null`, so a shipment
+    // with a null or missing part has an empty group (unlike the same key in a Join, where null equals null, and unlike LINQ-to-objects).
+    // EF8 and EF9 keep the anonymous key whole in the rewrite (`Equals(new { s.A, s.B }, new { r.A, r.B })`), which is member-wise equality:
+    // null equals null, as in LINQ-to-objects. The provider follows the tree each version hands it. An explicit subquery carries no guard on
+    // any version, so C# semantics apply there: a null part equals a null part and a missing element reads as null.
+    // Oracles are LINQ-to-objects over the same rows as materialized, written to those rules.
+
+    private static bool GroupJoinGuardsNullKeyParts
+    {
+        get
+        {
+#if EF8 || EF9
+            return false;
+#else
+            return true;
+#endif
+        }
+    }
+
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void GroupJoin_with_Sum_over_the_grouping_still_fails_in_every_mode_regardless_of_key(MongoQueryMode mode)
+    public void GroupJoin_Count_on_a_three_member_anonymous_key_matches_the_oracle(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out var spy);
+
+        var actual = db.Shipments
+            .GroupJoin(db.Rates, s => new { s.Region, s.Zone, s.Bay }, r => new { r.Region, r.Zone, r.Bay }, (s, g) => new { s.Id, N = g.Count() })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .Select(s => new
+            {
+                s.Id,
+                N = !GroupJoinGuardsNullKeyParts || (s.Region != null && s.Bay != null)
+                    ? rates.Count(r => r.Region == s.Region && r.Zone == s.Zone && r.Bay == s.Bay)
+                    : 0
+            })
+            .OrderBy(x => x.Id).ToList();
+
+        // Guarded (EF10): only shipment 1 has no null part; shipments 2 (Bay), 3 and 4 (Region) match nothing although rates 12, 13, 14 and 15
+        // carry the same nulls. Member-wise (EF8, EF9): those rates match, a missing element reading as null.
+        Assert.Equal(GroupJoinGuardsNullKeyParts ? [2, 0, 0, 0, 0] : [2, 1, 1, 2, 0], expected.Select(x => x.N));
+        Assert.Equal(expected, actual);
+
+        // The composite lookup excludes a null outer value for the nullable guarded parts (Region = k0, Bay = k2), not for Zone (k1), whose
+        // property cannot be null, and for none of them where the key is compared member-wise.
+        var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.DoesNotContain("{ \"$ne\" : [\"$$k1\", null] }", mql);
+        if (GroupJoinGuardsNullKeyParts)
+        {
+            spy.AssertExecutedMqlContains("{ \"$ne\" : [\"$$k0\", null] }");
+            spy.AssertExecutedMqlContains("{ \"$ne\" : [\"$$k2\", null] }");
+        }
+        else
+        {
+            Assert.DoesNotContain("{ \"$ne\" : [\"$$k0\", null] }", mql);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void GroupJoin_Sum_and_Any_on_a_two_member_anonymous_key_match_the_oracle(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        var actual = db.Shipments
+            .GroupJoin(db.Rates, s => new { s.Region, s.Zone }, r => new { r.Region, r.Zone },
+                (s, g) => new { s.Id, Total = g.Sum(r => r.Price), Any = g.Any(r => r.Price > 450) })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .Select(s => new
+            {
+                s.Id,
+                Total = !GroupJoinGuardsNullKeyParts || s.Region != null
+                    ? rates.Where(r => r.Region == s.Region && r.Zone == s.Zone).Sum(r => r.Price)
+                    : 0,
+                Any = (!GroupJoinGuardsNullKeyParts || s.Region != null)
+                      && rates.Where(r => r.Region == s.Region && r.Zone == s.Zone).Any(r => r.Price > 450)
+            })
+            .OrderBy(x => x.Id).ToList();
+
+        // Shipment 1 (N, 1): rates 10, 11, 16; shipment 2 (N, 2): rate 12. Shipments 3 and 4 have a null Region: no group where it is guarded
+        // (EF10), rates 13 to 15 (1200) where it is not.
+        Assert.Equal(GroupJoinGuardsNullKeyParts ? [801, 200, 0, 0, 0] : [801, 200, 1200, 1200, 0], expected.Select(x => x.Total));
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void Explicit_subquery_on_two_equalities_counts_by_both(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        // No `!= null` guard here, so C# semantics: a null Region equals a null Region.
+        var actual = db.Shipments
+            .Select(s => new { s.Id, N = db.Rates.Where(r => r.Region == s.Region && r.Zone == s.Zone).Count() })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .Select(s => new { s.Id, N = rates.Where(r => r.Region == s.Region && r.Zone == s.Zone).Count() })
+            .OrderBy(x => x.Id).ToList();
+
+        Assert.Equal(expected, actual);
+        Assert.Contains(expected, x => x.N > 1);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void Where_and_OrderBy_over_a_composite_correlated_aggregate(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        var actual = db.Shipments
+            .Where(s => db.Rates.Where(r => r.Region == s.Region && r.Zone == s.Zone && r.Bay == s.Bay).Any(r => r.Price > 100))
+            .OrderBy(s => db.Rates.Where(r => r.Region == s.Region && r.Zone == s.Zone && r.Bay == s.Bay).Sum(r => r.Price)).ThenBy(s => s.Id)
+            .Select(s => s.Id).ToList();
+        var expected = shipments
+            .Where(s => rates.Where(r => r.Region == s.Region && r.Zone == s.Zone && r.Bay == s.Bay).Any(r => r.Price > 100))
+            .OrderBy(s => rates.Where(r => r.Region == s.Region && r.Zone == s.Zone && r.Bay == s.Bay).Sum(r => r.Price)).ThenBy(s => s.Id)
+            .Select(s => s.Id).ToList();
+
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void A_filtered_group_on_a_composite_key_reads_its_parameter_per_execution(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        // One context and one lambda shape, so the second run hits the compiled-query cache: a filter value baked into the plan would
+        // repeat the first run's answer.
+        foreach (var cutoff in new[] { 150, 450 })
+        {
+            var actual = db.Shipments
+                .GroupJoin(db.Rates.Where(r => r.Price > cutoff), s => new { s.Region, s.Zone }, r => new { r.Region, r.Zone },
+                    (s, g) => new { s.Id, N = g.Count() })
+                .OrderBy(x => x.Id).ToList();
+            var expected = shipments
+                .Select(s => new
+                {
+                    s.Id,
+                    N = !GroupJoinGuardsNullKeyParts || s.Region != null
+                        ? rates.Where(r => r.Price > cutoff).Count(r => r.Region == s.Region && r.Zone == s.Zone)
+                        : 0
+                })
+                .OrderBy(x => x.Id).ToList();
+
+            Assert.Equal(expected, actual);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void A_guard_on_one_part_of_an_explicit_composite_correlation_excludes_only_that_part(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        // Region is guarded (a null Region matches nothing); Bay is not (a null or missing Bay equals a null or missing Bay).
+        var actual = db.Shipments
+            .Select(s => new
+            {
+                s.Id,
+                N = db.Rates.Where(r => s.Region != null && r.Region == s.Region && r.Zone == s.Zone && r.Bay == s.Bay).Count()
+            })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .Select(s => new
+            {
+                s.Id,
+                N = rates.Where(r => s.Region != null && r.Region == s.Region && r.Zone == s.Zone && r.Bay == s.Bay).Count()
+            })
+            .OrderBy(x => x.Id).ToList();
+
+        // Shipment 2 (N, 2, null Bay) matches rate 12 (null Bay): the unguarded part equates null with null.
+        Assert.Equal([2, 1, 0, 0, 0], expected.Select(x => x.N));
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Element_leaves_over_a_composite_correlation_match_the_oracle(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        var actual = db.Shipments
+            .Select(s => new
+            {
+                s.Id,
+                All = db.Rates.Where(r => r.Region == s.Region && r.Zone == s.Zone).OrderByDescending(r => r.Id).ToList(),
+                Cheapest = db.Rates.Where(r => r.Region == s.Region && r.Zone == s.Zone).OrderBy(r => r.Price).FirstOrDefault()
+            })
+            .AsEnumerable().OrderBy(x => x.Id)
+            .Select(x => (x.Id, string.Join(",", x.All.Select(r => r.Id)), x.Cheapest?.Id)).ToList();
+        var expected = shipments
+            .Select(s => (
+                s.Id,
+                string.Join(",", rates.Where(r => r.Region == s.Region && r.Zone == s.Zone).OrderByDescending(r => r.Id).Select(r => r.Id)),
+                rates.Where(r => r.Region == s.Region && r.Zone == s.Zone).OrderBy(r => r.Price).FirstOrDefault()?.Id))
+            .OrderBy(x => x.Item1).ToList();
+
+        Assert.Contains(expected, x => x.Item2.Contains(','));
+        Assert.Equal(expected, actual);
+    }
+
+    // ---- constant, parameter and computed key parts ----
+    // An equality in the correlation that is not between an outer and an inner property is a condition on ONE side. On the element alone
+    // (`r.Zone == 1`, `r.Zone + 1 == 2`, `r.Zone == p`) it is an element filter. On the outer row alone (`s.Zone == 1`) it is constant per
+    // outer row, so it gates the group: empty when it is false. Only equalities are admitted: any other conjunct is still never dropped.
+    // The driver-LINQ translation answers the element filters; a condition on the outer row alone is refused there, never answered empty.
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void Explicit_subquery_with_an_element_constant_beside_the_key_equality(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        var actual = db.Shipments
+            .Select(s => new { s.Id, N = db.Rates.Where(r => r.Region == s.Region && r.Zone == 1).Count() })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .Select(s => new { s.Id, N = rates.Where(r => r.Region == s.Region && r.Zone == 1).Count() })
+            .OrderBy(x => x.Id).ToList();
+
+        Assert.Contains(expected, x => x.N > 1);
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void Explicit_subquery_with_a_computed_element_condition_beside_the_key_equality(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        var actual = db.Shipments
+            .Select(s => new { s.Id, Total = db.Rates.Where(r => r.Region == s.Region && r.Zone + 1 == 2).Sum(r => r.Price) })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .Select(s => new { s.Id, Total = rates.Where(r => r.Region == s.Region && r.Zone + 1 == 2).Sum(r => r.Price) })
+            .OrderBy(x => x.Id).ToList();
+
+        Assert.Contains(expected, x => x.Total > 0);
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void Explicit_subquery_with_an_element_parameter_reads_it_per_execution(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        // One context and one lambda shape, so the second run hits the compiled-query cache.
+        var answers = new List<List<int>>();
+        foreach (var zone in new[] { 1, 2 })
+        {
+            var actual = db.Shipments
+                .Select(s => new { s.Id, N = db.Rates.Where(r => r.Region == s.Region && r.Zone == zone).Count() })
+                .OrderBy(x => x.Id).ToList();
+            var expected = shipments
+                .Select(s => new { s.Id, N = rates.Where(r => r.Region == s.Region && r.Zone == zone).Count() })
+                .OrderBy(x => x.Id).ToList();
+
+            Assert.Equal(expected, actual);
+            answers.Add(expected.Select(x => x.N).ToList());
+        }
+
+        Assert.NotEqual(answers[0], answers[1]);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Explicit_subquery_with_a_condition_on_the_outer_row_gates_the_group(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        var actual = db.Shipments
+            .Select(s => new { s.Id, N = db.Rates.Where(r => r.Region == s.Region && s.Zone == 1).Count() })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .Select(s => new { s.Id, N = rates.Where(r => r.Region == s.Region && s.Zone == 1).Count() })
+            .OrderBy(x => x.Id).ToList();
+
+        // Shipments 2 (Zone 2) and 5 (Zone 9) fail the gate and have no group, although shipment 2 shares Region N with four rates.
+        Assert.Contains(expected, x => x.N > 0);
+        Assert.Equal(0, expected.Single(x => x.Id == 2).N);
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Explicit_subquery_with_an_outer_parameter_condition_reads_it_per_execution(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        var answers = new List<List<int>>();
+        foreach (var zone in new[] { 1, 2 })
+        {
+            var actual = db.Shipments
+                .Select(s => new { s.Id, N = db.Rates.Where(r => r.Region == s.Region && s.Zone == zone).Count() })
+                .OrderBy(x => x.Id).ToList();
+            var expected = shipments
+                .Select(s => new { s.Id, N = rates.Where(r => r.Region == s.Region && s.Zone == zone).Count() })
+                .OrderBy(x => x.Id).ToList();
+
+            Assert.Equal(expected, actual);
+            answers.Add(expected.Select(x => x.N).ToList());
+        }
+
+        Assert.NotEqual(answers[0], answers[1]);
+    }
+
+    [Fact]
+    public void A_condition_on_the_outer_row_is_refused_by_the_driver_translation_not_answered_empty()
+    {
+        using var db = CreateContext(MongoQueryMode.DriverLinq, out _);
+
+        Assert.ThrowsAny<Exception>(() => db.Shipments
+            .Select(s => new { s.Id, N = db.Rates.Where(r => r.Region == s.Region && s.Zone == 1).Count() })
+            .AsEnumerable().ToList());
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void GroupJoin_with_a_constant_in_the_key_that_is_an_element_condition(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        // `1 == r.Zone`: EF10 writes it as a conjunct of the rewritten correlation, EF8 and EF9 as a member of the whole anonymous key.
+        var actual = db.Shipments
+            .GroupJoin(db.Rates, s => new { s.Region, Z = 1 }, r => new { r.Region, Z = r.Zone }, (s, g) => new { s.Id, N = g.Count() })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .Select(s => new
+            {
+                s.Id,
+                N = !GroupJoinGuardsNullKeyParts || s.Region != null
+                    ? rates.Count(r => r.Region == s.Region && r.Zone == 1)
+                    : 0
+            })
+            .OrderBy(x => x.Id).ToList();
+
+        Assert.Contains(expected, x => x.N > 0);
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void GroupJoin_with_a_computed_inner_key_part_against_a_constant(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        var actual = db.Shipments
+            .GroupJoin(db.Rates, s => new { s.Region, Z = 2 }, r => new { r.Region, Z = r.Zone + 1 }, (s, g) => new { s.Id, Total = g.Sum(r => r.Price) })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .Select(s => new
+            {
+                s.Id,
+                Total = !GroupJoinGuardsNullKeyParts || s.Region != null
+                    ? rates.Where(r => r.Region == s.Region && r.Zone + 1 == 2).Sum(r => r.Price)
+                    : 0
+            })
+            .OrderBy(x => x.Id).ToList();
+
+        Assert.Contains(expected, x => x.Total > 0);
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void GroupJoin_with_a_constant_in_the_key_that_is_a_condition_on_the_outer_row(MongoQueryMode mode)
+    {
+        var (shipments, rates, _) = Materialize();
+        using var db = CreateContext(mode, out _);
+
+        // `s.Zone == 1`: shipments of another zone have an empty group.
+        var actual = db.Shipments
+            .GroupJoin(db.Rates, s => new { s.Region, s.Zone }, r => new { r.Region, Zone = 1 }, (s, g) => new { s.Id, N = g.Count() })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .Select(s => new
+            {
+                s.Id,
+                N = s.Zone == 1 && (!GroupJoinGuardsNullKeyParts || s.Region != null)
+                    ? rates.Count(r => r.Region == s.Region)
+                    : 0
+            })
+            .OrderBy(x => x.Id).ToList();
+
+        Assert.Contains(expected, x => x.N > 0);
+        Assert.Contains(shipments, s => s.Zone != 1);
+        Assert.Equal(expected, actual);
+    }
+
+    // A correlation that is not a clean conjunction of one equality and at most one null guard per compared outer property declines
+    // (NativeOnly refuses; the fallback finds nothing to read), never answering by the part it did understand.
+    [Theory]
+    [InlineData("GuardOnAPropertyThatIsNotCompared")]
+    [InlineData("TheSameOuterPropertyTwice")]
+    [InlineData("AnOrInsteadOfAnAnd")]
+    public void Malformed_composite_correlations_decline_loudly(string shape)
+    {
+        using var db = CreateContext(MongoQueryMode.NativeOnly, out _);
+
+        Assert.ThrowsAny<Exception>(() => (shape switch
+        {
+            "GuardOnAPropertyThatIsNotCompared" => db.Shipments.Select(s => new
+            {
+                s.Id, N = db.Rates.Where(r => r.Region == s.Region && r.Zone == s.Zone && s.Bay != null).Count()
+            }).AsEnumerable().Select(x => x.N),
+            "TheSameOuterPropertyTwice" => db.Shipments.Select(s => new
+            {
+                s.Id, N = db.Rates.Where(r => r.Region == s.Region && r.Region == s.Region && r.Zone == s.Zone).Count()
+            }).AsEnumerable().Select(x => x.N),
+            _ => db.Shipments.Select(s => new
+            {
+                s.Id, N = db.Rates.Where(r => r.Region == s.Region || r.Zone == s.Zone).Count()
+            }).AsEnumerable().Select(x => x.N)
+        }).ToList());
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void A_further_conjunct_in_the_correlation_is_never_dropped(MongoQueryMode mode)
     {
         using var db = CreateContext(mode, out _);
 
-        Assert.Throws<InvalidOperationException>(() => db.Shipments
-            .GroupJoin(db.Rates, s => s.Id, r => r.Zone, (s, g) => new { s.Id, Sum = g.Sum(r => r.Price) })
-            .ToList());
-        Assert.Throws<InvalidOperationException>(() => db.Shipments
-            .GroupJoin(db.Rates, s => new { s.Region, s.Zone }, r => new { r.Region, r.Zone },
-                (s, g) => new { s.Id, Sum = g.Sum(r => r.Price) })
-            .ToList());
+        // `r.Price > 100` is not part of the key, so the correlation is not recognized: every mode refuses rather than count by the keys alone.
+        Assert.ThrowsAny<Exception>(() => db.Shipments
+            .Select(s => new { s.Id, N = db.Rates.Where(r => r.Region == s.Region && r.Zone == s.Zone && r.Price > 100).Count() })
+            .AsEnumerable().ToList());
     }
 
     private (List<Shipment> Shipments, List<Rate> Rates, List<Slot> Slots) Materialize()
@@ -774,7 +1218,6 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
             });
         }
 
-        // Each call captures `prefix` in a new closure object.
         private static void HasPrefixedConversion(PropertyBuilder<int> property, string prefix)
             => property.HasConversion(v => prefix + v, v => int.Parse(v.Substring(prefix.Length)));
     }

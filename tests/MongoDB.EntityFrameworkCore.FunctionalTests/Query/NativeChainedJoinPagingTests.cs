@@ -91,7 +91,6 @@ public class NativeChainedJoinPagingTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Ann", "Ann"], result);
     }
 
-    // The wrapped-projection arm must decline too.
     [Fact]
     public void Paging_between_joins_after_a_first_level_filter_with_a_wrapped_projection()
     {
@@ -104,7 +103,6 @@ public class NativeChainedJoinPagingTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Ann:A", "Ann:A", "Ann:B"], result);
     }
 
-    // Skip written between the joins: skipping order 10 leaves order 20 (one line).
     [Fact]
     public void Skip_between_joins_after_a_first_level_filter_skips_before_the_second_join()
     {

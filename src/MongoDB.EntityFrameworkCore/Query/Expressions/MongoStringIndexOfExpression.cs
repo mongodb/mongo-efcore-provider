@@ -28,10 +28,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 internal sealed class MongoStringIndexOfExpression(
     MongoExpression haystack, MongoExpression needle, MongoExpression? start = null) : MongoExpression
 {
-    /// <summary>The string-valued expression searched.</summary>
     public MongoExpression Haystack { get; } = haystack;
 
-    /// <summary>The string-valued expression searched for.</summary>
     public MongoExpression Needle { get; } = needle;
 
     /// <summary>Code-point start index (<c>IndexOf(value, startIndex)</c>), or <see langword="null"/>.</summary>

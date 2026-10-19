@@ -31,11 +31,9 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <see cref="Build(in MongoNativeBuildContext)"/>.
 /// </summary>
 /// <remarks>
-/// Constants are baked inline; parameters become sentinels in a shared <see cref="PlaceholderTable"/> that Build
-/// substitutes in a cloned template. A slot whose BSON shape (not just values) depends on runtime state is
-/// deferred to a builder run at Build time; its output goes through the same substitution pass. Deferred slots
-/// require <see cref="Build(in MongoNativeBuildContext)"/>; the values-only overload throws rather than emit a
-/// pipeline with a hole.
+/// Constants are baked inline; parameters become sentinels in a shared <see cref="PlaceholderTable"/> that Build substitutes in a
+/// cloned template. A slot whose BSON shape depends on runtime state is deferred to a builder run at Build time (same
+/// substitution pass); deferred slots require <see cref="Build(in MongoNativeBuildContext)"/>, and the values-only overload throws.
 /// </remarks>
 internal sealed class MongoPipelineFactory
 {
@@ -59,9 +57,8 @@ internal sealed class MongoPipelineFactory
     }
 
     /// <summary>
-    /// One template slot: a <see cref="BsonDocument"/> rendered at <see cref="Create"/> time, or a builder
-    /// deferred to <see cref="Build(in MongoNativeBuildContext)"/> for a stage whose key set depends on runtime
-    /// state.
+    /// One template slot: a <see cref="BsonDocument"/> rendered at <see cref="Create"/> time, or a builder deferred to
+    /// <see cref="Build(in MongoNativeBuildContext)"/> for a stage whose key set depends on runtime state.
     /// </summary>
     internal readonly struct StageSlot
     {
@@ -87,9 +84,7 @@ internal sealed class MongoPipelineFactory
         internal BsonDocument Build(in MongoNativeBuildContext context) => _builder!(context);
     }
 
-    /// <summary>
-    /// Renders <paramref name="stages"/> into a template sharing one <see cref="PlaceholderTable"/>.
-    /// </summary>
+    /// <summary>Renders <paramref name="stages"/> into a template sharing one <see cref="PlaceholderTable"/>.</summary>
     public static MongoPipelineFactory Create(
         IReadOnlyList<MongoPipelineStage> stages,
         MongoQueryLanguageRenderer renderer)
@@ -149,7 +144,7 @@ internal sealed class MongoPipelineFactory
             MongoSortStage sort => RenderSort(sort),
             MongoSkipStage skip => RenderSkip(skip, placeholders),
             MongoLimitStage limit => RenderLimit(limit, placeholders),
-            MongoLookupStage lookup => RenderLookup(lookup.Lookup),
+            MongoLookupStage lookup => RenderLookup(lookup.Lookup, renderer, placeholders),
             MongoUnwindStage unwind => RenderUnwind(unwind.Lookup, unwind.PreserveNullAndEmptyArrays),
             MongoUnwindFieldStage unwindField => unwindField.IncludeArrayIndex is null
                 ? new BsonDocument("$unwind", "$" + unwindField.ElementPath)
@@ -182,7 +177,6 @@ internal sealed class MongoPipelineFactory
             MongoAddFieldsStage addFields => RenderAddFields(addFields, placeholders),
             MongoUnsetStage unset => RenderUnset(unset),
             MongoCountStage count => new BsonDocument("$count", count.OutputField),
-            // The $vectorSearch score companion: a fixed document, not deferred.
             MongoVectorSearchScoreStage => new BsonDocument("$addFields",
                 new BsonDocument(MongoVectorSearchScoreStage.ScoreField,
                     new BsonDocument("$meta", "vectorSearchScore"))),
@@ -198,14 +192,13 @@ internal sealed class MongoPipelineFactory
         };
 
     /// <summary>
-    /// Builds the deferred slot for <c>$vectorSearch</c>: the pre-filter is rendered now into the shared
-    /// placeholder table; the rest is built per execution.
+    /// Builds the deferred slot for <c>$vectorSearch</c>: the pre-filter is rendered now into the shared placeholder table;
+    /// the rest is built per execution.
     /// </summary>
     /// <remarks>
-    /// Deferred because the presence of <c>exact</c>/<c>numCandidates</c> and the index depend on runtime
-    /// <c>VectorQueryOptions</c>. The driver's stage builder is reused so <c>numCandidates</c> is derived from
-    /// <c>limit</c> exactly as on the driver-LINQ path. The pre-filter is deep-cloned per execution because
-    /// substitution rewrites sentinels in place.
+    /// Deferred because <c>exact</c>/<c>numCandidates</c> and the index depend on runtime <c>VectorQueryOptions</c>. The driver's
+    /// stage builder is reused so <c>numCandidates</c> derives from <c>limit</c> as on the driver-LINQ path. The pre-filter is
+    /// deep-cloned per execution because substitution rewrites sentinels in place.
     /// </remarks>
     private static Func<MongoNativeBuildContext, BsonDocument> CreateVectorSearchBuilder(
         MongoVectorSearch search,
@@ -392,11 +385,10 @@ internal sealed class MongoPipelineFactory
         return new BsonDocument("$group", group);
     }
 
-    // A composite _id omits a sub-key whose value is missing, so every later read of "_id.<Name>" (HAVING, the
-    // flatten $project, projection ternaries) would see missing rather than null: $expr's $eq: [missing, null] is
-    // false, and a missing and a null part would form two groups where C# forms one. $ifNull: [part, null] normalizes
-    // missing to null once, here, for every part that may be null. A single-part _id needs no wrapping: $group
-    // already groups a missing scalar _id as null. Each part is $literal-wrapped as in RenderKeyedGroup.
+    // A composite _id omits a sub-key whose value is missing, so later reads of "_id.<Name>" (HAVING, flatten $project, projection
+    // ternaries) would see missing, not null: $eq: [missing, null] is false and a missing and a null part would form two groups
+    // where C# forms one. $ifNull: [part, null] normalizes once, here, for every part that may be null. A single-part _id needs
+    // no wrapping ($group already groups a missing scalar _id as null). Each part is $literal-wrapped as in RenderKeyedGroup.
     private static BsonValue RenderCompositeKeyPart(MongoExpression fieldRef, PlaceholderTable placeholders)
     {
         var rendered = MongoAggregationExpressionRenderer.RenderBranch(fieldRef, placeholders);
@@ -417,8 +409,99 @@ internal sealed class MongoPipelineFactory
         PlaceholderTable placeholders)
         => new BsonDocument("$limit", MongoValueRenderer.RenderValue(stage.Limit, placeholders));
 
-    private static BsonDocument RenderLookup(LookupExpression lookup)
+    private static BsonDocument RenderLookup(
+        LookupExpression lookup,
+        MongoQueryLanguageRenderer renderer,
+        PlaceholderTable placeholders)
     {
+        // A join whose inner side was filtered: the predicate is relative to the joined document, i.e. the scope inside the
+        // sub-pipeline. Rendered here, not stored as BSON on the lookup, so a parameter or clock value goes through the placeholder
+        // table and is read per execution instead of frozen into the cached plan. Stages nested by an inner-side collection Include
+        // follow the filter. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
+        // An element sort or limit (a keyed array behind `OrderBy(..).ToList()`/`FirstOrDefault()`) uses the same shape.
+        if (lookup.InnerPredicate is not null || lookup.HasElementStages || lookup.HasOuterConditions)
+        {
+            var stages = new BsonArray();
+
+            // A condition on the outer row is constant per outer row: a `let` of its field and a `$match` on it, so a group the condition
+            // rejects is empty. The `let` is merged into whichever form carries the key below.
+            var (outerLet, outerGate) = RenderOuterGate(lookup, placeholders);
+
+            // A composite key matches every pair in the let/$expr form, ahead of the filter.
+            BsonDocument? compositeLet = null;
+            if (lookup.CompositeKey is { } compositeKey)
+            {
+                var (let, match) = LookupExpression.CompositeKeyLetAndMatch(compositeKey);
+                compositeLet = let;
+                stages.Add(new BsonDocument("$match", new BsonDocument("$expr", match)));
+            }
+
+            if (outerGate is not null)
+                stages.Add(outerGate);
+
+            // A null local key that must match nothing needs the let form; the filter then follows the key match.
+            if (lookup.ExcludesNullLocalKey)
+                stages.Add(new BsonDocument("$match", new BsonDocument("$expr", lookup.NullExcludingMatch())));
+
+            if (lookup.InnerPredicate is { } innerPredicate)
+                stages.Add(new BsonDocument("$match", renderer.Render(innerPredicate, placeholders)));
+
+            // Sort, then limit: the first element is the first by the ordering. Element stages are constants (field paths, directions), baked.
+            if (lookup.ElementSort.Count > 0)
+            {
+                var sort = new BsonDocument();
+                foreach (var (field, direction) in lookup.ElementSort)
+                    sort.Add(field, direction);
+                stages.Add(new BsonDocument("$sort", sort));
+            }
+
+            if (lookup.ElementSkip is { } skip)
+                stages.Add(new BsonDocument("$skip", MongoValueRenderer.RenderValue(skip, placeholders)));
+
+            if (lookup.ElementLimit is { } limit)
+                stages.Add(new BsonDocument("$limit", MongoValueRenderer.RenderValue(limit, placeholders)));
+
+            stages.AddRange(lookup.PipelineStages);
+
+            if (compositeLet is not null)
+            {
+                compositeLet.AddRange(outerLet);
+                return new BsonDocument("$lookup", new BsonDocument
+                {
+                    { "from", lookup.From },
+                    { "let", compositeLet },
+                    { "pipeline", stages },
+                    { "as", lookup.As }
+                });
+            }
+
+            if (lookup.ExcludesNullLocalKey)
+            {
+                var nullExcludingLet = lookup.NullExcludingLet();
+                nullExcludingLet.AddRange(outerLet);
+                return new BsonDocument("$lookup", new BsonDocument
+                {
+                    { "from", lookup.From },
+                    { "let", nullExcludingLet },
+                    { "pipeline", stages },
+                    { "as", lookup.As }
+                });
+            }
+
+            var plain = new BsonDocument
+            {
+                { "from", lookup.From },
+                { "localField", lookup.LocalField },
+                { "foreignField", lookup.ForeignField }
+            };
+            if (outerLet.ElementCount > 0)
+                plain.Add("let", outerLet);
+
+            plain.Add("pipeline", stages);
+            plain.Add("as", lookup.As);
+            return new BsonDocument("$lookup", plain);
+        }
+
         // CorrelatedReducer uses localField/foreignField plus a pipeline ($match/$sort/$limit:1): an indexable
         // equality join. ToLookupStageDocument's let+pipeline ($expr) shape is for kinds like NestedInclude,
         // which have no single equality field at this level.
@@ -436,6 +519,33 @@ internal sealed class MongoPipelineFactory
         }
 
         return lookup.ToLookupStageDocument();
+    }
+
+    /// <summary>
+    /// The <c>let</c> variables and the <c>$match</c> of a lookup's <see cref="LookupExpression.OuterConditions"/>: each outer field
+    /// null-normalized (a missing field reads as C# reads it, null), compared with the rendered value, and with a guard also not null.
+    /// </summary>
+    private static (BsonDocument Let, BsonDocument? Gate) RenderOuterGate(LookupExpression lookup, PlaceholderTable placeholders)
+    {
+        var let = new BsonDocument();
+        if (!lookup.HasOuterConditions)
+            return (let, null);
+
+        var conditions = new BsonArray();
+        for (var i = 0; i < lookup.OuterConditions.Count; i++)
+        {
+            var condition = lookup.OuterConditions[i];
+            var variable = $"o{i}";
+            let.Add(variable, new BsonDocument("$ifNull", new BsonArray { $"${condition.LocalField}", BsonNull.Value }));
+
+            if (condition.Guarded)
+                conditions.Add(new BsonDocument("$ne", new BsonArray { $"$${variable}", BsonNull.Value }));
+
+            conditions.Add(new BsonDocument("$eq",
+                new BsonArray { $"$${variable}", MongoAggregationExpressionRenderer.RenderBranch(condition.Value, placeholders) }));
+        }
+
+        return (let, new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$and", conditions))));
     }
 
     private static BsonDocument RenderUnwind(LookupExpression lookup, bool preserveNullAndEmptyArrays)
@@ -465,10 +575,9 @@ internal sealed class MongoPipelineFactory
         }
     }
 
-    // Intersect/Except as a source-tagging pipeline over the same collection (so $$ROOT equality is
-    // well-defined): dedup and tag each side (_a first, _b second), union, regroup by full document, then
-    // $match (Intersect: _a && _b; Except: _a && !_b). _a/_b sit beside _doc, so they can't collide with
-    // entity fields.
+    // Intersect/Except as a source-tagging pipeline over the same collection (so $$ROOT equality is well-defined): dedup and tag
+    // each side (_a first, _b second), union, regroup by full document, then $match (Intersect: _a && _b; Except: _a && !_b).
+    // _a/_b sit beside _doc, so they can't collide with entity fields.
     private static IEnumerable<BsonDocument> RenderSetDifference(
         MongoSetDifferenceStage stage,
         MongoQueryLanguageRenderer renderer,
@@ -482,7 +591,6 @@ internal sealed class MongoPipelineFactory
             { "_b", new BsonDocument("$literal", b) }
         });
 
-        // Outer (first operand) side: dedup + tag as _a.
         yield return GroupByRootStage();
         yield return Tag(a: true, b: false);
 
@@ -507,11 +615,9 @@ internal sealed class MongoPipelineFactory
             { "_b", new BsonDocument("$max", "$_b") }
         });
 
-        // Discriminate. Intersect: in both (_b true). Except: in the first only (_b false).
         var keepInB = stage.Kind == MongoSetOperationKind.Intersect;
         yield return new BsonDocument("$match", new BsonDocument { { "_a", true }, { "_b", keepInB } });
 
-        // Restore the plain document (the re-unify $group put _doc under _id).
         yield return ReplaceRootWithIdStage();
     }
 
@@ -527,9 +633,7 @@ internal sealed class MongoPipelineFactory
     /// Clones the template and substitutes every placeholder sentinel with its serialized runtime value.
     /// </summary>
     /// <param name="parameterValues">Must contain every parameter recorded in <see cref="_placeholders"/>.</param>
-    /// <exception cref="InvalidOperationException">
-    /// A parameter is missing, or the template has a deferred slot (use <see cref="Build(in MongoNativeBuildContext)"/>).
-    /// </exception>
+    /// <exception cref="InvalidOperationException">A parameter is missing, or the template has a deferred slot (use <see cref="Build(in MongoNativeBuildContext)"/>).</exception>
     public BsonDocument[] Build(IReadOnlyDictionary<string, object?> parameterValues)
     {
         if (_hasDeferredSlot)
@@ -559,7 +663,6 @@ internal sealed class MongoPipelineFactory
     public BsonDocument[] Build(in MongoNativeBuildContext context)
     {
         // Runtime-computed values (a closed clock subtree) are evaluated per Build, never baked into the template.
-        // Deferred slots see the same wrapped values.
         var parameterValues = RuntimeParameterValues.Wrap(context.ParameterValues, _placeholders.RuntimeEvaluators);
         var buildContext = context with { ParameterValues = parameterValues };
         var result = new BsonDocument[_template.Count];
@@ -611,12 +714,18 @@ internal sealed class MongoPipelineFactory
                         $"Skip must be non-negative; got {skip}.");
             }
 
-            if (stage.TryGetValue("$unionWith", out var unionWithValue)
-                && unionWithValue.AsBsonDocument.TryGetValue("pipeline", out var innerPipeline))
+            // A $lookup sub-pipeline (an element leaf's Skip/Take) needs the same rules: `$limit: 0` is a server error there too.
+            foreach (var nested in new[] { "$unionWith", "$lookup" })
             {
-                var innerArray = innerPipeline.AsBsonArray.Select(d => d.AsBsonDocument).ToArray();
-                NormalizePagingStages(innerArray);
-                unionWithValue.AsBsonDocument["pipeline"] = new BsonArray(innerArray);
+                if (stage.TryGetValue(nested, out var nestedValue)
+                    && nestedValue.IsBsonDocument
+                    && nestedValue.AsBsonDocument.TryGetValue("pipeline", out var innerPipeline)
+                    && innerPipeline.IsBsonArray)
+                {
+                    var innerArray = innerPipeline.AsBsonArray.Select(d => d.AsBsonDocument).ToArray();
+                    NormalizePagingStages(innerArray);
+                    nestedValue.AsBsonDocument["pipeline"] = new BsonArray(innerArray);
+                }
             }
         }
     }
@@ -675,7 +784,8 @@ internal sealed class MongoPipelineFactory
         int index,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex, regexCaseInsensitive) = _placeholders.Entries[index];
+        var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex, regexCaseInsensitive, compositeKeys) =
+            _placeholders.Entries[index];
 
         // Coerces to the serializer's ValueType (which differs from the property ClrType the compile-time path
         // uses when a value converter is present) and serializes via the shared path used for constants.
@@ -686,6 +796,10 @@ internal sealed class MongoPipelineFactory
             throw new InvalidOperationException(
                 $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
                 + "is not present in parameterValues. This is a bug in the query compilation pipeline.");
+
+        // Composite-key entity-list Contains: the value is the entity list; build the per-entity key conjunctions.
+        if (compositeKeys is not null)
+            return CompositeKeyClauses.Build((System.Collections.IEnumerable)(rawValue ?? Array.Empty<object>()), compositeKeys);
 
         // Entity-list Contains (`customers.Contains(c)`): the value is an array of entities; extract each key.
         // Null elements stay BSON null (see MongoExpressionTranslator.TryTranslateEntityListContains). Must

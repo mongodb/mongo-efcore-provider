@@ -44,7 +44,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
 
         var lines = db.Lines.Include(l => l.Product).ToList();
 
-        // L5's prod_id matches no product, so it is excluded: Product is required.
         Assert.Equal(["L1", "L2", "L3", "L4", "L6"], LineNames(lines));
         Assert.All(lines, l => Assert.NotNull(l.Product));
     }
@@ -60,7 +59,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
 
         var orders = db.Orders.Include(o => o.Buyer).OrderBy(o => o.OrderName).ToList();
 
-        // O3's buyer_id is dangling and Buyer is required => inner join => O3 absent, in every mode.
         Assert.Equal(3, orders.Count);
         Assert.All(orders, o => Assert.NotNull(o.Buyer));
         Assert.DoesNotContain(orders, o => o.Buyer == null);
@@ -76,7 +74,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .Include(l => l.Product)
             .ToList();
 
-        // L4 has a dangling ord_id, L5 a dangling prod_id; both navigations are required.
         Assert.Equal(["L1", "L2", "L3", "L6"], LineNames(lines));
         Assert.All(lines, l =>
         {
@@ -115,7 +112,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .OrderBy(x => x.LineName)
             .ToList();
 
-        // A user Join is unambiguously inner, so L4 (dangling ord_id) contributes nothing.
         Assert.Equal(["L1", "L2", "L3", "L5", "L6"], pairs.Select(p => p.LineName).ToArray());
         Assert.All(pairs, p => Assert.NotNull(p.OrderName));
     }
@@ -167,7 +163,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
 
         var lines = db.Lines.Include(l => l.Carrier).ToList();
 
-        // Carrier is optional: L2 has no carr_id and L6's dangles, but neither row may be dropped.
         Assert.Equal(["L1", "L2", "L3", "L4", "L5", "L6"], LineNames(lines));
         Assert.Null(lines.Single(l => l.LineName == "L2").Carrier);
         Assert.Null(lines.Single(l => l.LineName == "L6").Carrier);
@@ -203,7 +198,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .OrderBy(x => x.LineName)
             .ToList();
 
-        // GroupJoin + DefaultIfEmpty is left-outer: every line survives, L4 has no matching order.
         Assert.Equal(["L1", "L2", "L3", "L4", "L5", "L6"], pairs.Select(p => p.LineName).ToArray());
         Assert.Null(pairs.Single(p => p.LineName == "L4").Order);
         Assert.Equal("O1", pairs.Single(p => p.LineName == "L1").Order.OrderName);
@@ -221,7 +215,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .OrderBy(x => x.LineName)
             .ToList();
 
-        // LeftJoin is left-outer: L4 survives with no matching order.
         Assert.Equal(["L1", "L2", "L3", "L4", "L5", "L6"], pairs.Select(p => p.LineName).ToArray());
         Assert.Null(pairs.Single(p => p.LineName == "L4").OrderName);
         Assert.Equal("O1", pairs.Single(p => p.LineName == "L1").OrderName);
@@ -240,9 +233,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .Include(o => o.Buyer)
             .ToList();
 
-        // Two lookups in one pipeline, each with its own semantics: the required Buyer reference drops O3
-        // (its buyer_id dangles), while the Lines collection keeps O4, which has no lines at all. A
-        // collection Include must never drop a childless principal.
         Assert.Equal(["O1", "O2", "O4"], orders.Select(o => o.OrderName).OrderBy(n => n).ToArray());
         Assert.Empty(orders.Single(o => o.OrderName == "O4").Lines);
         Assert.All(orders, o => Assert.NotNull(o.Buyer));
@@ -353,7 +343,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .Include(l => l.Product)
             .ToList();
 
-        // Control: nothing is composed above the Includes, so the lookups are tail-appended. Base source L1..L4, less L4.
         Assert.Equal(["L1", "L2", "L3"], LineNames(lines));
     }
 
@@ -390,7 +379,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
         var product2 = ObjectId.GenerateNewId();
         var carrier1 = ObjectId.GenerateNewId();
 
-        // Never inserted anywhere: the dangling targets.
         var missingBuyer = ObjectId.GenerateNewId();
         var missingOrder = ObjectId.GenerateNewId();
         var missingProduct = ObjectId.GenerateNewId();
@@ -492,7 +480,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
         public ObjectId ProductId { get; set; }
         public Product Product { get; set; }
 
-        // The only OPTIONAL navigation in the model; nullable FK, no IsRequired().
         public ObjectId? CarrierId { get; set; }
         public Carrier Carrier { get; set; }
     }

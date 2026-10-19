@@ -90,14 +90,12 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.Contains("\"localField\" : \"MidId\"", mql);
         Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
 
-        // The defect's signature: the leaf $lookup matching the root's own colliding field.
         Assert.DoesNotContain("\"localField\" : \"LeafId\"", mql);
     }
 
     [Fact]
     public void Colliding_fk_name_transitive_hop_now_goes_native_under_NativeOnly()
     {
-        // A routing pin, so NativeOnly: the fallback emits the same flat _lookup_<Nav> shape. A linear 2-hop
         // reference ThenInclude chain goes native.
         using var db = CreateCollidingContext(
             nameof(Colliding_fk_name_transitive_hop_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
@@ -148,7 +146,6 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.Contains("\"localField\" : \"MidId\"", mql);
         Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
 
-        // The tier-2 defect's signature: a leaf $lookup resolved off RRoot.SideLeaf, matching the root's field.
         Assert.DoesNotContain("\"localField\" : \"SideLeafId\"", mql);
         Assert.DoesNotContain("_lookup_SideLeaf", mql);
     }
@@ -156,7 +153,6 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     [Fact]
     public void Renamed_fk_transitive_hop_now_goes_native_under_NativeOnly()
     {
-        // A routing pin, not a guard for the misrouting fix (see the tier-1 twin).
         using var db = CreateRenamedContext(
             nameof(Renamed_fk_transitive_hop_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
 
@@ -311,8 +307,6 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
 
         spyLogger.AssertExecutedMqlContains("\"localField\" : \"ParentId\"");
     }
-
-    // Fixtures.
 
     private CollidingChainDbContext CreateCollidingContext(
         string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
@@ -687,7 +681,6 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         public ObjectId Id { get; set; }
         public string Label { get; set; } = "";
 
-        // Deliberately no NLeaf navigation.
         public ObjectId LeafId { get; set; }
     }
 
@@ -698,7 +691,6 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         public ObjectId MidId { get; set; }
         public NMid Mid { get; set; } = null!;
 
-        // Bait for both root tiers: NMid's FK name and a navigation to the joined type.
         public ObjectId LeafId { get; set; }
         public NLeaf Leaf { get; set; } = null!;
     }

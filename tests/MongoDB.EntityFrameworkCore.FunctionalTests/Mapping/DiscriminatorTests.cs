@@ -139,7 +139,6 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         }
 
         {
-            // Succeeding under NativeOnly proves a value-converted discriminator translates natively.
             using var db = SingleEntityDbContext.Create(collection, configuration,
                 optionsBuilderAction: b => new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly));
             var customer = Assert.Single(db.Entities.OfType<KeyedCustomer>());

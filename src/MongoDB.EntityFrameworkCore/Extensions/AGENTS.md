@@ -13,17 +13,12 @@ The provider's public configuration surface: `Extensions/` (fluent + DI entry po
 ## Contract
 
 Signature/default/visibility/behavior changes here are candidate breaking changes (see root `AGENTS.md`). Keep
-overload sets complete when adding one:
-
-- `UseMongoDB(...)` — every `(connectionString | mongoClient | mongoClientSettings, databaseName?)` combination
-  plus a `MongoOptionsExtension` overload; generic/non-generic; optional trailing
-  `Action<MongoDbContextOptionsBuilder>`. `AddMongoDB<TContext>(...)` mirrors the connection shapes.
-- `AddEntityFrameworkMongoDB()` (`MongoServiceCollectionExtensions`) is the single binding point to EF's
-  `EntityFrameworkServicesBuilder`.
-- Model builders (`MongoEntityTypeBuilderExtensions`, `MongoPropertyBuilderExtensions`,
-  `MongoIndexBuilderExtensions`, `QueryableEncryptionBuilderExtensions`) and `MongoDatabaseFacadeExtensions`.
-- `MongoQueryableExtensions.VectorSearch<,>` must be at the queryable root (optionally after a `Where`); a new
-  query-time extension or overload needs matching Query visitor support.
+overload sets complete when adding one: `UseMongoDB(...)` covers every `(connectionString | mongoClient |
+mongoClientSettings, databaseName?)` combination plus a `MongoOptionsExtension` overload, generic and non-generic,
+with an optional trailing `Action<MongoDbContextOptionsBuilder>`; `AddMongoDB<TContext>(...)` mirrors the connection
+shapes. `AddEntityFrameworkMongoDB()` is the single binding point to EF's `EntityFrameworkServicesBuilder`.
+`MongoQueryableExtensions.VectorSearch<,>` must be at the queryable root (optionally after a `Where`); a new
+query-time extension needs matching Query visitor support.
 
 ## Invariants
 
@@ -38,9 +33,3 @@ overload sets complete when adding one:
 - **`MongoDesignTimeServices` must keep calling `AddEntityFrameworkMongoDB()`** or `dotnet ef` fails with cryptic
   missing-service errors. No migrations/scaffolding support.
 - Changing `QueryableEncryptionSchemaMode`'s default is a behavior break.
-- Annotation semantics live in Metadata; builder methods here only surface them.
-
-## Testing
-
-`tests/…UnitTests/Infrastructure/`, `…UnitTests/Extensions/`, `…SpecificationTests/Extensions/`,
-`…FunctionalTests/Design/`; filter `FullyQualifiedName~Infrastructure|FullyQualifiedName~Extensions|FullyQualifiedName~Design`.

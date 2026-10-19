@@ -34,23 +34,16 @@ using MongoDB.EntityFrameworkCore.Serializers;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Rewrites EF's post-injection entity-materializer block for a streaming-eligible entity so each native-path
-/// row is materialized via a single forward <see cref="IBsonReader"/> pass into typed locals, instead of
-/// building a <see cref="BsonDocument"/> DOM.
+/// Rewrites EF's post-injection entity-materializer block for a streaming-eligible entity so each native-path row is
+/// materialized via a single forward <see cref="IBsonReader"/> pass into typed locals instead of a <see cref="BsonDocument"/> DOM.
 /// </summary>
 /// <remarks>
-/// Handles flat (scalar / mapped-array) entities, entities with single (reference) owned sub-documents
-/// (recursively, since an owned type may itself own further reference sub-documents), and owned collections
-/// whose element carries no navigation of its own (via the forward-fill loop, see <see cref="BuildFillLoop"/>).
-/// A non-owned collection navigation, and an owned collection whose element itself carries a further
-/// navigation, are rejected upstream by <see cref="StreamingEligibility"/> (which gates the streaming path)
-/// and surface here as <see cref="NativeTranslationNotSupportedException"/>.
-/// <para>
-/// EF's construction/tracking blocks are reused verbatim, with their <c>ValueBufferTryReadValue</c> reads
-/// redirected to the typed locals and their <see cref="MaterializationContext"/> value-buffer source replaced
-/// by <see cref="ValueBuffer.Empty"/>. EF's <see cref="IncludeExpression"/> structure (and navigation fixup)
-/// is preserved; only the value source and the owned null-guard inside each block are replaced.
-/// </para>
+/// Handles flat entities, reference owned sub-documents (recursively), and owned collections whose element has no navigation
+/// of its own (see <see cref="BuildFillLoop"/>). A non-owned collection navigation, or an owned collection element with a further
+/// navigation, is rejected upstream by <see cref="StreamingEligibility"/> and surfaces here as <see cref="NativeTranslationNotSupportedException"/>.
+/// EF's construction/tracking blocks are reused verbatim, with <c>ValueBufferTryReadValue</c> reads redirected to the typed locals
+/// and the <see cref="MaterializationContext"/> source replaced by <see cref="ValueBuffer.Empty"/>; <see cref="IncludeExpression"/>
+/// structure (and navigation fixup) is preserved.
 /// </remarks>
 internal sealed class MongoStreamingEntityMaterializerRewriter
 {
@@ -92,8 +85,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         typeof(string).GetMethod(nameof(string.Equals), [typeof(string), typeof(string)])!;
 
     /// <summary>
-    /// A per-entity-instance materialization plan: the typed locals for its scalar properties, an optional
-    /// "present" flag local (owned sub-documents only), and the plans for its owned reference navigations.
+    /// A per-entity-instance materialization plan: typed locals for scalar properties, an optional "present" flag local
+    /// (owned sub-documents only), and plans for its owned reference navigations.
     /// </summary>
     private sealed class EntityPlan
     {
@@ -101,10 +94,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         public required Dictionary<IProperty, ParameterExpression> Locals { get; init; }
 
         /// <summary>
-        /// Presence flag per required non-nullable scalar, set by the fill loop when the element is encountered
-        /// (even as explicit BSON <c>null</c>). Still <c>false</c> after the loop means the element was missing,
-        /// and the materializer throws the same <see cref="InvalidOperationException"/> as
-        /// <c>BsonBinding.GetPropertyValue</c>.
+        /// Presence flag per required non-nullable scalar, set by the fill loop when the element is seen (even as BSON <c>null</c>).
+        /// Still <c>false</c> after the loop means the element was missing: throws like <c>BsonBinding.GetPropertyValue</c>.
         /// </summary>
         public required Dictionary<IProperty, ParameterExpression> RequiredPresence { get; init; }
 
@@ -114,24 +105,19 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         public required List<LookupReferencePlan> LookupReferences { get; init; }
 
         /// <summary>
-        /// The property→local scope this plan's construction block reads from. The root entity and its owned
-        /// sub-document subtree share ONE scope (owned-type keys resolve to the principal's local via
-        /// <see cref="ConstructionRewriter.ResolveLocal"/>). A lookup-backed non-owned reference target gets its
-        /// OWN fresh scope, since it is an independent entity instance — for a self-referential reference (e.g.
-        /// <c>Employee.Manager</c>) sharing the root's scope would alias the target's locals onto the root's
-        /// identical <see cref="IProperty"/> keys and corrupt both reads.
+        /// The property→local scope this plan's construction block reads from. The root and its owned subtree share ONE scope
+        /// (owned-type keys resolve to the principal's local via <see cref="ConstructionRewriter.ResolveLocal"/>). A lookup-backed
+        /// non-owned reference target gets its OWN scope: sharing the root's for a self-referential reference (e.g. <c>Employee.Manager</c>)
+        /// would alias the target's locals onto the root's identical <see cref="IProperty"/> keys and corrupt both reads.
         /// </summary>
         public required Dictionary<IProperty, ParameterExpression> AllLocals { get; init; }
     }
 
     /// <summary>
-    /// A plan for a non-owned single (reference) navigation materialized from a cross-collection
-    /// <c>$lookup</c> + <c>$unwind</c>. Unlike an owned reference (which descends into an embedded element
-    /// mid-parse), the joined sub-document arrives as a ROOT-level element named
-    /// <see cref="LookupExpression.GetLookupAlias"/> (<c>_lookup_&lt;Nav&gt;</c>) — a sibling of the parent's
-    /// own fields after <c>$unwind</c>. The joined entity reads its own primary key as a normal field (no
-    /// owner-key resolution) and does its own tracking. The target plan's present flag is false when the lookup
-    /// field is BSON Null (no match), yielding a null navigation.
+    /// A plan for a non-owned reference navigation materialized from a cross-collection <c>$lookup</c> + <c>$unwind</c>. Unlike an owned
+    /// reference, the joined sub-document is a ROOT-level element named <see cref="LookupExpression.GetLookupAlias"/> (<c>_lookup_&lt;Nav&gt;</c>).
+    /// Its primary key is a normal field (no owner-key resolution) and it does its own tracking. The target plan's present flag is
+    /// false when the lookup field is BSON Null (no match), yielding a null navigation.
     /// </summary>
     private sealed class LookupReferencePlan
     {
@@ -141,10 +127,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// A plan for an owned <em>collection</em> navigation: the element materialization plan, a 1-based loop
-    /// <see cref="Counter"/> local that supplies the synthesized ordinal key, and a <see cref="List"/>
-    /// accumulator local of the element CLR type. Element locals are declared once (in the element plan) and
-    /// reassigned on each array iteration.
+    /// A plan for an owned <em>collection</em> navigation: the element plan, a 1-based loop <see cref="Counter"/> local supplying the
+    /// synthesized ordinal key, and a <see cref="List"/> accumulator local. Element locals are declared once and reassigned per iteration.
     /// </summary>
     private sealed class CollectionPlan
     {
@@ -153,9 +137,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         public required ParameterExpression Counter { get; init; }
         public required ParameterExpression List { get; init; }
 
-        // The rewritten per-element construction expression (element locals + counter -> CLR element), set by
-        // RewriteMaterializer from the CollectionShaperExpression's inner shaper, consumed by BuildFillLoop to
-        // emit `list.Add(<constructed element>)` inside the array loop.
+        // The rewritten per-element construction expression, set by RewriteMaterializer and consumed by BuildFillLoop for `list.Add(...)`.
         public Expression? ElementConstructor { get; set; }
     }
 
@@ -165,13 +147,11 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     private static readonly MethodInfo ReadEndArrayMethod =
         typeof(IBsonReader).GetMethod(nameof(IBsonReader.ReadEndArray))!;
 
-    // Set by Rewrite from its readerParameter argument. The caller owns opening/positioning/disposing the
-    // reader; this instance only ever serves a single Rewrite call, so a plain field is sufficient.
+    // Set by Rewrite; the caller owns opening/positioning/disposing the reader. One instance serves a single Rewrite call.
     private ParameterExpression _reader = null!;
 
-    // The per-document BsonDeserializationContext threaded in from MongoEntityMaterializerSerializer.Deserialize
-    // (its Reader IS _reader). Reused for every per-property typed read of the row — including nested owned
-    // sub-documents, which share the same reader — so no context is allocated per property.
+    // The per-document context from MongoEntityMaterializerSerializer.Deserialize (its Reader IS _reader), reused for every typed read,
+    // including nested owned sub-documents, so no context is allocated per property.
     private ParameterExpression _context = null!;
     private readonly ParameterExpression _name = Expression.Variable(typeof(string), "__name");
 
@@ -206,9 +186,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// Builds a plan for <paramref name="entityType"/> (recursively for owned navigations). Rejects a non-owned
-    /// collection navigation with <see cref="NativeTranslationNotSupportedException"/>; an owned collection whose
-    /// element carries a further navigation is rejected earlier, by <see cref="StreamingEligibility"/>.
+    /// Builds a plan for <paramref name="entityType"/> (recursively for owned navigations). Rejects a non-owned collection navigation
+    /// with <see cref="NativeTranslationNotSupportedException"/>; an owned collection element with a further navigation is rejected earlier by <see cref="StreamingEligibility"/>.
     /// </summary>
     private EntityPlan BuildPlan(
         IEntityType entityType,
@@ -220,9 +199,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         var requiredPresence = new Dictionary<IProperty, ParameterExpression>();
         foreach (var property in entityType.GetProperties())
         {
-            // Owned-type keys (shadow FKs sharing the principal's primary key) live only on the owner document,
-            // not the owned sub-document. They get no local and no fill-loop entry; reads resolve to the
-            // principal's local via ConstructionRewriter.ResolveLocal.
+            // Owned-type keys (shadow FKs sharing the principal's primary key) live only on the owner document: no local, no fill-loop
+            // entry; reads resolve to the principal's local via ConstructionRewriter.ResolveLocal.
             if (property.IsOwnedTypeKey())
             {
                 continue;
@@ -250,20 +228,16 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
             if (!target.IsOwned())
             {
-                // Non-owned reference navigations are planned only one level deep, off the root entity: a
-                // lookup-backed target does not plan its own further non-owned references, since a
-                // self-referential relationship (e.g. Staff.Manager) would otherwise recurse forever here. A
-                // deeper (ThenInclude) non-owned reference has no LookupReferencePlan, so
+                // Non-owned references are planned one level deep, off the root only: a self-referential relationship (e.g. Staff.Manager)
+                // would otherwise recurse forever. A deeper (ThenInclude) reference has no LookupReferencePlan, so
                 // RewriteLookupReferenceNavigation rejects it and falls back to the DOM path.
                 if (!allowLookupReferences)
                 {
                     continue;
                 }
 
-                // A non-owned navigation is only streamable as a single reference backed by a cross-collection
-                // $lookup + $unwind. The joined sub-document arrives as a root-level `_lookup_<Nav>` element (a
-                // sibling of this entity's own fields); its primary key is a normal field of the joined
-                // document, read without owner-key resolution. A non-owned collection is not streamable.
+                // A non-owned navigation is streamable only as a single reference backed by a cross-collection $lookup + $unwind (a root-level
+                // `_lookup_<Nav>` element whose primary key is a normal field). A non-owned collection is not streamable.
                 if (navigation.IsCollection)
                 {
                     throw new NativeTranslationNotSupportedException(
@@ -271,9 +245,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                         + "(non-owned collection navigation).");
                 }
 
-                // The joined target is an independent entity instance: it gets its own fresh locals scope, not
-                // the root's — critical for self-referential references where target and root share IProperty
-                // keys. Non-owned reference recursion is disabled (single-level only).
+                // The joined target is an independent instance: it gets its own fresh locals scope, not the root's (critical for
+                // self-referential references sharing IProperty keys). No further non-owned recursion.
                 var lookupPresent = Expression.Variable(typeof(bool), "__present_lookup_" + target.ShortName());
                 var lookupTarget = BuildPlan(
                     target, lookupPresent, new Dictionary<IProperty, ParameterExpression>(),
@@ -289,9 +262,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
             if (navigation.IsCollection)
             {
-                // Owned collection: element plan locals are reused across iterations (no present flag —
-                // presence is per-array-element, governed by the loop). A 1-based counter local supplies the
-                // synthesized ordinal key; a List<TElement> accumulator collects the materialized elements.
+                // Owned collection: element locals are reused across iterations (no present flag; presence is per array element). A 1-based
+                // counter local supplies the synthesized ordinal key; a List<TElement> accumulator collects the elements.
                 var element = BuildPlan(target, present: null, allLocals, allowLookupReferences);
                 var counter = Expression.Variable(typeof(int), "__counter_" + target.ShortName());
                 var listType = typeof(List<>).MakeGenericType(target.ClrType);
@@ -363,14 +335,12 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             locals.Add(collection.List);
             initializers.Add(Expression.Assign(collection.List, Expression.Default(collection.List.Type)));
 
-            // Element locals are shared across iterations; declare + default-init them once here.
             CollectLocals(collection.Element, locals, initializers);
         }
     }
 
     /// <summary>
-    /// Builds the forward name-dispatch fill loop for one document level (reader already after
-    /// <c>ReadStartDocument</c>).
+    /// Builds the forward name-dispatch fill loop for one document level (reader already after <c>ReadStartDocument</c>).
     /// </summary>
     private Expression BuildFillLoop(EntityPlan plan)
     {
@@ -378,7 +348,6 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         foreach (var property in plan.EntityType.GetProperties())
         {
-            // Owned-type keys have no local and are not stored in the sub-document; skip them in the loop.
             if (!plan.Locals.TryGetValue(property, out var local))
             {
                 continue;
@@ -408,10 +377,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         foreach (var lookup in plan.LookupReferences)
         {
-            // The joined sub-document is a root-level `_lookup_<Nav>` element (post-$unwind sibling of this
-            // entity's own fields). Same null-guarded descent as an owned reference, but keyed by the lookup
-            // alias rather than an embedded containing-element name. BSON Null (no $lookup match) -> present
-            // = false -> null navigation.
+            // The joined sub-document is a root-level `_lookup_<Nav>` element. Same null-guarded descent as an owned reference, keyed by
+            // the lookup alias; BSON Null (no $lookup match) -> present = false -> null navigation.
             ifChain = Dispatch(lookup.ElementName, BuildNullGuardedDescent(lookup.Target), ifChain);
         }
 
@@ -442,10 +409,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             return loop;
         }
 
-        // Reset presence flags and collection accumulators before each pass, and enforce/normalize after.
-        // Owned-collection element plans reuse their locals across iterations, so element N's state must not leak
-        // into element N+1 (for once-only plans the reset is redundant but harmless). A flag still false after the
-        // loop throws like BsonBinding.GetPropertyValue.
+        // Reset presence flags and collection accumulators before each pass (owned-collection element plans reuse locals, so element N's
+        // state must not leak into N+1), and enforce/normalize after. A flag still false after the loop throws like BsonBinding.GetPropertyValue.
         var body = new List<Expression>();
         foreach (var (_, presenceFlag) in plan.RequiredPresence)
         {
@@ -459,11 +424,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         body.Add(loop);
 
-        // Normalize an absent owned collection (missing element, or explicit BSON Null consumed by
-        // BuildCollectionLoop) to an empty accumulator. EF Core's contract is an empty collection either way,
-        // matching the DOM shaper; a null accumulator makes IncludeCollection skip GetOrCreate, so the result would
-        // depend on the POCO's field initializer. The navigation's own IClrCollectionAccessor creates the actual
-        // collection, so non-List types such as HashSet<T> still work.
+        // Normalize an absent owned collection (missing, or BSON Null consumed by BuildCollectionLoop) to an empty accumulator, matching
+        // the DOM shaper: a null accumulator makes IncludeCollection skip GetOrCreate, so the result would depend on the POCO's field
+        // initializer. The navigation's IClrCollectionAccessor creates the real collection, so HashSet<T> etc. still work.
         foreach (var collection in plan.OwnedCollections)
         {
             body.Add(
@@ -494,15 +457,13 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             body,
             chain);
 
-    // Whether the reader's current value is BSON Null.
     private Expression IsCurrentNull()
         => Expression.Equal(
             Expression.Call(_reader, GetCurrentBsonTypeMethod),
             Expression.Constant(BsonType.Null, typeof(BsonType)));
 
-    // Descends into an embedded sub-document read into `plan` (an owned reference or a joined `_lookup_<Nav>`). If
-    // the element is BSON Null the sub-document is absent: ReadNull + present=false. Otherwise: present=true, descend
-    // (ReadStartDocument / sub-fill-loop / ReadEndDocument).
+    // Descends into an embedded sub-document read into `plan` (owned reference or joined `_lookup_<Nav>`): BSON Null means absent
+    // (ReadNull + present=false); otherwise present=true and descend (ReadStartDocument / sub-fill-loop / ReadEndDocument).
     private Expression BuildNullGuardedDescent(EntityPlan plan)
         => Expression.IfThenElse(
             IsCurrentNull(),
@@ -516,12 +477,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 Expression.Call(_reader, ReadEndDocumentMethod)));
 
     /// <summary>
-    /// Build the array loop for an owned collection. The reader is positioned at the array value (after the
-    /// element name). If the value is BSON Null the null is consumed and the accumulator is left NULL — the
-    /// post-loop normalization in <see cref="BuildFillLoop"/> turns that into an empty accumulator, which also
-    /// covers a MISSING array element (this method never runs for one). Otherwise each array element is read
-    /// into the element plan's locals (reassigned per iteration), the 1-based <c>counter</c> supplies the
-    /// synthesized ordinal key, and the constructed element is appended.
+    /// Builds the array loop for an owned collection (reader at the array value). BSON Null is consumed and the accumulator left NULL:
+    /// post-loop normalization in <see cref="BuildFillLoop"/> makes it empty, as for a MISSING array element (which never reaches here).
+    /// Otherwise each element is read into the element plan's locals and appended, with the 1-based <c>counter</c> as the ordinal key.
     /// </summary>
     private Expression BuildCollectionLoop(CollectionPlan collection)
     {
@@ -546,16 +504,14 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                         Expression.Call(_reader, ReadStartDocumentMethod),
                         BuildFillLoop(collection.Element),
                         Expression.Call(_reader, ReadEndDocumentMethod),
-                        // The synthesized ordinal key resolves to `counter + 1` (1-based, matching the DOM
-                        // path's `ordinal + 1`); construct, append, then advance the 0-based counter.
+                        // The ordinal key resolves to `counter + 1` (matching the DOM path's `ordinal + 1`); construct, append, then advance the counter.
                         Expression.Call(collection.List, addMethod, elementConstructor),
                         Expression.AddAssign(collection.Counter, Expression.Constant(1))),
                     Expression.Break(elementBreak)),
                 elementBreak),
             Expression.Call(_reader, ReadEndArrayMethod));
 
-        // BSON Null: consume it and leave the accumulator null; BuildFillLoop normalizes it the same way as a
-        // missing array, keeping the two absent states in one place.
+        // BSON Null: consume it and leave the accumulator null; BuildFillLoop normalizes it as for a missing array.
         return Expression.IfThenElse(
             IsCurrentNull(),
             Expression.Call(_reader, ReadNullMethod),
@@ -563,20 +519,16 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// Rewrite the materializer expression, preserving any <see cref="IncludeExpression"/> structure.
-    /// For a plain entity block the value source is redirected to <paramref name="plan"/>'s locals; for an
-    /// <see cref="IncludeExpression"/> the entity block is rewritten with the parent plan and each owned
-    /// navigation block is rewritten with the matching child plan, its <c>bsonDocN == null</c> guard
-    /// replaced by <c>!present</c>.
+    /// Rewrites the materializer expression, preserving any <see cref="IncludeExpression"/> structure: a plain entity block is redirected
+    /// to <paramref name="plan"/>'s locals; an IncludeExpression's entity block uses the parent plan and each owned navigation block its
+    /// child plan, with its <c>bsonDocN == null</c> guard replaced by <c>!present</c>.
     /// </summary>
     private Expression RewriteMaterializer(Expression body, EntityPlan plan, CollectionPlan? collection = null)
     {
         if (body is IncludeExpression include)
         {
-            // Reduce the IncludeExpression ourselves (it is not a reducible node). EF's binding remover
-            // would normally turn it into a fixup call woven through a BsonDocument; on the streaming path
-            // there is no BsonDocument, so we replicate the reference-include fixup directly, splicing it
-            // into the (recursively rewritten) entity materializer block before its trailing instance.
+            // Reduce the IncludeExpression ourselves (it is not reducible). EF's binding remover would weave a fixup through a BsonDocument;
+            // there is none here, so replicate the reference-include fixup, splicing it into the rewritten entity block before its trailing instance.
             if (include.Navigation is not INavigation navigation)
             {
                 throw new NativeTranslationNotSupportedException(
@@ -597,11 +549,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
             var entityBlock = (BlockExpression)RewriteMaterializer(include.EntityExpression, plan, collection);
 
-            // A non-owned single reference is materialized from the cross-collection $lookup result field
-            // (`_lookup_<Nav>`). It uses the same IncludeExpression / reference-fixup shape as an owned
-            // reference, so the fixup is spliced in via SpliceInclude the same way; the difference is
-            // purely how the joined entity is materialized — from a root-level lookup field, reading its own
-            // PK as a normal field.
+            // A non-owned single reference from the cross-collection $lookup field (`_lookup_<Nav>`): same IncludeExpression/fixup shape as an
+            // owned reference, spliced via SpliceInclude; only the joined entity's materialization differs.
             if (!navigation.TargetEntityType.IsOwned())
             {
                 var lookupPlan = FindLookupReferencePlan(plan, navigation);
@@ -617,30 +566,18 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             return SpliceInclude(entityBlock, navigation, navExpression, include.SetLoaded);
         }
 
-        // Plain entity block: { bsonDocN; bsonDocN = projection as BsonDocument; bsonDocN == null ? null : <block> }.
-        // The root row is always present, so drop the bsonDocN local + null guard and use the materializer
-        // block directly, redirecting its value source to this plan's locals. When building a collection
-        // element, `collection` carries the loop counter so the synthesized ordinal key resolves to counter+1.
+        // Plain entity block: { bsonDocN; bsonDocN = projection as BsonDocument; bsonDocN == null ? null : <block> }. The root row is always
+        // present, so drop the local + null guard and redirect the block to this plan's locals. For a collection element, `collection` carries
+        // the loop counter so the synthesized ordinal key resolves to counter+1.
         var materializerBlock = ExtractMaterializerBlock(body, plan.EntityType);
         return new ConstructionRewriter(plan.AllLocals, collection).Visit(materializerBlock);
     }
 
     /// <summary>
-    /// Splice a navigation fixup into a rewritten entity materializer block, mirroring EF's
-    /// <c>IncludeReference</c>/<c>IncludeCollection</c> paths. The block's trailing instance expression is preserved; the
-    /// fixup call is inserted just before it, using the block's own <c>entry</c> / <c>entityType</c> / <c>instance</c>
-    /// locals.
+    /// Splices a navigation fixup into a rewritten entity materializer block, mirroring EF's <c>IncludeReference</c>/<c>IncludeCollection</c>.
+    /// The fixup call is inserted just before the block's trailing instance expression, using its own <c>entry</c>/<c>entityType</c>/<c>instance</c>
+    /// locals. For a collection, <c>relatedEntityExpression</c> is the <c>List&lt;TElement&gt;</c> local filled by the array loop.
     /// </summary>
-    /// <param name="entityBlock">The rewritten materializer block of the including entity.</param>
-    /// <param name="navigation">The included navigation.</param>
-    /// <param name="relatedEntityExpression">
-    /// For a reference navigation, the related entity's materialization. For a collection navigation, the
-    /// <c>List&lt;TElement&gt;</c> local filled by the array loop (<c>IncludeCollection&lt;TIncluding,TIncluded&gt;</c>
-    /// expects <c>IEnumerable&lt;TIncluded&gt;</c>; <c>List&lt;TElement&gt;</c> qualifies), each element of which
-    /// <see cref="MongoIncludeFixups"/>'s <c>IncludeCollection</c> wires onto the principal collection navigation
-    /// (and, when tracking, marks it loaded).
-    /// </param>
-    /// <param name="setLoaded">The <c>IncludeExpression.SetLoaded</c> flag.</param>
     private BlockExpression SpliceInclude(
         BlockExpression entityBlock,
         INavigation navigation,
@@ -668,9 +605,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// Locate the <see cref="CollectionShaperExpression"/> inside an owned-collection navigation expression and
-    /// build the per-element construction expression (element locals + 1-based ordinal counter -> CLR element),
-    /// storing it on <paramref name="collectionPlan"/> for the array loop to emit as <c>list.Add(...)</c>.
+    /// Locates the <see cref="CollectionShaperExpression"/> inside an owned-collection navigation expression and builds the per-element
+    /// construction expression (element locals + ordinal counter -> CLR element), storing it on <paramref name="collectionPlan"/> for <c>list.Add(...)</c>.
     /// </summary>
     private void BuildCollectionElementConstructor(Expression navExpression, CollectionPlan collectionPlan)
     {
@@ -678,10 +614,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                      ?? throw new NativeTranslationNotSupportedException(
                          $"Unexpected owned-collection materializer shape for '{collectionPlan.Element.EntityType.DisplayName()}'.");
 
-        // The inner shaper is the per-element materializer. It may itself be an IncludeExpression (the element
-        // owns further references/collections) — RewriteMaterializer handles that recursively, redirecting
-        // reads to the element plan's locals, with the collection context threaded through so the synthesized
-        // ordinal key resolves to `counter + 1`.
+        // The inner shaper is the per-element materializer; it may itself be an IncludeExpression (element owns further navigations), which
+        // RewriteMaterializer handles recursively with the collection context threaded through for the ordinal key.
         collectionPlan.ElementConstructor =
             RewriteMaterializer(shaper.InnerShaper, collectionPlan.Element, collectionPlan);
     }
@@ -726,18 +660,14 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// Rewrite an owned reference navigation's expression. The owned-entity block has the shape
-    /// <c>{ bsonDocN; bsonDocN = projection as BsonDocument; return bsonDocN == null ? null : &lt;block&gt;; }</c>;
-    /// when the owned type itself owns further references the expression is an <see cref="IncludeExpression"/>
-    /// wrapping that block. The materializer block's value source is redirected to the child plan's locals,
-    /// any nested owned-reference fixup is spliced in, and the <c>bsonDocN == null</c> presence test is
-    /// replaced with <c>!present</c> so an absent owned sub-document yields the null navigation.
+    /// Rewrites an owned reference navigation: the block is <c>{ bsonDocN; bsonDocN = projection as BsonDocument; return bsonDocN == null ? null : &lt;block&gt;; }</c>,
+    /// wrapped in an <see cref="IncludeExpression"/> when the owned type owns further references. The value source is redirected to the
+    /// child plan's locals, nested fixups are spliced in, and the null test is replaced with <c>!present</c>.
     /// </summary>
     private Expression RewriteOwnedNavigation(Expression navExpression, INavigation navigation, EntityPlan child)
     {
-        // Locate the owned-entity block carrying the `bsonDocN == null ? null : <block>` guard. When the owned
-        // type has its own owned references the navigation is an IncludeExpression whose EntityExpression is
-        // that block; otherwise the navigation expression is the block directly.
+        // Locate the owned-entity block carrying the `bsonDocN == null ? null : <block>` guard: the IncludeExpression's EntityExpression when
+        // the owned type has its own owned references, else the navigation expression itself.
         var entityExpression = navExpression is IncludeExpression nestedInclude
             ? nestedInclude.EntityExpression
             : navExpression;
@@ -749,11 +679,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 $"Unexpected owned-navigation materializer shape for '{child.EntityType.DisplayName()}'.");
         }
 
-        // Rewrite the owned materializer block's value source to the child's locals (the owned subtree
-        // shares the root's scope, so owned-type keys still resolve to the principal's local).
+        // Redirect to the child's locals (the owned subtree shares the root's scope, so owned-type keys still resolve to the principal's local).
         var rewrittenBlock = (BlockExpression)new ConstructionRewriter(child.AllLocals).Visit(materializerBlock);
 
-        // Splice in any nested owned-reference fixup (recursively rewriting the nested navigation).
         if (navExpression is IncludeExpression include)
         {
             if (include.Navigation is not INavigation nestedNavigation || nestedNavigation.IsCollection)
@@ -768,10 +696,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             rewrittenBlock = SpliceInclude(rewrittenBlock, nestedNavigation, nestedNavExpression, include.SetLoaded);
         }
 
-        // Replace the whole `{ bsonDocN; bsonDocN = ... as BsonDocument; bsonDocN == null ? null : <block> }`
-        // with `!present ? <absent> : <rewrittenBlock>`. The bsonDocN local is dropped: its RHS is an unreduced
-        // EntityProjectionExpression with no streaming equivalent. For a required owned reference, <absent>
-        // throws like the DOM path (BsonBinding.GetBsonDocument) rather than yielding null.
+        // Replace the whole `{ bsonDocN; ...; bsonDocN == null ? null : <block> }` with `!present ? <absent> : <rewrittenBlock>`. The bsonDocN
+        // local is dropped (its RHS is an unreduced EntityProjectionExpression). For a required owned reference, <absent> throws like the DOM
+        // path (BsonBinding.GetBsonDocument) rather than yielding null.
         var absent = navigation.ForeignKey.IsRequiredDependent
             ? (Expression)Expression.Block(
                 conditional.Type,
@@ -791,21 +718,17 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// Rewrite a non-owned single (reference) navigation's expression. The joined entity arrives from the
-    /// root-level <c>_lookup_&lt;Nav&gt;</c> field (a sibling element of the parent, post-<c>$unwind</c>), so it
-    /// is materialized from the target plan's own locals — its primary key read normally as a field of the
-    /// joined document (no owner-key resolution; the joined entity does its own tracking). The block has the
-    /// same EF shape as an owned reference, so the materializer block is extracted the same way; the
-    /// <c>bsonDocN == null</c> guard is replaced by <c>!present</c> (false when the lookup field is BSON Null —
-    /// no match — yielding a null navigation). Nested includes (ThenInclude) are not yet streamable.
+    /// Rewrites a non-owned single reference navigation. The joined entity comes from the root-level <c>_lookup_&lt;Nav&gt;</c> field and is
+    /// materialized from the target plan's own locals (PK read as a normal field, own tracking). The block has the same EF shape as an owned
+    /// reference; its <c>bsonDocN == null</c> guard becomes <c>!present</c> (false on BSON Null, i.e. no match). Nested includes (ThenInclude)
+    /// are not yet streamable.
     /// </summary>
     private Expression RewriteLookupReferenceNavigation(
         Expression navExpression,
         INavigation navigation,
         LookupReferencePlan lookup)
     {
-        // A nested include (ThenInclude off this reference) wraps the joined block in another
-        // IncludeExpression — not yet streamable.
+        // A nested include (ThenInclude off this reference) wraps the joined block in another IncludeExpression: not yet streamable.
         if (navExpression is IncludeExpression)
         {
             throw new NativeTranslationNotSupportedException(
@@ -820,10 +743,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 $"Unexpected lookup-reference materializer shape for '{lookup.Target.EntityType.DisplayName()}'.");
         }
 
-        // Redirect the joined block's value source to the target's own isolated locals scope. Its PK is a
-        // normal local (not an owned-type key), so ConstructionRewriter.ResolveLocal finds it directly with no
-        // owner-key resolution. Using the target's own scope (not the root's) keeps a self-referential
-        // reference from aliasing the root's identical-IProperty locals.
+        // Redirect to the target's own isolated locals scope: its PK is a normal local, found directly by ConstructionRewriter.ResolveLocal.
+        // Sharing the root's scope would alias a self-referential reference's identical-IProperty locals.
         var rewrittenBlock = (BlockExpression)new ConstructionRewriter(lookup.Target.AllLocals).Visit(materializerBlock);
 
         // `!present ? null : <rewrittenBlock>` — an absent (BSON Null) lookup field yields a null navigation.
@@ -887,9 +808,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             return directBlock;
         }
 
-        // Collection-element materializer block: always present (no `bsonDocN == null ? null` guard), so EF's
-        // injected block is itself the materializer block — it declares a MaterializationContext and ends with
-        // the instance variable rather than a conditional. Use it directly.
+        // Collection-element block: always present (no `bsonDocN == null ? null` guard), so EF's injected block is itself the materializer
+        // block (ends with the instance variable, not a conditional). Use it directly.
         if (injectedBlock.Variables.Any(v => v.Type == typeof(MaterializationContext)))
         {
             return injectedBlock;
@@ -903,11 +823,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// Reads the value at the reader's current position via the property's serializer into <paramref name="local"/>.
     /// </summary>
     /// <remarks>
-    /// An explicit BSON <c>null</c> is consumed. A non-nullable value-typed property is left at
-    /// <c>default(T)</c>, matching <see cref="Storage.BsonBinding"/> (whose null check can never fire for an
-    /// unconstrained value-typed <c>T</c>). A non-nullable reference-typed property throws the same
-    /// <see cref="InvalidOperationException"/> as <see cref="Storage.BsonBinding"/>, since <c>default(T)</c> would be
-    /// an invalid null. A missing element is handled separately by the fill loop's presence tracking.
+    /// An explicit BSON <c>null</c> is consumed. A non-nullable value type is left at <c>default(T)</c>, matching <see cref="Storage.BsonBinding"/>
+    /// (whose null check can never fire for an unconstrained value-typed <c>T</c>); a non-nullable reference type throws the same
+    /// <see cref="InvalidOperationException"/>, since <c>default(T)</c> would be an invalid null. A missing element is handled by the fill loop.
     /// </remarks>
     private Expression BuildTypedRead(IProperty property, ParameterExpression local)
     {
@@ -985,8 +903,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             {
                 var property = node.Arguments[2].GetConstantValue<IProperty>();
 
-                // The synthesized owned-collection ordinal key isn't stored in BSON; it's the 1-based array
-                // index supplied by the loop counter (`counter + 1`, matching the DOM path's `ordinal + 1`).
+                // The synthesized owned-collection ordinal key isn't stored in BSON: it's the loop counter + 1 (matching the DOM path's `ordinal + 1`).
                 if (_collection != null
                     && property.DeclaringType == _collection.Element.EntityType
                     && property.IsOwnedTypeOrdinalKey())
@@ -1009,10 +926,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         }
 
         /// <summary>
-        /// Resolve a read property to its streaming local. An owned-type key (e.g. a shadow FK that shares
-        /// the principal's primary key, and so is stored only on the owner document, not in the owned
-        /// sub-document) is redirected to its principal property's local — exactly as the DOM binding remover
-        /// reads such keys from the owner via <c>FindFirstPrincipal</c>.
+        /// Resolves a read property to its streaming local. An owned-type key (shadow FK sharing the principal's primary key, stored only on
+        /// the owner document) is redirected to its principal property's local, as the DOM binding remover does via <c>FindFirstPrincipal</c>.
         /// </summary>
         private ParameterExpression? ResolveLocal(IProperty property)
         {

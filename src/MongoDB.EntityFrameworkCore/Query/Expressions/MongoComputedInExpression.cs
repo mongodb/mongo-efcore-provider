@@ -24,12 +24,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoComputedInExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoComputedInExpression"/>.
-    /// </summary>
-    /// <param name="needle">The computed value being tested for membership.</param>
-    /// <param name="values">The candidate values to test against.</param>
-    /// <param name="negated"><see langword="true"/> for negated membership (the value is not in the set).</param>
     public MongoComputedInExpression(MongoExpression needle, MongoExpression values, bool negated)
     {
         Needle = needle;
@@ -37,13 +31,10 @@ internal sealed class MongoComputedInExpression : MongoExpression
         Negated = negated;
     }
 
-    /// <summary>The computed value being tested for membership.</summary>
     public MongoExpression Needle { get; }
 
-    /// <summary>The candidate values to test against.</summary>
     public MongoExpression Values { get; }
 
-    /// <summary><see langword="true"/> for negated membership (the value is not in the set).</summary>
     public bool Negated { get; }
 
     /// <inheritdoc />

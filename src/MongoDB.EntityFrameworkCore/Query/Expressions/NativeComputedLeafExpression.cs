@@ -24,19 +24,11 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <c>x.S.Contains("a")</c>, <c>x.S == null</c>), wrapping the ordinary client-side form of the same node.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <see cref="ClientExpression"/> is what the projection binding visitor would have produced without the wrapper: a
-/// binding of the whole leaf to the same member when <c>MongoProjectionBindingExpressionVisitor.IsClientComputedLeaf</c>
-/// admits it (the mixed shaper re-evaluates it over whole documents), otherwise the receiver bound to the alias with
-/// the call/operator re-applied client-side. Every path that isn't the native alias reader stays correct by reading
-/// through it: the mixed shaper, the driver-LINQ push-down analysis (<c>ProjectionAnalyzer</c>), and anything that
-/// just reduces the node.
-/// </para>
-/// <para>
-/// Only <c>MongoProjectionBindingRemovingExpressionVisitor</c> (the alias reader) replaces the whole node with a raw
-/// read of <see cref="Binding"/>'s alias, whose value the server (or a driver-LINQ push-down of the same Select)
-/// already computed. Reading through <see cref="ClientExpression"/> there would apply the call twice.
-/// </para>
+/// <see cref="ClientExpression"/> is what the projection binding visitor would have produced without the wrapper;
+/// every path other than the native alias reader (the mixed shaper, <c>ProjectionAnalyzer</c>, anything that just
+/// reduces the node) stays correct by reading through it. Only
+/// <c>MongoProjectionBindingRemovingExpressionVisitor</c> replaces the whole node with a raw read of
+/// <see cref="Binding"/>'s alias; reading through <see cref="ClientExpression"/> there would apply the call twice.
 /// </remarks>
 internal sealed class NativeComputedLeafExpression : Expression
 {

@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 // only comparer-equal, so one element's key is not the group key), as is any other shape.
 internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 {
-    // Queryable operators between a GroupBy and the operator whose lambdas see the groupings.
     private static readonly HashSet<string> GroupingPreservingQueryableMethods =
     [
         nameof(Queryable.Where),
@@ -46,7 +45,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         nameof(Queryable.Take)
     ];
 
-    // Operators over a group's element sequence that yield the same elements.
     private static readonly HashSet<string> ElementPreservingMethods =
     [
         nameof(Enumerable.Where),
@@ -65,7 +63,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         nameof(Enumerable.ToArray)
     ];
 
-    // Operators over a group's element sequence whose argument 1 is a lambda over one element.
     private static readonly HashSet<string> ElementLambdaMethods =
     [
         nameof(Enumerable.Where),
@@ -238,11 +235,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
            && type.GenericTypeArguments[0] == keyType
            && type.GenericTypeArguments[1] == elementType;
 
-    /// <summary>
-    /// Walks a grouping lambda body; for each operator over the group's element sequence (rooted at
-    /// <paramref name="grouping"/>), substitutes <c>grouping.Key</c> references inside its element lambda with
-    /// <paramref name="keyBody"/> written over that lambda's element.
-    /// </summary>
+    /// <summary>Substitutes <c>grouping.Key</c> inside the element lambda of each operator over the group's element sequence with <paramref name="keyBody"/> written over that lambda's element.</summary>
     private sealed class ElementLambdaKeyRewriter(
         ParameterExpression grouping,
         ParameterExpression sourceRow,

@@ -55,7 +55,6 @@ public class NativeStringLengthTests(TemporaryDatabaseFixture database) : IClass
     {
         var collection = Seed(nameof(Length_counts_code_points_so_a_surrogate_pair_is_one_like_driver_linq_not_two_like_the_CLR));
 
-        // Premise: the CLR counts UTF-16 code units.
         Assert.Equal(3, "a\U0001F600".Length);
 
         using var oracle = CreateContext(collection, MongoQueryMode.Native);

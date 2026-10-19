@@ -27,10 +27,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </remarks>
 internal sealed class MongoCoalesceExpression(MongoExpression left, MongoExpression right) : MongoExpression
 {
-    /// <summary>The primary operand, used when non-null.</summary>
     public MongoExpression Left { get; } = left;
 
-    /// <summary>The fallback operand, used when <see cref="Left"/> is null.</summary>
     public MongoExpression Right { get; } = right;
 
     /// <inheritdoc />

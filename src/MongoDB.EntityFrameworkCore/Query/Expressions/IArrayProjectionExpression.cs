@@ -17,8 +17,11 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal interface IArrayProjectionExpression
 {
-    /// <summary>The collection navigation this array materializes into.</summary>
-    INavigation Navigation { get; }
+    /// <summary>
+    /// The entity type that declares the collection navigation this array materializes into, or <see langword="null"/> for an array
+    /// that materializes into no navigation (a projected, filtered or ordered list of another collection's entities).
+    /// </summary>
+    IEntityType? OwnerEntityType { get; }
 
     /// <summary>Access to the document that owns the array; used for the owned element's owner-key read.</summary>
     Expression AccessExpression { get; }

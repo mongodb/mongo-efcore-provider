@@ -51,10 +51,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         public int OtherValue { get; set; }
     }
 
-    /// <summary>
-    /// Shared seed/context builder for the int/decimal/nullable-int/bool <see cref="ValueEntity"/> shapes below
-    /// — they differ only in which property the seed values project onto.
-    /// </summary>
+    /// <summary>Shared seed/context builder for the int/decimal/nullable-int/bool <see cref="ValueEntity"/> shapes.</summary>
     private SingleEntityDbContext<ValueEntity> CreateContext<TSeed>(
         TSeed[] seed, Func<TSeed, ValueEntity> project, MongoQueryMode mode, string name)
     {
@@ -187,7 +184,6 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     public void First_after_Take_now_goes_native()
     {
         using var db = CreateContext([1, 2, 3, 4, 5], MongoQueryMode.NativeOnly, nameof(First_after_Take_now_goes_native));
-        // Take(3) then First => [$limit 3, $limit 1] => the first of the first three.
         Assert.Equal(1, db.Entities.OrderBy(e => e.Value).Take(3).First().Value); // NativeOnly succeeds => native
     }
 
@@ -254,8 +250,6 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Equal(2, db.Entities.OrderBy(e => e.Value).Skip(1).First().Value);
     }
 
-    // Scalar aggregates.
-
     [Fact]
     public void Count_goes_native_and_counts()
     {
@@ -305,7 +299,6 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_with_failing_element_is_false()
     {
-        // Asserting the value, not just no exception, under NativeOnly.
         using var db = CreateContext([1, -1, 2], MongoQueryMode.NativeOnly, nameof(All_with_failing_element_is_false));
         Assert.False(db.Entities.All(e => e.Value > 0)); // -1 fails the predicate => All is false
     }
@@ -438,8 +431,6 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         using var db = CreateContext([1, 2], MongoQueryMode.NativeOnly, nameof(Computed_selector_sum_goes_native));
         Assert.Equal(6, db.Entities.Sum(e => e.Value * 2));
     }
-
-    // Non-int scalar coverage for DeserializeScalar<TResult>.
 
     [Fact]
     public void Sum_over_decimal_goes_native()
@@ -578,7 +569,6 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Count_after_Take_stays_native()
     {
-        // No injected predicate: $limit -> $count.
         using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(Count_after_Take_stays_native));
         Assert.Equal(2, db.Entities.Take(2).Count()); // succeeds under NativeOnly => went native
     }
@@ -586,7 +576,6 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_bare_bool_with_failing_row_is_false_native()
     {
-        // The false-result branch of a native bare-bool All.
         using var db = CreateBoolContext(
             [true, false], MongoQueryMode.NativeOnly, nameof(All_bare_bool_with_failing_row_is_false_native));
         Assert.False(db.Entities.All(e => e.IsActive));
