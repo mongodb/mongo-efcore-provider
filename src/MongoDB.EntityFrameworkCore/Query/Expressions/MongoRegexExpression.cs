@@ -69,8 +69,10 @@ internal sealed class MongoRegexExpression : MongoExpression
     /// </summary>
     /// <param name="field">
     /// The document field being tested: a <c>MongoFieldExpression</c>, or a <c>MongoElementRefExpression</c> for a
-    /// value with no backing <c>IProperty</c> (e.g. a projected <c>Distinct()</c>'s computed alias). Only the
-    /// document path is read (see <c>MongoQueryLanguageRenderer.RenderRegex</c>).
+    /// value with no backing <c>IProperty</c> (e.g. a projected <c>Distinct()</c>'s computed alias); only the
+    /// document path is read (see <c>MongoQueryLanguageRenderer.RenderRegex</c>). For StartsWith/EndsWith/Contains it
+    /// may also be a computed string (<c>(c.A + "").Contains("1")</c>), which has no document path and renders only
+    /// via <c>$expr</c>/<c>$regexMatch</c> (see <c>MongoQueryLanguageRenderer.IsQueryDialectRegex</c>).
     /// </param>
     /// <param name="kind">The kind of regex test to perform (StartsWith, EndsWith, or Contains).</param>
     /// <param name="term">

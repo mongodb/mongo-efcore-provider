@@ -24,7 +24,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <c>$group</c> output (<c>_id</c>, <c>_id.&lt;Name&gt;</c>, accumulator fields) into top-level aliases.
 /// </summary>
 internal sealed class MongoElementRefExpression(
-    string path, Type clrType, bool nullSafe = false, IProperty? valueProperty = null) : MongoExpression
+    string path, Type clrType, bool nullSafe = false, IProperty? valueProperty = null, bool throwsOnNull = false)
+    : MongoExpression
 {
     /// <summary>
     /// <see cref="Path"/> meaning the whole current document (<c>$$ROOT</c>).
@@ -62,6 +63,15 @@ internal sealed class MongoElementRefExpression(
     /// (<see cref="NativeTranslation.NativeDateTimeKindReadBack"/>).
     /// </summary>
     public IProperty? ValueProperty { get; } = valueProperty;
+
+    /// <summary>
+    /// The element is an upstream alias the emit side flagged <see cref="MongoProjection.ThrowsOnNull"/> (a projected
+    /// Distinct's flattened key, a bare Select's output, a set-op operand's): a null-propagated value behind a
+    /// non-nullable type. Carried from that flag, never re-derived, so an operator reducing or keying over the
+    /// reference sees it (<c>MongoAggregationExpressionRenderer.MayBeNullBehindNonNullableType</c>) instead of an
+    /// opaque non-nullable element.
+    /// </summary>
+    public bool ThrowsOnNull { get; } = throwsOnNull;
 
     /// <inheritdoc />
     public override Type Type { get; } = clrType;

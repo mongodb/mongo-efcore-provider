@@ -39,9 +39,10 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// each non-null element, and null elements pass through as BSON null. Per-element analog of
     /// <paramref name="extractFromEntityValue"/>; mutually exclusive with it and <paramref name="arrayElementIndex"/>.
     /// </param>
+    /// <param name="valueType">See <see cref="ValueType"/>.</param>
     public MongoParameterExpression(
         string name, IProperty? forSerialization, bool extractFromEntityValue = false, int? arrayElementIndex = null,
-        Type? rawElementType = null, bool extractEntityKeyFromArrayElements = false)
+        Type? rawElementType = null, bool extractEntityKeyFromArrayElements = false, Type? valueType = null)
     {
         Name = name;
         ForSerialization = forSerialization;
@@ -49,6 +50,7 @@ internal sealed class MongoParameterExpression : MongoExpression
         ArrayElementIndex = arrayElementIndex;
         RawElementType = rawElementType;
         ExtractEntityKeyFromArrayElements = extractEntityKeyFromArrayElements;
+        ValueType = valueType;
     }
 
     /// <summary>The parameter name.</summary>
@@ -78,6 +80,13 @@ internal sealed class MongoParameterExpression : MongoExpression
 
     /// <summary>See the constructor parameter of the same name.</summary>
     public bool ExtractEntityKeyFromArrayElements { get; }
+
+    /// <summary>
+    /// The CLR type of the LINQ query parameter the value is bound from, when known; <see langword="null"/> otherwise.
+    /// Only a nullability hint (a non-nullable value type is never bound to null): serialization and <see cref="Type"/>
+    /// still come from <see cref="ForSerialization"/>.
+    /// </summary>
+    public Type? ValueType { get; }
 
     /// <inheritdoc />
     public override Type Type

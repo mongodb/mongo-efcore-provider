@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
@@ -329,6 +330,14 @@ internal static class MongoAggregationExpressionRenderer
             MongoDatePart.DayOfWeek
                 => new BsonDocument("$subtract", new BsonArray { new BsonDocument("$dayOfWeek", operand), 1 }),
             MongoDatePart.Date => new BsonDocument("$dateTrunc", new BsonDocument { { "date", operand }, { "unit", "day" } }),
+            // The driver's shape: milliseconds since midnight (a long; null for a null date), read back through
+            // BsonSerializerFactory.TimeOfDayMillisecondsSerializer.
+            MongoDatePart.TimeOfDay => new BsonDocument("$dateDiff", new BsonDocument
+            {
+                { "startDate", new BsonDocument("$dateTrunc", new BsonDocument { { "date", operand }, { "unit", "day" } }) },
+                { "endDate", operand },
+                { "unit", "millisecond" }
+            }),
             _ => throw new NativeTranslationNotSupportedException($"Unhandled {nameof(MongoDatePart)} '{node.Part}'.")
         };
     }
@@ -961,6 +970,8 @@ internal static class MongoAggregationExpressionRenderer
             MongoConstantExpression constant => constant.Value is null,
             // Rendered as $ifNull: [field, null], so it is null (never missing) when absent.
             MongoFieldExpression { NullSafe: true } or MongoElementRefExpression { NullSafe: true } => true,
+            // A read of an upstream alias holding a null-propagated value behind a non-nullable type.
+            MongoElementRefExpression { ThrowsOnNull: true } => true,
             MongoParameterExpression => true,
             // Arithmetic ($add/$subtract/..., $trunc of $divide) propagates a null operand.
             MongoBinaryExpression { Operator: not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
@@ -987,40 +998,104 @@ internal static class MongoAggregationExpressionRenderer
     /// Whether <paramref name="node"/>, whose CLR type is a non-nullable value type, may nonetheless evaluate to null:
     /// <c>$strLenCP</c>/<c>$indexOfCP</c> over a possibly-null string (null-guarded, see <see cref="NullPropagating"/>),
     /// directly or through arithmetic, a cast, a math function or a conditional branch. Read back as that non-nullable type, the null would
-    /// silently become <c>default(T)</c> (a <c>0</c> length) where EF throws, so a value read of it (a projection
-    /// leaf, group key, <c>$min</c>/<c>$max</c>/<c>$avg</c> or <c>$push</c> operand) declines; a nullable cast
-    /// (<c>(int?)s.Length</c>) reads the null and stays native. Filters are unaffected: the relational null guard
-    /// covers them.
+    /// silently become <c>default(T)</c> (a <c>0</c> length) where EF throws, so a group key, <c>$min</c>/<c>$max</c>/
+    /// <c>$avg</c> or <c>$push</c> operand declines, and a projection leaf throws on null or declines (see
+    /// <see cref="ClassifyNonNullableValueRead"/>); a nullable cast (<c>(int?)s.Length</c>) reads the null and stays
+    /// native. Filters are unaffected: the relational null guard covers them.
     /// </summary>
+    /// <remarks>
+    /// Doesn't count a date operator over a nullable date (<c>o.OrderDate.Value.Day</c>, <c>.AddDays(1)</c>) as null
+    /// behind the type, unlike
+    /// <see cref="ClassifyNonNullableValueRead"/>: declining those group keys and accumulators would move grouped queries
+    /// that are native today onto the fallback, and a group key has no throw-on-null read yet. Their null still reads
+    /// as <c>0</c> (EF-461).
+    /// </remarks>
     internal static bool MayBeNullBehindNonNullableType(MongoExpression node)
-        => MayBeNullBehindNonNullableType(node, []);
+        => WalkNullBehindNonNullableType(node, [], dateParts: false).MayBeNull;
+
+    // What one walk of a value finds about a null behind its non-nullable type: whether it may be null at all
+    // (MayBeNullBehindNonNullableType), and whether an operator between that null and the value may absorb it into a
+    // non-null answer (ClassifyNonNullableValueRead's Decline). One walker answers both so they can't cover different
+    // nodes: a node one saw and the other didn't would classify a hidden Math.Max as ThrowOnNull (a silent wrong value).
+    private readonly record struct NullBehindNonNullable(bool MayBeNull, bool MayAbsorb)
+    {
+        public static NullBehindNonNullable operator |(NullBehindNonNullable a, NullBehindNonNullable b)
+            => new(a.MayBeNull || b.MayBeNull, a.MayAbsorb || b.MayAbsorb);
+    }
 
     // nonNull: operands a conditional's test has proven non-null on the branch being inspected
-    // (`s == null ? 0 : s.Length` reads Length only where s isn't null).
-    private static bool MayBeNullBehindNonNullableType(MongoExpression node, IReadOnlyList<MongoExpression> nonNull)
+    // (`s == null ? 0 : s.Length` reads Length only where s isn't null). dateParts: whether a date part over a
+    // nullable date counts (see MayBeNullBehindNonNullableType's remarks).
+    private static NullBehindNonNullable WalkNullBehindNonNullableType(
+        MongoExpression node, IReadOnlyList<MongoExpression> nonNull, bool dateParts)
         => node switch
         {
-            MongoStringLengthExpression length => MayBeNullUnlessProven(length.Operand, nonNull),
+            MongoStringLengthExpression length => new(MayBeNullUnlessProven(length.Operand, nonNull), false),
             MongoStringIndexOfExpression indexOf
-                => MayBeNullUnlessProven(indexOf.Haystack, nonNull) || MayBeNullUnlessProven(indexOf.Needle, nonNull),
+                => new(MayBeNullUnlessProven(indexOf.Haystack, nonNull) || MayBeNullUnlessProven(indexOf.Needle, nonNull), false),
+            // An upstream alias (a Distinct's flattened key, a bare Select's `_v`, a set-op operand) the emit side
+            // flagged MongoProjection.ThrowsOnNull: the same possibly-null value, read by reference.
+            MongoElementRefExpression { ThrowsOnNull: true } => new(true, false),
             MongoBinaryExpression { Operator: not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
                 or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual or MongoBinaryOperator.LessThan
                 or MongoBinaryOperator.LessThanOrEqual or MongoBinaryOperator.GreaterThan
                 or MongoBinaryOperator.GreaterThanOrEqual) } arithmetic
-                => MayBeNullBehindNonNullableType(arithmetic.Left, nonNull)
-                   || MayBeNullBehindNonNullableType(arithmetic.Right, nonNull),
-            MongoConvertExpression convert => MayBeNullBehindNonNullableType(convert.Operand, nonNull),
-            MongoMathExpression math => math.Operands.Any(o => MayBeNullBehindNonNullableType(o, nonNull)),
+                => WalkNullBehindNonNullableType(arithmetic.Left, nonNull, dateParts)
+                   | WalkNullBehindNonNullableType(arithmetic.Right, nonNull, dateParts),
+            MongoConvertExpression convert => WalkNullBehindNonNullableType(convert.Operand, nonNull, dateParts),
+            // Date operators answer null for a null date, which a non-nullable read would take as 0 / 00:00 /
+            // DateTime.MinValue where EF throws: $year/$month/.../$dateTrunc/$dateDiff (`o.OrderDate.Value.Year`), $dateAdd
+            // (`o.OrderDate.Value.AddDays(1)`, also null for a null amount), and a DateTimeOffset's local reconstruction
+            // (`o.Dto.Value.DateTime`, a $dateAdd typed DateTime over the nullable stored offset).
+            MongoDatePartExpression datePart when dateParts
+                => new NullBehindNonNullable(MayBeNullUnlessProven(datePart.Operand, nonNull), false)
+                   | WalkNullBehindNonNullableType(datePart.Operand, nonNull, dateParts),
+            MongoDateAddExpression dateAdd when dateParts
+                => new NullBehindNonNullable(
+                       MayBeNullUnlessProven(dateAdd.StartDate, nonNull) || DateAddAmountMayBeNull(dateAdd.Amount, nonNull), false)
+                   | WalkNullBehindNonNullableType(dateAdd.StartDate, nonNull, dateParts)
+                   | WalkNullBehindNonNullableType(dateAdd.Amount, nonNull, dateParts),
+            MongoDateTimeOffsetLocalExpression local when dateParts
+                => new NullBehindNonNullable(MayBeNullUnlessProven(local.Operand, nonNull), false),
+            MongoMathExpression math => WalkMath(math, nonNull, dateParts),
             // Either branch may be the value read, each under what the test proves on it: `s == null ? a : b` and
             // `string.IsNullOrEmpty(s) ? a : b` make s non-null in b; `s != null ? a : b` makes it non-null in a.
             MongoConditionalExpression conditional
-                => MayBeNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)])
-                   || MayBeNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)]),
-            _ => false
+                => WalkNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)], dateParts)
+                   | WalkNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)], dateParts),
+            _ => default
         };
 
+    // $max/$min skip a null operand and Sign's $switch orders it below 0 (MongoGroupElementTranslator
+    // .IsNullPropagatingMathFunction), so over a possibly-null operand they may answer non-null where EF throws.
+    private static NullBehindNonNullable WalkMath(MongoMathExpression math, IReadOnlyList<MongoExpression> nonNull, bool dateParts)
+    {
+        var operands = default(NullBehindNonNullable);
+        foreach (var operand in math.Operands)
+            operands |= WalkNullBehindNonNullableType(operand, nonNull, dateParts);
+
+        return MongoGroupElementTranslator.IsNullPropagatingMathFunction(math.Function)
+            ? operands
+            : operands with { MayAbsorb = operands.MayAbsorb || operands.MayBeNull };
+    }
+
+    // A primary-key field is never null in a stored document, so its Length/IndexOf is not null behind the non-nullable
+    // type. Only the root document's own key (element "_id", unprefixed): a join's inner-scope field is a prefixed path
+    // ("inner._id"), and under a left-outer join that sub-document is missing for an unmatched row, so it may be null.
+    // Deliberately local to this predicate, not in MayBeNull: MayBeNull also drives the render-time $ifNull guards.
     private static bool MayBeNullUnlessProven(MongoExpression operand, IReadOnlyList<MongoExpression> nonNull)
-        => MayBeNull(operand) && !nonNull.Any(proven => IsSameStoredValue(proven, operand));
+        => MayBeNull(operand)
+           && !(operand is MongoFieldExpression { NullSafe: false, ElementName: "_id" } field
+                 && field.Property.IsPrimaryKey())
+           && !nonNull.Any(proven => IsSameStoredValue(proven, operand));
+
+    // A $dateAdd amount bound from a query parameter is judged by the parameter's CLR type: `AddDays(days)` over a
+    // captured non-nullable `days` is never null, although MayBeNull counts every parameter as possibly null (it can't
+    // see the type). A nullable-typed or untyped parameter, and any other amount, keep MayBeNullUnlessProven's answer.
+    private static bool DateAddAmountMayBeNull(MongoExpression amount, IReadOnlyList<MongoExpression> nonNull)
+        => amount is MongoParameterExpression { ValueType: { } valueType }
+            ? IsNullableClrType(valueType)
+            : MayBeNullUnlessProven(amount, nonNull);
 
     // The operands that `test` answering `outcome` proves non-null. Structural: only a null comparison of a stored
     // value, combined through ||/&&/! the way that preserves the proof (a false `a || b` makes both false; a true
@@ -1062,6 +1137,32 @@ internal static class MongoAggregationExpressionRenderer
     internal static bool ReadsNullAsDefault(Type readType, MongoExpression node)
         => readType.IsValueType && Nullable.GetUnderlyingType(readType) is null && MayBeNullBehindNonNullableType(node);
 
+    /// <summary>
+    /// How a projection leaf read back as <paramref name="readType"/> handles a null behind the non-nullable type
+    /// (<see cref="ReadsNullAsDefault"/>, and also a date operator over a nullable date: <c>o.OrderDate.Value.Year</c>,
+    /// <c>.Value.TimeOfDay</c>, <c>.Value.AddDays(1)</c>, <c>o.Dto.Value.DateTime</c>): <see cref="NonNullableValueRead.Plain"/>
+    /// when there is none;
+    /// <see cref="NonNullableValueRead.ThrowOnNull"/> when every operator between that null and the leaf's value
+    /// propagates it, so reading the leaf as <c>T?</c> and throwing on null is exactly EF's
+    /// "Nullable object must have a value."; <see cref="NonNullableValueRead.Decline"/> when an operator may absorb it
+    /// into a non-null answer where EF throws (<c>Math.Max(s.Length, t.Length)</c>: <c>$max</c>/<c>$min</c> skip a null
+    /// operand, and <c>Math.Sign</c>'s <c>$switch</c> orders it below 0), which no read of the value can detect.
+    /// </summary>
+    /// <remarks>
+    /// The one call a projection binder makes for a value leaf; its answer is both the gate and the read side's
+    /// <c>MongoProjection.ThrowsOnNull</c>.
+    /// </remarks>
+    internal static NonNullableValueRead ClassifyNonNullableValueRead(Type readType, MongoExpression node)
+    {
+        if (!readType.IsValueType || Nullable.GetUnderlyingType(readType) is not null)
+            return NonNullableValueRead.Plain;
+
+        var walk = WalkNullBehindNonNullableType(node, [], dateParts: true);
+        return !walk.MayBeNull ? NonNullableValueRead.Plain
+            : walk.MayAbsorb ? NonNullableValueRead.Decline
+            : NonNullableValueRead.ThrowOnNull;
+    }
+
     private static bool IsNullableClrType(Type type)
         => !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
 
@@ -1076,4 +1177,20 @@ internal static class MongoAggregationExpressionRenderer
                 + "answer the wrong boolean.");
         }
     }
+}
+
+/// <summary>
+/// How a projection value read back as a non-nullable value type treats a server null; see
+/// <see cref="MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead"/>.
+/// </summary>
+internal enum NonNullableValueRead
+{
+    /// <summary>The value is never null behind the non-nullable type: read it as usual.</summary>
+    Plain,
+
+    /// <summary>The value may be null and the null reaches it: read as <c>T?</c> and throw EF's exception on null.</summary>
+    ThrowOnNull,
+
+    /// <summary>An operator may absorb the null into a non-null answer where EF throws: decline.</summary>
+    Decline
 }
