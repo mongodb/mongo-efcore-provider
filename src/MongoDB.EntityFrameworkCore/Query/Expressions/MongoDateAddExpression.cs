@@ -18,10 +18,9 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// The date-arithmetic units this provider translates natively — exactly the <see cref="DateTime"/>/
-/// <see cref="DateTimeOffset"/> <c>AddXxx</c> overloads that map 1:1 onto a <c>$dateAdd</c> <c>unit</c> string.
-/// <c>AddTicks</c> and <c>Add(TimeSpan)</c> are deliberately absent — <c>$dateAdd</c> has no <c>tick</c> unit,
-/// and a decline falls back gracefully to the existing driver-LINQ bridge.
+/// Date-arithmetic units translated natively: the <see cref="DateTime"/>/<see cref="DateTimeOffset"/>
+/// <c>AddXxx</c> overloads that map 1:1 onto a <c>$dateAdd</c> <c>unit</c>. <c>AddTicks</c> and
+/// <c>Add(TimeSpan)</c> are absent — <c>$dateAdd</c> has no <c>tick</c> unit; they fall back to driver LINQ.
 /// </summary>
 internal enum MongoDateAddUnit
 {
@@ -39,14 +38,8 @@ internal enum MongoDateAddUnit
 /// rendered in the aggregation-expression dialect as <c>$dateAdd</c>.
 /// </summary>
 /// <remarks>
-/// Both <see cref="StartDate"/> and <see cref="Amount"/> are the general <see cref="MongoExpression"/> type,
-/// not a bare field — <c>$dateAdd</c> accepts any date-valued/numeric-valued EXPRESSION for either argument,
-/// which is what lets this node wrap a field, a constant, or another computed expression (including a nested
-/// <see cref="MongoDateAddExpression"/>, for a chained <c>.AddDays(...).AddMinutes(...)</c>).
-/// <para>
-/// Like <see cref="MongoDatePartExpression"/>, this node has no query-dialect form and must never be admitted
-/// by <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>.
-/// </para>
+/// Both operands are general expressions, so chained <c>.AddDays(...).AddMinutes(...)</c> nests.
+/// Value-only: must never be admitted by <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>.
 /// </remarks>
 internal sealed class MongoDateAddExpression(MongoExpression startDate, MongoDateAddUnit unit, MongoExpression amount)
     : MongoExpression

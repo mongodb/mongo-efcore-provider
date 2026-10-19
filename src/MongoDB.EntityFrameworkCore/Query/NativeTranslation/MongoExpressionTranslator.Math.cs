@@ -25,17 +25,10 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <see cref="MongoExpressionTranslator"/> — <c>Math</c>/<c>MathF</c>/<c>double.RadiansToDegrees</c>/
 /// <c>float.DegreesToRadians</c> function calls.
 /// </summary>
-/// <remarks>
-/// This task (EF-322) wires up only <see cref="MongoMathFunction.Abs"/>; later tasks add more entries to
-/// <see cref="UnaryFunctionsByName"/>/<see cref="BinaryFunctionsByName"/> and more special-cased branches
-/// below, but never touch the renderer/dispatcher wiring again — that's all already exhaustive over the whole
-/// <see cref="MongoMathFunction"/> enum from this task's Step 5 onward.
-/// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
     /// <summary>
-    /// <c>Math.X(double)</c>/<c>MathF.X(float)</c> unary function names that map 1:1 onto a
-    /// <see cref="MongoMathFunction"/> of the identical shape (one operand in, one MQL operator out).
+    /// <c>Math.X(double)</c>/<c>MathF.X(float)</c> names mapping 1:1 onto a unary <see cref="MongoMathFunction"/>.
     /// </summary>
     private static readonly Dictionary<string, MongoMathFunction> UnaryFunctionsByName = new()
     {
@@ -63,9 +56,8 @@ internal sealed partial class MongoExpressionTranslator
     };
 
     /// <summary>
-    /// <c>double.RadiansToDegrees</c>/<c>float.RadiansToDegrees</c>/<c>double.DegreesToRadians</c>/
-    /// <c>float.DegreesToRadians</c> — .NET 8+ static members declared on the numeric types themselves, not
-    /// on <c>Math</c>/<c>MathF</c>.
+    /// <c>RadiansToDegrees</c>/<c>DegreesToRadians</c> on <c>double</c>/<c>float</c> — .NET 8+ members declared on
+    /// the numeric types, not on <c>Math</c>/<c>MathF</c>.
     /// </summary>
     private static readonly Dictionary<string, MongoMathFunction> AngleConversionsByName = new()
     {
@@ -74,8 +66,8 @@ internal sealed partial class MongoExpressionTranslator
     };
 
     /// <summary>
-    /// <c>Math.X(double, double)</c> binary function names that map 1:1 onto a <see cref="MongoMathFunction"/>
-    /// of the identical shape (two operands in, one MQL operator out taking a 2-element array).
+    /// <c>Math.X(double, double)</c> names mapping 1:1 onto a binary <see cref="MongoMathFunction"/> (2-element array
+    /// operand).
     /// </summary>
     private static readonly Dictionary<string, MongoMathFunction> BinaryFunctionsByName = new()
     {
@@ -105,12 +97,9 @@ internal sealed partial class MongoExpressionTranslator
         if (node is not MethodCallExpression call || call.Method.DeclaringType != typeof(Math) && call.Method.DeclaringType != typeof(MathF))
             return false;
 
-        // Math.Round(double|decimal|float) and Math.Round(double|decimal|float, int) are the only overloads
-        // handled here. Math.Round(double, MidpointRounding) / Math.Round(double, int, MidpointRounding) have
-        // the SAME name and, for the 2-arg one, the same argument COUNT as the digits overload — without the
-        // arg[1].Type == typeof(int) guard, a MidpointRounding value (an int under the hood, e.g.
-        // AwayFromZero = 1) would be silently misread as a digit count, rendering {"$round": [x, 1]} instead
-        // of declining. Regression: MongoExpressionTranslatorMathTests
+        // Only Math.Round(x) and Math.Round(x, int). The MidpointRounding overloads share the name (and arg count), so
+        // without the arg[1].Type == typeof(int) guard a MidpointRounding value would be misread as digits
+        // ({"$round": [x, 1]}) instead of declining. Pinned by MongoExpressionTranslatorMathTests
         // .Math_Round_with_a_MidpointRounding_argument_declines_rather_than_misreading_it_as_digits.
         if (call.Method.Name == nameof(Math.Round)
             && (call.Arguments.Count == 1 || (call.Arguments.Count == 2 && call.Arguments[1].Type == typeof(int))))

@@ -18,15 +18,13 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// Represents an Atlas <c>$vectorSearch</c> stage. Always the FIRST stage of the pipeline — the server
-/// rejects it anywhere else (<c>Location40602</c>) — which is why the lowerer emits it from its own
-/// dedicated slot rather than from the ordered op list.
+/// An Atlas <c>$vectorSearch</c> stage. Must be the first stage (the server rejects it elsewhere,
+/// <c>Location40602</c>), so the lowerer emits it from a dedicated slot rather than the ordered op list.
 /// </summary>
 /// <remarks>
-/// Unlike every other stage, this one is rendered by a DEFERRED <c>MongoPipelineFactory</c> slot: the BSON
-/// SHAPE of a <c>$vectorSearch</c> body — whether the <c>exact</c> or <c>numCandidates</c> key is present at
-/// all, and which <c>index</c> is used — depends on a runtime <c>VectorQueryOptions</c>, so it cannot be
-/// baked at compile time and a value sentinel cannot stand in for it.
+/// Rendered by a deferred <c>MongoPipelineFactory</c> slot: the body's shape (whether <c>exact</c> or
+/// <c>numCandidates</c> is present, and which <c>index</c>) depends on runtime <c>VectorQueryOptions</c>, so a value
+/// sentinel can't stand in for it.
 /// </remarks>
 internal sealed class MongoVectorSearchStage : MongoPipelineStage
 {

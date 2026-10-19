@@ -106,18 +106,10 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     [InlineData("DayOfYear")]
     public void DateTimeOffset_date_part_matches_in_memory_LINQ_under_NativeOnly(string part)
     {
-        // A single parameterized test asserting each part's SQL-level correctness would need per-part
-        // projection expressions, which C# cannot build from a string at compile time — so this drives one
-        // fixed projection covering the part under test via a switch, keeping the test data/oracle shared.
-        //
-        // NOTE: the projection below returns each part's own natural type (int, or DayOfWeek) and boxes to
-        // `object` only AFTER materialization (outside the LINQ expression tree), not inside the `Select`.
-        // Boxing INSIDE the tree (`Select(x => (object)x.Foo.Year)`) compiles to a `Convert(..., typeof(object))`
-        // node that reaches the native translator, which has no `$toX` target for `object`
-        // (`MongoConvertExpression.ToOperatorFor` only maps int/long/double/decimal) — so it declines the whole
-        // projection under `NativeOnly`. That is a pre-existing, unrelated gap in boxing-cast support (it
-        // affects a boxed PLAIN field leaf identically, not just a date-part leaf), so working around it here in
-        // the test is the correct fix rather than patching the translator for a shape outside this task's scope.
+        // One fixed projection per part via a switch, since a per-part expression can't be built from a string.
+        // Each part is projected in its natural type and boxed only after materialization: a boxing cast inside the
+        // tree (`(object)x.Foo.Year`) has no `$toX` target (MongoConvertExpression.ToOperatorFor) and declines
+        // under NativeOnly for any leaf, an unrelated gap.
         var collection = Seed(nameof(DateTimeOffset_date_part_matches_in_memory_LINQ_under_NativeOnly) + part);
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
 

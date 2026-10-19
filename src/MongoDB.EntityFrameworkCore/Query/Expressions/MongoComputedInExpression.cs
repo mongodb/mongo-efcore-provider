@@ -18,13 +18,9 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// The computed-needle sibling of <see cref="MongoInExpression"/>: a collection-membership test whose
-/// needle is a COMPUTED value (e.g. a string concatenation, <c>c.CustomerID + "SomeConstant"</c>) rather
-/// than a bare field. Unlike <see cref="MongoInExpression"/>, this has no query-dialect form at all — a
-/// computed needle can only be tested via the aggregation-expression array-form <c>{ $in: [needle, haystack] }</c>
-/// inside <c>$expr</c>, never as <c>{ field: { $in: [...] } }</c> — so it is a distinct sealed type rather
-/// than widening <see cref="MongoInExpression.Field"/>'s type, per the "sealed sibling type over a flag"
-/// convention documented in Query/AGENTS.md.
+/// The computed-needle sibling of <see cref="MongoInExpression"/> (e.g. <c>c.CustomerID + "X"</c> in a list). Has no
+/// query-dialect form, only the aggregation <c>{ $in: [needle, haystack] }</c> inside <c>$expr</c>, so it is a
+/// separate sealed type rather than a widened <see cref="MongoInExpression.Field"/>.
 /// </summary>
 internal sealed class MongoComputedInExpression : MongoExpression
 {

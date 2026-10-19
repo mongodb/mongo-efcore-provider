@@ -102,12 +102,8 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
         Assert.Contains("p => p.mainAtmosphere", ex.Message);
     }
 
-    // EF-344: a bare GroupBy(key) and an element-selector GroupBy are not natively representable (no aggregate
-    // Select finalizes a $group, and an element selector is out of scope), so as of the native-GroupBy sub-project
-    // they no longer hard-throw at QMTEV translation — they route to the driver-LINQ fallback instead. The driver's
-    // LINQ provider cannot materialize a bare IGrouping either, so an InvalidOperationException is still thrown
-    // (the exception type — the only part of the unsupported-feature contract — is unchanged); only the message
-    // and the layer that raises it changed. Full grouped fallback/native execution is wired in a later task.
+    // A bare GroupBy(key) isn't natively representable, so it falls back to driver-LINQ, which also can't
+    // materialize a bare IGrouping; the exception type is the contract here, not the message.
     [Fact]
     public void GroupBy_cannot_be_translated()
         => Assert.Throws<InvalidOperationException>(() => _db.Planets.GroupBy(p => p.hasRings).ToList());

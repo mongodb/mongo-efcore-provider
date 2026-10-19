@@ -23,13 +23,11 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-377: a chained Join with a bare key-equality hop (no model navigation) previously left a
-/// dependent hop's <c>$lookup</c> localField unscoped, or dropped the hop's own <c>$lookup</c>
-/// entirely, once a later join forced flat mode — silently dropping every row. Covers the bare hop
-/// in first, second, and both positions, plus the shared <c>GroupJoin</c> translator path.
-/// EF-322 (navigation-less join native eligibility): these same bare-hop chain shapes are also now
-/// eligible for native translation, not merely fallback-correct — the <c>_go_native_under_NativeOnly</c>
-/// facts assert that explicitly under <see cref="MongoQueryMode.NativeOnly"/>.
+/// EF-377: a chained Join with a bare key-equality hop (no model navigation) left a dependent hop's <c>$lookup</c>
+/// localField unscoped, or dropped the hop's own <c>$lookup</c>, once a later join forced flat mode, silently
+/// dropping every row. Covers the bare hop in first, second and both positions, plus the shared <c>GroupJoin</c>
+/// translator path. The <c>_go_native_under_NativeOnly</c> facts pin native translation under
+/// <see cref="MongoQueryMode.NativeOnly"/>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)

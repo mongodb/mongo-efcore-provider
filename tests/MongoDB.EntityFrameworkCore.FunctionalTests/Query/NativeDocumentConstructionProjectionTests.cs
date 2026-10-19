@@ -28,10 +28,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-447: a CONSTRUCTED (non-navigation) sub-entity leaf in a projection —
+/// A constructed (non-navigation) sub-entity leaf in a projection —
 /// <c>Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title }, b.Rank })</c> — mixed with a
-/// sibling leaf, goes native on all four legs (NativeOnly, default Native, explicit DriverLinq, and the
-/// late-fallback leg). Mirrors <c>NativeOwnedReferenceWholeEntityTests</c>' EF-441 coverage pattern.
+/// sibling leaf, across NativeOnly, Native and DriverLinq. See also <c>NativeOwnedReferenceWholeEntityTests</c>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture database)
@@ -80,9 +79,8 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         public int Rank { get; set; }
     }
 
-    // A plain, unmapped DTO reconstructed from the root entity's own scalar fields — NOT a navigation, and not
-    // itself part of the model. Distinguishes this leaf from EF-441's owned-nav-entity leaf, which aliases an
-    // ALREADY-STORED owned sub-document.
+    // Unmapped DTO built from the root's own scalar fields (unlike an owned-nav leaf, which aliases a stored
+    // sub-document).
     private class BookCopy
     {
         public ObjectId Id { get; set; }
@@ -146,9 +144,8 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
             + "\"Rank\" : \"$Rank\", \"_id\" : 0 } }");
     }
 
-    // Mixed with a COMPUTED sibling too — unlike EF-441's owned-nav-entity leaf, this leaf's own members are
-    // independently readable off a whole document by their own natural paths, so a computed sibling's lack of
-    // a document path is not a hazard here (see NativeProjectionBinder.TryGetDocumentConstructionLeaf remarks).
+    // A computed sibling is safe here, unlike with an owned-nav leaf: this leaf's members are readable off a whole
+    // document by their natural paths (see NativeProjectionBinder.TryGetDocumentConstructionLeaf).
     [Fact]
     public void Document_construction_leaf_mixed_with_computed_sibling_goes_native()
     {
@@ -199,14 +196,9 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         Assert.Equal(driver, native);
     }
 
-    // This test originally used a captured-local `StartsWith` to force the LATE-FALLBACK leg (translate-time
-    // routes native, Route == Projection, then MongoQueryLanguageRenderer.RenderRegex declined at render
-    // time) — the leg that hands the shaper WHOLE, un-projected documents (see
-    // MongoMixedProjectionBindingRemovingExpressionVisitor.ReadDocumentConstructionMember's override, which reads
-    // each member at its own NATURAL root-relative path instead of the native $project's nested alias). That
-    // trigger no longer declines — a parameterized StartsWith term is now natively representable — so this
-    // shape goes fully native under both Native and NativeOnly. The mixed/whole-document shaper read this
-    // test used to force via that trigger remains covered directly by the explicit-DriverLinq leg below.
+    // The DriverLinq leg hands the shaper whole, un-projected documents, so each member must be read at its
+    // natural root-relative path, not the $project alias (see
+    // MongoMixedProjectionBindingRemovingExpressionVisitor.ReadDocumentConstructionMember).
     [Fact]
     public void Document_construction_leaf_behind_a_parameterized_where_reads_correct_values()
     {
@@ -239,7 +231,6 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
             Assert.Equal(3, row.Rank);
         }
 
-        // And explicit DriverLinq — the OTHER leg that needs the same shape to read correctly.
         using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq))
         {
             var results = driver.Entities.AsNoTracking()
@@ -254,10 +245,8 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         }
     }
 
-    // A computed MEMBER inside the construction (not a plain root-relative scalar field) declines the WHOLE
-    // leaf — a strict, minimal widening rather than a general nested-projection engine — so this shape must
-    // keep behaving exactly as it did before this ticket: silent fallback under Native, and correct values in
-    // every mode (there is a working driver-LINQ oracle for this shape).
+    // A computed member inside the construction declines the whole leaf: NativeOnly throws, Native silently
+    // falls back and still reads correct values.
     [Fact]
     public void Document_construction_leaf_with_computed_member_falls_back_but_still_reads_correct_values()
     {

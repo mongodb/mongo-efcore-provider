@@ -20,9 +20,9 @@ using Xunit;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// The projection-alias override carrier on <see cref="MongoSelectDefinition"/> (EF-322 step 3a): the single
-/// fact the emit side writes and every alias-deriving site reads, so the emitted <c>$project</c> key and the
-/// element name the DOM shaper reads by can never be two independently derived strings.
+/// The projection-alias override carrier on <see cref="MongoSelectDefinition"/>: the single fact the emit side
+/// writes and every alias-deriving site reads, so the <c>$project</c> key and the element name the shaper reads
+/// can't diverge.
 /// </summary>
 public class MongoSelectDefinitionProjectionAliasTests
 {
@@ -90,7 +90,7 @@ public class MongoSelectDefinitionProjectionAliasTests
         select.AddProjectionAliasOverride(
             MongoSelectDefinition.BareProjectionMemberKey, "Posts", ProjectionAliasTier.DocumentPath);
 
-        // Reading is what the four alias-derivation sites do; none of them may consume or mutate the entry.
+        // Reading must not consume or mutate the entry.
         for (var i = 0; i < 3; i++)
         {
             Assert.True(select.TryGetProjectionAlias(null, out var alias));
@@ -114,7 +114,7 @@ public class MongoSelectDefinitionProjectionAliasTests
         var select = new MongoSelectDefinition();
         select.AddProjectionAliasOverride(MongoSelectDefinition.BareProjectionMemberKey, alias, tier);
 
-        // The tier is carried as DATA so the late-fallback strip never has to sniff the alias string for "_v".
+        // The tier is carried as data so the late-fallback strip never sniffs the alias string for "_v".
         Assert.Equal(tier, select.BareProjectionTier);
         Assert.True(select.TryGetProjectionAlias(null, out var readBack));
         Assert.Equal(alias, readBack);
@@ -123,12 +123,9 @@ public class MongoSelectDefinitionProjectionAliasTests
     [Fact]
     public void Re_registering_the_same_key_throws_because_the_carrier_is_write_once()
     {
-        // SETTLED in Task 2, which is the first task with a writer that could tell whether re-entry was
-        // reachable: the carrier is WRITE-ONCE and enforces it, because the failure a second write causes is
-        // silent. Two committed aliases for one projection member means the emitted $project key and the name
-        // the shaper reads by can disagree, and a missed read returns null for a nullable/reference leaf and an
-        // EMPTY collection for an array leaf, with no exception anywhere. This test pins the throw, and the
-        // first alias staying readable — a half-applied second write would be worse than either outcome.
+        // Write-once and enforced: a second alias for one member lets the $project key and the shaper's read name
+        // disagree, silently returning null (or an empty collection). Pins the throw and that the first alias
+        // stays readable.
         var select = new MongoSelectDefinition();
         select.AddProjectionAliasOverride(
             MongoSelectDefinition.BareProjectionMemberKey, "Title", ProjectionAliasTier.DocumentPath);

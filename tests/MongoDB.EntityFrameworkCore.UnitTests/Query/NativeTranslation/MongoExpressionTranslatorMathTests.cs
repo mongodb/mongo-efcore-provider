@@ -57,9 +57,7 @@ public class MongoExpressionTranslatorMathTests
     [Fact]
     public void A_math_expression_over_a_non_default_serialized_field_is_not_treated_as_safe()
     {
-        // A bare MongoFieldExpression whose IProperty reports non-default serialization must make
-        // AllFieldsDefaultSerialized answer false when wrapped in a MongoMathExpression — the explicit
-        // recursive case added in this task, not the switch's permissive `_ => true` default.
+        // MongoMathExpression must recurse into its operands rather than hit the switch's `_ => true` default.
         var nonDefaultField = new MongoFieldExpression(NonDefaultSerializedAmountProperty(), "Amount");
         var math = new MongoMathExpression(MongoMathFunction.Abs, [nonDefaultField], typeof(double));
 
@@ -69,11 +67,8 @@ public class MongoExpressionTranslatorMathTests
     [Fact]
     public void Math_Round_with_a_MidpointRounding_argument_declines_rather_than_misreading_it_as_digits()
     {
-        // Math.Round(double, MidpointRounding) has the same name and argument COUNT as
-        // Math.Round(double, int) (the real "round to N digits" overload) — TryTranslateMath must not
-        // recognize this shape as RoundDigits, or the MidpointRounding enum value (an int under the hood,
-        // e.g. AwayFromZero = 1) gets treated as a digit count, silently rendering {"$round": [x, 1]}
-        // instead of declining. Regression test for a finding from this feature's own final review.
+        // Same arity as Math.Round(double, int); misreading it as RoundDigits would silently render
+        // {"$round": [x, 1]} for AwayFromZero.
         var (translator, _) = BuildTranslator();
         Expression<Func<Widget, double>> selector = w => Math.Round(w.Amount, MidpointRounding.AwayFromZero);
 
