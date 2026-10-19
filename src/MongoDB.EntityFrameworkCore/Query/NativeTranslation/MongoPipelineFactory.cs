@@ -409,97 +409,111 @@ internal sealed class MongoPipelineFactory
         PlaceholderTable placeholders)
         => new BsonDocument("$limit", MongoValueRenderer.RenderValue(stage.Limit, placeholders));
 
+    /// <summary>
+    /// The pipeline form of a lookup that carries an inner filter, element stages or outer conditions.
+    /// </summary>
+    /// <remarks>
+    /// A join whose inner side was filtered: the predicate is relative to the joined document, i.e. the scope inside the
+    /// sub-pipeline. Rendered here, not stored as BSON on the lookup, so a parameter or clock value goes through the placeholder
+    /// table and is read per execution instead of frozen into the cached plan. Stages nested by an inner-side collection Include
+    /// follow the filter. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
+    /// An element sort or limit (a keyed array behind `OrderBy(..).ToList()`/`FirstOrDefault()`) uses the same shape.
+    /// </remarks>
+    private static BsonDocument RenderFilteredLookup(
+        LookupExpression lookup,
+        MongoQueryLanguageRenderer renderer,
+        PlaceholderTable placeholders)
+    {
+        var stages = new BsonArray();
+
+        // A condition on the outer row is constant per outer row: a `let` of its field and a `$match` on it, so a group the condition
+        // rejects is empty. The `let` is merged into whichever form carries the key below.
+        var (outerLet, outerGate) = RenderOuterGate(lookup, placeholders);
+
+        // A composite key matches every pair in the let/$expr form, ahead of the filter.
+        BsonDocument? compositeLet = null;
+        if (lookup.CompositeKey is { } compositeKey)
+        {
+            var (let, match) = LookupExpression.CompositeKeyLetAndMatch(compositeKey);
+            compositeLet = let;
+            stages.Add(new BsonDocument("$match", new BsonDocument("$expr", match)));
+        }
+
+        if (outerGate is not null)
+            stages.Add(outerGate);
+
+        // A null local key that must match nothing needs the let form; the filter then follows the key match.
+        if (lookup.ExcludesNullLocalKey)
+            stages.Add(new BsonDocument("$match", new BsonDocument("$expr", lookup.NullExcludingMatch())));
+
+        if (lookup.InnerPredicate is { } innerPredicate)
+            stages.Add(new BsonDocument("$match", renderer.Render(innerPredicate, placeholders)));
+
+        // Sort, then limit: the first element is the first by the ordering. Element stages are constants (field paths, directions), baked.
+        if (lookup.ElementSort.Count > 0)
+        {
+            var sort = new BsonDocument();
+            foreach (var (field, direction) in lookup.ElementSort)
+                sort.Add(field, direction);
+            stages.Add(new BsonDocument("$sort", sort));
+        }
+
+        if (lookup.ElementSkip is { } skip)
+            stages.Add(new BsonDocument("$skip", MongoValueRenderer.RenderValue(skip, placeholders)));
+
+        if (lookup.ElementLimit is { } limit)
+            stages.Add(new BsonDocument("$limit", MongoValueRenderer.RenderValue(limit, placeholders)));
+
+        stages.AddRange(lookup.PipelineStages);
+
+        if (compositeLet is not null)
+        {
+            compositeLet.AddRange(outerLet);
+            return new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", lookup.From },
+                { "let", compositeLet },
+                { "pipeline", stages },
+                { "as", lookup.As }
+            });
+        }
+
+        if (lookup.ExcludesNullLocalKey)
+        {
+            var nullExcludingLet = lookup.NullExcludingLet();
+            nullExcludingLet.AddRange(outerLet);
+            return new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", lookup.From },
+                { "let", nullExcludingLet },
+                { "pipeline", stages },
+                { "as", lookup.As }
+            });
+        }
+
+        var plain = new BsonDocument
+        {
+            { "from", lookup.From },
+            { "localField", lookup.LocalField },
+            { "foreignField", lookup.ForeignField }
+        };
+        if (outerLet.ElementCount > 0)
+            plain.Add("let", outerLet);
+
+        plain.Add("pipeline", stages);
+        plain.Add("as", lookup.As);
+        return new BsonDocument("$lookup", plain);
+    }
+
     private static BsonDocument RenderLookup(
         LookupExpression lookup,
         MongoQueryLanguageRenderer renderer,
         PlaceholderTable placeholders)
     {
-        // A join whose inner side was filtered: the predicate is relative to the joined document, i.e. the scope inside the
-        // sub-pipeline. Rendered here, not stored as BSON on the lookup, so a parameter or clock value goes through the placeholder
-        // table and is read per execution instead of frozen into the cached plan. Stages nested by an inner-side collection Include
-        // follow the filter. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
-        // An element sort or limit (a keyed array behind `OrderBy(..).ToList()`/`FirstOrDefault()`) uses the same shape.
+        // A lookup carrying an inner filter, element stages or outer conditions needs the pipeline form.
         if (lookup.InnerPredicate is not null || lookup.HasElementStages || lookup.HasOuterConditions)
         {
-            var stages = new BsonArray();
-
-            // A condition on the outer row is constant per outer row: a `let` of its field and a `$match` on it, so a group the condition
-            // rejects is empty. The `let` is merged into whichever form carries the key below.
-            var (outerLet, outerGate) = RenderOuterGate(lookup, placeholders);
-
-            // A composite key matches every pair in the let/$expr form, ahead of the filter.
-            BsonDocument? compositeLet = null;
-            if (lookup.CompositeKey is { } compositeKey)
-            {
-                var (let, match) = LookupExpression.CompositeKeyLetAndMatch(compositeKey);
-                compositeLet = let;
-                stages.Add(new BsonDocument("$match", new BsonDocument("$expr", match)));
-            }
-
-            if (outerGate is not null)
-                stages.Add(outerGate);
-
-            // A null local key that must match nothing needs the let form; the filter then follows the key match.
-            if (lookup.ExcludesNullLocalKey)
-                stages.Add(new BsonDocument("$match", new BsonDocument("$expr", lookup.NullExcludingMatch())));
-
-            if (lookup.InnerPredicate is { } innerPredicate)
-                stages.Add(new BsonDocument("$match", renderer.Render(innerPredicate, placeholders)));
-
-            // Sort, then limit: the first element is the first by the ordering. Element stages are constants (field paths, directions), baked.
-            if (lookup.ElementSort.Count > 0)
-            {
-                var sort = new BsonDocument();
-                foreach (var (field, direction) in lookup.ElementSort)
-                    sort.Add(field, direction);
-                stages.Add(new BsonDocument("$sort", sort));
-            }
-
-            if (lookup.ElementSkip is { } skip)
-                stages.Add(new BsonDocument("$skip", MongoValueRenderer.RenderValue(skip, placeholders)));
-
-            if (lookup.ElementLimit is { } limit)
-                stages.Add(new BsonDocument("$limit", MongoValueRenderer.RenderValue(limit, placeholders)));
-
-            stages.AddRange(lookup.PipelineStages);
-
-            if (compositeLet is not null)
-            {
-                compositeLet.AddRange(outerLet);
-                return new BsonDocument("$lookup", new BsonDocument
-                {
-                    { "from", lookup.From },
-                    { "let", compositeLet },
-                    { "pipeline", stages },
-                    { "as", lookup.As }
-                });
-            }
-
-            if (lookup.ExcludesNullLocalKey)
-            {
-                var nullExcludingLet = lookup.NullExcludingLet();
-                nullExcludingLet.AddRange(outerLet);
-                return new BsonDocument("$lookup", new BsonDocument
-                {
-                    { "from", lookup.From },
-                    { "let", nullExcludingLet },
-                    { "pipeline", stages },
-                    { "as", lookup.As }
-                });
-            }
-
-            var plain = new BsonDocument
-            {
-                { "from", lookup.From },
-                { "localField", lookup.LocalField },
-                { "foreignField", lookup.ForeignField }
-            };
-            if (outerLet.ElementCount > 0)
-                plain.Add("let", outerLet);
-
-            plain.Add("pipeline", stages);
-            plain.Add("as", lookup.As);
-            return new BsonDocument("$lookup", plain);
+            return RenderFilteredLookup(lookup, renderer, placeholders);
         }
 
         // CorrelatedReducer uses localField/foreignField plus a pipeline ($match/$sort/$limit:1): an indexable

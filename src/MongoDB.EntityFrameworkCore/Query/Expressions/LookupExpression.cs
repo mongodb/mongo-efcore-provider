@@ -40,14 +40,16 @@ internal enum LookupPipelineKind
 }
 
 /// <summary>
-/// The pending data for a <c>$lookup</c> stage (cross-collection navigation or join hop); the lowerer/pipeline
-/// factory render it into the actual <c>$lookup</c>/<c>$unwind</c> documents.
+/// Represents a pending $lookup aggregation stage needed to include
+/// a cross-collection navigation property.
 /// </summary>
 internal sealed class LookupExpression
 {
-    /// <summary>Creates a <see cref="LookupExpression"/> for the given navigation.</summary>
-    /// <param name="navigation">The navigation the lookup traverses.</param>
-    /// <param name="forceUnwind">Force <c>$unwind</c> even for collection navigations (explicit Join).</param>
+    /// <summary>
+    /// Create a <see cref="LookupExpression"/> for the given navigation.
+    /// </summary>
+    /// <param name="navigation">The <see cref="INavigation"/> that requires a $lookup.</param>
+    /// <param name="forceUnwind">Force $unwind even for collection navigations (used for explicit Join).</param>
     public LookupExpression(INavigation navigation, bool forceUnwind = false)
     {
         Navigation = navigation;
@@ -88,7 +90,10 @@ internal sealed class LookupExpression
         }
     }
 
-    /// <summary>Creates a <see cref="LookupExpression"/> for a Join hop with no model navigation, from resolved key field paths.</summary>
+    /// <summary>
+    /// Create a <see cref="LookupExpression"/> for a Join hop with no corresponding model navigation,
+    /// built directly from resolved join-key field paths instead of an <see cref="INavigation"/>.
+    /// </summary>
     public LookupExpression(
         IEntityType targetEntityType, string collectionName, string localField, string foreignField, string alias,
         bool forceUnwind)
@@ -116,19 +121,24 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// The <c>_lookup_&lt;NavigationName&gt;</c> field a <c>$lookup</c> writes to and the shaper reads back from;
-    /// centralized so write and read sites can't drift.
+    /// The field a <c>$lookup</c> writes its results to and the shaper reads back from. Centralized so
+    /// write and read sites can't drift on the <c>_lookup_</c> format.
     /// </summary>
+    /// <param name="navigation">The navigation the lookup supports.</param>
+    /// <returns>The <c>_lookup_&lt;NavigationName&gt;</c> field name.</returns>
     public static string GetLookupAlias(IReadOnlyNavigationBase navigation)
         => $"{LookupAliasPrefix}{navigation.Name}";
 
     /// <summary>The prefix of the synthetic <c>$lookup</c> alias field (see <see cref="GetLookupAlias"/>).</summary>
     public const string LookupAliasPrefix = "_lookup_";
 
-    /// <summary>The navigation this lookup supports, or <see langword="null"/> for a navigation-less Join hop (EF-377).</summary>
+    /// <summary>The navigation this lookup supports, or <see langword="null"/> for a bare key-equality
+    /// Join hop with no corresponding model navigation (see EF-377).</summary>
     public INavigation? Navigation { get; }
 
-    /// <summary>The entity type this lookup produces documents for. Unlike <see cref="Navigation"/>, always available.</summary>
+    /// <summary>The entity type this lookup's <c>$lookup</c> stage produces documents for. Always
+    /// available, unlike <see cref="Navigation"/>, so consumers can match a lookup back to an entity
+    /// type without assuming a navigation exists.</summary>
     public IEntityType TargetEntityType { get; }
 
     /// <summary>The target collection name to look up from.</summary>
@@ -195,7 +205,11 @@ internal sealed class LookupExpression
         return elementName;
     }
 
-    /// <summary>Stages applied inside the <c>$lookup</c>; when non-empty the pipeline form is used.</summary>
+    /// <summary>
+    /// Pipeline stages to apply inside the $lookup for filtered Includes
+    /// (e.g., OrderBy, Skip, Take on the included collection).
+    /// When non-empty, the pipeline form of $lookup is used instead of localField/foreignField.
+    /// </summary>
     public List<BsonDocument> PipelineStages { get; } = [];
 
     /// <summary>
@@ -222,7 +236,7 @@ internal sealed class LookupExpression
     /// </remarks>
     public LookupPipelineKind PipelineKind { get; internal set; } = LookupPipelineKind.None;
 
-    /// <summary>Whether this lookup uses the pipeline form (filtered Include).</summary>
+    /// <summary>Whether this lookup uses a pipeline (filtered Include).</summary>
     public bool HasPipeline => PipelineStages.Count > 0;
 
     /// <summary>Whether this lookup is a single reference; a navigation-less lookup is always a reference.</summary>
@@ -372,6 +386,7 @@ internal sealed class LookupExpression
     public bool IsStreamableReference
         => IsReference && !HasPipeline && !LocalField.StartsWith(LookupAliasPrefix, System.StringComparison.Ordinal);
 
+    /// <summary>Whether $unwind should be applied after $lookup.</summary>
     public bool ShouldUnwind => IsReference || ForceUnwind;
 
     public bool ForceUnwind { get; }
@@ -438,13 +453,26 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// Whether the following <c>$unwind</c> uses <c>preserveNullAndEmptyArrays: true</c> (left-outer). Defaults to
-    /// <see langword="true"/> for Include; the join path sets it from the LINQ operator.
+    /// Whether the <c>$unwind</c> following this <c>$lookup</c> uses <c>preserveNullAndEmptyArrays: true</c>
+    /// — LEFT-OUTER (principal survives an unmatched join) vs INNER (it is dropped).
+    /// <para>
+    /// Defaults to <see langword="true"/> so non-join registration sites (Include) get the conservative,
+    /// principal-preserving behaviour. The join-translation path overrides it from the actual LINQ operator:
+    /// <c>LeftJoin</c>/<c>GroupJoin</c> are left-outer, plain <c>Join</c> is inner — which also covers EF's
+    /// lowering of a REQUIRED reference navigation to <c>Queryable.Join</c>.
+    /// </para>
     /// </summary>
+    /// <remarks>
+    /// <see langword="init"/>-only: compile-time state on an object reused across executions, so it must be
+    /// written exactly once, at registration.
+    /// </remarks>
     public bool PreserveNullAndEmptyArrays { get; init; } = true;
 
     /// <summary>
-    /// Whether this <c>$lookup</c> must be injected right after the root source rather than tail-appended.
+    /// Whether this $lookup must be injected right after the root collection source (before the user's
+    /// downstream pipeline stages) rather than tail-appended. Used for projected collection-navigation
+    /// counts (<c>select new { ..., c.Orders.Count }</c>) where a later <c>$match</c>/<c>$project</c>
+    /// reads the <c>_lookup_&lt;Nav&gt;</c> array via <c>{ $size: ... }</c> and so must see it already present.
     /// </summary>
     public bool InjectAfterRoot { get; set; }
 

@@ -172,14 +172,6 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    // The key is read back from _id through a generic CLR-type serializer (no backing IProperty), which only reproduces default/identity serialization; a value
-    // converter or non-default BsonRepresentation would throw or return the raw stored value, so such keys fall back. Accumulator operands are held to the same
-    // rule ($sum/$max reduce the stored form). Also used by TranslateOfType's discriminator guard and as the strict half of StoredOrdering.PreservesClrOrdering (EF-337).
-    internal static bool HasDefaultKeySerialization(IProperty property)
-        => property.GetValueConverter() == null
-           && property.GetTypeMapping().Converter == null
-           && property.GetBsonRepresentation() == null;
-
     /// <summary>
     /// Parses the <c>Select</c> result selector against the pending key, finalizing <see cref="MongoSelectDefinition.Grouping"/>. Each member (or the bare body)
     /// must be a key access (<c>g.Key</c> / <c>g.Key.&lt;Sub&gt;</c>), a supported aggregate over a translatable value, or a supported computed/nested shape. A wrapped
@@ -230,7 +222,7 @@ internal static class NativeGroupByBinder
                         return false; // bare g.Key over a composite key — no single field to sort by
 
                     resolvedOrderings.Add(new MongoOrdering(
-                        new MongoElementRefExpression(keyPath, Unwrap(body).Type), ascending));
+                        new MongoElementRefExpression(keyPath, MongoExpressionTranslator.Unwrap(body).Type), ascending));
                     continue;
                 }
 
@@ -252,7 +244,7 @@ internal static class NativeGroupByBinder
         foreach (var (memberName, projectedValue) in bindings)
         {
             // A client case mapping (`g.Key.ToUpper()`) stages only its receiver; the shaper re-applies the call (BindGroupMember), since $toUpper/$toLower are ASCII-only.
-            var valueExpr = PeelResultMemberCaseMapping(projectedValue);
+            var valueExpr = NativeCaseMapping.PeelResultMemberCaseMapping(projectedValue);
             hasCaseMappedMember |= !ReferenceEquals(valueExpr, projectedValue);
 
             if (!TryBindGroupMemberValue(
@@ -286,49 +278,6 @@ internal static class NativeGroupByBinder
             bareLeafAlias = NativeProjectionBinder.SyntheticBareProjectionAlias;
         ConfirmGroupByJoinScope(mongoQ);
         return true;
-    }
-
-    /// <summary>
-    /// The value a grouped result member (or bare body) stages when it projects a client case mapping (<c>g.Key.ToUpper()</c>, also under a <c>Convert</c>): the
-    /// mapping's receiver, whose raw value the <c>$group</c> output holds while the shaper re-applies the .NET call; otherwise <paramref name="value"/>. Driver-LINQ
-    /// would compute it with the ASCII-only, null-as-<c>""</c> <c>$toUpper</c>/<c>$toLower</c>, so <see cref="ContainsCaseMappingCall"/> declines it.
-    /// </summary>
-    internal static Expression PeelResultMemberCaseMapping(Expression value)
-        => value is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
-           && PeelResultMemberCaseMapping(convert.Operand) is var receiver
-           && !ReferenceEquals(receiver, convert.Operand)
-            ? receiver
-            : NativeProjectionBinder.PeelCaseMapping(value);
-
-    /// <summary>True when <paramref name="expression"/> holds a case-mapping call (<see cref="NativeProjectionBinder.IsCaseMappingCall"/>) anywhere; the shaped-query compiler declines a grouped query holding one rather than run it on driver-LINQ (ASCII-only, null-as-<c>""</c> <c>$toUpper</c>/<c>$toLower</c>).</summary>
-    internal static bool ContainsCaseMappingCall(Expression expression)
-    {
-        var finder = new CaseMappingCallFinder();
-        finder.Visit(expression);
-        return finder.Found;
-    }
-
-    private sealed class CaseMappingCallFinder : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        public override Expression? Visit(Expression? node)
-            => Found ? node : base.Visit(node);
-
-        protected override Expression VisitMethodCall(MethodCallExpression node)
-        {
-            if (NativeProjectionBinder.IsCaseMappingCall(node))
-            {
-                Found = true;
-                return node;
-            }
-
-            return base.VisitMethodCall(node);
-        }
-
-        // Query roots and other provider nodes carry no case mapping, and not all can visit children.
-        protected override Expression VisitExtension(Expression node)
-            => node;
     }
 
     // The flattening read of a key member. A whole composite g.Key is normally lifted as one sub-document and read through the key type's class map, whose DateTime
@@ -411,7 +360,7 @@ internal static class NativeGroupByBinder
         bool allowWholeKeyRead = true)
     {
         path = null;
-        expr = Unwrap(expr);
+        expr = MongoExpressionTranslator.Unwrap(expr);
 
         if (expr is not MemberExpression member)
             return false;
@@ -461,7 +410,7 @@ internal static class NativeGroupByBinder
             if (keyPath == null)
                 return false; // bare g.Key over a composite key cannot flatten to a single field
 
-            result = ReadKeyMember(select, keyPath, Unwrap(value).Type, scope);
+            result = ReadKeyMember(select, keyPath, MongoExpressionTranslator.Unwrap(value).Type, scope);
             isKeyRead = true;
             return true;
         }
@@ -499,7 +448,7 @@ internal static class NativeGroupByBinder
         [NotNullWhen(true)] out MongoDocumentConstructionExpression? result)
     {
         result = null;
-        expr = Unwrap(expr);
+        expr = MongoExpressionTranslator.Unwrap(expr);
 
         if (!expr.TryGetProjectionMembers(out var nestedMembers))
             return false;
@@ -527,7 +476,7 @@ internal static class NativeGroupByBinder
         [NotNullWhen(true)] out MongoExpression? result)
     {
         result = null;
-        expr = Unwrap(expr);
+        expr = MongoExpressionTranslator.Unwrap(expr);
 
         if (TryGetKeyMemberPath(expr, scope, out var keyPath))
         {
@@ -576,7 +525,7 @@ internal static class NativeGroupByBinder
     {
         result = null;
 
-        var unwrappedExpr = Unwrap(expr);
+        var unwrappedExpr = MongoExpressionTranslator.Unwrap(expr);
         if (unwrappedExpr is BinaryExpression bin)
         {
             if (MongoExpressionTranslator.MapComparisonOperator(bin.NodeType) is { } op)
@@ -588,7 +537,7 @@ internal static class NativeGroupByBinder
                         bin.Right, ResolveKeyMemberSerializationProperty(leftPath, scope), out var rightConst))
                 {
                     result = new MongoBinaryExpression(
-                        op, new MongoElementRefExpression(leftPath, Unwrap(bin.Left).Type), rightConst);
+                        op, new MongoElementRefExpression(leftPath, MongoExpressionTranslator.Unwrap(bin.Left).Type), rightConst);
                     return true;
                 }
 
@@ -599,7 +548,7 @@ internal static class NativeGroupByBinder
                         bin.Left, ResolveKeyMemberSerializationProperty(rightPath, scope), out var leftConst))
                 {
                     result = new MongoBinaryExpression(
-                        MirroredComparisonOperator(bin.NodeType), new MongoElementRefExpression(rightPath, Unwrap(bin.Right).Type), leftConst);
+                        MirroredComparisonOperator(bin.NodeType), new MongoElementRefExpression(rightPath, MongoExpressionTranslator.Unwrap(bin.Right).Type), leftConst);
                     return true;
                 }
             }
@@ -624,7 +573,7 @@ internal static class NativeGroupByBinder
         if (keyPath != "_id" || scope.KeyParts.Count != 0)
             return true;
 
-        return Unwrap(otherOperand) is ConstantExpression { Value: null };
+        return MongoExpressionTranslator.Unwrap(otherOperand) is ConstantExpression { Value: null };
     }
 
     // g.Count()/g.LongCount() -> $sum: 1; g.Sum/Average/Min/Max(x => ...) -> the operator over the translated operand. The aggregate's source must be the grouping
@@ -643,7 +592,7 @@ internal static class NativeGroupByBinder
         if (outputField == GroupIdFieldName)
             return false;
 
-        if (Unwrap(expr) is not MethodCallExpression call)
+        if (MongoExpressionTranslator.Unwrap(expr) is not MethodCallExpression call)
             return false;
 
         // g.Select(e => e.Field).Distinct().<Op>(): its source isn't g, so try it before the IsGroupingSource guard.
@@ -739,14 +688,14 @@ internal static class NativeGroupByBinder
         if (outputField == GroupIdFieldName)
             return false;
 
-        if (Unwrap(expr) is not MethodCallExpression { Method.IsGenericMethod: true, Arguments.Count: 1 } call)
+        if (MongoExpressionTranslator.Unwrap(expr) is not MethodCallExpression { Method.IsGenericMethod: true, Arguments.Count: 1 } call)
             return false;
 
         var definition = call.Method.GetGenericMethodDefinition();
         if (definition != EnumerableMethods.ToList && definition != EnumerableMethods.ToArray)
             return false;
 
-        if (Unwrap(call.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true, Arguments.Count: 2 } selectCall
+        if (MongoExpressionTranslator.Unwrap(call.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true, Arguments.Count: 2 } selectCall
             || (selectCall.Method.GetGenericMethodDefinition() != QueryableMethods.Select
                 && selectCall.Method.GetGenericMethodDefinition() != EnumerableMethods.Select)
             || !IsGroupingSource(selectCall.Arguments[0], scope.GroupingParameter)
@@ -861,7 +810,7 @@ internal static class NativeGroupByBinder
         [NotNullWhen(true)] out MongoExpression? result)
     {
         result = null;
-        expr = Unwrap(expr);
+        expr = MongoExpressionTranslator.Unwrap(expr);
 
         if (expr is not MemberExpression member)
             return false;
@@ -921,7 +870,7 @@ internal static class NativeGroupByBinder
         result = null;
         isKeyOnlyCondition = false;
 
-        if (Unwrap(predicateBody) is BinaryExpression bin
+        if (MongoExpressionTranslator.Unwrap(predicateBody) is BinaryExpression bin
             && MongoExpressionTranslator.MapComparisonOperator(bin.NodeType) is { } op)
         {
             // A key-only comparison reads the key part's raw per-row value, which over a left join may be an unmatched inner side's missing value ($expr orders null below
@@ -976,7 +925,7 @@ internal static class NativeGroupByBinder
     {
         condition = null;
         isKeyOnlyCondition = false;
-        source = Unwrap(source);
+        source = MongoExpressionTranslator.Unwrap(source);
 
         if (IsGroupingSource(source, scope.GroupingParameter))
             return true; // bare g — no condition
@@ -1035,7 +984,7 @@ internal static class NativeGroupByBinder
         if (!isSize && reduceOp is null)
             return false;
 
-        if (Unwrap(call.Arguments[0]) is not MethodCallExpression
+        if (MongoExpressionTranslator.Unwrap(call.Arguments[0]) is not MethodCallExpression
             {
                 Method: { Name: nameof(Queryable.Distinct), DeclaringType: var distinctDeclaring },
                 Arguments.Count: 1
@@ -1043,7 +992,7 @@ internal static class NativeGroupByBinder
             || (distinctDeclaring != typeof(Queryable) && distinctDeclaring != typeof(Enumerable)))
             return false;
 
-        if (Unwrap(distinctCall.Arguments[0]) is not MethodCallExpression
+        if (MongoExpressionTranslator.Unwrap(distinctCall.Arguments[0]) is not MethodCallExpression
             {
                 Method: { Name: nameof(Queryable.Select), DeclaringType: var selectDeclaring },
                 Arguments.Count: 2
@@ -1058,7 +1007,7 @@ internal static class NativeGroupByBinder
         // count needs only injective serialization, which every serializer is.
         if (selectCall.Arguments[1].UnwrapLambdaFromQuote() is not { Body: MemberExpression } selector
             || !scope.Translator.TryTranslateField(selector.Body, out var selectorField)
-            || (!isSize && !HasDefaultKeySerialization(selectorField.Property)))
+            || (!isSize && !StoredSerialization.HasDefaultKeySerialization(selectorField.Property)))
             return false;
 
         MongoExpression operand = selectorField;
@@ -1104,7 +1053,7 @@ internal static class NativeGroupByBinder
         if (reduceOp is null)
             return false;
 
-        if (Unwrap(call.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true } selectCall
+        if (MongoExpressionTranslator.Unwrap(call.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true } selectCall
             || selectCall.Method.GetGenericMethodDefinition() != QueryableMethods.Select
             || selectCall.Arguments.Count != 2
             || !IsGroupingSource(selectCall.Arguments[0], scope.GroupingParameter))
@@ -1136,7 +1085,7 @@ internal static class NativeGroupByBinder
         // g.Where(pred).Count()/LongCount() (one argument, so checked before the Arguments.Count != 2 gate) -> $sum: {$cond: [pred, 1, 0]}, same as g.Count(pred).
         if (call.Arguments.Count == 1
             && IsCountWithoutPredicate(call.Method)
-            && Unwrap(call.Arguments[0]) is MethodCallExpression
+            && MongoExpressionTranslator.Unwrap(call.Arguments[0]) is MethodCallExpression
                 {
                     Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring0 },
                     Arguments.Count: 2
@@ -1159,7 +1108,7 @@ internal static class NativeGroupByBinder
         if (op is null)
             return false;
 
-        if (Unwrap(call.Arguments[0]) is not MethodCallExpression
+        if (MongoExpressionTranslator.Unwrap(call.Arguments[0]) is not MethodCallExpression
             {
                 Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
                 Arguments.Count: 2
@@ -1222,19 +1171,16 @@ internal static class NativeGroupByBinder
     // True when `source` is the grouping parameter `g`, after unwrapping converts and one AsQueryable/AsEnumerable.
     private static bool IsGroupingSource(Expression source, ParameterExpression groupingParameter)
     {
-        source = Unwrap(source);
+        source = MongoExpressionTranslator.Unwrap(source);
 
         if (source is MethodCallExpression { Method: { IsGenericMethod: true } method } call
             && call.Arguments.Count == 1
             && (method.GetGenericMethodDefinition() == QueryableMethods.AsQueryable
                 || method.Name == nameof(Enumerable.AsEnumerable)))
-            source = Unwrap(call.Arguments[0]);
+            source = MongoExpressionTranslator.Unwrap(call.Arguments[0]);
 
         return source == groupingParameter;
     }
-
-    private static Expression Unwrap(Expression e)
-        => e.RemoveConvert();
 
     /// <summary>
     /// Binds <c>Count</c>/<c>LongCount</c>/<c>Any</c>/<c>All</c> applied directly to a bare <c>GroupBy(key)</c> (<c>GroupBy(o =&gt; o.CustomerID).Count()</c>, <c>.Any(g =&gt; g.Count() &gt; 1)</c>),
@@ -1348,7 +1294,7 @@ internal static class NativeGroupByBinder
 
         const string outputField = "__agg0";
 
-        if (Unwrap(body) is not BinaryExpression bin
+        if (MongoExpressionTranslator.Unwrap(body) is not BinaryExpression bin
             || MongoExpressionTranslator.MapComparisonOperator(bin.NodeType) is not { } op)
         {
             return false;
@@ -1401,14 +1347,14 @@ internal static class NativeGroupByBinder
             keySerializationProperty = ResolveKeyMemberSerializationProperty(keyPath, scope);
 
             matchedKeyPath = keyPath;
-            reference = new MongoElementRefExpression(keyPath, Unwrap(side).Type);
+            reference = new MongoElementRefExpression(keyPath, MongoExpressionTranslator.Unwrap(side).Type);
             return true;
         }
 
         if (TryBindAccumulator(side, accumulatorOutputField, scope, out var acc, out _))
         {
             accumulator = acc;
-            reference = new MongoElementRefExpression(accumulatorOutputField, Unwrap(side).Type);
+            reference = new MongoElementRefExpression(accumulatorOutputField, MongoExpressionTranslator.Unwrap(side).Type);
             return true;
         }
 
@@ -1419,7 +1365,7 @@ internal static class NativeGroupByBinder
     private static bool TryTranslateComparisonConstant(
         Expression expr, IProperty? forSerialization, [NotNullWhen(true)] out MongoExpression? result)
     {
-        expr = Unwrap(expr);
+        expr = MongoExpressionTranslator.Unwrap(expr);
 
         // A null literal renders as BSON null directly: the key property may be non-nullable (a nullable-cast key `(decimal?)o.Total`), and its serializer throws on null.
         if (expr is ConstantExpression { Value: null })
@@ -1473,7 +1419,7 @@ internal static class NativeGroupByBinder
         foreach (var projection in select.Projection)
         {
             // A bare field needs the default-serialization guard (or is a bare converted key); a computed key part has no IProperty, so no converter applies.
-            if (projection.Expression is MongoFieldExpression field && !HasDefaultKeySerialization(field.Property)
+            if (projection.Expression is MongoFieldExpression field && !StoredSerialization.HasDefaultKeySerialization(field.Property)
                 && !IsBareValueConvertedDistinctKey(select, field))
                 return false;
 
@@ -1601,7 +1547,7 @@ internal static class NativeGroupByBinder
 
         // A value-converted key (admitted by IsBareValueConvertedDistinctKey) would reduce the stored values and read the result back through a generic CLR serializer: Max over an
         // enum stored as a string throws, Average over an int stored as a string answers 0. The ungrouped Select(o => o.X).Max() declines the same operand.
-        if (keyPart.FieldRef is MongoFieldExpression keyField && !HasDefaultKeySerialization(keyField.Property))
+        if (keyPart.FieldRef is MongoFieldExpression keyField && !StoredSerialization.HasDefaultKeySerialization(keyField.Property))
             return false;
 
         var operand = new MongoElementRefExpression(keyPart.Name, keyPart.FieldRef.Type, throwsOnNull: keyPart.ThrowsOnNull);

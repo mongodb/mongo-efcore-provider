@@ -57,6 +57,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// Perform translation of the <paramref name="expression" /> that belongs to the
     /// supplied <paramref name="queryExpression"/>.
     /// </summary>
+    /// <param name="queryExpression">The <see cref="MongoQueryExpression"/> the expression being translated belongs to.</param>
+    /// <param name="expression">The <see cref="Expression"/> being translated.</param>
+    /// <returns>The translated expression tree.</returns>
     public Expression Translate(
         MongoQueryExpression queryExpression,
         Expression expression)
@@ -286,7 +289,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // ToLower/ToUpper over a string: $toLower/$toUpper are ASCII-only, so the call always runs client-side over
             // the bound receiver (the binder stages only the receiver), null-propagated; also kept off driver-LINQ
             // push-down (ProjectionAnalyzer.HasCaseMappingProjectedValue).
-            case MethodCallExpression caseMappingCall when NativeProjectionBinder.IsCaseMappingCall(caseMappingCall):
+            case MethodCallExpression caseMappingCall when NativeCaseMapping.IsCaseMappingCall(caseMappingCall):
                 return NullPropagatingStringCall(caseMappingCall, NullPropagatingReceiver(Visit(caseMappingCall.Object)!));
 
             // DateTimeOffset.ToString(...): the driver would render the stored sub-document as BSON JSON (EF-217). Bind
@@ -300,7 +303,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // Projection route only; the driver-LINQ fallback still sees the original call.
             case MethodCallExpression dateTimeToString
                 when _queryExpression.Select.Route == NativeRoute.Projection
-                     && NativeProjectionBinder.IsDateTimeToString(dateTimeToString):
+                     && NativeCaseMapping.IsDateTimeToString(dateTimeToString):
                 return Expression.Call(
                     VisitThroughConversions(dateTimeToString.Object!), dateTimeToString.Method,
                     dateTimeToString.Arguments.Select(a => Visit(a)!));
@@ -427,7 +430,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// </summary>
     internal static bool IsClientCaseMapping(Expression expression)
         => expression is BlockExpression { Result: ConditionalExpression { IfFalse: MethodCallExpression call } }
-           && NativeProjectionBinder.IsCaseMappingCall(call);
+           && NativeCaseMapping.IsCaseMappingCall(call);
 
     /// <summary>
     /// True for <c>ToString(...)</c> on a <see cref="DateTimeOffset"/> (or nullable), also through a boxing conversion;
@@ -1707,8 +1710,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             expression, node => node is StructuralTypeShaperExpression or ProjectionBindingExpression or EntityProjectionExpression);
 
     /// <summary>
-    /// Whether a method call is a scalar property access to store in the projection mapping like a
-    /// <see cref="MemberExpression"/> (<c>EF.Property</c> on a non-navigation, or <c>Mql.Field</c>).
+    /// Checks whether a method call expression represents a scalar property access that should
+    /// be stored in the projection mapping (like <see cref="MemberExpression"/>), rather than
+    /// being fully visited. This covers <c>EF.Property</c> (for non-navigation properties) and
+    /// <c>Mql.Field</c> calls.
     /// </summary>
     private static bool IsScalarMethodPropertyAccess(MethodCallExpression methodCallExpression)
     {
