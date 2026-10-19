@@ -19,6 +19,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -44,7 +45,7 @@ public sealed class BsonSerializerFactory
 
     // Mirrors what GetCollectionSerializer accepts: Memory<>/ReadOnlyMemory<> (not IEnumerable) plus anything
     // enumerable. Keeps non-collection generic types (e.g. anonymous types) off the collection path.
-    private static bool IsSupportedCollectionType(Type type)
+    internal static bool IsSupportedCollectionType(Type type)
         => type.TryGetItemType(typeof(Memory<>)) != null
            || type.TryGetItemType(typeof(ReadOnlyMemory<>)) != null
            || typeof(System.Collections.IEnumerable).IsAssignableFrom(type);
@@ -120,9 +121,14 @@ public sealed class BsonSerializerFactory
                 => GetDictionarySerializer(type),
             {IsGenericType: true} when IsSupportedCollectionType(type)
                 => GetCollectionSerializer(type, CreateTypeSerializer(type.GetGenericArguments()[0])),
+            // ValueTuple/Tuple expose fields or get-only properties the driver's class map doesn't map, so a class map
+            // would silently serialize an empty document. Tuple keys are handled by the callers (MongoTupleExpression).
+            _ when typeof(ITuple).IsAssignableFrom(type)
+                => throw new NotSupportedException($"No known serializer for tuple type '{type.ShortDisplayName()}'."),
             // Value-type and concrete-class POCOs (anonymous composite GroupBy keys, DTO keys, constructor projections).
             // Interfaces and abstract classes can't be auto-mapped, so they fall to the NotSupportedException below
-            // rather than surfacing a driver class-map error.
+            // rather than surfacing a driver class-map error. This factory has no model, so it can't tell an EF entity
+            // type from a POCO: callers must route entity types through GetEntitySerializer, never here.
             {IsValueType: true, IsPrimitive: false} or {IsClass: true, IsAbstract: false}
                 => CreateClassMapSerializer(type),
             _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'.")
@@ -180,10 +186,29 @@ public sealed class BsonSerializerFactory
         return true;
     }
 
-    // Adapted from BsonClassMapSerializationProvider in the C# driver
+    private static readonly ConcurrentDictionary<Type, IBsonSerializer> ClassMapSerializers = new();
+
+    // Adapted from BsonClassMapSerializationProvider in the C# driver. BsonClassMap.LookupClassMap would create and
+    // freeze a map in the driver's global registry, making a later application RegisterClassMap<T> for the type throw.
+    // So an application-registered map is honored, but otherwise an independent (unregistered) auto-map is built.
     private static IBsonSerializer CreateClassMapSerializer(Type type)
-        => (IBsonSerializer)Activator.CreateInstance(
-            typeof(BsonClassMapSerializer<>).MakeGenericType(type), BsonClassMap.LookupClassMap(type))!;
+        => ClassMapSerializers.GetOrAdd(
+            type, static t =>
+            {
+                BsonClassMap classMap;
+                if (BsonClassMap.IsClassMapRegistered(t))
+                {
+                    classMap = BsonClassMap.LookupClassMap(t);
+                }
+                else
+                {
+                    classMap = (BsonClassMap)Activator.CreateInstance(typeof(BsonClassMap<>).MakeGenericType(t))!;
+                    classMap.AutoMap();
+                    classMap.Freeze();
+                }
+
+                return (IBsonSerializer)Activator.CreateInstance(typeof(BsonClassMapSerializer<>).MakeGenericType(t), classMap)!;
+            });
 
     internal static BsonType GetBsonType(Type type)
         => type switch

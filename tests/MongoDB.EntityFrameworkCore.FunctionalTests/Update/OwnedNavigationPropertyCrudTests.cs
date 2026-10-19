@@ -408,12 +408,14 @@ public class OwnedNavigationPropertyCrudTests(TemporaryDatabaseFixture database)
             person.Countries.Add(newZealand);
             db.SaveChanges();
 
+            // Test in-memory state on existing context
             Assert.Equal(unitedKingdom.Name, person.Countries[0].Name);
             Assert.Equal(france.Name, person.Countries[1].Name);
             Assert.Equal(newZealand.Name, person.Countries[2].Name);
         }
 
         {
+            // Test on-disk state via new context
             using var db = SingleEntityDbContext.Create(collection);
             var person = db.Entities.First();
 
@@ -478,12 +480,14 @@ public class OwnedNavigationPropertyCrudTests(TemporaryDatabaseFixture database)
 
             db.SaveChanges();
 
+            // Test in-memory state on existing context
             Assert.Equal(ukHomePhone.Description, person.PhonesByCountry[0].Phones[0].Description);
             Assert.Equal(ukCellPhone.Description, person.PhonesByCountry[0].Phones[1].Description);
             Assert.Equal(ukWorkPhone.Description, person.PhonesByCountry[0].Phones[2].Description);
         }
 
         {
+            // Test on-disk state via new context
             using var db = SingleEntityDbContext.Create(collection);
             var person = db.Entities.First();
 
