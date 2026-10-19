@@ -58,6 +58,53 @@ public class NativeModeAssertTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
+    public void NativeAndParity_returns_the_rows_when_non_empty()
+    {
+        var collection = Seed(nameof(NativeAndParity_returns_the_rows_when_non_empty));
+
+        var result = NativeModeAssert.NativeAndParity(mode => Titles(collection, mode, x => x.Score > 5));
+
+        Assert.Equal(["ten"], result);
+    }
+
+    [Fact]
+    public void NativeAndParity_fails_when_both_modes_are_empty()
+    {
+        var collection = Seed(nameof(NativeAndParity_fails_when_both_modes_are_empty));
+
+        var ex = Assert.ThrowsAny<Xunit.Sdk.XunitException>(
+            () => NativeModeAssert.NativeAndParity(mode => Titles(collection, mode, x => x.Score > 100)));
+
+        Assert.Contains("allowEmpty", ex.Message);
+    }
+
+    [Fact]
+    public void NativeAndParity_allows_empty_when_opted_in()
+    {
+        var collection = Seed(nameof(NativeAndParity_allows_empty_when_opted_in));
+
+        var result = NativeModeAssert.NativeAndParity(
+            mode => Titles(collection, mode, x => x.Score > 100), allowEmpty: true);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void NativeAndParity_still_fails_on_disagreement_even_with_allowEmpty()
+    {
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(
+            () => NativeModeAssert.NativeAndParity(
+                mode => mode == MongoQueryMode.NativeOnly ? ["a"] : new List<string>(), allowEmpty: true));
+    }
+
+    private static List<string> Titles(
+        IMongoCollection<Item> collection, MongoQueryMode mode, System.Linq.Expressions.Expression<Func<Item, bool>> predicate)
+    {
+        using var db = CreateContext(collection, mode);
+        return db.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Title).Select(x => x.Title).ToList();
+    }
+
+    [Fact]
     public void TwiceWithDifferentValues_hits_the_cached_plan_with_new_values()
     {
         var collection = Seed(nameof(TwiceWithDifferentValues_hits_the_cached_plan_with_new_values));
