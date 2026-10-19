@@ -192,4 +192,75 @@ public class MongoQueryExpressionApplyProjectionTests
                 [new ProjectionMember().Append(typeof(Product).GetProperty(nameof(Product.Name))!)] =
                     new EntityProjectionExpression(entityType, new RootReferenceExpression(entityType))
             });
+
+    // ── Task 4 fix-round tests (review finding I3): the guard narrowing that replaced the original
+    // "if (Projection.Any()) return;" early-out. Both tests below are mutation-discriminating against the
+    // TWO halves of that guard independently — see each test's own comment for which half it pins.
+
+    /// <summary>
+    /// Simulates the reference-collection-list array leaf's OWN <c>AddToProjection</c> call
+    /// (<c>MongoProjectionBindingExpressionVisitor.TryBindProjectedCollectionNavigation</c>), made
+    /// independently of <c>ApplyProjection</c> and BEFORE it ever runs -- distinct from
+    /// <see cref="MakeProjectionRoute"/>, which only populates <c>Select.Projection</c> (a different list,
+    /// used purely to compute <c>Route</c>) and never touches <c>MongoQueryExpression.Projection</c> itself.
+    /// </summary>
+    private static void SimulateArrayLeafProjectionRegistration(MongoQueryExpression queryExpression)
+        => queryExpression.AddToProjection(Expression.Constant("array-leaf-placeholder"), "Orders");
+
+    [Fact]
+    public void A_scalar_sibling_mapping_is_flattened_even_when_Projection_is_already_non_empty()
+    {
+        // Simulates the EF-322 Task 1/4 hazard directly: a reference-collection-list array leaf calls
+        // AddToProjection on its OWN array shaper independently of this method, so Projection is already
+        // non-empty by the time this runs -- but a plain scalar sibling leaf's ProjectionMember mapping
+        // (RemapToNamedMember) still needs flattening into a Constant(int), or GetProjectionIndex throws
+        // ("Operation is not valid due to the current state of the object") at compile time.
+        // MUTATION: reverting the guard to "if (Projection.Any()) return;" (the pre-fix condition) makes
+        // this test fail -- the sibling's mapping stays the raw, non-constant EntityProjectionExpression
+        // RemapToNamedMember installed, never reaching a ConstantExpression at all.
+        var entityType = ProductEntityType();
+        var queryExpression = new MongoQueryExpression(entityType);
+        MakeProjectionRoute(queryExpression);
+        SimulateArrayLeafProjectionRegistration(queryExpression);
+        RemapToNamedMember(queryExpression, entityType);
+
+        queryExpression.ApplyProjection();
+
+        Assert.Equal(2, queryExpression.Projection.Count);
+        var mappedMember = new ProjectionMember().Append(typeof(Product).GetProperty(nameof(Product.Name))!);
+        var mapped = queryExpression.GetMappedProjection(mappedMember);
+        var constant = Assert.IsType<ConstantExpression>(mapped);
+        var index = Assert.IsType<int>(constant.Value);
+        Assert.Equal(nameof(Product.Name), queryExpression.Projection[index].Alias);
+    }
+
+    [Fact]
+    public void A_sibling_mapping_is_NOT_flattened_once_Route_has_left_Projection()
+    {
+        // The narrower half of the SAME guard (review finding, and a real regression this fix caused and
+        // then fixed once already): once Route has left Projection (the native binder correctly declined
+        // this shape and it falls back), a non-constant _projectionMapping entry must NOT be flattened here
+        // even though Projection already has entries from elsewhere -- unconditionally flattening it is what
+        // let NorthwindSelectQueryMongoTest.Custom_projection_reference_navigation_PK_to_FK_optimization (a
+        // shape the native projection binder correctly declines) silently succeed via the mixed/fallback
+        // shaper instead of throwing the NotSupportedException AssertTranslationFailed requires.
+        // MUTATION: dropping the "|| Select.Route != NativeRoute.Projection" disjunct (flattening whenever
+        // there's anything to flatten, regardless of Route) makes this test fail -- the mapping gets
+        // flattened into a ConstantExpression anyway.
+        var entityType = ProductEntityType();
+        var queryExpression = new MongoQueryExpression(entityType);
+        MakeProjectionRoute(queryExpression);
+        SimulateArrayLeafProjectionRegistration(queryExpression);
+        RemapToNamedMember(queryExpression, entityType);
+        queryExpression.Select.MarkNotNativelyRepresentable();
+        Assert.Equal(NativeRoute.Fallback, queryExpression.Select.Route);
+
+        queryExpression.ApplyProjection();
+
+        // Unchanged -- only the pre-existing array-leaf-placeholder entry; nothing new was flattened in.
+        Assert.Single(queryExpression.Projection);
+        var mappedMember = new ProjectionMember().Append(typeof(Product).GetProperty(nameof(Product.Name))!);
+        var mapped = queryExpression.GetMappedProjection(mappedMember);
+        Assert.IsNotType<ConstantExpression>(mapped);
+    }
 }

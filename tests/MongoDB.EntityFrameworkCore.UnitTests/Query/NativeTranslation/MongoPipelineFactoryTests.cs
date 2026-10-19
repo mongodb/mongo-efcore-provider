@@ -747,6 +747,92 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("""{ "$sort" : { "__sort0" : 1 } }"""), pipeline[0]);
     }
 
+    // ------------------------------------------------------------------
+    // MongoRegexExpression with a PARAMETERIZED term — the escape+anchor transform must run at
+    // Build (per-execution) time, not render (compile) time, since the value isn't known yet.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Parameterized_starts_with_binds_and_escapes_across_executions()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var regex = new MongoRegexExpression(
+            field, MongoRegexKind.StartsWith, new MongoParameterExpression("term", nameProperty), negated: false);
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(regex) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var first = factory.Build(new Dictionary<string, object?> { ["term"] = "A.b" });
+        var second = factory.Build(new Dictionary<string, object?> { ["term"] = "Qu" });
+
+        Assert.Equal(
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: '^A\\\\.b', options: 's' } } } }"),
+            first[0]);
+        Assert.Equal(
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: '^Qu', options: 's' } } } }"),
+            second[0]);
+
+        // Template is not mutated between builds: re-binding the first value again must reproduce it.
+        var third = factory.Build(new Dictionary<string, object?> { ["term"] = "A.b" });
+        Assert.Equal(first[0], third[0]);
+    }
+
+    [Fact]
+    public void Parameterized_ends_with_binds_and_anchors_at_build_time()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var regex = new MongoRegexExpression(
+            field, MongoRegexKind.EndsWith, new MongoParameterExpression("term", nameProperty), negated: false);
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(regex) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["term"] = "A.b" });
+
+        Assert.Equal(
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: 'A\\\\.b$', options: 's' } } } }"),
+            result[0]);
+    }
+
+    [Fact]
+    public void Parameterized_contains_binds_unanchored_at_build_time()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var regex = new MongoRegexExpression(
+            field, MongoRegexKind.Contains, new MongoParameterExpression("term", nameProperty), negated: false);
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(regex) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["term"] = "A.b" });
+
+        Assert.Equal(
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: 'A\\\\.b', options: 's' } } } }"),
+            result[0]);
+    }
+
+    [Fact]
+    public void Parameterized_negated_starts_with_wraps_with_not_at_build_time()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var regex = new MongoRegexExpression(
+            field, MongoRegexKind.StartsWith, new MongoParameterExpression("term", nameProperty), negated: true);
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(regex) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["term"] = "A" });
+
+        Assert.Equal(
+            BsonDocument.Parse(
+                "{ $match: { Name: { $not: { $regularExpression: { pattern: '^A', options: 's' } } } } }"),
+            result[0]);
+    }
+
     [Fact]
     public void Sort_stage_still_rejects_a_key_that_is_neither_a_field_nor_an_element_ref()
     {
@@ -759,5 +845,82 @@ public class MongoPipelineFactoryTests
         // renderer means that rewrite did not happen, and must stay loud rather than emit a wrong $sort.
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()));
+    }
+
+    // ------------------------------------------------------------------
+    // MongoLookupStage rendering with pipeline stages (EF-449)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Lookup_stage_includes_pipeline_field_when_HasPipeline()
+    {
+        // EF-450: RenderLookup's localField/foreignField+pipeline shape is now specific to
+        // LookupPipelineKind.CorrelatedReducer — a bare HasPipeline lookup with no kind tagged (which no
+        // real registration path produces any more) renders via the let+pipeline shape instead (see
+        // Lookup_stage_uses_let_pipeline_shape_for_NestedInclude below). Tag the kind explicitly so this
+        // test still exercises the shape it names.
+        var navigation = ChildrenNavigation();
+        var lookup = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.CorrelatedReducer };
+        lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
+
+        var stages = new List<MongoPipelineStage> { new MongoLookupStage(lookup) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        var lookupDoc = result[0]["$lookup"].AsBsonDocument;
+        Assert.True(lookupDoc.Contains("pipeline"));
+        Assert.Equal(new BsonArray { new BsonDocument("$limit", 1) }, lookupDoc["pipeline"]);
+        // Also verify that the standard fields are still present
+        Assert.Equal("LookupChild", lookupDoc["from"].AsString);
+        Assert.Equal("_id", lookupDoc["localField"].AsString);
+        Assert.Equal("ParentId", lookupDoc["foreignField"].AsString);
+        Assert.Equal("_lookup_Children", lookupDoc["as"].AsString);
+    }
+
+    [Fact]
+    public void Lookup_stage_uses_let_pipeline_shape_for_NestedInclude()
+    {
+        // EF-450: a NestedInclude-kind lookup (a collection-then-collection/reference ThenInclude) renders
+        // via LookupExpression.ToLookupStageDocument()'s let+pipeline shape — the SAME shape the driver-LINQ
+        // fallback bridge already emits for this kind — not the CorrelatedReducer localField/foreignField
+        // +pipeline shape.
+        var navigation = ChildrenNavigation();
+        var lookup = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.NestedInclude };
+        lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
+
+        var stages = new List<MongoPipelineStage> { new MongoLookupStage(lookup) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        var lookupDoc = result[0]["$lookup"].AsBsonDocument;
+        Assert.False(lookupDoc.Contains("localField"));
+        Assert.False(lookupDoc.Contains("foreignField"));
+        Assert.Equal("_id", lookupDoc["let"].AsBsonDocument["localField"].AsString.TrimStart('$'));
+        var pipeline = lookupDoc["pipeline"].AsBsonArray;
+        Assert.Equal(2, pipeline.Count);
+        Assert.Equal("$expr", pipeline[0].AsBsonDocument["$match"].AsBsonDocument.GetElement(0).Name);
+        Assert.Equal(new BsonDocument("$limit", 1), pipeline[1]);
+        Assert.Equal("LookupChild", lookupDoc["from"].AsString);
+        Assert.Equal("_lookup_Children", lookupDoc["as"].AsString);
+    }
+
+    [Fact]
+    public void Lookup_stage_omits_pipeline_field_when_no_pipeline()
+    {
+        var navigation = ChildrenNavigation();
+        var lookup = new LookupExpression(navigation);
+
+        var stages = new List<MongoPipelineStage> { new MongoLookupStage(lookup) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        var lookupDoc = result[0]["$lookup"].AsBsonDocument;
+        Assert.False(lookupDoc.Contains("pipeline"));
     }
 }

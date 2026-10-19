@@ -47,6 +47,16 @@ internal static class NativeCardinalityBinder
         if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
             return false;
 
+        // A reducer composed after a CONFIRMED genuine two-sided join must fall back too (EF-392). The $limit
+        // synthesized below lands in PipelineOps, which MongoSelectLowerer emits BEFORE the join's
+        // $lookup/$unwind — so `Join(...).Select(...).First()` would limit to the first OUTER row and only then
+        // expand it across a 1:N $unwind: if that row has no match the $unwind drops it entirely and First()
+        // throws on a query LINQ answers with the second outer row's first joined row. Unlike a reducer, a
+        // scalar AGGREGATE (Count/Sum/…) is safe and stays native: its $count/$group stage is emitted after the
+        // lookup block, so it already counts joined rows. See MongoSelectDefinition.HasConfirmedJoinLookup.
+        if (select.HasConfirmedJoinLookup)
+            return false;
+
         // EF-397: no HasLimit guard. A reducer's own $limit composes safely with a $limit a preceding Take
         // already recorded — AppendLimit appends to the TAIL of the ordered op list, and consecutive $limit
         // stages narrow monotonically, so Take(3).First() emits [$limit 3, $limit 1] = "the first of the
@@ -89,6 +99,34 @@ internal static class NativeCardinalityBinder
     {
         var select = mongoQ.Select;
 
+        // A scalar aggregate terminating DIRECTLY on a BARE GroupBy(key) — no intervening Select — e.g.
+        // GroupBy(o => o.CustomerID).Count()/.Any(g => g.Count() > 1) (EF-449). Checked BEFORE the
+        // HasTerminalOperator guard below: TranslateGroupBy sets IsGroupBy unconditionally the moment a
+        // GroupBy is seen, Select or not, so that guard would otherwise always decline this shape.
+        // TryBindGroupTerminalAggregate itself re-checks PendingGroupKey/Grouping, so a false return here
+        // (an out-of-scope predicate shape) falls through safely to the ordinary guard below, which declines
+        // for the same underlying reason (IsGroupBy already true) — no double-decision, just two paths to
+        // the same fallback.
+        if (select.PendingGroupKey != null && select.Grouping == null
+            && NativeGroupByBinder.TryBindGroupTerminalAggregate(mongoQ, op, predicate, resultType))
+        {
+            return true;
+        }
+
+        // A scalar aggregate terminating DIRECTLY on a projected Distinct() — no intervening Select — e.g.
+        // Select(o => o.OrderID).Distinct().Max() (EF-453). Checked BEFORE the HasTerminalOperator guard
+        // below for the same reason as the bare-GroupBy carve-out above: TranslateDistinct finalizes
+        // IsDistinct/Grouping unconditionally the moment a projected Distinct is seen, so that guard would
+        // otherwise always decline this shape. TryBindDistinctTerminalAggregate itself re-checks Grouping's
+        // shape, so a false return here falls through safely to the ordinary guard below, which declines for
+        // the same underlying reason (IsDistinct already true) — no double-decision, just two paths to the
+        // same fallback.
+        if (select.IsDistinct && select.Cardinality == null
+            && NativeGroupByBinder.TryBindDistinctTerminalAggregate(mongoQ, op, selector, resultType))
+        {
+            return true;
+        }
+
         // A scalar aggregate applied after a finalized GroupBy(key).Select(anon)/Distinct must fall back:
         // setting Cardinality on an already-grouped select flips Route to ScalarAggregate (which takes
         // priority over Grouping), but the lowerer's grouping branch still emits [$group, $project] with no
@@ -99,7 +137,10 @@ internal static class NativeCardinalityBinder
         if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
             return false;
 
-        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+        // predicate is null for Sum/Min/Max/Average (which take a selector instead) and for a bare Any()/Count()
+        // with no predicate — SelfParam stays null in those cases, which is fine: there is no predicate lambda
+        // for a nested Count(pred)/Any/All to correlate against anyway.
+        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType, predicate?.Parameters[0]);
 
         MongoFieldExpression? operand = null;
         if (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min
@@ -156,6 +197,31 @@ internal static class NativeCardinalityBinder
             MongoAggregateOperator.All => false,
             _ => null
         };
+
+        // NATIVE-CHAINED-JOIN-SCOPE PLAN, TASK 6 FINAL ROUND. A scalar aggregate with no selector-bearing
+        // operand (a bare Any()/Count()) can reach this exact point with an eligible, chain-wide JoinScope
+        // that NOTHING has confirmed yet — MEASURED, not theoretical: for
+        // `Join(…).Join(…).Where(…).OrderBy(…).Any()`, EF's nav-expansion only synthesizes a join's pending
+        // wrap Select when something downstream needs ROW SHAPE, and a presence-only aggregate doesn't, so
+        // (confirmed via LambdaExpression.Print() on the preprocessed tree) NO Select node exists between the
+        // last Join and Where/OrderBy/Any at all. Both Select-side confirming arms in
+        // MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect therefore never run for this
+        // shape, and without a second confirming site here the chain's candidate joins would stay
+        // unconfirmed forever (Route stuck at Fallback) even though every join in the chain is individually
+        // eligible and this aggregate itself binds fine.
+        //
+        // Reuses the SAME eligibility check the Select-side arms gate on (not a looser copy — see that
+        // method's own remarks on why it was made internal for exactly this call), and confirms via the SAME
+        // shared commit helper NativeJoinScopeProjectionBinder.TryBindProjection itself delegates to. Placed
+        // immediately before the unconditional success return below (not earlier in this method) so it only
+        // ever fires once every other decline in this method has already been ruled out — confirming and
+        // then still failing for an unrelated reason would flip MongoSelectDefinition.HasConfirmedJoinLookup
+        // for a query that is about to fall back anyway, for no benefit.
+        if (!select.HasConfirmedJoinLookup
+            && Visitors.MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope(mongoQ, out _))
+        {
+            NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQ, select.JoinScope!);
+        }
 
         select.Cardinality = MongoCardinality.ForAggregate(
             op, operand, emptyBehavior, emptyValue, resultType, presenceOnly, presentValue);

@@ -117,7 +117,64 @@ internal sealed partial class MongoQueryExpression : Expression
 
     public void ApplyProjection()
     {
-        if (Projection.Any())
+        // Deliberately NOT "if (Projection.Any()) return;" (the guard this replaced). That version assumed
+        // a non-empty Projection always means every _projectionMapping entry was ALREADY resolved by-index by
+        // some other mechanism (a join's RebindInnerShaperToOuterQuery, GroupBy's flatten shaper, a native
+        // SelectMany result shaper) — true for those paths (confirmed empirically: _projectionMapping is
+        // always EMPTY by this point when Projection was populated by one of them). A projected
+        // reference-collection-nav list leaf (`Orders = c.Orders.ToList()`, EF-449/Task 1) breaks that
+        // assumption: it calls MongoQueryExpression.AddToProjection directly (mirroring the cross-collection
+        // Include path) for its OWN array shaper, independently of the generic
+        // _projectionBindingExpressionVisitor fold — so Projection is non-empty by the time this runs whenever
+        // such a leaf sits in the SAME projection as an ordinary scalar sibling (e.g. `new { c.CustomerID,
+        // Orders = c.Orders.ToList() }`). The old guard then skipped flattening _projectionMapping entirely,
+        // leaving the scalar sibling's ProjectionMember mapped to its raw (non-constant) expression forever;
+        // GetProjectionIndex expects a ConstantExpression for any ProjectionMember-keyed binding and throws
+        // ("Operation is not valid due to the current state of the object") at compile time.
+        //
+        // The fix is narrowly scoped to `Route == NativeRoute.Projection` — the exact condition
+        // NativeProjectionBinder.TryPopulateNativeProjection sets on SUCCESS, which is the only route the
+        // reference-collection-list leaf reaches. Widening unconditionally (dropping the guard whenever
+        // _projectionMapping has entries, regardless of Route) regressed a genuinely DIFFERENT case, measured:
+        // `Custom_projection_reference_navigation_PK_to_FK_optimization` (a MemberInit constructing a nested
+        // Customer sub-object through a reference navigation, combined with a join) is a shape the native
+        // projection binder correctly DECLINES (Route stays Fallback, _hasUnsupportedOperator true) — but its
+        // generic shaper fold still leaves non-constant entries in _projectionMapping, and unconditionally
+        // flattening those let the query silently succeed via the mixed/fallback shaper instead of the
+        // `NotSupportedException` it must throw (`AssertTranslationFailed` in that test asserts exactly that
+        // decline). Gating on Route == Projection keeps that decline intact while still covering every shape
+        // this fix targets, since Route is Fallback whenever _hasUnsupportedOperator is true.
+        //
+        // CONFIRMED (review finding I2), not just reasoned: this guard is still wider than just the
+        // reference-collection-list feature -- it also newly applies to a native WRAPPED-join projection
+        // (EF-444, NativeJoinScopeProjectionBinder.TryBindProjection), which ALSO sets Route == Projection.
+        // That path never calls _projectionBindingExpressionVisitor.Translate at all (TranslateSelect returns
+        // early via BuildSelectManyResultShaper/BindResultMember once TryBindProjection succeeds), so
+        // _projectionMapping still holds only the ONE entry the constructor seeds
+        // (EmptyProjectionMember -> the root entity's own EntityProjectionExpression) -- never cleared, since
+        // ReplaceProjectionMapping is never reached for this route. Two sub-cases, both verified by reading
+        // the actual call graph rather than assumed:
+        //   (a) the projection ALSO includes a whole-entity Outer leaf (`new { o, ... }`): BindResultMember
+        //       (MongoQueryableMethodTranslatingExpressionVisitor.cs) resolves that SAME root
+        //       EntityProjectionExpression via GetMappedProjection(EmptyProjectionMember) and calls
+        //       AddToProjection on it FIRST, at translate time. AddToProjection dedupes by Expression.Equals --
+        //       EntityProjectionExpression DOES override Equals (structurally, on EntityType + Name +
+        //       ParentAccessExpression, not just reference identity) -- so this method's later AddToProjection
+        //       call on the SAME object/EmptyProjectionMember entry resolves to the SAME existing index either
+        //       way: reference equality already holds for this same-object case, and the structural override is
+        //       a superset that would dedupe even two distinct-but-equivalent instances, so if anything it
+        //       strengthens rather than weakens this argument; no new entry, no behavior change.
+        //   (b) no whole-entity Outer leaf is projected: nothing else ever touches that constructor-seeded
+        //       entry, so this method adds it to Projection for the first time here -- an extra, otherwise
+        //       unused entry. Confirmed inert: the join-scope shaper is built ENTIRELY by INDEX (every
+        //       ProjectionBindingExpression BindResultMember embeds already carries an Index, never a
+        //       ProjectionMember), so nothing ever reads back the flattened EmptyProjectionMember constant
+        //       this method produces; and nothing iterates the WHOLE Projection list at a point in the
+        //       pipeline where this extra entry could matter (NativeJoinScopeProjectionBinder's own
+        //       Projection-iterating collision check runs at TRANSLATE time, strictly before this
+        //       POSTPROCESS-time method ever runs, so it never sees the extra entry either).
+        // Spec baselines for every EF-444 join-projection test are unchanged, corroborating this.
+        if (Projection.Any() && (_projectionMapping.Count == 0 || Select.Route != NativeRoute.Projection))
         {
             return;
         }

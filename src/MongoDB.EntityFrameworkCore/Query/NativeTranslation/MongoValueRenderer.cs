@@ -52,7 +52,9 @@ internal static class MongoValueRenderer
                 if (parameter.ForSerialization is null)
                     return placeholders.CreatePlaceholder(parameter.Name, serializer: null);
                 var info = BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization);
-                return placeholders.CreatePlaceholder(parameter.Name, info.Serializer);
+                return parameter.ExtractFromEntityValue
+                    ? placeholders.CreateEntityMemberPlaceholder(parameter.Name, parameter.ForSerialization, info.Serializer)
+                    : placeholders.CreatePlaceholder(parameter.Name, info.Serializer);
 
             default:
                 throw new NativeTranslationNotSupportedException(

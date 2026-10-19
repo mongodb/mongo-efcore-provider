@@ -14,8 +14,10 @@
  */
 
 using System.Collections.Generic;
+using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
+using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -44,12 +46,12 @@ internal sealed class PlaceholderTable
     /// </remarks>
     internal const string SentinelKey = "__mongoef_param__";
 
-    private readonly List<(string Name, IBsonSerializer? Serializer, bool IsArray)> _entries = [];
+    private readonly List<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty)> _entries = [];
 
     /// <summary>
     /// A read-only view of all accumulated placeholder entries, in insertion order.
     /// </summary>
-    public IReadOnlyList<(string Name, IBsonSerializer? Serializer, bool IsArray)> Entries => _entries;
+    public IReadOnlyList<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty)> Entries => _entries;
 
     /// <summary>
     /// Appends a placeholder entry and returns a sentinel <see cref="BsonValue"/> to embed
@@ -67,7 +69,31 @@ internal sealed class PlaceholderTable
     public BsonValue CreatePlaceholder(string parameterName, IBsonSerializer? serializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, serializer, false));
+        _entries.Add((parameterName, serializer, false, null, null));
+        return new BsonDocument(SentinelKey, new BsonInt32(index));
+    }
+
+    /// <summary>
+    /// Appends an <em>entity-member-extraction</em> placeholder entry — used when a query parameter's
+    /// runtime value is a WHOLE ENTITY instance (e.g. the <c>local</c> side of <c>c == local</c>) rather
+    /// than the value to compare directly. Unlike an ordinary value placeholder, at
+    /// <see cref="MongoPipelineFactory.Build(IReadOnlyDictionary{string, object})"/> time the raw parameter
+    /// value has <paramref name="entityMemberProperty"/>'s <see cref="IPropertyBase.GetGetter"/> applied to it
+    /// first, per execution, to obtain the actual member value before it is serialized with
+    /// <paramref name="serializer"/> — mirroring the deferred-computation pattern
+    /// <see cref="CreateRegexPlaceholder"/> uses for a parameterized regex term.
+    /// </summary>
+    /// <param name="parameterName">The EF query-parameter name (e.g. <c>__p_0</c>), bound to a whole entity.</param>
+    /// <param name="entityMemberProperty">The primary-key property whose value is extracted from that entity.</param>
+    /// <param name="serializer">The <see cref="IBsonSerializer"/> that will serialize the extracted value.</param>
+    /// <returns>
+    /// A sentinel <see cref="BsonDocument"/> of the form <c>{ __mongoef_param__: &lt;index&gt; }</c>
+    /// where <c>index</c> is the zero-based position in <see cref="Entries"/>.
+    /// </returns>
+    public BsonValue CreateEntityMemberPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer serializer)
+    {
+        var index = _entries.Count;
+        _entries.Add((parameterName, serializer, false, null, entityMemberProperty));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 
@@ -88,7 +114,31 @@ internal sealed class PlaceholderTable
     public BsonValue CreateArrayPlaceholder(string parameterName, IBsonSerializer elementSerializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, elementSerializer, true));
+        _entries.Add((parameterName, elementSerializer, true, null, null));
+        return new BsonDocument(SentinelKey, new BsonInt32(index));
+    }
+
+    /// <summary>
+    /// Appends a <em>regex</em> placeholder entry — used for a parameterized
+    /// <c>string.StartsWith</c>/<c>EndsWith</c>/<c>Contains</c> search term — and returns a sentinel
+    /// <see cref="BsonValue"/> to embed in the rendered BSON template at the parameter-value position.
+    /// Unlike an ordinary value placeholder, this one is never serialized verbatim: at
+    /// <see cref="MongoPipelineFactory.Build(IReadOnlyDictionary{string, object})"/> time the raw runtime
+    /// string is escaped and anchored per <paramref name="kind"/> (via
+    /// <see cref="MongoRegexPatternBuilder.BuildPattern"/>) into a <see cref="BsonRegularExpression"/>,
+    /// mirroring what <see cref="MongoQueryLanguageRenderer.RenderRegex"/> does for a constant term at
+    /// render time.
+    /// </summary>
+    /// <param name="parameterName">The EF query-parameter name (e.g. <c>__p_0</c>).</param>
+    /// <param name="kind">Whether the term is a <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c> test.</param>
+    /// <returns>
+    /// A sentinel <see cref="BsonDocument"/> of the form <c>{ __mongoef_param__: &lt;index&gt; }</c>
+    /// where <c>index</c> is the zero-based position in <see cref="Entries"/>.
+    /// </returns>
+    public BsonValue CreateRegexPlaceholder(string parameterName, MongoRegexKind kind)
+    {
+        var index = _entries.Count;
+        _entries.Add((parameterName, null, false, kind, null));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 

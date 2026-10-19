@@ -71,6 +71,26 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(["T1", "T2", "T3"], results.Select(r => r.Mid.Leaf.Tip.Label).OrderBy(x => x));
     }
 
+    [Fact]
+    public void Two_hop_reference_ThenInclude_goes_native()
+    {
+        // EF-392: this exact shape declined under NativeOnly before this change (the recognizer now
+        // admits it; this test proves the lowerer can actually emit the transitive $lookup too).
+        using var db = CreateContext(MongoQueryMode.NativeOnly,
+            nameof(Two_hop_reference_ThenInclude_goes_native), out var spyLogger);
+
+        var results = db.Roots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList();
+
+        Assert.Equal(3, results.Count);
+        Assert.All(results, r => Assert.NotNull(r.Mid));
+        Assert.All(results, r => Assert.NotNull(r.Mid.Leaf));
+        Assert.Equal(["L1", "L2", "L3"], results.Select(r => r.Mid.Leaf.Label).OrderBy(x => x));
+
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("\"localField\" : \"MidId\"", mql);
+        Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
+    }
+
     // ---- T2: the MQL pin. Hop 3's localField must be scoped under hop 2's lookup alias. ----
 
     [Fact]
@@ -87,7 +107,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(3, results.Count);
 
-        AssertMql(spyLogger, "\"localField\" : \"_lookup_Leaf.TipId\"");
+        spyLogger.AssertExecutedMqlContains("\"localField\" : \"_lookup_Leaf.TipId\"");
     }
 
     // ---- T3: the second doorway — a user-authored chained Join of 3 levels ----
@@ -109,7 +129,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(3, results.Count);
         Assert.Equal(["R1|T1", "R2|T2", "R3|T3"], results.OrderBy(x => x));
 
-        AssertMql(spyLogger, "\"localField\" : \"_lookup_Leaf.TipId\"");
+        spyLogger.AssertExecutedMqlContains("\"localField\" : \"_lookup_Leaf.TipId\"");
     }
 
     // ---- T4: no over-prefixing at depth 1 and 2 ----
@@ -123,7 +143,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         var results = db.Roots.Include(r => r.Mid).ToList();
 
         Assert.Equal(3, results.Count);
-        AssertMql(spyLogger, "\"localField\" : \"MidId\"");
+        spyLogger.AssertExecutedMqlContains("\"localField\" : \"MidId\"");
         Assert.DoesNotContain("\"localField\" : \"_lookup_Mid.MidId\"",
             spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
     }
@@ -186,22 +206,6 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
             .ThenInclude(m => m.Leaf)
             .ThenInclude(l => l.Tip);
 
-#if EF8 || EF9
-        // PRE-EXISTING, unrelated to EF-372 and unchanged by it: EF's nav-expansion lowers an OPTIONAL
-        // reference navigation to Queryable.LeftJoin, which has no dispatch case at all before EF10, so EF
-        // Core rejects the whole query before any $lookup is built.
-        // The gap is BLANKET and DEPTH-INDEPENDENT, not specific to a deep chain: MEASURED, a ONE-hop
-        // `OptRoots.Include(r => r.Mid)` fails identically on both EF8 and EF9. The precedent for pinning
-        // this disposition rather than compiling the test out is
-        // RequiredNavigationUnwindTests.Optional_reference_Include_is_not_translated_on_EF8_EF9.
-        var ex = Assert.Throws<InvalidOperationException>(() => query.ToList());
-
-        // Pin the message, not the bare type: InvalidOperationException is also what a materialization
-        // failure throws, so the type alone cannot tell "declined to translate" from "translated and then
-        // broke".
-        Assert.Contains("could not be translated", ex.Message);
-        Assert.Contains("ThenInclude", ex.Message);
-#else
         var results = query.ToList();
 
         Assert.Equal(3, results.Count);
@@ -214,7 +218,6 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
         Assert.Contains("\"localField\" : \"_lookup_Leaf.TipId\"", mql);
         Assert.Contains("\"preserveNullAndEmptyArrays\" : true", mql);
-#endif
     }
 
     // ---- T6: two same-typed navigations (Order.Buyer / Order.Approver, both Person) is an ORDINARY
@@ -247,7 +250,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotNull(results[0].PrimaryMid.Leaf);
         Assert.Equal("A", results[0].PrimaryMid.Leaf.Label);
 
-        AssertMql(spyLogger, "\"localField\" : \"_lookup_PrimaryMid.LeafId\"");
+        spyLogger.AssertExecutedMqlContains("\"localField\" : \"_lookup_PrimaryMid.LeafId\"");
     }
 
     [Theory]
@@ -713,9 +716,6 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         return new OptionalAmbiguousChainDbContext(database, roots, mids, leaves, mode, loggerFactory);
     }
 #endif
-
-    private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
-        => Assert.Contains(expected, spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
 
     private class Nub
     {

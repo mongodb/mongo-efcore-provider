@@ -604,6 +604,75 @@ public class MongoSelectLowererTests
         Assert.True(replaceRootIndex > matchIndex, "filter $match must precede the $replaceRoot");
     }
 
+    // EF-449: a reference-collection-nav First/FirstOrDefault projection leaf tags its LookupExpression
+    // with PipelineKind == CorrelatedReducer (the $lookup's own sub-pipeline already narrows to 0-or-1
+    // matches). AppendLookupStages must emit $lookup + a LEFT-OUTER $unwind for it, rather than falling
+    // through to the final else's NativeTranslationNotSupportedException.
+    [Fact]
+    public void AppendLookupStages_emits_lookup_and_left_outer_unwind_for_CorrelatedReducer()
+    {
+        var (query, navigation) = TestReferenceSelect();
+        var lookup = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.CorrelatedReducer };
+        lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
+        query.AddLookup(lookup);
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.Same(lookup, Assert.IsType<MongoLookupStage>(s).Lookup),
+            s =>
+            {
+                var unwind = Assert.IsType<MongoUnwindStage>(s);
+                Assert.Same(lookup, unwind.Lookup);
+                Assert.True(unwind.PreserveNullAndEmptyArrays);
+            });
+    }
+
+    // Task 4 fix round (review finding C1): AddLookup's dedup-by-alias must MERGE a later, pipeline-bearing
+    // registration INTO the existing entry, never swap the list slot for the incoming object outright. A
+    // swap silently discards every attribute the two-argument (As/HasPipeline) dedup check doesn't look at
+    // -- ForceUnwind, PreserveNullAndEmptyArrays, InjectAfterRoot -- which matters because ANOTHER feature
+    // can hold its own reference to the original object (e.g. JoinInfo.Lookup) that a swap would silently
+    // orphan. This test pins all three attributes surviving, plus object identity, plus the incoming
+    // pipeline actually landing on the survivor.
+    [Fact]
+    public void AddLookup_merges_a_pipeline_bearing_registration_into_the_existing_entry_without_losing_its_own_attributes()
+    {
+        var (query, navigation) = TestReferenceSelect();
+
+        // The FIRST registration: bare (no pipeline), but carrying attributes a swap would lose --
+        // ForceUnwind/PreserveNullAndEmptyArrays (as a join's own JoinInfo.Lookup registration would) and
+        // InjectAfterRoot (as a projected-Count leaf's registration would).
+        var existing = new LookupExpression(navigation, forceUnwind: true)
+        {
+            PreserveNullAndEmptyArrays = false,
+            InjectAfterRoot = true
+        };
+        query.AddLookup(existing);
+
+        // The SECOND registration: same alias (same navigation), bare constructor but carrying a pipeline --
+        // mirrors a ThenInclude's nested $lookup arriving after a join/Count's bare placeholder.
+        var incoming = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.NestedInclude };
+        incoming.PipelineStages.Add(new BsonDocument("$match", new BsonDocument("x", 1)));
+        query.AddLookup(incoming);
+
+        var stored = Assert.Single(query.GetPendingLookups());
+
+        // MUTATION: reverting to "_pendingLookups[existingIndex] = lookup" (a swap) fails every assertion
+        // below except the pipeline ones -- the survivor would be `incoming` instead of `existing`, with
+        // ForceUnwind/PreserveNullAndEmptyArrays/InjectAfterRoot all reverted to their bare defaults.
+        Assert.Same(existing, stored);
+        Assert.True(stored.ForceUnwind);
+        Assert.False(stored.PreserveNullAndEmptyArrays);
+        Assert.True(stored.InjectAfterRoot);
+
+        // The incoming pipeline must still land on the survivor -- a merge that preserves attributes but
+        // drops the very pipeline the dedup exists to protect would just trade one bug for another.
+        Assert.True(stored.HasPipeline);
+        Assert.Equal(LookupPipelineKind.NestedInclude, stored.PipelineKind);
+        Assert.Single(stored.PipelineStages);
+    }
+
     // EF-347 filtered-inner OWNED SelectMany. Mirrors the reference filter test above but for an owned
     // $unwind: the lowerer's Filter $match block is kind-agnostic, so it must emit the $match after the
     // owned $unwind and before the $project (projected form) / $replaceRoot (whole-element form) with NO

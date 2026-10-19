@@ -239,6 +239,68 @@ internal static class BsonBinding
         Expression.Call(null, GetElementValueAtPathMethodInfo.MakeGenericMethod(type), bsonDocExpression,
             Expression.Constant(path));
 
+    /// <summary>
+    /// Create the expression which reads a value nested under one or more parent documents, walking
+    /// <paramref name="path"/> segment by segment and reading the LAST segment through
+    /// <paramref name="property"/>'s own serializer / nullability, exactly as
+    /// <see cref="GetPropertyValueAtElement{T}"/> does for a top-level element.
+    /// </summary>
+    /// <remarks>
+    /// The path-walking sibling of the <c>(name, property, mappedType)</c> overload of
+    /// <see cref="CreateGetValueExpression(Expression, string?, IProperty, Type)"/>, and the property-aware
+    /// sibling of <see cref="CreateGetElementValueAtPath"/> (which uses a bare TYPE serializer and so cannot
+    /// honour a value converter or a non-default BSON representation). Used when a projection leaf's alias and
+    /// its root-relative document path differ and the shaper is reading WHOLE, un-projected documents.
+    /// </remarks>
+    internal static MethodCallExpression CreateGetPropertyValueAtPath(
+        Expression bsonDocExpression, string[] path, IProperty property, Type mappedType)
+        => Expression.Call(
+            null,
+            GetPropertyValueAtPathMethodInfo.MakeGenericMethod(
+                property.IsNullable ? mappedType.MakeNullable() : mappedType),
+            bsonDocExpression,
+            Expression.Constant(path),
+            Expression.Constant(property));
+
+    private static readonly MethodInfo GetPropertyValueAtPathMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetPropertyValueAtPath));
+
+    internal static T? GetPropertyValueAtPath<T>(BsonDocument document, string[] path, IReadOnlyProperty property)
+    {
+        var current = document;
+        for (var i = 0; i < path.Length - 1; i++)
+        {
+            if (!current.TryGetValue(path[i], out var segmentValue) || segmentValue is not BsonDocument segmentDocument)
+            {
+                // An absent INTERMEDIATE segment is the ordinary shape of an unmatched left-outer join row: the
+                // whole joined sub-document ("_lookup_<Nav>") is not there. That is a structurally different
+                // condition from "the document is here but this leaf is missing", so it is deliberately NOT
+                // dispatched on property.IsNullable (the rule the leaf read below uses) but on whether the
+                // REQUESTED CLR TYPE can hold absence — i.e. exactly the rule GetElementValue{T} applies.
+                //
+                // MEASURED, and this is why it matters (EF-444 Task 4): the native leg reads the same unmatched
+                // row's leaf through GetElementValue{T} and yields null for a `string Region` — dispatching on
+                // property.IsNullable here instead made the DriverLinq/late-fallback leg THROW for that same
+                // row while Native succeeded, a mode-dependent divergence. See NativeJoinTests
+                // .LeftJoin_unmatched_row_reads_a_dotted_scalar_leaf_through_the_whole_document_path, which pins
+                // the two legs against EACH OTHER rather than against a hard-coded disposition.
+                if (typeof(T).IsNullableType())
+                {
+                    return default;
+                }
+
+                throw new InvalidOperationException(
+                    $"Document element '{string.Join(".", path)}' is missing for required non-nullable property '{
+                        property.Name}'.");
+            }
+
+            current = segmentDocument;
+        }
+
+        return GetPropertyValueAtElement<T>(current, path[^1], property);
+    }
+
     private static readonly MethodInfo GetPropertyValueMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetPropertyValue));

@@ -66,16 +66,10 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_Property_Select_Average_with_group_enumerable_projected(bool async)
     {
-#if EF8 || EF9
-        await base.GroupBy_Property_Select_Average_with_group_enumerable_projected(async);
-
-        AssertMql();
-#else
         await Assert.ThrowsAnyAsync<Exception>(() => base.GroupBy_Property_Select_Average_with_group_enumerable_projected(async));
 
         AssertMql(
         );
-#endif
     }
 
     public override async Task GroupBy_Property_Select_Count(bool async)
@@ -1839,8 +1833,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$count" : "_v" }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$count" : "v" }
+""");
     }
 
     public override async Task Count_with_predicate_after_GroupBy_without_aggregate(bool async)
@@ -1849,8 +1843,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$match" : { "$expr" : { "$gt" : [{ "$size" : "$_elements" }, 1] } } }, { "$count" : "_v" }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$match" : { "$expr" : { "$gt" : ["$__agg0", 1] } } }, { "$count" : "v" }
+""");
     }
 
     public override async Task LongCount_after_GroupBy_without_aggregate(bool async)
@@ -1859,8 +1853,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$count" : "_v" }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$count" : "v" }
+""");
     }
 
     public override async Task LongCount_with_predicate_after_GroupBy_without_aggregate(bool async)
@@ -1869,8 +1863,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$match" : { "$expr" : { "$gt" : [{ "$size" : "$_elements" }, 1] } } }, { "$count" : "_v" }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$match" : { "$expr" : { "$gt" : ["$__agg0", 1] } } }, { "$count" : "v" }
+""");
     }
 
     public override async Task Any_after_GroupBy_without_aggregate(bool async)
@@ -1879,8 +1873,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task Any_with_predicate_after_GroupBy_without_aggregate(bool async)
@@ -1889,8 +1883,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$match" : { "$expr" : { "$gt" : ["$__agg0", 1] } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$match" : { "$expr" : { "$gt" : ["$__agg0", 1] } } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task All_with_predicate_after_GroupBy_without_aggregate(bool async)
@@ -1899,8 +1893,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$match" : { "$nor" : [{ "$expr" : { "$gt" : ["$__agg0", 1] } }] } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$match" : { "$expr" : { "$not" : [{ "$gt" : ["$__agg0", 1] }] } } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task GroupBy_aggregate_followed_by_another_GroupBy_aggregate(bool async)

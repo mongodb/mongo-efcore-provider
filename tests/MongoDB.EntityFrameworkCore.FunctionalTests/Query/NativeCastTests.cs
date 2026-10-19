@@ -1422,15 +1422,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     // ── 21. Wrapped numeric-cast PROJECTION leaf behind a parameterized predicate ──────────────────
     //
-    // The mandatory late-native-factory-decline leg: `prefix` is a captured local, so the native renderer
-    // refuses the regex term, TryBuildNativeFactory declines LATE (after the Select's own translation already
-    // committed Route == Projection), and the alias-addressed shaper built for the native $project is handed
-    // a driver-rendered pipeline instead. This is the ONLY route that exercises the read-side fix under the
-    // default Native mode with a genuinely driver-built (not provider-built) $project — the read side must
-    // agree with whichever side actually rendered the "X" alias. Carries BOTH a non-nullable and a NULLABLE
-    // cast-target leg (fix round 1, Minor 6) — the non-nullable leaf alone cannot discriminate a silent alias
-    // miss (it fails loudly instead), which is exactly why this file's own late-decline legs elsewhere mix
-    // nullable and non-nullable leaves.
+    // `prefix` is a captured local: this shape now goes fully native under Native/NativeOnly (a parameterized
+    // StartsWith term is natively representable), so this proves Native and DriverLinq agree on the read.
+    // Carries BOTH a non-nullable and a NULLABLE cast-target leg (fix round 1, Minor 6) — the non-nullable
+    // leaf alone cannot discriminate a silent alias miss (it fails loudly instead), which is exactly why this
+    // file's own tests elsewhere mix nullable and non-nullable leaves.
 
     [Fact]
     public void Wrapped_cast_projection_leaf_behind_a_parameterized_predicate_returns_correct_values()
@@ -1559,14 +1555,15 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Bare_cast_projection_leaf_behind_a_parameterized_predicate_returns_correct_values()
     {
         var collection = Seed(nameof(Bare_cast_projection_leaf_behind_a_parameterized_predicate_returns_correct_values));
-        var prefix = "a";
+        var prefix = "a"; // a captured local, not a constant — a genuine query parameter
 
-        // Still throws under NativeOnly, but for a different reason than it used to: the DECLINE moved from
-        // translate time to render time. NativeOnly has no fallback to land on, so a late decline surfaces.
+        // Now goes fully native under NativeOnly too: a parameterized StartsWith term is natively
+        // representable (it defers its escape/anchor to a regex placeholder sentinel resolved at Build time),
+        // so the earlier render-time decline this test exercised no longer occurs.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => nativeOnly.Entities.AsNoTracking()
-                .Where(x => x.Label.StartsWith(prefix)).Select(x => (int)x.D).ToList());
+        var nativeOnlyResult = nativeOnly.Entities.AsNoTracking()
+            .Where(x => x.Label.StartsWith(prefix)).Select(x => (int)x.D).ToList();
+        Assert.Equal([1], nativeOnlyResult);
 
         using var native = CreateContext(collection, MongoQueryMode.Native);
         var nativeResult = native.Entities.AsNoTracking()

@@ -55,15 +55,13 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal sealed class MongoStreamingEntityMaterializerRewriter
 {
     private readonly IEntityType _rootEntityType;
-    private readonly BsonSerializerFactory _bsonSerializerFactory;
 
-    public MongoStreamingEntityMaterializerRewriter(
-        IEntityType rootEntityType,
-        BsonSerializerFactory bsonSerializerFactory)
-    {
-        _rootEntityType = rootEntityType;
-        _bsonSerializerFactory = bsonSerializerFactory;
-    }
+    // No BsonSerializerFactory dependency: unlike the DOM read path, this rewriter bakes each property's
+    // serializer into the generated expression tree at COMPILE time via the static
+    // BsonSerializerFactory.GetPropertySerializationInfo (see BuildTypedRead), so there is no per-instance
+    // factory to hold. It used to take and store one, and never read it.
+    public MongoStreamingEntityMaterializerRewriter(IEntityType rootEntityType)
+        => _rootEntityType = rootEntityType;
 
     private static readonly MethodInfo ReadStartDocumentMethod =
         typeof(IBsonReader).GetMethod(nameof(IBsonReader.ReadStartDocument))!;
@@ -94,14 +92,6 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
     private static readonly MethodInfo StringEqualsMethod =
         typeof(string).GetMethod(nameof(string.Equals), [typeof(string), typeof(string)])!;
-
-    private static readonly MethodInfo IsAssignableFromMethodInfo =
-        typeof(IReadOnlyEntityType).GetMethod(
-            nameof(IReadOnlyEntityType.IsAssignableFrom), [typeof(IReadOnlyEntityType)])!;
-
-    private static readonly MethodInfo IncludeReferenceMethodInfo =
-        typeof(MongoStreamingEntityMaterializerRewriter).GetTypeInfo()
-            .GetDeclaredMethod(nameof(IncludeReference))!;
 
     /// <summary>
     /// A per-entity-instance materialization plan: the typed locals for its scalar properties, an optional
@@ -178,10 +168,6 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
     private static readonly MethodInfo ReadEndArrayMethod =
         typeof(IBsonReader).GetMethod(nameof(IBsonReader.ReadEndArray))!;
-
-    private static readonly MethodInfo IncludeCollectionMethodInfo =
-        typeof(MongoStreamingEntityMaterializerRewriter).GetTypeInfo()
-            .GetDeclaredMethod(nameof(IncludeCollection))!;
 
     // Set by Rewrite from its readerParameter argument. The caller owns opening/positioning/disposing the
     // reader; this instance only ever serves a single Rewrite call, so a plain field is sufficient.
@@ -703,15 +689,15 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 #pragma warning restore EF1001 // Internal EF Core API usage.
 
         var inverseNavigation = navigation.Inverse;
-        var fixup = GenerateReferenceFixup(includingClrType, relatedEntityClrType, navigation, inverseNavigation);
+        var fixup = MongoIncludeFixups.GenerateFixup(includingClrType, relatedEntityClrType, navigation, inverseNavigation);
 
         var includeCall = Expression.IfThen(
             Expression.Call(
                 Expression.Constant(navigation.DeclaringEntityType, typeof(IReadOnlyEntityType)),
-                IsAssignableFromMethodInfo,
+                MongoIncludeFixups.IsAssignableFromMethodInfo,
                 Expression.Convert(concreteEntityTypeVariable, typeof(IReadOnlyEntityType))),
             Expression.Call(
-                IncludeReferenceMethodInfo.MakeGenericMethod(includingClrType, relatedEntityClrType),
+                MongoIncludeFixups.IncludeReferenceMethodInfo.MakeGenericMethod(includingClrType, relatedEntityClrType),
                 entityEntryExpression,
                 instanceVariable,
                 concreteEntityTypeVariable,
@@ -733,7 +719,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// <summary>
     /// Splice an owned collection-navigation fixup into a rewritten entity materializer block, mirroring EF's
     /// <c>IncludeCollection</c> path. <paramref name="collectionExpression"/> is the materialized
-    /// <c>List&lt;TElement&gt;</c> local filled by the array loop; <see cref="IncludeCollection"/> wires each
+    /// <c>List&lt;TElement&gt;</c> local filled by the array loop; <see cref="MongoIncludeFixups"/>'s <c>IncludeCollection</c> wires each
     /// element onto the principal collection navigation (and, when tracking, marks it loaded).
     /// </summary>
     private BlockExpression SpliceCollectionInclude(
@@ -754,16 +740,16 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 #pragma warning restore EF1001 // Internal EF Core API usage.
 
         var inverseNavigation = navigation.Inverse;
-        var fixup = GenerateCollectionFixup(includingClrType, relatedEntityClrType, navigation, inverseNavigation);
+        var fixup = MongoIncludeFixups.GenerateFixup(includingClrType, relatedEntityClrType, navigation, inverseNavigation);
 
         // IncludeCollection<TIncluding,TIncluded> expects IEnumerable<TIncluded>; List<TElement> qualifies.
         var includeCall = Expression.IfThen(
             Expression.Call(
                 Expression.Constant(navigation.DeclaringEntityType, typeof(IReadOnlyEntityType)),
-                IsAssignableFromMethodInfo,
+                MongoIncludeFixups.IsAssignableFromMethodInfo,
                 Expression.Convert(concreteEntityTypeVariable, typeof(IReadOnlyEntityType))),
             Expression.Call(
-                IncludeCollectionMethodInfo.MakeGenericMethod(includingClrType, relatedEntityClrType),
+                MongoIncludeFixups.IncludeCollectionMethodInfo.MakeGenericMethod(includingClrType, relatedEntityClrType),
                 entityEntryExpression,
                 instanceVariable,
                 concreteEntityTypeVariable,
@@ -838,107 +824,6 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         throw new NativeTranslationNotSupportedException(
             $"No streaming plan for owned collection '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}'.");
     }
-
-    /// <summary>
-    /// Collection-include fixup, mirroring EF's binding remover <c>IncludeCollection</c>: adds each
-    /// materialized related entity onto the principal's collection navigation (and sets the loaded flag).
-    /// </summary>
-    private static void IncludeCollection<TIncludingEntity, TIncludedEntity>(
-#pragma warning disable EF1001 // Internal EF Core API usage.
-        InternalEntityEntry? entry,
-#pragma warning restore EF1001 // Internal EF Core API usage.
-        object? entity,
-        IEntityType entityType,
-        IEnumerable<TIncludedEntity>? relatedEntities,
-        INavigation navigation,
-        INavigation? inverseNavigation,
-        Action<TIncludingEntity, TIncludedEntity> fixup,
-        bool setLoaded)
-    {
-        if (entity == null
-            || !navigation.DeclaringEntityType.IsAssignableFrom(entityType))
-        {
-            return;
-        }
-
-        if (entry == null)
-        {
-            var includingEntity = (TIncludingEntity)entity;
-            navigation.SetIsLoadedWhenNoTracking(includingEntity);
-
-            if (relatedEntities != null)
-            {
-                foreach (var relatedEntity in relatedEntities)
-                {
-                    fixup(includingEntity, relatedEntity);
-                    inverseNavigation?.SetIsLoadedWhenNoTracking(relatedEntity!);
-                }
-            }
-        }
-        else
-        {
-            if (setLoaded)
-            {
-#pragma warning disable EF1001 // Internal EF Core API usage.
-                entry.SetIsLoaded(navigation);
-#pragma warning restore EF1001 // Internal EF Core API usage.
-            }
-
-            if (relatedEntities != null)
-            {
-                using var enumerator = relatedEntities.GetEnumerator();
-                while (enumerator.MoveNext())
-                {
-                }
-            }
-        }
-
-        // Ensure empty collections still initialize a new CLR object for them.
-        if (relatedEntities != null && !navigation.IsShadowProperty())
-        {
-            navigation.GetCollectionAccessor()!.GetOrCreate(entity, forMaterialization: true);
-        }
-    }
-
-    private static Delegate GenerateCollectionFixup(
-        Type entityType,
-        Type relatedEntityType,
-        INavigation navigation,
-        INavigation? inverseNavigation)
-    {
-        var entityParameter = Expression.Parameter(entityType);
-        var relatedEntityParameter = Expression.Parameter(relatedEntityType);
-        var expressions = new List<Expression>
-        {
-            AssignCollectionNavigation(entityParameter, relatedEntityParameter, navigation)
-        };
-
-        if (inverseNavigation != null)
-        {
-            expressions.Add(
-                inverseNavigation.IsCollection
-                    ? AssignCollectionNavigation(relatedEntityParameter, entityParameter, inverseNavigation)
-                    : AssignReferenceNavigation(relatedEntityParameter, entityParameter, inverseNavigation));
-        }
-
-        return Expression.Lambda(
-                Expression.Block(typeof(void), expressions), entityParameter, relatedEntityParameter)
-            .Compile();
-    }
-
-    private static Expression AssignCollectionNavigation(
-        ParameterExpression entity,
-        ParameterExpression relatedEntity,
-        INavigation navigation)
-        => Expression.Call(
-            Expression.Constant(navigation.GetCollectionAccessor()),
-            CollectionAccessorAddMethodInfo,
-            entity,
-            relatedEntity,
-            Expression.Constant(true));
-
-    private static readonly MethodInfo CollectionAccessorAddMethodInfo =
-        typeof(IClrCollectionAccessor).GetTypeInfo().GetDeclaredMethod(nameof(IClrCollectionAccessor.Add))!;
 
     /// <summary>
     /// Rewrite an owned reference navigation's expression. The owned-entity block has the shape
@@ -1195,80 +1080,6 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
     private static readonly ConstructorInfo RequiredPropertyNullExceptionCtor
         = typeof(InvalidOperationException).GetConstructor([typeof(string)])!;
-
-    /// <summary>
-    /// Reference-include fixup, mirroring EF's binding remover <c>IncludeReference</c>: wires the materialized
-    /// related entity onto the principal via <paramref name="fixup"/> (and sets the navigation loaded flag).
-    /// </summary>
-    private static void IncludeReference<TIncludingEntity, TIncludedEntity>(
-        InternalEntityEntry? entry,
-        object? entity,
-        IEntityType entityType,
-        TIncludedEntity relatedEntity,
-        INavigation navigation,
-        INavigation? inverseNavigation,
-        Action<TIncludingEntity, TIncludedEntity> fixup,
-        bool _)
-    {
-        if (entity == null
-            || !navigation.DeclaringEntityType.IsAssignableFrom(entityType))
-        {
-            return;
-        }
-
-        if (entry == null)
-        {
-            var includingEntity = (TIncludingEntity)entity;
-            navigation.SetIsLoadedWhenNoTracking(includingEntity);
-            if (relatedEntity != null)
-            {
-                fixup(includingEntity, relatedEntity);
-                if (inverseNavigation != null
-                    && !inverseNavigation.IsCollection)
-                {
-                    inverseNavigation.SetIsLoadedWhenNoTracking(relatedEntity);
-                }
-            }
-        }
-        // For non-null relatedEntity the StateManager sets the flag.
-        else if (relatedEntity == null)
-        {
-            entry.SetIsLoaded(navigation);
-        }
-    }
-
-    private static Delegate GenerateReferenceFixup(
-        Type entityType,
-        Type relatedEntityType,
-        INavigation navigation,
-        INavigation? inverseNavigation)
-    {
-        var entityParameter = Expression.Parameter(entityType);
-        var relatedEntityParameter = Expression.Parameter(relatedEntityType);
-        var expressions = new List<Expression>
-        {
-            AssignReferenceNavigation(entityParameter, relatedEntityParameter, navigation)
-        };
-
-        if (inverseNavigation != null)
-        {
-            // A single owned reference's inverse is always a single reference back to the principal; a
-            // collection inverse does not occur for the owned-reference shapes this rewriter accepts.
-            expressions.Add(
-                AssignReferenceNavigation(relatedEntityParameter, entityParameter, inverseNavigation));
-        }
-
-        return Expression.Lambda(
-                Expression.Block(typeof(void), expressions), entityParameter, relatedEntityParameter)
-            .Compile();
-    }
-
-    private static Expression AssignReferenceNavigation(
-        ParameterExpression entity,
-        ParameterExpression relatedEntity,
-        INavigation navigation)
-        => entity.MakeMemberAccess(navigation.GetMemberInfo(forMaterialization: true, forSet: true))
-            .Assign(relatedEntity);
 
     /// <summary>
     /// Rewrites an EF construction/tracking block to consume the streaming locals instead of a ValueBuffer:

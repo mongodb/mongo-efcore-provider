@@ -214,6 +214,63 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
             db.Entities.Select(o => new { o.Country }).Distinct().Count());
     }
 
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Bare_scalar_Distinct_then_Max_goes_native(MongoQueryMode mode)
+    {
+        // EF-453: Sum/Min/Max/Average terminating directly on a bare-scalar-projected Distinct() now go
+        // native (NativeOnly succeeding is the "went native" signal). Distinct years: {2020, 2021}.
+        using var db = CreateContext(SeedOrders(), mode, nameof(Bare_scalar_Distinct_then_Max_goes_native) + mode);
+
+        Assert.Equal(2021, db.Entities.Select(o => o.Year).Distinct().Max());
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Bare_scalar_Distinct_then_Min_goes_native(MongoQueryMode mode)
+    {
+        using var db = CreateContext(SeedOrders(), mode, nameof(Bare_scalar_Distinct_then_Min_goes_native) + mode);
+
+        Assert.Equal(2020, db.Entities.Select(o => o.Year).Distinct().Min());
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Bare_scalar_Distinct_then_Sum_goes_native(MongoQueryMode mode)
+    {
+        using var db = CreateContext(SeedOrders(), mode, nameof(Bare_scalar_Distinct_then_Sum_goes_native) + mode);
+
+        Assert.Equal(4041, db.Entities.Select(o => o.Year).Distinct().Sum());
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Bare_scalar_Distinct_then_Average_goes_native(MongoQueryMode mode)
+    {
+        using var db = CreateContext(SeedOrders(), mode, nameof(Bare_scalar_Distinct_then_Average_goes_native) + mode);
+
+        Assert.Equal(2020.5, db.Entities.Select(o => o.Year).Distinct().Average());
+    }
+
+    [Fact]
+    public void Wrapped_projection_Distinct_then_Sum_still_falls_back_under_native_only()
+    {
+        // Sum/Min/Max/Average require a selector-less call reducing whatever Distinct() already flattened —
+        // the parameterless overloads are only reachable over a genuinely scalar-projected Distinct (C#'s
+        // IComparable constraint rules out an anonymous-type source). A Sum(x => x.Year) OVER a wrapped
+        // projection's member is a different (still out-of-scope) shape: TryBindDistinctTerminalAggregate
+        // declines whenever a selector is present, so this keeps falling back gracefully.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(Wrapped_projection_Distinct_then_Sum_still_falls_back_under_native_only));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            db.Entities.Select(o => new { o.Year }).Distinct().Sum(r => r.Year));
+    }
+
     [Fact]
     public void Distinct_then_GroupBy_falls_back_and_matches_driver_linq()
     {

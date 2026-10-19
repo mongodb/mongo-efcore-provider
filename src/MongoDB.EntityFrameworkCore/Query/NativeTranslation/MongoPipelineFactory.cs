@@ -415,20 +415,32 @@ internal sealed class MongoPipelineFactory
         => new BsonDocument("$limit", MongoValueRenderer.RenderValue(stage.Limit, placeholders));
 
     private static BsonDocument RenderLookup(LookupExpression lookup)
-        => new BsonDocument("$lookup", new BsonDocument
+    {
+        // EF-449's CorrelatedReducer kind needs the localField/foreignField+pipeline shape specifically —
+        // an indexable equality join PLUS a supplementary pipeline ($match/$sort/$limit:1) MongoDB
+        // supports combining directly, unlike LookupExpression.ToLookupStageDocument()'s let+pipeline
+        // shape (which correlates via $expr instead, because EF-450's NestedInclude kind has no single
+        // equality-comparable field of its own to hand to localField/foreignField at this level — it
+        // exists purely to carry a nested ThenInclude's own $lookup(s), matching the shape the driver-LINQ
+        // fallback bridge already emits for that kind).
+        if (lookup.PipelineKind == LookupPipelineKind.CorrelatedReducer)
         {
-            { "from", lookup.From },
-            { "localField", lookup.LocalField },
-            { "foreignField", lookup.ForeignField },
-            { "as", lookup.As }
-        });
+            var lookupDoc = new BsonDocument
+            {
+                { "from", lookup.From },
+                { "localField", lookup.LocalField },
+                { "foreignField", lookup.ForeignField },
+                { "pipeline", new BsonArray(lookup.PipelineStages) },
+                { "as", lookup.As }
+            };
+            return new BsonDocument("$lookup", lookupDoc);
+        }
+
+        return lookup.ToLookupStageDocument();
+    }
 
     private static BsonDocument RenderUnwind(LookupExpression lookup, bool preserveNullAndEmptyArrays)
-        => new BsonDocument("$unwind", new BsonDocument
-        {
-            { "path", "$" + lookup.As },
-            { "preserveNullAndEmptyArrays", preserveNullAndEmptyArrays }
-        });
+        => lookup.ToUnwindStageDocument(preserveNullAndEmptyArrays);
 
     // Renders a $unionWith over the operand's nested pipeline into the SAME placeholder table (so a
     // parameter inside the operand substitutes at Build time), then, for Union, the full-document dedup.
@@ -697,12 +709,28 @@ internal sealed class MongoPipelineFactory
         int index,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        var (name, serializer, isArray) = _placeholders.Entries[index];
+        var (name, serializer, isArray, regexKind, entityMemberProperty) = _placeholders.Entries[index];
 
         if (!parameterValues.TryGetValue(name, out var rawValue))
             throw new InvalidOperationException(
                 $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
                 + "is not present in parameterValues. This is a bug in the query compilation pipeline.");
+
+        // Entity-equality rewrite (`c == local`): the raw parameter value is a WHOLE ENTITY instance, not
+        // the value to compare — extract the key member's own CLR value from it now, per execution, mirroring
+        // the regexKind deferred-computation pattern immediately below. Applied before the regexKind/serializer
+        // branches so the extracted value flows through the ordinary serialization path unchanged.
+        if (entityMemberProperty is not null && rawValue is not null)
+            rawValue = entityMemberProperty.GetGetter().GetClrValue(rawValue);
+
+        // A parameterized string.StartsWith/EndsWith/Contains term: the escape+anchor transform can only
+        // run now, per execution, since render (compile) time had no value to escape. Mirrors
+        // MongoQueryLanguageRenderer.RenderRegex's constant-term branch exactly, just deferred.
+        if (regexKind is not null)
+        {
+            var pattern = MongoRegexPatternBuilder.BuildPattern((string)rawValue!, regexKind.Value);
+            return new BsonRegularExpression(pattern, "s");
+        }
 
         // Property-less primitive (e.g. Skip/Take count): serialize via BsonValue.Create.
         if (serializer is null)
