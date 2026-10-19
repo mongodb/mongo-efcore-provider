@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +25,7 @@ using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -85,6 +87,16 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                             return rootArithmeticRead;
                         }
 
+                        // The bare-body spelling of the string-to-char-sequence leaf
+                        // (`select p.Name.AsEnumerable()`). Without this it falls through to
+                        // TryResolveFieldAccess, which resolves nothing for an Enumerable.* call, and the whole
+                        // BsonDocument is handed back where a char sequence was expected.
+                        if (TryBindStringSequenceLeaf(sourceExpression, projectionBindingExpression.Type,
+                                out var rootStringSequenceRead))
+                        {
+                            return rootStringSequenceRead;
+                        }
+
                         var rootField = TryResolveFieldAccess(sourceExpression);
                         if (rootField.Property != null)
                             return CreateGetValueExpression(
@@ -143,6 +155,20 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 if (TryBindArithmeticLeaf(sourceExpression, projectionBindingExpression.Type, out var arithmeticRead))
                 {
                     return arithmeticRead;
+                }
+
+                // A string-to-char-sequence leaf (`select new { P = b.City.AsEnumerable(), b.Posts }`) mixed
+                // alongside an owned-array / owned-nav-entity reference. Same reasoning as the arithmetic leaf
+                // immediately above: MongoProjectionBindingExpressionVisitor registers the whole
+                // Enumerable.AsEnumerable/ToList/ToArray call as ONE projection-mapping leaf, and in this path
+                // the pushed-down Select was stripped, so the operator has to be re-applied client-side over a
+                // whole-document read. Without this the leaf falls through to the alias read at the bottom of
+                // this arm, which looks for a document element literally named after the alias and throws
+                // ("Document element 'P' is missing but required" — MEASURED under MongoQueryMode.DriverLinq).
+                if (TryBindStringSequenceLeaf(sourceExpression, projectionBindingExpression.Type,
+                        out var stringSequenceRead))
+                {
+                    return stringSequenceRead;
                 }
 
                 var fieldAccess = TryResolveFieldAccess(sourceExpression);
@@ -347,6 +373,27 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             docExpr = CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument));
         }
 
+        // A join-scope-sourced member (native-join-scope-nested-projection ticket): field.ElementName is a
+        // dotted path relative to docExpr (e.g. "_lookup_Customer.CustomerID"), not a root property of the
+        // outer entity — CreateGetValueExpression(docExpr, field.Property, memberType) would incorrectly
+        // look up field.Property's OWN element name directly on docExpr. Walk the dotted path instead via
+        // the same multi-segment helper the ordinary (native) read side uses for its own [alias, memberName]
+        // path — it already treats an absent INTERMEDIATE segment (an unmatched left-outer join row) as
+        // null rather than a missing-leaf error, which is exactly what an Inner-side member needs here.
+        //
+        // Dispatching on "is the ElementName dotted" rather than on provenance is SAFE, not merely convenient
+        // (final-review Finding 7): a root-relative EF-447 member — the other recognizer that builds this node
+        // — can never present a dotted ElementName, because NativeProjectionBinder
+        // .TryGetDocumentConstructionLeaf explicitly declines any member whose field.ElementName contains a
+        // dot (see its `!field.ElementName.Contains('.')` conjunct and the remarks giving the reason). So the
+        // two provenances partition cleanly on this test, and the undotted branch below cannot be reached by a
+        // join-scope member nor the dotted branch by a root-relative one. If that decline is ever relaxed,
+        // this dispatch must become provenance-carrying data instead of a string test.
+        if (field.ElementName.Contains('.'))
+        {
+            return BsonBinding.CreateGetPropertyValueAtPath(docExpr, field.ElementName.Split('.'), field.Property, memberType);
+        }
+
         return CreateGetValueExpression(docExpr, field.Property, memberType);
     }
 
@@ -445,6 +492,63 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         Expression count = Expression.Property(
             Expression.Coalesce(array, Expression.New(typeof(BsonArray))), nameof(BsonArray.Count));
         result = count.Type == resultType ? count : Expression.Convert(count, resultType);
+        return true;
+    }
+
+    /// <summary>
+    /// Binds a STRING-TO-CHAR-SEQUENCE projection leaf — <c>select new { P = b.City.AsEnumerable(), b.Posts }</c>
+    /// and its <c>.ToList()</c>/<c>.ToArray()</c> spellings — against the WHOLE, un-projected document this
+    /// visitor runs over. The mirror of the native read side's own handling
+    /// (<see cref="MongoProjectionBindingRemovingExpressionVisitor"/>'s matching block), differing only in where
+    /// the raw string is read from: there it is this leaf's <c>$project</c> alias, here it is the source
+    /// property's own natural document location.
+    /// </summary>
+    /// <remarks>
+    /// The read goes through the source <see cref="IProperty"/>, not a bare element read, so a value converter or
+    /// a non-default <c>BsonRepresentation</c> on the string property still applies — the same reason the native
+    /// side reads it property-aware. The original <see cref="MethodCallExpression"/> is then rebuilt around that
+    /// read, so the compiled shaper performs the char-sequence materialization at execution time exactly as
+    /// <c>Enumerable.ToList(rawString)</c> would in memory (<see langword="string"/> implements
+    /// <c>IEnumerable&lt;char&gt;</c>). Returns <see langword="false"/> for anything that is not such a leaf, or
+    /// whose argument does not resolve to a property, so the caller falls through to its other resolution paths.
+    /// </remarks>
+    private bool TryBindStringSequenceLeaf(Expression? mappedExpression, Type resultType, out Expression result)
+    {
+        result = null!;
+
+        if (mappedExpression is not MethodCallExpression call
+            || !NativeProjectionBinder.IsStringSequenceMaterializationCall(call))
+        {
+            return false;
+        }
+
+        var fieldAccess = TryResolveFieldAccess(call.Arguments[0]);
+        if (fieldAccess.Property is not { } property)
+        {
+            return false;
+        }
+
+        // The emit side only ever admits this leaf over a string-typed field (IsStringSequenceMaterializationCall
+        // requires the call's source expression to be typed `string`), so a resolved property that is NOT a
+        // string means the resolver and the emit side have disagreed about which member this leaf reads.
+        Debug.Assert(property.ClrType == typeof(string),
+            $"String-sequence projection leaf resolved to non-string property '{property.Name}' of type '{property.ClrType}'.");
+
+        // The driver's own native Join places the root entity's own scalars under "_outer" rather than at the
+        // document root — the same redirect every other read in this visitor performs.
+        var docExpr = fieldAccess.DocumentExpression ?? _docParameter;
+        if (_queryExpression.UsesDriverJoinFields
+            && ReferenceEquals(docExpr, _docParameter))
+        {
+            docExpr = CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument));
+        }
+
+        result = Expression.Call(call.Method, CreateGetValueExpression(docExpr, property, typeof(string)));
+        if (result.Type != resultType)
+        {
+            result = Expression.Convert(result, resultType);
+        }
+
         return true;
     }
 

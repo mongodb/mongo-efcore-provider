@@ -38,12 +38,11 @@ public class NorthwindJoinQueryMongoTest : NorthwindJoinQueryTestBase<NorthwindQ
 
     public override async Task LeftJoin(bool async)
     {
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.LeftJoin(async);
 
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "c" : "$$ROOT", "_lookup_Orders" : "$_lookup_Orders", "_id" : 0 } }
 """);
     }
 
@@ -316,7 +315,7 @@ Customers.
 
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer.CustomerID", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "CustomerID", "foreignField" : "CustomerID", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$project" : { "_" : "$$ROOT", "_lookup_Order" : "$_lookup_Order", "_id" : 0 } }
 """);
     }
 
@@ -407,13 +406,23 @@ Customers.
 
     public override async Task GroupJoin_DefaultIfEmpty(bool async)
     {
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.GroupJoin_DefaultIfEmpty(async);
 
+#if EF8 || EF9
+        // See GroupJoin_DefaultIfEmpty_multiple's remarks: NativeSlotPopulator's candidate-join arm doesn't
+        // recognize EF8/EF9's internal LeftJoin shim, so this pre-existing, version-generic gap keeps the
+        // query on the driver-LINQ fallback there even though EF-TBD's left-outer/collection-navigation fix
+        // lets it go native on EF10.
         AssertMql(
             """
 Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
+#else
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "c" : "$$ROOT", "_lookup_Orders" : "$_lookup_Orders", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task GroupJoin_DefaultIfEmpty_multiple(bool async)
@@ -426,13 +435,25 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         // not the BCL Queryable.LeftJoin added in .NET 10 - our own method-source allow-list only recognized
         // the latter, so the flattened call was declined before ever reaching TranslateLeftJoin. Once
         // MongoQueryableMethodTranslatingExpressionVisitor recognizes both forms, EF-375's join-flattening
-        // fix (itself version-generic, no #if needed) applies identically on EF8/EF9/EF10.
+        // fix (itself version-generic, no #if needed) applies identically on EF8/EF9/EF10 — the query now
+        // reaches TranslateLeftJoin on every version, but EF-TBD's left-outer/collection-navigation native
+        // eligibility fix is NOT version-generic: NativeSlotPopulator's candidate-join arm still doesn't
+        // recognize EF8/EF9's internal LeftJoin shim as a joining operator at all (see
+        // NativeJoinScopeProjectionBinder's remarks), so the query is marked non-native before eligibility is
+        // even consulted there. Only EF10 goes native; EF8/EF9 keep falling back, correctly.
         await base.GroupJoin_DefaultIfEmpty_multiple(async);
 
+#if EF8 || EF9
         AssertMql(
             """
 Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders_1" } }, { "$unwind" : { "path" : "$_lookup_Orders_1", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }
 """);
+#else
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders_1" } }, { "$unwind" : { "path" : "$_lookup_Orders_1", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "c" : "$$ROOT", "_lookup_Orders" : "$_lookup_Orders", "_lookup_Orders_1" : "$_lookup_Orders_1", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task GroupJoin_DefaultIfEmpty2(bool async)
@@ -838,7 +859,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
         await base.GroupJoin_customers_employees_shadow(async);
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer.City", "foreignField" : "City", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "Title" : "$Inner.Title", "_id" : "$Inner._id" } }
+Customers.{ "$lookup" : { "from" : "Employees", "localField" : "City", "foreignField" : "City", "as" : "_lookup_Employee" } }, { "$unwind" : { "path" : "$_lookup_Employee", "preserveNullAndEmptyArrays" : false } }, { "$project" : { "Title" : "$_lookup_Employee.Title", "Id" : "$_lookup_Employee._id", "_id" : 0 } }
 """);
     }
 

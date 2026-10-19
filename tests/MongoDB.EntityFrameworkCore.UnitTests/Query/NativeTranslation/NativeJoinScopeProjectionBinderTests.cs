@@ -423,43 +423,57 @@ public class NativeJoinScopeProjectionBinderTests
     }
 
     [Fact]
-    public void Declines_a_second_chained_join_rather_than_reusing_the_first_joins_scope()
+    public void Binds_a_second_chained_join_reusing_the_first_joins_target_type_at_the_correct_alias()
     {
-        // The structural closure of NativeJoinScopeTranslator's documented RESIDUAL GAP, re-verified after
-        // the native-chained-join-scope plan's Task 6 widening. A JoinScope built from a chained second join
-        // whose OWN flat TransparentIdentifier<TOuter,TInner> coincidentally matches the FIRST join's
-        // Outer/Inner CLR types (both joins here target the SAME entity type in the SAME positions) would
-        // otherwise be resolved against the FIRST join's InnerPrefix ($lookup alias) — silently wrong data.
-        // Before Task 6 the call-site gate's `Joins.Count == 1` conjunct declined this outright; Task 6
-        // widens that gate to `scope.Levels.Count == Joins.Count`, which THIS shape now satisfies (both joins
-        // are individually eligible, so JoinScope IS rebuilt to a 2-level chain) — but the trailing selector's
-        // leaves (`o.Name`, `r2.Total`) are plain scalars, not whole-entity references, so
-        // NativeJoinScopeProjectionBinder's own chain restriction (Levels.Count > 1 admits ONLY whole-entity
-        // leaves, never falling through to the flat, type-comparing NativeJoinScopeTranslator.TryTranslateValue
-        // this gap warns about) declines the whole projection one layer down instead. Same net Route/Lookups
-        // outcome as before Task 6, different mechanism — see NativeJoinScopeProjectionBinder's own "RESIDUAL
-        // GAP (updated for Task 6)" remarks.
+        // The structural closure of NativeJoinScopeTranslator's documented RESIDUAL GAP, re-verified after the
+        // native-chained-join-scalar-projection plan's Task 4 widening. A JoinScope built from a chained
+        // second join whose OWN flat TransparentIdentifier<TOuter,TInner> coincidentally matches the FIRST
+        // join's Outer/Inner CLR types (both joins here target the SAME entity type in the SAME positions) is
+        // the gap's own worked example: a translator that resolved this leaf by comparing CLR types (the OLD
+        // flat NativeJoinScopeTranslator.TryTranslateValue) would misresolve `r2.Total` against the FIRST
+        // join's InnerPrefix — silently wrong data. This test is now the POSITIVE proof that
+        // TryTranslateSingleScope's resolution — by the ACTUAL member-name hop chain
+        // (MongoTransparentScopeResolver.ScopeRerootingVisitor), never by comparing a scope's recorded CLR
+        // type against some OTHER level's type — targets the SECOND join's own alias correctly, rather than
+        // the gap's hazard materializing. The residual gap therefore stays closed by resolving correctly, not
+        // by declining: `o.Name` structurally re-roots to scope 0 (the root Owner, unprefixed), and `r2.Total`
+        // structurally re-roots to scope 2 — the SECOND join's own Levels[1], not Levels[0] — because the
+        // actual rootParam here is a genuinely two-level-nested TransparentIdentifier
+        // (TransparentIdentifier<TransparentIdentifier<Owner,Order>,Order>), which
+        // MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope's own chain-rebuild
+        // produces for this shape — confirmed by asserting Levels[1].InnerPrefix is NOT Levels[0].InnerPrefix
+        // below, and that `Total` is emitted under the SECOND (Levels[1]) prefix.
         var mongoQ = TranslateJoinQuery((owners, orders) =>
             owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
                 .Select(x => x.o)
                 .Join(orders, o => o.Id, r2 => r2.OwnerId, (o, r2) => new { o.Name, r2.Total }));
 
-        // NOTE (final-review finding 4): the intermediate `Select(x => x.o)` runs while Joins.Count is still 1,
-        // so it hits the bare-whole-entity-leaf confirm arm — AddLookup FIRES and
-        // MongoQueryExpression.UsesDriverJoinFields flips — and only the SECOND join then pushes the query to
-        // Fallback. Routing alone therefore doesn't prove the resulting driver-LINQ fallback still returns the
-        // right rows for this shape (the forward-ordering analogue of that ordering produced a real wrong-data
-        // failure on this plan: NorthwindJoinQueryMongoTest.GroupJoin_Where). No database is reachable from a
-        // unit test, so the RESULT half is pinned by the differential oracle appended to
-        // NativeJoinTests.Chained_second_join_still_declines_cleanly_in_NativeOnly; the two must be read
-        // together.
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        var scope = mongoQ.Select.JoinScope!;
+        Assert.Equal(2, scope.Levels.Count);
         Assert.Equal(2, mongoQ.Joins.Count);
-        // Both lookups are registered: the first by the intermediate Select's confirm arm, the second
-        // unconditionally by TranslateJoinCore's own multi-join flattening once Joins.Count > 1 (independent of
-        // any confirmation) — measured, and the concrete reason the fallback needs a result check.
+
+        // Both lookups are registered: the first by the intermediate Select's own bare-whole-entity-leaf
+        // confirm arm (which fires while Joins.Count is still 1), the second unconditionally by
+        // TranslateJoinCore's own multi-join flattening once Joins.Count > 1 — measured, and independent of
+        // whether the trailing projection ends up binding a leaf against either level.
         Assert.Equal(2, mongoQ.Lookups.Count);
-        Assert.Empty(mongoQ.Select.Projection);
-        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+
+        Assert.Equal(["Name", "Total"], mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+
+        // Name (root, scope 0): plain MongoFieldExpression, unprefixed.
+        var name = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[0].Expression);
+        Assert.Equal("Name", name.ElementName);
+
+        // Total (the SECOND join's own Inner, scope 2 == Levels[1]): prefixed with Levels[1].InnerPrefix, NOT
+        // Levels[0].InnerPrefix — the alias that would have been used had this leaf misresolved against the
+        // FIRST join instead, per the gap's worked example.
+        Assert.NotEqual(scope.Levels[0].InnerPrefix, scope.Levels[1].InnerPrefix);
+        var total = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[1].Expression);
+        Assert.Equal(scope.Levels[1].InnerPrefix + ".Total", total.ElementName);
+
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
     }
 
     [Fact]
@@ -508,5 +522,114 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.Equal(2, mongoQ.Lookups.Count);
         Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
         Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Binds_a_two_level_chain_projection_with_scalar_leaves_at_every_scope()
+    {
+        // Native-chained-join-scalar-projection plan (2026-09-18). Every leaf is a plain scalar rooted at
+        // exactly one scope: e.o.Name (root, scope 0), e.r.Total (join #1's Inner, scope 1), l.Sku (join #2's
+        // Inner, scope 2). Mirrors the motivating shape in
+        // NorthwindMiscellaneousQueryMongoTest.Join_Customers_Orders_Orders_Skip_Take_Same_Properties, minus the
+        // trailing Skip/Take (a separate, still-open gap).
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new
+                {
+                    OwnerName = e.o.Name,
+                    OrderTotal = e.r.Total,
+                    LineSku = l.Sku
+                }));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        var scope = mongoQ.Select.JoinScope!;
+        Assert.Equal(2, scope.Levels.Count);
+
+        Assert.Equal(["OwnerName", "OrderTotal", "LineSku"], mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+
+        // OwnerName (root, scope 0): plain MongoFieldExpression, unprefixed.
+        var ownerName = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[0].Expression);
+        Assert.Equal("Name", ownerName.ElementName);
+
+        // OrderTotal (join #1's Inner, scope 1): prefixed with Levels[0].InnerPrefix.
+        var orderTotal = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[1].Expression);
+        Assert.Equal(scope.Levels[0].InnerPrefix + ".Total", orderTotal.ElementName);
+
+        // LineSku (join #2's Inner, scope 2): prefixed with Levels[1].InnerPrefix.
+        var lineSku = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[2].Expression);
+        Assert.Equal(scope.Levels[1].InnerPrefix + ".Sku", lineSku.ElementName);
+
+        Assert.Equal(2, mongoQ.Lookups.Count);
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Binds_a_chain_scalar_leaf_mixed_with_a_whole_entity_leaf()
+    {
+        // `new { cr = e.o, or = e.r, LineSku = l.Sku }` — a whole-entity leaf (root) alongside a chain-scalar
+        // leaf (scope 2). The existing whole-entity sibling-readability guard already accepts a plain
+        // MongoFieldExpression sibling; this leaf produces exactly that, so no guard change is needed — this
+        // test verifies that, not just the leaf's own translation.
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { cr = e.o, or = e.r, LineSku = l.Sku }));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        var scope = mongoQ.Select.JoinScope!;
+
+        Assert.Equal(["cr", scope.Levels[0].InnerPrefix, "LineSku"], mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+
+        var lineSku = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[2].Expression);
+        Assert.Equal(scope.Levels[1].InnerPrefix + ".Sku", lineSku.ElementName);
+
+        Assert.Equal(2, mongoQ.Lookups.Count);
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Declines_a_chain_scalar_leaf_that_spans_two_scopes()
+    {
+        // `Mixed = e.r.Total + l.Id` spans scope 1 (Total) AND scope 2 (Id) in a single leaf — out of scope for
+        // this plan (see the design doc's Scope/Out section). Must decline the WHOLE projection, not partially
+        // commit the other, individually-translatable leaf.
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o.Name, Mixed = e.r.Total + l.Id }));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Empty(mongoQ.Select.Projection);
+
+        // NOT Assert.Empty: both lookups are ALREADY registered before this binder ever runs — unconditionally,
+        // by TranslateJoinCore's own multi-join flattening the moment Joins.Count > 1 (this shape's Joins.Count
+        // is 2) — independent of whether the trailing projection binds. This mirrors the same, pre-existing
+        // measured behavior asserted by
+        // Binds_a_second_chained_join_reusing_the_first_joins_target_type_at_the_correct_alias above; verified
+        // unrelated to this task's wiring change (reproduces identically with the OLD outright-decline arm
+        // too).
+        Assert.Equal(2, mongoQ.Lookups.Count);
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Declines_a_nested_wrapped_leaf_over_a_two_level_chain()
+    {
+        // `Nested = new { Value = l.Sku }` trailing a genuine 2-level chain (scope.Levels.Count == 2) is
+        // explicitly out of scope for the native-chained-join-scalar-projection plan (design doc's Scope/Out
+        // section: "a nested wrapped leaf ... over a chain — already separately gated to Levels.Count == 1").
+        // Regression pin: the ordinary (scalar/computed) leaf arm's `TryTranslateSingleScope` call must exclude
+        // a nested-projection-shaped leafBody before calling it, or the leaf's inner NewExpression round-trips
+        // through MongoExpressionTranslator's own generic NewExpression→MongoDocumentConstructionExpression
+        // handling and gets wrongly admitted. Must decline the WHOLE projection, not partially commit the
+        // sibling scalar leaf either.
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o.Name, Nested = new { Value = l.Sku } }));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
+        Assert.Empty(mongoQ.Select.Projection);
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
     }
 }

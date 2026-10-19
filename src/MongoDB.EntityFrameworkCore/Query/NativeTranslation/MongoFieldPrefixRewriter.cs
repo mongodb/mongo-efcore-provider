@@ -103,6 +103,9 @@ internal static class MongoFieldPrefixRewriter
             MongoFilteredSizeExpression f => new MongoFilteredSizeExpression(prefix + "." + f.ArrayPath, f.ElementPredicate, f.Type),
             // The operand carries the field path; the conversion itself has nothing to prefix.
             MongoConvertExpression c => new MongoConvertExpression(Rewrite(c.Operand, prefix), c.Type),
+            // The tested field is a document path like any other field reference, so it prefixes the same way.
+            MongoNumericTypeBracketExpression b => new MongoNumericTypeBracketExpression(
+                (MongoFieldExpression)Rewrite(b.Field, prefix)),
             // This switch's default THROWS rather than declining gracefully (unlike every other gate in this
             // area — see the durable-invariants list in Query/AGENTS.md). A SelectMany result-selector
             // projection leaf that needs cross-scope field prefixing reaches here for any node kind
@@ -111,7 +114,13 @@ internal static class MongoFieldPrefixRewriter
             // hard failure in every MongoQueryMode.
             MongoConditionalExpression c2 => new MongoConditionalExpression(
                 Rewrite(c2.Test, prefix), Rewrite(c2.IfTrue, prefix), Rewrite(c2.IfFalse, prefix)),
+            MongoCoalesceExpression co => new MongoCoalesceExpression(
+                Rewrite(co.Left, prefix), Rewrite(co.Right, prefix)),
             MongoDatePartExpression dp => new MongoDatePartExpression(Rewrite(dp.Operand, prefix), dp.Part),
+            MongoDateAddExpression da => new MongoDateAddExpression(
+                Rewrite(da.StartDate, prefix), da.Unit, Rewrite(da.Amount, prefix)),
+            MongoStringIndexOfExpression io => new MongoStringIndexOfExpression(
+                Rewrite(io.Haystack, prefix), Rewrite(io.Needle, prefix)),
             MongoDateTimeOffsetLocalExpression l => new MongoDateTimeOffsetLocalExpression(
                 (MongoFieldExpression)Rewrite(l.Operand, prefix)),
             // NullSafe MUST be carried across — dropping it (as this arm used to) silently removed the $ifNull
@@ -129,6 +138,16 @@ internal static class MongoFieldPrefixRewriter
             MongoConcatExpression concat => new MongoConcatExpression(
                 concat.Operands.Select(o => Rewrite(o, prefix)).ToList()),
             MongoConstantExpression or MongoParameterExpression => expr,
+            // Elements are each a MongoConstantExpression/MongoParameterExpression (see the node's own
+            // remarks), both of which pass through Rewrite unchanged above — recursing keeps this arm
+            // correct if a future element shape ever needs prefixing, matching MongoInExpression/
+            // MongoComputedInExpression's own consistency-over-necessity recursion into Values.
+            MongoValueListExpression list => new MongoValueListExpression(
+                list.Elements.Select(el => Rewrite(el, prefix)).ToList()),
+            // A tuple's own elements are field/constant/parameter/computed values like any other operand —
+            // same consistency-over-necessity recursion as MongoValueListExpression immediately above.
+            MongoTupleExpression tuple => new MongoTupleExpression(
+                tuple.Elements.Select(el => Rewrite(el, prefix)).ToList()),
             _ => throw new NativeTranslationNotSupportedException(
                 $"Cannot prefix-rewrite MongoExpression node '{expr.GetType().Name}'.")
         };

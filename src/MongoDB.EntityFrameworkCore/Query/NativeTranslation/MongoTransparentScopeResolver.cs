@@ -95,6 +95,17 @@ internal static class MongoTransparentScopeResolver
         {
             if (TryResolveScopeDepth(node.Expression, rootParam, hopNames, sourceCount, out var scope))
             {
+                // Fail-closed guard: node.Member comes from the ACTUAL transparent-identifier hop, while
+                // scopeParams[scope]'s type comes from the caller's RECORDED scope metadata. Those normally
+                // agree by construction, but if they ever don't, Expression.MakeMemberAccess throws
+                // ArgumentException at query-compile time — a hard crash rather than a decline. Decline instead
+                // by falling through to base.VisitMember, which leaves this subtree unrewritten; the caller's
+                // own ReferencesParameterOutsideHopChain-style guard then catches it as an unresolved reference.
+                if (node.Member.DeclaringType?.IsAssignableFrom(scopeParams[scope].Type) != true)
+                {
+                    return base.VisitMember(node);
+                }
+
                 if (ResolvedScope is { } prior && prior != scope)
                     CrossScope = true;
                 ResolvedScope = scope;

@@ -36,6 +36,7 @@ public class MongoQueryLanguageRendererTests
         public bool Active { get; set; }
         public int Score { get; set; }
         public string Name { get; set; } = null!;
+        public string Nickname { get; set; } = null!;
 
         // Final-review fix 3 (EF-421 round 2): a value-converted (non-default-serialized) bool, so a bare
         // outer-scoped reference to it under Not can exercise RenderUnary's fall-to-$expr branch's own
@@ -444,6 +445,43 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
+    // Test 18b (EF-322): MongoInExpression over a MongoValueListExpression of separately-named parameters
+    // (`new[] { prm1, prm2 }.Contains(c.Age)`) → { Age: { $in: [<sentinel0>, <sentinel1>] } }, one
+    // independent placeholder entry per element — not a single CreateArrayPlaceholder sentinel for the
+    // whole array (that's the single-array-valued-parameter shape, unrelated to this one).
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Renders_in_for_value_list_of_parameters_as_independent_sentinels()
+    {
+        var age = GetProperty<Customer>("Age");
+        var expr = new MongoInExpression(
+            new MongoFieldExpression(age, "Age"),
+            new MongoValueListExpression(
+            [
+                new MongoParameterExpression("p0", age),
+                new MongoParameterExpression("p1", age)
+            ]),
+            negated: false);
+
+        var placeholders = new PlaceholderTable();
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, placeholders);
+
+        Assert.Equal(2, placeholders.Entries.Count);
+        Assert.Equal("p0", placeholders.Entries[0].Name);
+        Assert.Equal("p1", placeholders.Entries[1].Name);
+
+        var doc = Assert.IsType<BsonDocument>(rendered);
+        var ageCond = Assert.IsType<BsonDocument>(doc["Age"]);
+        var inArray = Assert.IsType<BsonArray>(ageCond["$in"]);
+        Assert.Equal(2, inArray.Count);
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(inArray[0], out var index0));
+        Assert.Equal(0, index0);
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(inArray[1], out var index1));
+        Assert.Equal(1, index1);
+    }
+
+    // ------------------------------------------------------------------
     // Test 19-23: MongoRegexExpression (EF-329) → $regularExpression, matching the driver-LINQ v3
     // rendering shape empirically captured under MongoQueryMode.DriverLinq (see Task 6 report):
     // { field: { $regularExpression: { pattern: "<anchored/escaped>", options: "s" } } }.
@@ -528,6 +566,22 @@ public class MongoQueryLanguageRendererTests
         Assert.True(
             PlaceholderTable.TryGetPlaceholderIndex(rendered["Name"].AsBsonDocument["$not"], out var index));
         Assert.Equal(0, index);
+    }
+
+    [Fact]
+    public void Field_to_field_regex_falls_through_to_expr()
+    {
+        var name = GetProperty<Customer>("Name");
+        var nickname = GetProperty<Customer>("Nickname");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(name, "Name"), MongoRegexKind.StartsWith,
+            new MongoFieldExpression(nickname, "Nickname"), negated: false);
+
+        var result = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$expr" : { "$eq" : [{ "$indexOfCP" : ["$Name", "$Nickname"] }, 0] } }""",
+            result.ToJson());
     }
 
     // ------------------------------------------------------------------

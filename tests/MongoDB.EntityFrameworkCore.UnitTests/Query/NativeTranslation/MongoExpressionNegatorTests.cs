@@ -155,6 +155,36 @@ public class MongoExpressionNegatorTests
         Assert.Equal(BsonDocument.Parse("{ Rank: { $nin: [1, 2] } }"), RenderOf(negated));
     }
 
+    // EF-322: a MongoInExpression over a MongoValueListExpression (per-element independently-parameterized
+    // $in values) must flip Negated exactly like the constant-enumerable case above — TryFlipNegatedFlag
+    // passes Values through unchanged regardless of its shape, so this pins that the value-list shape is not
+    // silently dropped by the query-dialect gate TryNegate applies first.
+    [Fact]
+    public void In_over_value_list_flips_to_nin()
+    {
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var inExpr = new MongoInExpression(
+            new MongoFieldExpression(rank, "Rank"),
+            new MongoValueListExpression(
+            [
+                new MongoParameterExpression("p0", rank),
+                new MongoParameterExpression("p1", rank)
+            ]),
+            negated: false);
+
+        Assert.True(MongoExpressionNegator.TryNegate(inExpr, out var negated));
+        var negatedIn = Assert.IsType<MongoInExpression>(negated);
+        Assert.True(negatedIn.Negated);
+
+        var placeholders = new PlaceholderTable();
+        var rendered = Assert.IsType<BsonDocument>(new MongoQueryLanguageRenderer().Render(negatedIn, placeholders));
+        var rankCond = Assert.IsType<BsonDocument>(rendered["Rank"]);
+        var ninArray = Assert.IsType<BsonArray>(rankCond["$nin"]);
+        Assert.Equal(2, ninArray.Count);
+        Assert.Equal("p0", placeholders.Entries[0].Name);
+        Assert.Equal("p1", placeholders.Entries[1].Name);
+    }
+
     // EF-382 review fix: MongoArrayContainsExpression's negator arm (MongoExpressionNegator.cs:174-178) had
     // zero test coverage — mutation-checked by the reviewer, deleting the arm or forgetting to flip Negated
     // left every suite green. Reached via All(p => p.ArrayField.Contains(c)), which negates the element
@@ -219,6 +249,29 @@ public class MongoExpressionNegatorTests
 
         Assert.True(MongoExpressionNegator.TryNegate(regex, out var negated));
         Assert.True(Assert.IsType<MongoRegexExpression>(negated).Negated);
+    }
+
+    // EF-322 Task 1 fix round: a field-to-field MongoRegexExpression (Term is itself a MongoFieldExpression,
+    // e.g. `c.ContactName.StartsWith(c.ContactName)` — the shape All_top_level_column produces) fails
+    // IsQueryDialectRenderable by design (Mongo's $regularExpression pattern must be a literal, never another
+    // field). TryNegate special-cases it, mirroring the MongoQuantifierExpression exception below, because its
+    // one negation call site (NativeCardinalityBinder's root-level All(pred) arm) places the negated node in a
+    // top-level $match conjunct, where $expr is legal. The negation itself is unaffected by Term's shape — it's
+    // still just TryFlipNegatedFlag's regex arm (flip Negated, Term unchanged).
+    [Fact]
+    public void Regex_with_field_to_field_term_negates_despite_not_being_query_dialect_renderable()
+    {
+        var heading = GetPostProperty(nameof(Post.Heading));
+        var regex = new MongoRegexExpression(
+            new MongoFieldExpression(heading, "Heading"),
+            MongoRegexKind.StartsWith,
+            new MongoFieldExpression(heading, "Heading"),
+            negated: false);
+
+        Assert.True(MongoExpressionNegator.TryNegate(regex, out var negated));
+        var negatedRegex = Assert.IsType<MongoRegexExpression>(negated);
+        Assert.True(negatedRegex.Negated);
+        Assert.IsType<MongoFieldExpression>(negatedRegex.Term);
     }
 
     [Fact]
