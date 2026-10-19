@@ -776,6 +776,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         (string Country, int Count)[] Run(SingleEntityDbContext<Order> db) =>
             db.Entities.GroupBy(o => o.Country)
                 .OrderBy(g => g.Count() * 2)
+                .ThenBy(g => g.Key) // US and UK tie on count; without a tiebreaker their order is unspecified
                 .Select(g => new { g.Key, Count = g.Count() })
                 .AsEnumerable()
                 .Select(x => (x.Key, x.Count)).ToArray();
