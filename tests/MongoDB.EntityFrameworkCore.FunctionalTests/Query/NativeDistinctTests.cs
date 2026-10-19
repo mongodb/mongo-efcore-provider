@@ -705,13 +705,16 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
-    public void Bare_scalar_value_converted_Distinct_then_arithmetic_predicate_declines_cleanly()
+    public void Bare_scalar_value_converted_Distinct_then_arithmetic_predicate_is_refused()
     {
-        var result = NativeModeAssert.DeclinesCleanly(ConvertedRunner(
-            nameof(Bare_scalar_value_converted_Distinct_then_arithmetic_predicate_declines_cleanly),
-            q => q.Select(o => o.Year).Distinct().Where(v => v % 2 == 1).ToList()));
+        // "$mod" over the stored strings used to match nothing on the fallback (EF-465); the arithmetic is now refused in every mode.
+        var run = ConvertedRunner(
+            nameof(Bare_scalar_value_converted_Distinct_then_arithmetic_predicate_is_refused),
+            q => q.Select(o => o.Year).Distinct().Where(v => v % 2 == 1).ToList());
 
-        Assert.Empty(result); // "$mod" over the stored strings matches nothing on the fallback either.
+        Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryMode.NativeOnly));
+        Assert.Throws<NotSupportedException>(() => run(MongoQueryMode.Native));
+        Assert.Throws<NotSupportedException>(() => run(MongoQueryMode.DriverLinq));
     }
 
     [Fact]

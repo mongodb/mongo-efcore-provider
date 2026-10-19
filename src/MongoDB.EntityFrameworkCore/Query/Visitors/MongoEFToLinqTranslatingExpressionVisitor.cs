@@ -767,6 +767,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     protected override Expression VisitMember(MemberExpression node)
     {
+        ThrowIfComputedFromStoredValue(node);
+
         // A server-side date part (Hour, Date, Year, ...) of a Local-kind DateTime property is extracted from the stored
         // UTC instant, but the entity materializes as local time, so the value would silently disagree (EF-459).
         if (IsServerDatePart(node, out var receiver))
@@ -775,6 +777,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         return base.VisitMember(node);
+    }
+
+    protected override Expression VisitUnary(UnaryExpression node)
+    {
+        ThrowIfComputedFromStoredValue(node);
+        return base.VisitUnary(node);
     }
 
     // A DateTime member (Hour, Date, Year, ...) the server computes from the stored instant; Kind is not stored.
@@ -876,6 +884,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // A sort key or aggregate over a property whose stored form orders differently (EF-337); see the StoredOrdering
         // partial.
         ThrowIfOrderingOrAggregateOverStoredOrdering(node);
+        ThrowIfComputedFromStoredValue(node);
 
         // Calendar arithmetic (day/month/year) over a Local-kind DateTime property is evaluated by the server in UTC.
         if (IsCalendarAdd(node, out var addReceiver))
@@ -1472,6 +1481,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     protected override Expression VisitBinary(BinaryExpression node)
     {
         ThrowIfRelationalComparisonOverStoredOrdering(node);
+        ThrowIfComputedFromStoredValue(node);
         ThrowIfDateTimeOffsetConcatenation(node);
 
         if (node.NodeType is ExpressionType.Equal or ExpressionType.NotEqual)
