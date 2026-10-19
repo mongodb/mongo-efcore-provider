@@ -18,21 +18,14 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// Represents a <c>$lookup</c> aggregation stage that performs a join with another collection.
+/// A <c>$lookup</c> stage joining another collection.
 /// </summary>
 internal sealed class MongoLookupStage : MongoPipelineStage
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MongoLookupStage"/> class.
-    /// </summary>
-    /// <param name="lookup">The lookup expression that specifies the join parameters.</param>
     public MongoLookupStage(LookupExpression lookup)
     {
         Lookup = lookup;
     }
 
-    /// <summary>
-    /// Gets the lookup expression that specifies the join parameters.
-    /// </summary>
     public LookupExpression Lookup { get; }
 }

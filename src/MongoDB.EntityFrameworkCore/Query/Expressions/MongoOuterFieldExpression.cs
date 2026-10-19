@@ -23,25 +23,13 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// that has bound its element to a variable.
 /// </summary>
 /// <remarks>
-/// <para>
-/// A sibling of <see cref="MongoFieldExpression"/> rather than a flag on it (same reasoning as
-/// <see cref="MongoFilteredSizeExpression"/>). Used by a two-scope
-/// <see cref="NativeTranslation.MongoExpressionTranslator"/> for members rooted on the outer parameter. Outside a
-/// <c>$filter</c>/<c>$map</c> it renders like an ordinary field; inside one, an ordinary field would render as
-/// <c>"$$" + elementVariable + "." + path</c> (the element), whereas this keeps <c>"$" + path</c>.
-/// </para>
-/// <para>
-/// Aggregation-expression only; <see cref="NativeTranslation.MongoQueryLanguageRenderer.IsQueryDialectRenderable"/>
-/// declines it unconditionally.
-/// </para>
+/// A sibling of <see cref="MongoFieldExpression"/> rather than a flag (same reasoning as
+/// <see cref="MongoFilteredSizeExpression"/>), used by a two-scope translator for members rooted on the outer
+/// parameter. Inside a <c>$filter</c>/<c>$map</c> an ordinary field renders against the element variable; this keeps
+/// <c>"$" + path</c>. Aggregation-expression only.
 /// </remarks>
 internal sealed class MongoOuterFieldExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoOuterFieldExpression"/> for the given property.
-    /// </summary>
-    /// <param name="property">The EF Core <see cref="IProperty"/> this field corresponds to.</param>
-    /// <param name="elementName">The document element name, relative to the outer document root.</param>
     public MongoOuterFieldExpression(IProperty property, string elementName)
     {
         Property = property;

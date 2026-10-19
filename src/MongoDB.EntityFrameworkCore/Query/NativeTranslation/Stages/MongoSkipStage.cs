@@ -20,8 +20,6 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// <summary>A <c>$skip</c> aggregation stage.</summary>
 internal sealed class MongoSkipStage : MongoPipelineStage
 {
-    /// <summary>Creates a <see cref="MongoSkipStage"/>.</summary>
-    /// <param name="offset">The number of documents to skip.</param>
     public MongoSkipStage(MongoExpression offset)
     {
         Offset = offset;

@@ -124,8 +124,6 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
         }
     }
 
-    // ── The mixed shaper ──────────────────────────────────────────────────────────
-    //
     // An owned-array or owned-reference leaf alongside makes ProjectionAnalyzer.CanPushDown refuse the driver's
     // LINQ provider, so MongoMixedProjectionBindingRemovingExpressionVisitor reads whole documents and sees the raw
     // Enumerable.*-over-string call. It needs the same rebuild-around-a-raw-read as the native read side;
@@ -210,7 +208,6 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
         }
     }
 
-    // ── A VALUE-CONVERTED string property ────────────────────────────────────────
     //
     // The raw read goes through the source IProperty, so its converter must apply: stored "X<city>" must
     // materialize as "<city>".

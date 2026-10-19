@@ -18,21 +18,14 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// Represents a <c>$match</c> aggregation stage that filters documents based on a predicate.
+/// A <c>$match</c> stage.
 /// </summary>
 internal sealed class MongoMatchStage : MongoPipelineStage
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MongoMatchStage"/> class.
-    /// </summary>
-    /// <param name="predicate">The predicate expression that filters documents.</param>
     public MongoMatchStage(MongoExpression predicate)
     {
         Predicate = predicate;
     }
 
-    /// <summary>
-    /// Gets the predicate expression that filters documents.
-    /// </summary>
     public MongoExpression Predicate { get; }
 }

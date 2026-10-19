@@ -39,23 +39,12 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// form <c>q.SelectMany(o =&gt; o.Items.Select(i =&gt; new {o.X, i.Y}))</c> and the explicit-result-selector /
 /// query-syntax form, which normalizes to a bare-nav + trailing-<c>Select</c> tree.
 /// <para>
-/// Whole-inner-element results (<c>(o, i) =&gt; i</c>, <c>select i</c>, 1-arg <c>SelectMany(o =&gt; o.Items)</c>) go
-/// native via <c>UnwindSource.WholeElement</c>: the lowerer emits <c>$unwind(includeArrayIndex)</c> +
-/// <c>$replaceRoot</c>, for owned elements carrying owner key and ordinal under sentinel fields that the re-rooted
-/// shaper reads back. Tracking such an owned query throws EF Core's own "owned entity without its owner" error.
-/// </para>
-/// <para>
 /// Still declined: the whole-outer form (<c>select o</c>) throws <see cref="NotSupportedException"/> at translation
 /// time, so the same in every mode. Where <see cref="NativeSelectManyBinder.TryBind"/> rejects a shape, EF's own
 /// translation failure is reached directly and throws in every <see cref="MongoQueryMode"/>. Unrepresentable
 /// computed leaves over owned collections fall back gracefully via <c>MarkNotNativelyRepresentable()</c>. Most
 /// operators composed after a native SelectMany hard-fail in every mode, since the fallback can't rebuild a shaper
 /// over the by-index projection; cardinality-only <c>Count</c> needs no shaper and falls back gracefully.
-/// </para>
-/// <para>
-/// Reference navigations (<see cref="NativeSelectManyBinder.TryBindReferenceNavUnwind"/>: <c>ForceUnwind</c>
-/// <c>$lookup</c> + <c>$unwind</c>) have no driver-LINQ baseline (the bridge rejects cross-collection SelectMany), so
-/// their fallback paths still throw under Native/DriverLinq.
 /// </para>
 /// </summary>
 [XUnitCollection("QueryTests")]
@@ -187,7 +176,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .OrderBy(r => r.Name).ThenBy(r => r.Price)
             .ToList();
 
-        // Succeeding under NativeOnly proves it went native.
         Assert.Equal(expected, result);
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
@@ -199,7 +187,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Inner_select_form_produces_correct_results_under_explicit_DriverLinq_mode()
     {
-        // The same supported shape must produce identical results when forced through driver-LINQ.
         var seed = SeedOwners();
         using var db = CreateContext(seed, MongoQueryMode.DriverLinq,
             nameof(Inner_select_form_produces_correct_results_under_explicit_DriverLinq_mode));
@@ -244,7 +231,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .OrderBy(r => r.Name).ThenBy(r => r.Price)
             .ToList();
 
-        // ItemDto has no Equals override, so compare member-wise.
         Assert.Equal(expected.Count, result.Count);
         for (var idx = 0; idx < expected.Count; idx++)
         {
@@ -299,7 +285,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Explicit_result_selector_form_goes_native_with_correct_results_and_mql()
     {
-        // The explicit-result-selector form normalizes to the same tree as the query-syntax form below.
         var seed = SeedOwners();
         using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
             nameof(Explicit_result_selector_form_goes_native_with_correct_results_and_mql), out var spyLogger);
@@ -391,7 +376,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .ToList();
 
         Assert.Equal(expected, result);
-        // Excludes the deliberately same-named "Match"/"Match" row (see SeedOwners).
         Assert.All(result.Where(r => !(r.OuterName == "Match" && r.InnerName == "Match")),
             r => Assert.NotEqual(r.OuterName, r.InnerName));
         Assert.Contains(result, r => r.OuterName == "Match" && r.InnerName == "Match");
@@ -444,8 +428,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Explicit_result_selector_form_computed_arithmetic_leaf_goes_native()
     {
-        // Inner-only arithmetic leaf binds natively via TryBindTransparentIdentifierProjection's arithmetic branch;
-        // owned inner-only projections have a driver oracle, so assert parity plus NativeOnly success.
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = i.Price * 2m })
             .OrderBy(r => r.X).ToList();
@@ -463,8 +445,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Root_scope_computed_leaf_in_selectmany_goes_native()
     {
-        // Root-scope (scope 0, unprefixed "$Rank") computed leaf end-to-end; one row per item, each with its owner's
-        // Rank * 2.
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { Doubled = o.Rank * 2m })
             .OrderBy(r => r.Doubled).ToList();
@@ -480,7 +460,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Root_scope_computed_leaf_in_selectmany_emits_unprefixed_field_in_mql()
     {
-        // The $multiply must reference "$Rank", never "$Items.Rank" (Item has no Rank).
         var seed = SeedOwners();
         using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
             nameof(Root_scope_computed_leaf_in_selectmany_emits_unprefixed_field_in_mql), out var spyLogger);
@@ -496,7 +475,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Mixed_operator_computed_leaves_in_selectmany_go_native()
     {
-        // +, -, % and decimal / (not integer division) over an inner-only leaf, in one projection.
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items,
                 (o, i) => new { Sum = i.Price + 1m, Diff = i.Price - 1m, Mod = i.Price % 2m, Half = i.Price / 2m })
@@ -514,8 +492,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Explicit_result_selector_form_computed_date_part_leaf_goes_native()
     {
-        // MongoFieldPrefixRewriter must prefix a MongoDatePartExpression's operand with the unwind path
-        // ("$Items.Occurred") rather than throwing in every mode.
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = i.Occurred.Year + 1 })
             .OrderBy(r => r.X).ToList();
@@ -864,7 +840,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .SelectMany(o => o.Items.Where(i => o.Name == ownerName), (o, i) => new { o.Name, i.Price })
             .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
 
-        // The predicate ignores i.Name, so both of "Match"'s items are included.
         Assert.Equal(expected, result);
         Assert.Equal(2, result.Count);
         Assert.All(result, r => Assert.Equal("Match", r.Name));
@@ -873,7 +848,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Owned_correlated_beyond_outer_against_a_plain_constant_goes_native_with_correct_rows()
     {
-        // Constant rather than parameter right-hand side for the MongoOuterFieldExpression comparison.
         var seed = SeedOwners();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Owned_correlated_beyond_outer_against_a_plain_constant_goes_native_with_correct_rows));
@@ -964,8 +938,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Filtered_owned_computed_arithmetic_leaf_goes_native()
     {
-        // Filtered owned SelectMany with an inner-only arithmetic leaf: $match before the computed $project. Parity
-        // plus NativeOnly success.
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { X = i.Price * 2m })
             .OrderBy(r => r.X).ToList();
@@ -1004,7 +976,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Cross_scope_computed_leaf_emits_both_scopes_unprefixed_and_prefixed_in_mql()
     {
-        // The $multiply must reference "$Rank" at the root and "$Items.Price" under the unwind path.
         var seed = SeedOwners();
         using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
             nameof(Cross_scope_computed_leaf_emits_both_scopes_unprefixed_and_prefixed_in_mql), out var spyLogger);
@@ -1021,8 +992,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Cross_scope_computed_leaf_with_a_constant_operand_goes_native()
     {
-        // Cross-scope subtree as an operand ((o.Rank * i.Price) + 1): translation must recurse; `1` covers the
-        // scope-free operand arm.
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { Total = o.Rank * i.Price + 1m })
             .OrderBy(r => r.Total).ToList();
@@ -1211,7 +1180,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         public ObjectId Id { get; set; }
         public string Name { get; set; } = "";
 
-        // Paired with RefItem.Score for a numeric correlated predicate (r.Score >= o.Threshold) exercising $expr $gte.
         public int Threshold { get; set; }
         public List<RefItem> Refs { get; set; } = [];
     }
@@ -1224,7 +1192,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // Shares "Name" with RefOwner, to prove outer ("$Name") and inner ("$_lookup_Refs.Name") never conflate.
         public string Name { get; set; } = "";
 
-        // See RefOwner.Threshold.
         public int Score { get; set; }
 
         // Nullable and mostly null, so `r.Note != null` discriminates: it must not be absorbed into the FK
@@ -1351,9 +1318,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         spyLogger = provider;
         return new RefOwnerItemDbContext(database, ownersCollection, refsCollection, mode, loggerFactory);
     }
-
-    // ── Nested (2-level) cross-collection reference SelectMany fixture ──────────────────────────────────
-    // NestOwner --(Mids, FK OwnerId)--> NestMid --(Leaves, FK MidId)--> NestLeaf, all ToCollection references.
 
     private class NestOwner
     {
@@ -1507,7 +1471,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         seedDb.Owners.AddRange(owners);
         seedDb.Mids.AddRange(mids);
         seedDb.Leaves.AddRange(leaves);
-        // No NestGrandLeaf rows: the 3-level decline test fails at translation time.
         seedDb.SaveChanges();
     }
 
@@ -1603,7 +1566,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Nested_reference_selectmany_composes_with_parametrized_outer_predicate()
     {
-        // Bespoke seed: two owners both contribute rows, so a dropped or mis-composed outer Where shows up.
         var owner1 = new NestOwner { Id = ObjectId.GenerateNewId(), Name = "Owner1" };
         var owner2 = new NestOwner { Id = ObjectId.GenerateNewId(), Name = "Owner2" };
         var mid1 = new NestMid { Id = ObjectId.GenerateNewId(), Tag = "Mid1", OwnerId = owner1.Id };
@@ -1635,7 +1597,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 select new { o.Name, m.Tag, l.Label })
                 .OrderBy(x => x.Tag).ThenBy(x => x.Label).ToList();
 
-            // Owner2's row, which the unfiltered query would include, is excluded.
             Assert.Equal(expected, result);
             Assert.NotEmpty(result);
             Assert.Single(result);
@@ -1894,8 +1855,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         return new OwnedSubNavDbContext(database, parentsCollection, childrenCollection, mode);
     }
 
-    // Core reference-form success test; verified to translate identically on EF8, EF9 and EF10, so this suite has no
-    // EF-version guard.
     [Fact]
     public void Reference_form_goes_native_with_correct_results()
     {
@@ -2042,7 +2001,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .ToList();
 
         Assert.Equal(expected, result);
-        // Outer/inner values never conflate, except Dave's deliberately same-named "Dave" child (see SeedRefData).
         Assert.All(result.Where(r => !(r.OuterName == "Dave" && r.InnerName == "Dave")),
             r => Assert.NotEqual(r.OuterName, r.InnerName));
         Assert.Contains(result, r => r.OuterName == "Dave" && r.InnerName == "Dave");
@@ -2071,12 +2029,9 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         var expectedTags = items.Select(i => i.Tag).OrderBy(t => t).ToList(); // Alice(2)+Carol(1)+Dave(2)=5; Bob(0) none
 
-        // 1-arg
         var oneArg = db.Owners.SelectMany(o => o.Refs).AsEnumerable().Select(r => r.Tag).OrderBy(t => t).ToList();
-        // query syntax
         var querySyntax = (from o in db.Owners from r in o.Refs select r)
             .AsEnumerable().Select(r => r.Tag).OrderBy(t => t).ToList();
-        // explicit result selector
         var explicitRs = db.Owners.SelectMany(o => o.Refs, (o, r) => r)
             .AsEnumerable().Select(r => r.Tag).OrderBy(t => t).ToList();
 
@@ -2146,7 +2101,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .OrderBy(x => x.Name).ThenBy(x => x.Tag)
             .ToList();
 
-        // The "Widget" row is excluded.
         Assert.Equal(expected, result);
         Assert.DoesNotContain(result, x => x.Tag == "Widget");
     }
@@ -2214,7 +2168,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         using var db = CreateRefContext(MongoQueryMode.NativeOnly,
             nameof(Reference_form_filtered_inner_excluding_all_children_contributes_no_rows), out _, out _);
 
-        // No RefItem has Tag "nonexistent" → every principal contributes zero rows.
         var result = db.Owners
             .SelectMany(o => o.Refs.Where(r => r.Tag == "nonexistent"), (o, r) => new { o.Name, r.Tag })
             .ToList();
@@ -2431,7 +2384,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_correlated_emits_expr_match_after_unwind()
     {
-        // The correlated conjunct renders as $expr comparing the scope-prefixed inner field to root-relative "$Name".
         using var db = CreateRefContextWithLogging(MongoQueryMode.Native,
             nameof(Reference_form_correlated_emits_expr_match_after_unwind), out _, out _, out var spyLogger);
 
@@ -2463,20 +2415,26 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         }
     }
 
-    [Fact]
-    public void Filtered_reference_collection_count_still_falls_back()
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Filtered_reference_collection_count_goes_native(MongoQueryMode mode)
     {
-        // Not a SelectMany: a projected filtered Count (c.Refs.Count(pred)). Both the native Count binder and the
-        // fallback TryBindProjectedCollectionNavigationCount require a predicate-free Count, so this fails with
-        // InvalidOperationException in every mode (cf. QueryModeGateIncludeTests.Projected_collection_Count_with_
-        // predicate_still_falls_back). Pins that the SelectMany filter mechanism doesn't leak into the Count binder.
-        using var db = CreateRefContext(MongoQueryMode.Native,
-            nameof(Filtered_reference_collection_count_still_falls_back), out _, out _);
+        // Not a SelectMany: a projected filtered Count (c.Refs.Count(pred)) over a referenced collection, now a `$size` of a
+        // `$filter` over the `$lookup` array (design: 2026-10-08-native-referenced-collection-aggregates-design.md, slice 1).
+        // It used to fail with InvalidOperationException in every mode.
+        using var db = CreateRefContext(mode, nameof(Filtered_reference_collection_count_goes_native) + mode,
+            out var owners, out var items);
 
-        Assert.Throws<InvalidOperationException>(() =>
+        var expected = owners.OrderBy(o => o.Name)
+            .Select(o => $"{o.Name}:{items.Count(i => i.OwnerId == o.Id && i.Tag != "Widget")}").ToList();
+        Assert.Equal(["Alice:1", "Bob:0", "Carol:1", "Dave:2"], expected);
+
+        Assert.Equal(
+            expected,
             db.Owners
                 .Select(o => new { o.Name, N = o.Refs.Count(r => r.Tag != "Widget") })
-                .AsEnumerable().OrderBy(x => x.Name).ToList());
+                .AsEnumerable().OrderBy(x => x.Name).Select(x => $"{x.Name}:{x.N}").ToList());
     }
 
     // `r.Tag.ToUpper()` is a MethodCallExpression, so NativeProjectionBinder.IsArithmeticLeafShape declines it. (String `+` goes native
@@ -2506,7 +2464,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_string_concat_computed_leaf_goes_native()
     {
-        // String concatenation (r.Tag + "!") is a single-scope Add leaf and goes native via $concat.
         using var db = CreateRefContext(MongoQueryMode.NativeOnly,
             nameof(Reference_form_string_concat_computed_leaf_goes_native), out var owners, out var items);
 
@@ -2525,7 +2482,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_computed_arithmetic_leaf_goes_native()
     {
-        // No driver oracle: NativeOnly + in-memory expectation, plus the computed $project MQL ($_lookup_Refs.Score).
         using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
             nameof(Reference_form_computed_arithmetic_leaf_goes_native), out var owners, out var items, out var spyLogger);
 
@@ -2546,7 +2502,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Two_field_single_scope_computed_leaf_goes_native()
     {
-        // Two field-refs in one leaf, both inner scope → both get the Items. prefix. Owned inner-only has an oracle.
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { Sq = i.Price * i.Price })
             .OrderBy(r => r.Sq).ToList();
@@ -2563,7 +2518,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Mixed_member_and_computed_leaf_projection_goes_native()
     {
-        // One bare member (o.Name) + one arithmetic leaf (i.Price * 2m) in the same projection — both aliases correct.
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { o.Name, Doubled = i.Price * 2m })
             .OrderBy(r => r.Name).ThenBy(r => r.Doubled).ToList();
@@ -2580,7 +2534,6 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Nested_reference_single_scope_computed_leaf_goes_native()
     {
-        // Arithmetic leaf at the deepest scope (k=2) of a nested reference SelectMany: prefix _lookup_Leaves.Height.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
         {
             using var db = CreateNestContext(mode,

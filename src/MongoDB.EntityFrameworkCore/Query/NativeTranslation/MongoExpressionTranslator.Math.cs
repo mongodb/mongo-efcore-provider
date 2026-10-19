@@ -28,9 +28,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </summary>
 internal sealed partial class MongoExpressionTranslator
 {
-    /// <summary>
-    /// <c>Math.X(double)</c>/<c>MathF.X(float)</c> names mapping 1:1 onto a unary <see cref="MongoMathFunction"/>.
-    /// </summary>
+    /// <summary><c>Math.X(double)</c>/<c>MathF.X(float)</c> names mapping 1:1 onto a unary <see cref="MongoMathFunction"/>.</summary>
     private static readonly Dictionary<string, MongoMathFunction> UnaryFunctionsByName = new()
     {
         [nameof(Math.Abs)] = MongoMathFunction.Abs,
@@ -56,20 +54,14 @@ internal sealed partial class MongoExpressionTranslator
         [nameof(Math.Tanh)] = MongoMathFunction.Tanh
     };
 
-    /// <summary>
-    /// <c>RadiansToDegrees</c>/<c>DegreesToRadians</c> on <c>double</c>/<c>float</c> — .NET 8+ members declared on
-    /// the numeric types, not on <c>Math</c>/<c>MathF</c>.
-    /// </summary>
+    /// <summary><c>RadiansToDegrees</c>/<c>DegreesToRadians</c>: declared on <c>double</c>/<c>float</c>, not <c>Math</c>/<c>MathF</c>.</summary>
     private static readonly Dictionary<string, MongoMathFunction> AngleConversionsByName = new()
     {
         ["RadiansToDegrees"] = MongoMathFunction.RadiansToDegrees,
         ["DegreesToRadians"] = MongoMathFunction.DegreesToRadians
     };
 
-    /// <summary>
-    /// <c>Math.X(double, double)</c> names mapping 1:1 onto a binary <see cref="MongoMathFunction"/> (2-element array
-    /// operand).
-    /// </summary>
+    /// <summary><c>Math.X(double, double)</c> names mapping 1:1 onto a binary <see cref="MongoMathFunction"/>.</summary>
     private static readonly Dictionary<string, MongoMathFunction> BinaryFunctionsByName = new()
     {
         [nameof(Math.Pow)] = MongoMathFunction.Pow,
@@ -116,11 +108,7 @@ internal sealed partial class MongoExpressionTranslator
         return TryBuildMathExpression(call, function, out result);
     }
 
-    /// <summary>
-    /// Builds a <see cref="MongoMathExpression"/> for <paramref name="function"/> over every argument of
-    /// <paramref name="call"/>, each translated as a numeric-widening operand; declines if any argument doesn't
-    /// translate.
-    /// </summary>
+    /// <summary>Builds a <see cref="MongoMathExpression"/> over every argument of <paramref name="call"/>, each a numeric-widening operand.</summary>
     private bool TryBuildMathExpression(
         MethodCallExpression call, MongoMathFunction function, [NotNullWhen(true)] out MongoExpression? result)
     {

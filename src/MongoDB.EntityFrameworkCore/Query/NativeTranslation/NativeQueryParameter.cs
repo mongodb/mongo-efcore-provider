@@ -23,15 +23,9 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
-/// <summary>
-/// Helpers for recognizing EF Core query parameters in an expression tree across EF versions.
-/// </summary>
 internal static class NativeQueryParameter
 {
-    /// <summary>
-    /// Recognizes an EF Core query-parameter node and extracts its name: a prefixed
-    /// <see cref="ParameterExpression"/> in EF8/EF9, a <c>QueryParameterExpression</c> in EF10.
-    /// </summary>
+    /// <summary>EF8/EF9 prefixed <see cref="ParameterExpression"/> or EF10 <c>QueryParameterExpression</c>; extracts its name.</summary>
     public static bool TryGetQueryParameterName(Expression expr, [NotNullWhen(true)] out string? name)
     {
 #if EF8 || EF9
@@ -54,13 +48,9 @@ internal static class NativeQueryParameter
     }
 
     /// <summary>
-    /// Recognizes a constant-index access into a query-parameter array (<c>args[0]</c> in a compiled query whose
-    /// lambda takes an array parameter). EF doesn't pre-evaluate this shape, so the element is resolved per
-    /// execution — see <see cref="Expressions.MongoParameterExpression.ArrayElementIndex"/>.
-    /// <para>
-    /// Matches both an <see cref="ExpressionType.ArrayIndex"/> node and the <c>Enumerable.ElementAt</c> call
-    /// EF10 rewrites it to.
-    /// </para>
+    /// Recognizes a constant-index access into a query-parameter array (<c>args[0]</c> in a compiled query). EF doesn't
+    /// pre-evaluate it, so the element is resolved per execution (<see cref="Expressions.MongoParameterExpression.ArrayElementIndex"/>).
+    /// Matches an <see cref="ExpressionType.ArrayIndex"/> node and the <c>Enumerable.ElementAt</c> call EF10 rewrites it to.
     /// </summary>
     public static bool TryGetParameterArrayElementIndex(Expression expr, [NotNullWhen(true)] out string? name, out int index)
     {
@@ -87,14 +77,10 @@ internal static class NativeQueryParameter
     }
 
     /// <summary>
-    /// Translates a literal to a <see cref="MongoConstantExpression"/> (baked-in) or a query parameter to a
-    /// <see cref="MongoParameterExpression"/> (per-execution placeholder), both serialized through
-    /// <paramref name="forSerialization"/>; <see langword="null"/> for any other node. Doesn't unwrap converts.
+    /// Translates a literal to a baked-in <see cref="MongoConstantExpression"/> or a query parameter to a per-execution
+    /// <see cref="MongoParameterExpression"/>, both serialized through <paramref name="forSerialization"/>; <see langword="null"/>
+    /// otherwise. Unlike <c>MongoExpressionTranslator.TranslateValue</c>: no array-element parameters, no value type, no convert unwrapping.
     /// </summary>
-    /// <remarks>
-    /// The plain form: no array-element parameters and no value type, unlike
-    /// <c>MongoExpressionTranslator.TranslateValue</c>.
-    /// </remarks>
     public static MongoExpression? TranslateConstantOrParameter(Expression expr, IProperty? forSerialization)
     {
         if (expr is ConstantExpression constant)

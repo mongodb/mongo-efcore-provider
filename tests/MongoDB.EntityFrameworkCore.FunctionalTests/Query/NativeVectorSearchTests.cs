@@ -277,13 +277,13 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     // Recognizer guards: each case's only reason to decline is one guard, so mutating that guard flips the test.
 
     [AtlasFact]
-    public void Mql_Field_for_a_non_score_element_declines()
+    public void Mql_Field_for_a_non_score_element_resolves_as_a_plain_field()
     {
-        // Guard A: the literal "__score" name. `Weight` is a real double-typed element and the receiver is the
-        // selector's parameter, so only the name guard declines it.
+        // `Weight` is a real double-typed element and the receiver is the selector's parameter, so it is not the
+        // vector-search score leaf (the literal "__score" name) and resolves like any mapped field.
         using (var db = CreateContext(MongoQueryMode.Native))
         {
-            // Falls back to driver-LINQ, which resolves Mql.Field correctly. Values are asserted in order so a dropped
+            // Values are asserted in order so a dropped
             // $vectorSearch stage is still caught.
             var values = db.Docs
                 .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
@@ -296,11 +296,14 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
 
         using (var db = CreateContext(MongoQueryMode.NativeOnly))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => db.Docs
-                    .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
-                    .Select(e => new { e.Label, Value = Mql.Field(e, "Weight", DoubleSerializer.Instance) })
-                    .ToList());
+            // A real, default-mapped element resolves as an ordinary field (TryResolveMqlField), so NativeOnly now serves it.
+            var values = db.Docs
+                .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
+                .Select(e => new { e.Label, Value = Mql.Field(e, "Weight", DoubleSerializer.Instance) })
+                .ToList();
+
+            Assert.Equal(ScoreOrder.Take(4), values.Select(v => v.Label));
+            Assert.Equal([1.0, 2.0, 3.0, 4.0], values.Select(v => v.Value));
         }
 
         // Guard B: the double/double? CLR type. The name is "__score", so only the type declines it. The native
@@ -587,7 +590,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
                 new MongoDatabaseCreationOptions(CreateMissingVectorIndexes: false, WaitForVectorIndexes: false));
 
             // Weight ascends in score order (A=1 … E=5), not insertion order, and is double-typed so only the name
-            // guard can decline it in Mql_Field_for_a_non_score_element_declines.
+            // guard can separate it in Mql_Field_for_a_non_score_element_resolves_as_a_plain_field.
             db.Docs.AddRange(
                 new VectorDoc
                 {

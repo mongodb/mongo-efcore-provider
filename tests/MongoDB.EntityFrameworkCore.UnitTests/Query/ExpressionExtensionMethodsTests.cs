@@ -171,8 +171,10 @@ public class ExpressionExtensionMethodsTests
         // so the GroupBy/SelectMany result selectors sharing allowPositionalConstructorArguments are not widened.
         var sources = new (string RelativePath, int ExpectedCallCount, int ExpectedOptedInCallCount, int ExpectedContainerOptInCount)[]
         {
-            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeProjectionBinder.cs", 4, 1, 1),
-            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeJoinScopeProjectionBinder.cs", 3, 0, 1),
+            // 5: the four ordinary arms plus FlattenNestedConstructions (family A, default arguments: no opt-in).
+            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeProjectionBinder.cs", 5, 1, 1),
+            // 4: the three ordinary arms plus the all-whole-entity wrapper arm (family A, no opt-in).
+            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeJoinScopeProjectionBinder.cs", 4, 0, 1),
             // Family B (read by index), pinned here only so neither widens to containers.
             ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeGroupByBinder.cs", 2, 1, 0),
             ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeSelectManyBinder.cs", 2, 2, 0),

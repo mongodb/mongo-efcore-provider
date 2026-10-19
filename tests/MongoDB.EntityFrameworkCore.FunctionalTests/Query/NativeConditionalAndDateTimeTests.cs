@@ -154,8 +154,6 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
         Assert.Equal(expected, actual);
     }
 
-    // ---- DateTime.TimeOfDay ----
-
     public class TimeRow
     {
         public ObjectId Id { get; set; }
@@ -173,7 +171,6 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
         ("b", new DateTime(2024, 3, 11, 0, 0, 0, 0, DateTimeKind.Utc), new DateTime(1999, 12, 31, 23, 59, 59, 999, DateTimeKind.Utc)),
         ("c", new DateTime(2024, 3, 11, 23, 59, 59, 999, DateTimeKind.Utc), null),
         ("d", new DateTime(1970, 1, 1, 12, 0, 0, 1, DateTimeKind.Utc), new DateTime(2024, 2, 29, 12, 0, 0, 0, DateTimeKind.Utc)),
-        // Before the Unix epoch: a negative stored millisecond count, still a positive time of day.
         ("e", new DateTime(1969, 12, 31, 23, 0, 0, 500, DateTimeKind.Utc), new DateTime(1969, 7, 20, 20, 17, 40, 0, DateTimeKind.Utc))
     ];
 
@@ -207,7 +204,6 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
             return db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => x.When.TimeOfDay).ToList();
         });
 
-        // Hand oracle: a unit mismatch (milliseconds read as ticks) would give 10000x smaller values.
         Assert.Equal(
             [
                 new TimeSpan(0, 23, 30, 15, 123), TimeSpan.Zero, new TimeSpan(0, 23, 59, 59, 999), new TimeSpan(0, 12, 0, 0, 1),
@@ -417,14 +413,18 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     }
 
     [Fact]
-    public void DateTimeOffset_TimeOfDay_projection_still_declines()
+    public void DateTimeOffset_TimeOfDay_projection_goes_native_and_matches_the_driver()
     {
-        var collection = Seed(nameof(DateTimeOffset_TimeOfDay_projection_still_declines));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        var collection = Seed(nameof(DateTimeOffset_TimeOfDay_projection_goes_native_and_matches_the_driver));
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.AsNoTracking().Where(x => x.OccurredOffset != null)
-                .Select(x => x.OccurredOffset!.Value.TimeOfDay).ToList());
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().Where(x => x.OccurredOffset != null)
+                .Select(x => x.OccurredOffset!.Value.TimeOfDay).ToList().OrderBy(t => t).ToList();
+        });
+
+        Assert.NotEmpty(result);
     }
 
     // Every reader shape the leaf can land in must read the milliseconds, not the generic TimeSpan serializer's ticks.
@@ -443,13 +443,14 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
         Assert.Equal(TimeRows.OrderBy(r => r.Label).Select(r => (r.Label, r.When.TimeOfDay)).ToList(), result);
     }
 
-    // A computed leaf inside a nested anonymous construction isn't native; the fallback must still read it right.
+    // A TimeOfDay leaf inside a nested anonymous construction is flattened into the enclosing projection and read back
+    // through the milliseconds serializer, matching the driver.
     [Fact]
-    public void TimeOfDay_in_a_nested_construction_declines()
+    public void TimeOfDay_in_a_nested_construction_goes_native_and_matches_the_driver()
     {
-        var collection = SeedTimeRows(nameof(TimeOfDay_in_a_nested_construction_declines));
+        var collection = SeedTimeRows(nameof(TimeOfDay_in_a_nested_construction_goes_native_and_matches_the_driver));
 
-        var result = NativeModeAssert.DeclinesCleanly(mode =>
+        var result = NativeModeAssert.NativeAndParity(mode =>
         {
             using var db = CreateTimeContext(collection, mode);
             return db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => new { x.Label, Inner = new { T = x.When.TimeOfDay } })
@@ -553,7 +554,6 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
             .Intersect(db.Entities.AsNoTracking().Select(x => new { T = x.When.TimeOfDay })).ToList());
     }
 
-    // Both operands TimeOfDay: both store milliseconds, and source1's reader reads them as such.
     [Fact]
     public void TimeOfDay_member_Union_with_TimeOfDay_matches_the_driver()
     {
@@ -600,7 +600,6 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
         Assert.Equal(TimeRows.OrderBy(r => r.Label).Select(r => (object)r.When.TimeOfDay).ToList(), result);
     }
 
-    // Review Focus #5: a DateTime-typed computed leaf over a null date must throw like C#, not read DateTime.MinValue.
     [Fact]
     public void AddDays_over_a_null_date_throws_like_CSharp()
     {

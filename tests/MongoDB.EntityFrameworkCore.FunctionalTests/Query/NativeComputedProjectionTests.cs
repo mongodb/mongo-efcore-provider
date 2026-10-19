@@ -105,7 +105,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     private static readonly Action<ModelBuilder> CustomerWithPostsModel =
         mb => mb.Entity<CustomerWithPosts>().OwnsMany(c => c.Posts);
 
-    // Alice: 2 posts, Bob: 0 posts, Carol: 1 post.
     private (IMongoCollection<CustomerWithPosts> collection, List<string> logs) SeedCustomersWithPosts(string name)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
@@ -219,7 +218,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         {
             var results = nativeOnly.Entities.Select(c => new { c.Name, M = c.Age % c.Score })
                 .OrderBy(r => r.Name).ToList();
-            // Alice: 7%2=1, Bob: 20%20=0, Carol: -7%2=-1 (negative dividend exercised)
             Assert.Equal([1, 0, -1], results.Select(r => r.M).ToArray());
 
             var mql = Mql(logs);
@@ -291,8 +289,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(nameof(Nullable_operand_arithmetic_matches_driver));
 
-        // NativeOnly proves the $project went native; parity alone wouldn't, since a silent fallback gives identical
-        // results.
         using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
         {
             var results = nativeOnly.Entities.Select(c => new { c.Name, X = c.MaybeAge * 2 })
@@ -385,7 +381,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         var (collection, logs) = SeedCustomers(
             nameof(Wrapped_and_bare_whole_entity_leaves_both_go_native_and_work_in_every_mode) + mode);
 
-        // Wrapped shape: Route == Projection.
         using (var wrapped = CreateContext(collection, logs, mode))
         {
             var results = wrapped.Entities.Select(c => new { c }).OrderBy(r => r.c.Name).ToList();
@@ -394,7 +389,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             Assert.Equal([7, 20, -7], results.Select(r => r.c.Age).ToArray());
         }
 
-        // Bare shape: Route == WholeEntity.
         using (var bare = CreateContext(collection, [], mode))
         {
             var results = bare.Entities.OrderBy(c => c.Name).ToList();
@@ -439,7 +433,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
         var logs = new List<string>();
 
-        // NativeOnly forbids fallback, so success proves the shape went native.
         using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
         {
             var results = nativeOnly.Entities.Select(c => new { c.Name, X = c.Age / c.Score })

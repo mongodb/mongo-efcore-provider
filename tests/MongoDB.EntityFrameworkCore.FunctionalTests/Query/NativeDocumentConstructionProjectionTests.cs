@@ -104,17 +104,12 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         return database.MongoDatabase.GetCollection<Book>(coll.CollectionNamespace.CollectionName);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Goes native: a constructed sub-entity leaf mixed with a plain field sibling
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-
     [Fact]
     public void Document_construction_leaf_goes_native_and_reads_correct_values()
     {
         var collection = SeedBooks(nameof(Document_construction_leaf_goes_native_and_reads_correct_values));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // NativeOnly: success here (rather than NativeTranslationNotSupportedException) is the routing proof.
         var results = db.Entities.AsNoTracking()
             .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Author }, b.Rank })
             .OrderBy(r => r.Copy.Title)
@@ -245,38 +240,36 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         }
     }
 
-    // A computed member inside the construction declines the whole leaf: NativeOnly throws, Native silently
-    // falls back and still reads correct values.
+    // A computed member inside the construction means it is not a sub-document leaf: it is flattened into the enclosing
+    // projection (FlattenNestedConstructions), each member a leaf under its own name, and read back member by member.
+    // The values are checked in every mode (BookCopy.Id maps to "_id" in the driver's class map; reading per member
+    // by alias must not depend on that).
     [Fact]
-    public void Document_construction_leaf_with_computed_member_falls_back_but_still_reads_correct_values()
+    public void Document_construction_leaf_with_computed_member_is_flattened_and_reads_correct_values()
     {
-        var collection = SeedBooks(nameof(Document_construction_leaf_with_computed_member_falls_back_but_still_reads_correct_values));
+        var collection = SeedBooks(nameof(Document_construction_leaf_with_computed_member_is_flattened_and_reads_correct_values));
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnly.Entities.AsNoTracking()
+            using var db = CreateContext(collection, mode);
+            var results = db.Entities.AsNoTracking()
                 .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Title.Length.ToString() } })
-                .ToList());
+                .OrderBy(r => r.Copy.Title)
+                .ToList();
+
+            Assert.Equal(2, results.Count);
+            Assert.Equal("Alpha", results[0].Copy.Title);
+            Assert.Equal("5", results[0].Copy.Author);
+            Assert.NotEqual(default, results[0].Copy.Id);
+            Assert.Equal("Beta", results[1].Copy.Title);
+            Assert.Equal("4", results[1].Copy.Author);
+            Assert.NotEqual(default, results[1].Copy.Id);
         }
-
-        using var db = CreateContext(collection, MongoQueryMode.Native);
-        var results = db.Entities.AsNoTracking()
-            .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Title.Length.ToString() } })
-            .OrderBy(r => r.Copy.Title)
-            .ToList();
-
-        Assert.Equal(2, results.Count);
-        Assert.Equal("Alpha", results[0].Copy.Title);
-        Assert.Equal("5", results[0].Copy.Author);
-        Assert.Equal("Beta", results[1].Copy.Title);
-        Assert.Equal("4", results[1].Copy.Author);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  A ternary whose branches are client-only constructions: only the test is projected (a bool leaf) and the
-    //  conditional is evaluated client-side. Server-side document construction would be wrong here: IdName.Id maps
-    //  to "_id" in the driver's class map, while a native sub-document would carry "Id".
-    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // A ternary whose branches are client-only constructions: only the test is projected (a bool leaf) and the
+    // conditional is evaluated client-side. Server-side construction would be wrong: IdName.Id maps to "_id" in the
+    // driver's class map, while a native sub-document would carry "Id".
 
     private class Place
     {
@@ -432,7 +425,6 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         });
         Assert.Equal(["Alpha|Alpha", "REC|Rec", "REC|Rec", "REC|Rec"], withinBranch);
 
-        // The shared read is staged once.
         using var logged = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
         _ = logged.Entities.AsNoTracking()
             .Select(p => p.City == "Seattle"
@@ -491,8 +483,8 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         Assert.Equal(["PAY|Alpha", "REC|UK", "REC|DE", "REC|FR"], results);
     }
 
-    // The latent crash: the wrapped form was admitted as a server-side $cond over sub-documents carrying "Id", and the
-    // read back through IdName's class map (which expects "_id") threw FormatException.
+    // The latent crash: the wrapped form was admitted as a server-side $cond over sub-documents carrying "Id", which
+    // IdName's class map (expecting "_id") then failed to read back with FormatException.
     [Fact]
     public void Wrapped_ternary_over_constant_constructions_goes_native_with_parity()
     {
@@ -637,8 +629,8 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         spyLogger.AssertExecutedMqlContains("\"then\" : { \"Text\" : \"$Name\" }, \"else\" : { \"Text\" : \"$Country\" }");
     }
 
-    // Over a join scope the ternary is staged by NativeJoinScopeProjectionBinder, whose computed leaf is read back whole
-    // through IdName's class map (Id -> _id): it used to throw FormatException in NativeOnly and Native. Declines now.
+    // Over a join scope the ternary is staged by NativeJoinScopeProjectionBinder and read back whole through IdName's
+    // class map (Id -> _id), which threw FormatException; it declines now.
     [Fact]
     public void Join_scope_ternary_over_constructions_the_class_map_misreads_declines()
     {

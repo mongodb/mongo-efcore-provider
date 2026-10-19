@@ -60,12 +60,21 @@ internal enum MongoBinaryOperator
     /// <c>double</c>, which would compare wrongly and fail to deserialize into an integral member.
     /// </summary>
     /// <remarks>
-    /// Chosen at translate time from the division node's CLR type, not at render time from the operands: widening
-    /// <c>Convert</c>s (<c>(double)a / b</c>) are unwrapped by then, so the operands would look integral.
+    /// Chosen at translate time from the node's CLR type: by render time widening <c>Convert</c>s
+    /// (<c>(double)a / b</c>) are unwrapped, so the operands would look integral.
     /// </remarks>
     IntegerDivide,
 
-    Modulo
+    Modulo,
+
+    /// <summary>Integer <c>&amp;</c> (<c>$bitAnd</c>).</summary>
+    BitAnd,
+
+    /// <summary>Integer <c>|</c> (<c>$bitOr</c>).</summary>
+    BitOr,
+
+    /// <summary>Integer <c>^</c> (<c>$bitXor</c>).</summary>
+    BitXor
 }
 
 /// <summary>
@@ -73,5 +82,8 @@ internal enum MongoBinaryOperator
 /// </summary>
 internal enum MongoUnaryOperator
 {
-    Not
+    Not,
+
+    /// <summary>Integer bitwise complement (<c>~x</c>, <c>$bitNot</c>); typed as the operand's integer type.</summary>
+    BitNot
 }

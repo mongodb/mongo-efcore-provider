@@ -42,10 +42,7 @@ internal sealed class MongoTrimExpression : MongoExpression
 
     public MongoTrimSide Side { get; }
 
-    /// <summary>
-    /// The characters to strip as one string constant (<c>"Se"</c> for <c>Trim('S','e')</c>), or
-    /// <see langword="null"/> for MongoDB's default (whitespace).
-    /// </summary>
+    /// <summary>The characters to strip as one string constant, or <see langword="null"/> for whitespace.</summary>
     public MongoExpression? Chars { get; }
 
     /// <inheritdoc />

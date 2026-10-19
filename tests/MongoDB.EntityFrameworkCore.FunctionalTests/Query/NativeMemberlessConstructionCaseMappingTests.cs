@@ -159,7 +159,6 @@ public class NativeMemberlessConstructionCaseMappingTests(TemporaryDatabaseFixtu
                 .AsEnumerable().Select(x => Show(x.Upper)),
             ["ABC", "<null>", "<null>", "ÉCOLE"]);
 
-    // Controls: an anonymous type and a member-init DTO.
     [Theory]
     [MemberData(nameof(AllModes))]
     public void Anonymous_type_and_member_init_dto_with_a_case_mapped_member(string mode)

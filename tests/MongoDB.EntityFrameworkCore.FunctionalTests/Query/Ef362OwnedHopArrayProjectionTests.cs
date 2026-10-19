@@ -77,8 +77,6 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
     private static readonly MongoQueryMode[] AllModes =
         [MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly];
 
-    // ── 1. The ragged matrix, all three modes ─────────────────────────────────────
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -97,18 +95,14 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
 
             Assert.Equal(new[] {"a_populated", "b_empty", "c_missing", "d_null"}, rows.Select(r => r.Title));
 
-            // Element VALUES, not counts and not != null: an alias miss presents as an empty collection.
             Assert.Equal(new[] {"n1", "n2"}, rows[0].Notes.Select(n => n.Text));
             Assert.Equal(new[] {1, 2}, rows[0].Notes.Select(n => n.NoteId));
 
-            // A missing or explicitly-null stored array materializes empty, never null.
             Assert.Empty(rows[1].Notes);
             Assert.Empty(rows[2].Notes);
             Assert.Empty(rows[3].Notes);
         }
     }
-
-    // ── 2. Parameterized Where ────────────────────────────────────────────────────
 
     [Theory]
     [InlineData(false)]
@@ -118,7 +112,6 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         var collection = Seed(nameof(Owned_hop_array_leaf_behind_a_parameterized_where_reads_correct_values) + shadowKey);
         var model = shadowKey ? ShadowKeyModel : KeyedModel;
 
-        // A captured local, not a constant, so it's a genuine query parameter; all three modes execute natively.
         var prefix = "a_";
 
         foreach (var mode in AllModes)
@@ -135,8 +128,6 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         }
     }
 
-    // ── 3. The emitted alias ──────────────────────────────────────────────────────
-
     [Fact]
     public void Owned_hop_array_leaf_emits_the_dotted_document_path_alias()
     {
@@ -151,20 +142,17 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         // dotted alias, which MongoDB renders as nested output, so the shaper's segment walk resolves it identically
         // against a projected document and a whole one.
         Assert.Contains("\"Home.Notes\" : \"$Home.Notes\"", mql);
-        // The owner key rides along for any array leaf, which also suppresses RenderProject's default `_id : 0`.
         Assert.Contains("\"_id\" : \"$_id\"", mql);
         Assert.DoesNotContain("aggregate([])", mql);
     }
 
-    // ── 4. The narrowings that must SURVIVE the widening ──────────────────────────
-
     [Fact]
-    public void Renamed_owned_hop_array_alias_is_still_declined_and_returns_correct_data()
+    public void Renamed_owned_hop_array_alias_goes_native_and_returns_correct_data()
     {
         // The renamed-alias narrowing is orthogonal to the hop: `N = b.Home.Notes` keeps alias `N`, which isn't the
         // document path, so IsNativeArrayProjectionLeaf declines the whole projection. Dropping
         // DeriveWrappedLeafAlias's `memberName == GetContainingElementName()` conjunct makes the NativeOnly leg pass.
-        var collection = Seed(nameof(Renamed_owned_hop_array_alias_is_still_declined_and_returns_correct_data));
+        var collection = Seed(nameof(Renamed_owned_hop_array_alias_goes_native_and_returns_correct_data));
 
         static List<string> Run(SingleEntityDbContext<NestedOwnerBlog> db)
             => db.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -175,23 +163,20 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
 
         var expected = new[] {"a_populated=[n1|n2]", "b_empty=[]", "c_missing=[]", "d_null=[]"};
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal(expected, Run(db));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
     [Fact]
-    public void Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_correctly()
+    public void Owned_hop_SCALAR_leaf_alongside_the_array_leaf_goes_native_and_reads_the_scalar_from_its_path()
     {
-        // A dotted scalar (`b.Home.City`) has ElementName "Home.City" but alias "City", so
-        // IsWholeDocumentReadableLeaf declines it and, with an array leaf present, the whole projection (the NativeOnly
-        // leg). The fallback modes must still read City from its dotted path, not the top level.
-        var collection = Seed(nameof(Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_correctly));
+        // A dotted scalar (`b.Home.City`) takes its document path as its alias, so the projection stays native beside the
+        // array leaf, and a whole-document late fallback reads the same path (the alias == document-path invariant).
+        var collection = Seed(nameof(Owned_hop_SCALAR_leaf_alongside_the_array_leaf_goes_native_and_reads_the_scalar_from_its_path));
 
         static List<string> Run(SingleEntityDbContext<NestedOwnerBlog> db)
             => db.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -200,20 +185,58 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
                 .Select(r => $"{r.City ?? "<null>"}=[{string.Join("|", r.Notes.Select(n => n.Text))}]")
                 .ToList();
 
-        // The seeded values, which both fallback-capable modes return.
         var expected = new[] {"NYC=[n1|n2]", "LA=[]", "SF=[]", "DC=[]"};
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal(expected, Run(db));
         }
-
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
-    // ── 5. Composition, and the tracking contract ─────────────────────────────────
+    [Fact]
+    public void Owned_hop_renamed_SCALAR_leaf_alongside_the_array_leaf_reads_from_its_path_in_every_mode()
+    {
+        // `Town = b.Home.City`: the member name differs from the path, so the alias override maps Town -> "Home.City".
+        var collection = Seed(nameof(Owned_hop_renamed_SCALAR_leaf_alongside_the_array_leaf_reads_from_its_path_in_every_mode));
+
+        static List<string> Run(SingleEntityDbContext<NestedOwnerBlog> db)
+            => db.Entities.AsNoTracking().OrderBy(b => b.Title)
+                .Select(b => new {Town = b.Home.City, b.Home.Notes})
+                .ToList()
+                .Select(r => $"{r.Town ?? "<null>"}=[{string.Join("|", r.Notes.Select(n => n.Text))}]")
+                .ToList();
+
+        var expected = new[] {"NYC=[n1|n2]", "LA=[]", "SF=[]", "DC=[]"};
+
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = CreateContext(collection, KeyedModel, mode);
+            Assert.Equal(expected, Run(db));
+        }
+    }
+
+
+    [Fact]
+    public void Owned_hop_scalar_beside_the_whole_owned_reference_declines_on_the_path_collision()
+    {
+        // `Home` and `Home.City` collide as $project paths, so the dotted scalar can't take its path as its alias.
+        var collection = Seed(nameof(Owned_hop_scalar_beside_the_whole_owned_reference_declines_on_the_path_collision));
+
+        List<string> Run(MongoQueryMode mode)
+        {
+            using var db = CreateContext(collection, KeyedModel, mode);
+            return db.Entities.AsNoTracking().OrderBy(b => b.Title)
+                .Select(b => new {b.Home, b.Home.City})
+                .ToList()
+                .Select(r => r.City ?? "<null>")
+                .ToList();
+        }
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
+        Assert.Equal(["NYC", "LA", "SF", "DC"], Run(MongoQueryMode.Native));
+        Assert.Equal(["NYC", "LA", "SF", "DC"], Run(MongoQueryMode.DriverLinq));
+    }
 
     [Fact]
     public void Owned_hop_array_leaf_composed_with_filter_sort_and_paging_goes_native()
@@ -234,15 +257,11 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         Assert.Equal(new[] {"n1", "n2"}, rows[1].Notes.Select(n => n.Text));
     }
 
-    // ── Fixture ───────────────────────────────────────────────────────────────────
-
     private IMongoCollection<NestedOwnerBlog> Seed(string name)
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(
             TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8]);
 
-        // Home is a required owned reference, so it's present on every row. The four states are the array's:
-        // populated, empty, field missing, field explicitly BSON null.
         coll.InsertMany(
         [
             Row("a_populated", "NYC", new BsonArray([NoteDoc(1, "n1"), NoteDoc(2, "n2")])),

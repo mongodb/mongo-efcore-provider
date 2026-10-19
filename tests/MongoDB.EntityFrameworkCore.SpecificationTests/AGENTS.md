@@ -66,34 +66,13 @@ var to confirm green.
 
 ## Test folder mirror
 
-Test folders mirror `src/` (`UnitTests/`, `FunctionalTests/`, `SpecificationTests/` each have `Query/`, `Storage/`,
-`Metadata/`, `Serializers/`, ... as applicable). Exceptions: `Storage/` functional tests also use `Update/`;
-`Serializers/` and `ChangeTracking/` functional tests use `Mapping/`/`Serialization/`; `Extensions/` +
-`Infrastructure/` functional tests use `Design/`; `ValueGeneration/` convention coverage is in
-`SpecificationTests/Metadata/Conventions/`.
-
-## Running
-
-```bash
-dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityFrameworkCore.SpecificationTests.csproj \
-  -c "Debug EF10" --no-build --filter "FullyQualifiedName~NorthwindWhere"
-```
+Test folders mirror `src/` (`UnitTests/`, `FunctionalTests/`, `SpecificationTests/`). Exceptions: `Storage/` functional tests also use `Update/`; `Serializers/` and `ChangeTracking/` use `Mapping/`/`Serialization/`; `Extensions/` and `Infrastructure/` use `Design/`; `ValueGeneration/` convention coverage is in `SpecificationTests/Metadata/Conventions/`.
 
 ## Native/driver differential runner
 
-`tests/tools/native-parity-diff.sh <EF8|EF9|EF10> <outdir> [--gate]` runs the SpecificationTests and FunctionalTests projects
-twice (4 parallel `dotnet test` processes, each with its own Atlas-local container) — once with
-`MONGODB_EF_QUERY_MODE=DriverLinq` and once with `NativeOnly` — then runs `native-parity-diff.py` over the TRX files.
-It needs a prior build of `Debug <ver>` (`--no-build`) and unsets `MONGODB_URI`/`ATLAS_URI`/`MONGODB_EF_NATIVE_ONLY`.
-It exits nonzero on a missing TRX, a test missing from one mode, or an unexpected outcome; with `--gate` (passed to
-the Python script as `--fail-on-regress`, or set `NATIVE_PARITY_FAIL_ON_REGRESS=1`) it also exits nonzero when any
-regress entry exists.
+`tests/tools/native-parity-diff.sh <EF8|EF9|EF10> <outdir> [--gate]` runs the SpecificationTests and FunctionalTests projects twice (4 parallel `dotnet test` processes, each with its own Atlas-local container): once with `MONGODB_EF_QUERY_MODE=DriverLinq`, once with `NativeOnly`; then `native-parity-diff.py` compares the TRX files. It needs a prior `Debug <ver>` build (`--no-build`) and unsets `MONGODB_URI`/`ATLAS_URI`/`MONGODB_EF_NATIVE_ONLY`.
 
-Outputs in `<outdir>`: `<ver>-<project>-regress.txt` (passes under DriverLinq, fails under NativeOnly: the native
-parity gaps) and `<ver>-<project>-improve.txt` (the reverse), each with the first 400 characters of the failure
-message, plus pass/fail and regress/improve counts on stdout.
-
-The script exports `MONGODB_EF_SKIP_MQL_ASSERTIONS=1` (`TestMqlLoggerFactory.AssertBaseline` returns early: MQL
-legitimately differs between the paths) and `MONGODB_EF_DIFFERENTIAL=1` (`IsNativeOnly` returns false in both runs and
-`AssertRefusal*` accepts either exception type; the test process warns once on stderr when it is set). Because `IsNativeOnly` is false in both runs, tests whose
-`IsNativeOnly` branches diverge in outcome are NOT masked and show up as regress/improve entries.
+- On Windows run it from **Git Bash**, not PowerShell: there `bash` resolves to WSL, which can't see the Windows `dotnet`/Docker. Python is the first of `python3`, `python`, `py` (override with `PYTHON=<cmd>`).
+- Exits nonzero on a missing TRX, a test missing from one mode, or an unexpected outcome; `--gate` (or `NATIVE_PARITY_FAIL_ON_REGRESS=1`) also fails on any regress entry.
+- Outputs `<outdir>/<ver>-<project>-regress.txt` (passes under DriverLinq, fails under NativeOnly: the native parity gaps) and `-improve.txt` (the reverse), with the first 400 characters of each failure message.
+- It exports `MONGODB_EF_SKIP_MQL_ASSERTIONS=1` (`AssertBaseline` returns early; MQL legitimately differs between paths) and `MONGODB_EF_DIFFERENTIAL=1` (`IsNativeOnly` is false in both runs and `AssertRefusal*` accepts either exception type). Tests whose `IsNativeOnly` branches diverge in outcome are therefore NOT masked and show as regress/improve entries.

@@ -35,7 +35,6 @@ public class MathTranslationsMongoTest : MathTranslationsTestBase<MongoBasicType
         : base(fixture)
     {
         Fixture.TestMqlLoggerFactory.Clear();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]

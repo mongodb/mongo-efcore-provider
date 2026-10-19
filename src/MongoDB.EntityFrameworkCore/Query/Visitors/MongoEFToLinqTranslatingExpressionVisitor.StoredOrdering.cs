@@ -26,16 +26,14 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
-// EF-337: the driver compares, sorts and reduces a property's stored BSON, so over a value-converted or
-// non-default-represented property a relational comparison, OrderBy/ThenBy key or Sum/Min/Max/Average silently answers
-// on the stored form ("9" > "100", $sum of strings is 0). The native translator declines these shapes, which only moves
-// them here, so this path refuses them loudly. The property tests are StoredOrdering.PreservesClrOrdering (comparison)
-// and StoredOrdering.PreservesClrOrderingForAggregateAndSort, shared with the native declines. Equality (==, !=,
-// Contains) is exact whatever the storage and is left alone.
+// EF-337: the driver compares, sorts and reduces a property's stored BSON, so over a value-converted or non-default-represented property
+// a relational comparison, OrderBy/ThenBy key or Sum/Min/Max/Average silently answers on the stored form ("9" > "100", $sum of strings is 0).
+// The native translator declines these shapes, which only moves them here, so this path refuses them loudly. The property tests are
+// StoredOrdering.PreservesClrOrdering and PreservesClrOrderingForAggregateAndSort, shared with the native declines. Equality is exact
+// whatever the storage and is left alone.
 //
-// The whole key/operand is walked, not just a bare member: through casts, ??, ?:, arithmetic, members of a projected
-// (anonymous/DTO) element, g.Key back to the GroupBy key selector, and Concat/Union sources. A construct the walk can't
-// classify is refused when the query reads any such property at all, so an unknown shape never passes silently.
+// The whole key/operand is walked (casts, ??, ?:, arithmetic, members of a projected element, g.Key back to the GroupBy key selector,
+// Concat/Union sources). A construct the walk can't classify is refused when the query reads any such property, so an unknown shape never passes.
 internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 {
     private enum StoredOrderingUse
@@ -118,7 +116,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
             case nameof(Queryable.Sum) or nameof(Queryable.Min) or nameof(Queryable.Max) or nameof(Queryable.Average)
                 when node.Arguments.Count == 1:
-                // Selector-less: the reduced value is the source's element.
                 if (FindElementExpressions(node.Arguments[0]) is { } elements)
                 {
                     foreach (var element in elements)
@@ -225,7 +222,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
             case ParameterExpression parameter
                 when parameter.Type.IsGenericType && parameter.Type.GetGenericTypeDefinition() == typeof(IGrouping<,>):
-                // A grouping ranges over the GroupBy's elements.
                 if (!ParameterSources.TryGetValue(parameter, out var groupingSources))
                 {
                     return null;
@@ -622,7 +618,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             var ownerType = StripConverts(memberOwner).Type;
             if (owner.IsMappedEntityType(ownerType))
             {
-                // A scalar property is checked; a navigation yields an entity/collection, not an ordered value.
                 CheckProperties(owner.FindMappedProperties(ownerType, member.Name));
                 return;
             }
@@ -683,7 +678,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             }
         }
 
-        // A non-entity parameter used as a value: walk what it ranges over.
         private void WalkValues(ParameterExpression parameter, Expression scope)
         {
             var definitions = ResolveValues(parameter);
@@ -754,7 +748,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             }
         }
 
-        // `p`, `p.A`, `p.A.B`, ... over a non-entity parameter: resolvable through the parameter's projection.
         private bool IsProjectionChain(Expression expression)
             => StripConverts(expression) switch
             {

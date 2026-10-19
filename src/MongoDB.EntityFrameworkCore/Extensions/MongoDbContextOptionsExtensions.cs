@@ -35,7 +35,6 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="databaseName">The name of the database to use.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <typeparam name="TContext">The type of context to be configured.</typeparam>
-    /// <returns>The options builder so that further configuration can be chained.</returns>
     public static DbContextOptionsBuilder<TContext> UseMongoDB<TContext>(
         this DbContextOptionsBuilder<TContext> optionsBuilder,
         string connectionString,
@@ -55,7 +54,6 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="connectionString">The connection string used to connect to MongoDB.</param>
     /// <param name="databaseName">The name of the database to use.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
-    /// <returns>The options builder so that further configuration can be chained.</returns>
     public static DbContextOptionsBuilder UseMongoDB(
         this DbContextOptionsBuilder optionsBuilder,
         string connectionString,
@@ -85,7 +83,6 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="connectionString">The connection string used to connect to MongoDB which must include a database name.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <typeparam name="TContext">The type of context to be configured.</typeparam>
-    /// <returns>The options builder so that further configuration can be chained.</returns>
     public static DbContextOptionsBuilder<TContext> UseMongoDB<TContext>(
         this DbContextOptionsBuilder<TContext> optionsBuilder,
         string connectionString,
@@ -102,7 +99,6 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="optionsBuilder">The builder being used to configure the context.</param>
     /// <param name="connectionString">The connection string used to connect to MongoDB which must include a database name.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
-    /// <returns>The options builder so that further configuration can be chained.</returns>
     public static DbContextOptionsBuilder UseMongoDB(
         this DbContextOptionsBuilder optionsBuilder,
         string connectionString,
@@ -130,7 +126,6 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="databaseName">The name of the database to use.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <typeparam name="TContext">The type of context to be configured.</typeparam>
-    /// <returns>The options builder so that further configuration can be chained.</returns>
     /// <remarks>
     /// It is recommended that you use alternative UseMongoDB overloads that take either a connection string
     /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Core Provider can correctly configure and
@@ -155,7 +150,6 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="mongoClient">The pre-configured <see cref="IMongoClient"/> for connecting to the server.</param>
     /// <param name="databaseName">The name of the MongoDB database to use.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
-    /// <returns>The options builder so that further configuration can be chained.</returns>
     /// <remarks>
     /// It is recommended that you use alternative UseMongoDB overloads that take either a connection string
     /// or <see cref="MongoClientSettings"/> to ensure the MongoDB EF Core Provider can correctly configure and
@@ -191,7 +185,6 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="databaseName">The name of the database to use.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
     /// <typeparam name="TContext">The type of context to be configured.</typeparam>
-    /// <returns>The options builder so that further configuration can be chained.</returns>
     /// <remarks>
     /// In some scenarios the MongoDB EF Core Provider may need to change some client settings before connecting depending on
     /// what features are configured.
@@ -215,7 +208,6 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="mongoClientSettings">The <see cref="MongoClientSettings"/> to use as a base when connecting to the server.</param>
     /// <param name="databaseName">The name of the database to use.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
-    /// <returns>The options builder so that further configuration can be chained.</returns>
     /// <remarks>
     /// In some scenarios the MongoDB EF Core Provider may need to change some client settings before connecting depending on
     /// what features are configured.
@@ -248,7 +240,6 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="optionsBuilder">The builder being used to configure the context.</param>
     /// <param name="extension">The <see cref="MongoOptionsExtension"/> to configure.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
-    /// <returns>The options builder so that further configuration can be chained.</returns>
     public static DbContextOptionsBuilder<TContext> UseMongoDB<TContext>(
         this DbContextOptionsBuilder<TContext> optionsBuilder,
         MongoOptionsExtension extension,
@@ -262,7 +253,6 @@ public static class MongoDbContextOptionsExtensions
     /// <param name="optionsBuilder">The builder being used to configure the context.</param>
     /// <param name="extension">The <see cref="MongoOptionsExtension"/> to configure.</param>
     /// <param name="optionsAction">An optional action to allow additional MongoDB-specific configuration.</param>
-    /// <returns>The options builder so that further configuration can be chained.</returns>
     public static DbContextOptionsBuilder UseMongoDB(
         this DbContextOptionsBuilder optionsBuilder,
         MongoOptionsExtension extension,

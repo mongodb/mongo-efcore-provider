@@ -32,8 +32,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 /// </summary>
 public class SlotPopulationTests
 {
-    // ── Entity model used across all tests ───────────────────────────────────────
-
     private class Customer
     {
         public ObjectId Id { get; set; }
@@ -69,8 +67,6 @@ public class SlotPopulationTests
         public ObjectId Id { get; set; }
         public string City { get; set; } = "";
     }
-
-    // ── Test harness ─────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Drives a LINQ query through the real QMTEV and returns the resulting <see cref="MongoQueryExpression"/>.
@@ -177,8 +173,6 @@ public class SlotPopulationTests
         }
     }
 
-    // ── Where → Predicate slot populated ─────────────────────────────────────────
-
     [Fact]
     public void Where_populates_the_predicate_slot()
     {
@@ -188,8 +182,6 @@ public class SlotPopulationTests
         Assert.Equal(NativeRoute.WholeEntity, mongoQ.Select.Route);
         Assert.NotNull(mongoQ.CapturedExpression);
     }
-
-    // ── OrderBy + ThenByDescending → Orderings slot populated ──────────────────────
 
     [Fact]
     public void OrderBy_then_ThenBy_preserves_order()
@@ -203,7 +195,6 @@ public class SlotPopulationTests
         Assert.False(sort.Orderings[1].Ascending);
     }
 
-    // ── Where after Take → non-canonical but native ──────────────────────────────
     // PipelineOps are emitted in arrival order, so a $match after a $limit stays after it.
 
     [Fact]
@@ -218,7 +209,6 @@ public class SlotPopulationTests
         Assert.NotNull(mongoQ.CapturedExpression);
     }
 
-    // ── Non-canonical Skip/Take families are native ───────────────────────────────
     // PipelineOps are emitted in arrival order. These assert op ordering / Route only; QueryModeGateTests has
     // the end-to-end NativeOnly proof.
 
@@ -256,8 +246,6 @@ public class SlotPopulationTests
         Assert.False(mongoQ.Select.Route == NativeRoute.Fallback);
     }
 
-    // ── A Select the projection binder declines → Route = Fallback ───────────────
-
     // Uses a narrowing cast with no MQL conversion operator ($toShort doesn't exist; see
     // MongoConvertExpression.ToOperatorFor), which the binder still declines.
     [Fact]
@@ -268,8 +256,6 @@ public class SlotPopulationTests
         Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
         Assert.Empty(mongoQ.Select.Projection);
     }
-
-    // ── Native projection slot population ─────────────────────────────────────────
 
     [Fact]
     public void Anonymous_member_projection_populates_projection_slot()
@@ -283,7 +269,6 @@ public class SlotPopulationTests
         Assert.IsType<MongoFieldExpression>(mongoQuery.Select.Projection[0].Expression);
     }
 
-    // ── Arithmetic computed leaves are native ─────────────────────────────────────
     // A top-level arithmetic leaf populates Select.Projection as a MongoBinaryExpression when every operand is
     // numeric with no integer-division divergence and no value-converted field (see TryTranslateValue).
 
@@ -404,17 +389,20 @@ public class SlotPopulationTests
         Assert.True(mongoQuery.Select.HasArrayProjectionLeaf);
     }
 
-    // Renamed-alias control: `new { Addr = c.Address, c.Age }` must decline, because the late-fallback leg needs
-    // the alias to name a real element the driver-LINQ bridge renders under the same name (see TryTranslateLeaf).
+    // Renamed-alias: `new { Addr = c.Address, c.Age }` stages the owned element under its own name ("Address") and maps
+    // the member to it with a DocumentPath alias override, so the alias-addressed shaper and a whole-document late
+    // fallback read the same element.
     [Fact]
-    public void Renamed_owned_reference_entity_leaf_declines()
+    public void Renamed_owned_reference_entity_leaf_is_staged_under_the_element_name()
     {
         var mongoQuery = TranslateToMongoQuery<CustomerWithOwnedAddress>(
             q => q.Select(c => new { Addr = c.Address, c.Age }),
             mb => mb.Entity<CustomerWithOwnedAddress>().OwnsOne(c => c.Address));
 
-        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
-        Assert.Empty(mongoQuery.Select.Projection);
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        Assert.Contains(mongoQuery.Select.Projection, p => p.Alias == "Address");
+        Assert.Contains(mongoQuery.Select.Projection, p => p.Alias == "Age");
+        Assert.Equal("Address", mongoQuery.Select.ResolveProjectionAlias("Addr"));
     }
 
     // A non-embedded owned type lives in its own collection, so admitting it would emit `"Address": "$Address"`
@@ -497,7 +485,6 @@ public class SlotPopulationTests
         Assert.Empty(mongoQuery.Select.Projection);
     }
 
-    // ── GroupBy wiring ────────────────────────────────────────────────────────────
     // GroupBy(k).Select(agg) must never hard-throw: a supported group routes native (Route = GroupBy); an
     // unsupported shape marks the query non-native (Route = Fallback).
 
@@ -599,11 +586,6 @@ public class SlotPopulationTests
         Assert.Null(mongoQuery.Select.SetOperation);
     }
 
-    // ══════════════════════════════════════════════════════════════════════════════════════════════
-    //  A constructed (non-navigation) sub-entity leaf — `new { Copy = new CustomerDto { Id = c.Id, ... } }` —
-    //  mixed with a computed sibling in a projection.
-    // ══════════════════════════════════════════════════════════════════════════════════════════════
-
     // An unmapped DTO rebuilt from root-level scalar fields — unlike the owned-nav-entity leaf, which aliases an
     // already-stored owned sub-document.
     private class CustomerDto
@@ -653,20 +635,18 @@ public class SlotPopulationTests
         Assert.IsType<MongoBinaryExpression>(mongoQuery.Select.Projection[1].Expression);
     }
 
-    // A member that isn't a plain top-level field (`c.Name.Length`) declines the whole leaf — this is a minimal
-    // widening, not a general nested-projection engine.
+    // A nested construction with a member that isn't a plain top-level field (`c.Name.Length`) is not a sub-document leaf:
+    // it is flattened into the enclosing projection (FlattenNestedConstructions), each member a leaf under its own name.
     [Fact]
-    public void Document_construction_leaf_with_computed_member_declines_to_fallback()
+    public void Document_construction_leaf_with_computed_member_is_flattened()
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(
             q => q.Select(c => new { Copy = new CustomerDto { Id = c.Id, Name = c.Name, Age = c.Name.Length } }));
 
-        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
-        Assert.Empty(mongoQuery.Select.Projection);
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        Assert.Equal(["Id", "Name", "Age"], mongoQuery.Select.Projection.Select(p => p.Alias));
     }
 
-
-    // ── Computed-leaf shaper wrapping (NativeComputedLeafExpression) ─────────────
 
     // The native alias reader replaces the wrapper with one raw read of the server-computed value; every other
     // reader goes through ClientExpression, which binds the whole leaf to the same member, so the mixed reader

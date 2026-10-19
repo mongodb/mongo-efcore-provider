@@ -27,7 +27,6 @@ public class NorthwindCompiledQueryMongoTest : NorthwindCompiledQueryTestBase<No
         : base(fixture)
     {
         fixture.TestMqlLoggerFactory.Clear();
-        //fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]

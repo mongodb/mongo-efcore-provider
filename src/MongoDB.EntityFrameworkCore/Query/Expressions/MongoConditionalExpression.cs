@@ -29,13 +29,10 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 internal sealed class MongoConditionalExpression(MongoExpression test, MongoExpression ifTrue, MongoExpression ifFalse)
     : MongoExpression
 {
-    /// <summary>The boolean condition.</summary>
     public MongoExpression Test { get; } = test;
 
-    /// <summary>The value when <see cref="Test"/> is true.</summary>
     public MongoExpression IfTrue { get; } = ifTrue;
 
-    /// <summary>The value when <see cref="Test"/> is false.</summary>
     public MongoExpression IfFalse { get; } = ifFalse;
 
     /// <inheritdoc />

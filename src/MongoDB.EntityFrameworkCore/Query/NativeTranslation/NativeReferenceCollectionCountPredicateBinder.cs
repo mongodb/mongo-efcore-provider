@@ -22,9 +22,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
 /// Translates a comparison between an unfiltered reference-collection-nav <c>Count</c>/<c>LongCount</c>
-/// (<c>c.Orders.Count &gt; 2</c>) and a translatable value into a native <c>$lookup</c> + <c>$size</c>
-/// comparison. Called from <see cref="NativeSlotPopulator"/>'s <c>Where</c> arm after
-/// <see cref="MongoExpressionTranslator.TryTranslate"/> declines (it only handles embedded collections).
+/// (<c>c.Orders.Count &gt; 2</c>) and a translatable value into a native <c>$lookup</c> + <c>$size</c> comparison. Called from
+/// <see cref="NativeSlotPopulator"/>'s <c>Where</c> arm after <see cref="MongoExpressionTranslator.TryTranslate"/> declines.
 /// </summary>
 internal static class NativeReferenceCollectionCountPredicateBinder
 {
@@ -81,18 +80,15 @@ internal static class NativeReferenceCollectionCountPredicateBinder
         if (!valueTranslator.TryTranslateValue(otherSide, out var otherNode))
             return false;
 
-        // Commit point: all gates passed, so apply what TryBuildReferenceCollectionCountLookup staged.
         if (lookupToStamp is not null)
             lookupToStamp.IsBareCountSizeSource = true;
 
         foreach (var lookup in pendingLookups)
             mongoQ.AddLookup(lookup);
 
-        // PipelineOps are lowered before AppendLookupStages, so a $match reading the $lookup array via $size
-        // would run before the array exists. This flips ActiveOps to PostJoinOps, emitted right after the
-        // lookups. It's a dedicated flag (not JoinInnerAccessConfirmed) so Route can decline the query if a later
-        // set op, projected Distinct/keyed GroupBy, or Join attaches — those lowering branches don't flush
-        // PostJoinOps where this predicate needs it. See ReferenceCollectionCountPredicateConfirmed.
+        // PipelineOps are lowered before AppendLookupStages, so a $match reading the $lookup array would run before it exists:
+        // this flips ActiveOps to PostJoinOps. A dedicated flag (not JoinInnerAccessConfirmed) so Route declines a later set op,
+        // projected Distinct/keyed GroupBy or Join, whose lowering does not flush PostJoinOps.
         mongoQ.Select.MarkReferenceCollectionCountPredicateConfirmed();
 
         var leftNode = ReferenceEquals(countSide, binary.Left) ? (MongoExpression)sizeExpression : otherNode;

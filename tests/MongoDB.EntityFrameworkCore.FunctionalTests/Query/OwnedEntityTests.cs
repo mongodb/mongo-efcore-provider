@@ -1349,8 +1349,6 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_leaf_projection_with_nested_collection_element()
     {
-        // Regression test: Post's own Comments navigation used to make this leaf mistyped as
-        // IEnumerable<Post>, throwing ArgumentException from Expression.New's member-type check.
         var collection = database.CreateCollection<Blog>();
         var expected = new Blog
         {
@@ -1444,7 +1442,6 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_field_can_be_tested_for_null()
     {
-        // See OwnedEntity_collection_can_be_tested_for_null.
         var collection = database.CreateCollection<AField>();
         var inserted = new AField { _id = "1" };
         var expected = new AField { _id = "1", children = [] };

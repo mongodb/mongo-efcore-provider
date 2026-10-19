@@ -370,7 +370,6 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
 
         Assert.NotNull(root.A);
         Assert.NotNull(root.B);
-        // Guards against each sibling reading the wrong (or the other's) joined document.
         Assert.Equal("MidA", root.A.Name);
         Assert.Equal("MidB", root.B.Name);
     }
@@ -507,8 +506,6 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     }
 #endif
 
-    // BSON uses: desc, cust_id for Orders; name for Customers
-    // C# uses:   OrderDescription, CustomerId for Orders; FullName for Customers
     private (string ordersCollection, string customersCollection) SetupOrdersAndCustomers()
     {
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("IncludeCustomers") + Guid.NewGuid().ToString("N")[..8];

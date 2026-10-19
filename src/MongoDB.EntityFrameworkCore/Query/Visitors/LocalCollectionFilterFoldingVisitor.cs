@@ -97,6 +97,15 @@ internal sealed class LocalCollectionFilterFoldingVisitor(QueryCompilationContex
                 source.Type);
         }
 
+        // A closed inline array (`new[] { a, DateTime.UtcNow.AddYears(1) }`) is the source itself: its elements are evaluated
+        // inside the extractor on every execution, so a clock element reads that execution's instant.
+        // An element that is a query parameter (a captured variable) is read from the query context instead.
+        if (sourceValue is null && source is NewArrayExpression { NodeType: ExpressionType.NewArrayInit } inlineArray
+            && TryRewriteInlineArrayElements(inlineArray, out var rewrittenArray))
+        {
+            sourceValue = rewrittenArray;
+        }
+
         if (sourceValue is null)
         {
             return false;
@@ -110,6 +119,35 @@ internal sealed class LocalCollectionFilterFoldingVisitor(QueryCompilationContex
         // (NativeQueryParameter.TryGetQueryParameterName); harmless on EF10.
         folded = queryCompilationContext.RegisterRuntimeParameter(
             $"__mongo_filtered_{_foldedParameterCount++}", extractor);
+        return true;
+    }
+
+    // Every element must be closed or a query parameter; parameters become query-context reads so the extractor, which runs
+    // once per execution, sees that execution's values.
+    private static bool TryRewriteInlineArrayElements(NewArrayExpression array, out Expression rewritten)
+    {
+        rewritten = array;
+        var elements = new List<Expression>(array.Expressions.Count);
+        foreach (var element in array.Expressions)
+        {
+            if (NativeQueryParameter.TryGetQueryParameterName(element, out var parameterName))
+            {
+                elements.Add(Expression.Convert(
+                    Expression.Property(
+                        ParameterValues(QueryCompilationContext.QueryContextParameter), "Item", Expression.Constant(parameterName)),
+                    element.Type));
+            }
+            else if (FreeVariableFinder.IsClosed(element))
+            {
+                elements.Add(element);
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        rewritten = Expression.NewArrayInit(array.Type.GetElementType()!, elements);
         return true;
     }
 
@@ -128,6 +166,13 @@ internal sealed class LocalCollectionFilterFoldingVisitor(QueryCompilationContex
         {
             var finder = new FreeVariableFinder(lambda.Parameters);
             finder.Visit(lambda.Body);
+            return !finder._found;
+        }
+
+        public static bool IsClosed(Expression expression)
+        {
+            var finder = new FreeVariableFinder([]);
+            finder.Visit(expression);
             return !finder._found;
         }
 

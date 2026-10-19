@@ -19,26 +19,15 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// Represents a <c>$set</c> (<c>$addFields</c>) aggregation stage that adds one or more computed fields to
-/// each document, leaving every existing field in place.
+/// A <c>$set</c> (<c>$addFields</c>) stage. Emitted only in the <c>$set</c> → <c>$sort</c> → <c>$unset</c> triple for a
+/// computed sort key: <c>$sort</c> accepts field paths only, so the key is first materialized into a synthetic field.
 /// </summary>
-/// <remarks>
-/// Emitted only in the <c>$set</c> → <c>$sort</c> → <c>$unset</c> triple for a computed sort key: MQL
-/// <c>$sort</c> accepts field paths only, so the key is first materialized into a synthetic field.
-/// </remarks>
 internal sealed class MongoAddFieldsStage : MongoPipelineStage
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MongoAddFieldsStage"/> class.
-    /// </summary>
-    /// <param name="fields">The ordered fields to add, as alias/expression pairs.</param>
     public MongoAddFieldsStage(IReadOnlyList<MongoProjection> fields)
     {
         Fields = fields;
     }
 
-    /// <summary>
-    /// Gets the ordered fields to add, as alias/expression pairs.
-    /// </summary>
     public IReadOnlyList<MongoProjection> Fields { get; }
 }

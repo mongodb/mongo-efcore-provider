@@ -85,8 +85,6 @@ public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── Ascending-then-descending: OrderBy(A).ThenByDescending(B) ─────────────────────────────────
-
     [Fact]
     public void Asc_then_desc_with_paging_goes_native_with_correct_order_and_parity()
     {
@@ -116,11 +114,9 @@ public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
                 .ToList();
         }
 
-        // (1) NativeOnly must succeed (goes native, no fallback) AND return the exact order.
         var nativeOnly = RunAscDesc(MongoQueryMode.NativeOnly);
         Assert.Equal(expected, nativeOnly);
 
-        // (2)/(3) Parity: Native and DriverLinq return the same ordered results.
         var native = RunAscDesc(MongoQueryMode.Native);
         var driver = RunAscDesc(MongoQueryMode.DriverLinq);
         Assert.Equal(expected, native);
@@ -128,8 +124,6 @@ public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
         Assert.Equal(driver, native);
         Assert.Equal(driver, nativeOnly);
     }
-
-    // ── Descending-then-ascending: OrderByDescending(A).ThenBy(B) ─────────────────────────────────
 
     [Fact]
     public void Desc_then_asc_with_paging_goes_native_with_correct_order_and_parity()

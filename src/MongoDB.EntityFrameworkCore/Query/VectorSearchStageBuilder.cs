@@ -58,15 +58,6 @@ internal static class VectorSearchStageBuilder
     /// <c>VectorSearchNeedsIndex</c> when the requested index isn't in the model. Must stay reflection-free (see
     /// type remarks).
     /// </summary>
-    /// <param name="entityType">
-    /// The root entity type, or <see langword="null" /> when the source CLR type isn't mapped (member resolution
-    /// then throws using <paramref name="sourceType" />).
-    /// </param>
-    /// <param name="sourceType">Used only for the error message when <paramref name="entityType" /> is null.</param>
-    /// <param name="propertyLambda">The property selector, already unquoted.</param>
-    /// <param name="options">The query's <see cref="VectorQueryOptions"/>, if any.</param>
-    /// <param name="queryLogger">Logger for the <c>VectorSearchNeedsIndex</c> warning.</param>
-    /// <returns>The resolved member and the options with the index name filled in.</returns>
     internal static ResolvedVectorSearch Resolve(
         IEntityType? entityType,
         Type sourceType,
@@ -141,16 +132,11 @@ internal static class VectorSearchStageBuilder
     /// Builds the driver's <c>$vectorSearch</c> <c>PipelineStageDefinition&lt;T, T&gt;</c> via reflection with default
     /// <see cref="BindingFlags"/>, so a bad <c>limit</c> is wrapped identically on both paths.
     /// </summary>
-    /// <param name="entityType">The root entity type.</param>
-    /// <param name="propertyLambda">The property selector, already unquoted.</param>
-    /// <param name="resolved">The result of <see cref="Resolve"/>.</param>
-    /// <param name="filterDefinition">
-    /// The pre-filter, or <see langword="null" />: an <c>ExpressionFilterDefinition&lt;T&gt;</c> on the driver-LINQ
-    /// bridge, a <c>BsonDocumentFilterDefinition&lt;T&gt;</c> on the native path.
-    /// </param>
-    /// <param name="queryVector">The query vector.</param>
-    /// <param name="limit">The limit; non-positive values are rejected by the driver inside the reflection call.</param>
-    /// <returns>The driver's pipeline stage definition, untyped.</returns>
+    /// <remarks>
+    /// <c>filterDefinition</c> is an <c>ExpressionFilterDefinition&lt;T&gt;</c> on the driver-LINQ bridge and a
+    /// <c>BsonDocumentFilterDefinition&lt;T&gt;</c> on the native path; the driver rejects a non-positive <c>limit</c>
+    /// inside the reflection call.
+    /// </remarks>
     internal static object CreateStage(
         IEntityType entityType,
         LambdaExpression propertyLambda,
@@ -188,10 +174,6 @@ internal static class VectorSearchStageBuilder
     /// Renders a stage from <see cref="CreateStage"/> to a <see cref="BsonDocument"/>. Native path only; the
     /// driver-LINQ bridge lets the driver render it via <c>MongoQueryable.AppendStage</c>.
     /// </summary>
-    /// <param name="stage">The stage returned by <see cref="CreateStage"/>.</param>
-    /// <param name="entityType">The root entity type.</param>
-    /// <param name="entitySerializer">The provider's serializer for <paramref name="entityType"/>.</param>
-    /// <returns>The rendered <c>$vectorSearch</c> stage document.</returns>
     internal static BsonDocument RenderStage(object stage, IEntityType entityType, IBsonSerializer entitySerializer)
         => (BsonDocument)RenderStageMethodInfo
             .MakeGenericMethod(entityType.ClrType)
@@ -205,10 +187,6 @@ internal static class VectorSearchStageBuilder
         IBsonSerializer<TDocument> entitySerializer)
         => stage.Render(new RenderArgs<TDocument>(entitySerializer, BsonSerializer.SerializerRegistry)).Document;
 
-    /// <summary>
-    /// The outcome of <see cref="Resolve"/>.
-    /// </summary>
-    /// <param name="Member">The mapped member the query vector is compared against.</param>
-    /// <param name="Options">The query options, with <see cref="VectorQueryOptions.IndexName"/> always set.</param>
+    /// <summary>The outcome of <see cref="Resolve"/>; <c>Options.IndexName</c> is always set.</summary>
     internal readonly record struct ResolvedVectorSearch(IPropertyBase Member, VectorQueryOptions Options);
 }

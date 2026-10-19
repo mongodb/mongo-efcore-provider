@@ -46,9 +46,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
     //  Sub-case 1: whole-entity ctor argument — bypasses projection, lands on NativeRoute.WholeEntity
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class Customer
     {
@@ -115,9 +113,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
         Assert.True(dto.Id is "ALFKI" or "ANATR");
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
     //  Sub-case 2a: scalar ctor argument
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class IdWrapper
     {
@@ -138,9 +134,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
         Assert.Contains(results, r => r.Value == "ANATR");
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
     //  Sub-case 2b: owned single-reference nav-entity ctor argument
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class Blog
     {
@@ -201,12 +195,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
         Assert.Equal("NYC", dto.City);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
     //  Sub-case 3: two-argument ctor-only DTO
-    //
-    //  Bound by NativeProjectionBinder's Members-null, 2+-argument NewExpression arm; the shaper reads by index
-    //  (see MongoSelectDefinition.HasPositionalCtorProjectionShaper).
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class TwoArgDto
     {
@@ -244,12 +233,8 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
         Assert.All(results, r => Assert.Equal(r.A, r.B));
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
     //  Sub-case 4: client construction over a whole-entity operand — `new object[] { x }`,
     //  `new List<object> { x }`, `new Wrapper(x) { City = x.City }`. Whole documents are fetched
-    //  (NativeRoute.WholeEntity, no $project) and the construction runs client-side over the
-    //  materialized, tracked entity (NativeClientWholeEntityShape.IsClientOnlyTree).
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class Person
     {

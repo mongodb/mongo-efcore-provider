@@ -8,9 +8,8 @@ adjacent-areas: [Extensions, Storage, Query, Serializers, ValueGeneration]
 # Metadata — AGENTS.md
 
 The `Mongo:` annotation registry (`MongoAnnotationNames`), attribute conventions, and the conventions that produce
-annotations (assembled in `Conventions/MongoConventionSetBuilder.cs`). Also `VectorIndexOptions`/`VectorIndexBuilder`,
-`BsonRepresentationConfiguration` and `InternalIndexExtensions` (`IIndex` → `CreateIndexModel`/`CreateSearchIndexModel`).
-Runtime *use* of annotations belongs to Query/Storage/Serializers/ValueGeneration; fluent entry points to `Extensions/`.
+annotations (assembled in `Conventions/MongoConventionSetBuilder.cs`). Runtime *use* of annotations belongs to
+Query/Storage/Serializers/ValueGeneration; fluent entry points to `Extensions/`.
 
 ## Invariants
 
@@ -27,10 +26,5 @@ Runtime *use* of annotations belongs to Query/Storage/Serializers/ValueGeneratio
   configures a PK there takes over that responsibility.
 - **Write annotations only in conventions/builders** (mutable during model building, immutable on `IModel`/
   `IRuntimeModel`).
-- Serializers read metadata, never set it. A new BSON attribute needs a convention here and serializer support.
-- Adding an annotation usually adds a builder method in `Extensions/`; they land together, reviewed separately.
-
-## Testing
-
-`tests/…UnitTests/Metadata/Conventions/` (incl. `BsonAttributes/`), `…SpecificationTests/Metadata/`,
-`…FunctionalTests/Metadata/`; filter `FullyQualifiedName~Metadata`.
+- A new BSON attribute needs a convention here and serializer support; a new annotation usually needs a builder
+  method in `Extensions/`.

@@ -41,7 +41,6 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
         var idToDelete = ObjectId.GenerateNewId();
 
         {
-            // Setup two entities
             var db = SingleEntityDbContext.Create(collection);
             db.AddRange(
                 new TextEntity {_id = idToDuplicate, text = "Original"},
@@ -50,7 +49,6 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
         }
 
         {
-            // Attempt to delete one and duplicate the other
             var db = SingleEntityDbContext.Create(collection);
             db.Database.AutoTransactionBehavior = transactionBehavior;
             var toDelete = db.Entities.First(e => e._id == idToDelete);
@@ -62,7 +60,6 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
         }
 
         {
-            // Ensure database is in original state
             var db = SingleEntityDbContext.Create(collection);
             if (transactionBehavior == AutoTransactionBehavior.Never)
             {
@@ -87,7 +84,6 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
         var idToDelete = ObjectId.GenerateNewId();
 
         {
-            // Setup two entities
             var db = SingleEntityDbContext.Create(collection);
             await db.AddRangeAsync(
                 new TextEntity {_id = idToDuplicate, text = "Original"},
@@ -96,7 +92,6 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
         }
 
         {
-            // Attempt to delete one and duplicate the other
             var db = SingleEntityDbContext.Create(collection);
             db.Database.AutoTransactionBehavior = transactionBehavior;
             var toDelete = await db.Entities.FirstAsync(e => e._id == idToDelete);
@@ -108,7 +103,6 @@ public class SaveChangesTransactionTests(TemporaryDatabaseFixture database)
         }
 
         {
-            // Ensure database is in original state
             var db = SingleEntityDbContext.Create(collection);
 
             if (transactionBehavior == AutoTransactionBehavior.Never)

@@ -16,9 +16,8 @@
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// <c>{ "$group": { "_id": "$$ROOT" } }</c> — the first half of whole-entity <c>Distinct()</c> dedup, paired
-/// with a following <see cref="MongoReplaceRootStage"/> reading <c>"$_id"</c> back out. A data-less marker
-/// rather than a <see cref="MongoGroupStage"/>, which models a named key plus accumulators.
+/// Data-less marker for <c>{ "$group": { "_id": "$$ROOT" } }</c>, the first half of whole-entity <c>Distinct()</c>;
+/// a following <see cref="MongoReplaceRootStage"/> reads <c>"$_id"</c> back out.
 /// </summary>
 internal sealed class MongoGroupByRootStage : MongoPipelineStage
 {

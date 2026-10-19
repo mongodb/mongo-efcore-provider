@@ -60,7 +60,6 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
             .OrderBy(s => s)
             .ToArray();
 
-        // The two cheapest orders are UK/25 and UK/50.
         Assert.Equal(["UK:EU", "UK:EU"], rows);
     }
 
@@ -178,7 +177,6 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
             .OrderBy(s => s)
             .ToArray();
 
-        // Seed: US x2 (NA), UK x2 + FR x1 (EU).
         Assert.Equal(["EU:3", "NA:2"], rows);
     }
 

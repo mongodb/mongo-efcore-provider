@@ -27,36 +27,24 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// separately (<see cref="NativeDateTimeKindReadBack"/>), and BinaryVector storage isn't covered.
 /// </summary>
 /// <remarks>
-/// <para>
-/// The single rule shared by every caller that combines two properties' stored values: the anonymous-key join's
-/// per-member pairs (<c>MongoQueryableMethodTranslatingExpressionVisitor.TryResolveAnonymousKeyJoinProperties</c>)
-/// and the projected set op's per-alias operands (<c>OperandSerializationsMatch</c>). Callers keep their own
-/// pre-checks (the join's scalar-only rule; the set op's both-default shortcut, computed values and TimeOfDay).
-/// </para>
-/// <para>
-/// Mirrors what <see cref="Serializers.BsonSerializerFactory"/> builds for a property: its type mapping's converter
-/// (wrapped in a <c>ValueConverterSerializer</c>), then its <c>BsonRepresentation</c> on the CLR or provider type.
-/// An enum stored as a string on one side and an int on the other, or <c>[BsonRepresentation(String)]</c> on one side
-/// only, never matches in the database.
-/// </para>
+/// Shared by the anonymous-key join's per-member pairs (<c>TryResolveAnonymousKeyJoinProperties</c>) and the projected set
+/// op's per-alias operands (<c>OperandSerializationsMatch</c>); callers keep their own pre-checks. Mirrors what
+/// <see cref="Serializers.BsonSerializerFactory"/> builds: the type mapping's converter, then <c>BsonRepresentation</c>. An
+/// enum stored as a string on one side and an int on the other never matches in the database.
 /// </remarks>
 internal static class StoredSerialization
 {
     /// <summary>
-    /// Whether <paramref name="property1"/> and <paramref name="property2"/> are stored identically: equal
-    /// <see cref="MongoPropertyExtensions.GetBsonRepresentation"/> (both none, or equal) and equivalent effective
-    /// converters (<see cref="ConvertersEquivalent"/>). The configured provider-type annotation
-    /// (<c>GetProviderClrType()</c>) isn't compared: the serializer never reads it, only the effective converter (whose
-    /// provider type is compared), the representation and, without a converter, the CLR type.
+    /// Equal <see cref="MongoPropertyExtensions.GetBsonRepresentation"/> and equivalent effective converters. The configured
+    /// provider-type annotation isn't compared: the serializer reads only the effective converter, representation and CLR type.
     /// </summary>
     internal static bool StoredAlike(IProperty property1, IProperty property2)
         => property1.GetBsonRepresentation() == property2.GetBsonRepresentation()
            && ConvertersEquivalent(EffectiveConverter(property1), EffectiveConverter(property2));
 
     /// <summary>
-    /// The converter <see cref="Serializers.BsonSerializerFactory"/> wraps: the type mapping's, which also covers one
-    /// derived from the provider type alone (<c>HasConversion&lt;string&gt;()</c>) that <c>GetValueConverter()</c>
-    /// doesn't report. A finalized model always has a type mapping; the configured converter is only a fallback.
+    /// The converter <see cref="Serializers.BsonSerializerFactory"/> wraps: the type mapping's, which also covers one derived
+    /// from the provider type alone (<c>HasConversion&lt;string&gt;()</c>) that <c>GetValueConverter()</c> doesn't report.
     /// </summary>
     private static ValueConverter? EffectiveConverter(IProperty property)
         => property.FindTypeMapping()?.Converter ?? property.GetValueConverter();
@@ -66,16 +54,10 @@ internal static class StoredSerialization
     /// type with the same provider type and structurally equal to- and from-provider expressions.
     /// </summary>
     /// <remarks>
-    /// EF value converters have no equality of their own, but their encoding is their expressions: constructor
-    /// arguments that choose the encoding appear in them as constants (<c>BoolToStringConverter("N", "Y")</c> vs
-    /// <c>("F", "T")</c>) or as captured closure objects. Closures compare by reference: separately created closures
-    /// (two calls to a helper capturing its argument, two converters built around a captured <c>Encoding</c>) decline
-    /// even when they would encode alike; two lambdas in one method capturing the same local share one closure and are
-    /// admitted, soundly. A lambda converter written the same way on both properties, or two instances of a converter
-    /// whose encoding is fixed by its type (<c>EnumToStringConverter&lt;&gt;</c>, the provider's ObjectId converters),
-    /// are equal. Assumes a converter's behaviour is fully described by its expressions: a subclass overriding
-    /// <c>ConvertToProviderTyped</c>/<c>ConvertFromProviderTyped</c> with state not in its expressions, or a captured
-    /// constant whose type has a lax <c>Equals</c>, would defeat it.
+    /// EF value converters have no equality; their encoding is their expressions, whose constants or captured closures choose
+    /// it (<c>BoolToStringConverter("N", "Y")</c> vs <c>("F", "T")</c>). Closures compare by reference, so separately created
+    /// closures decline even when they would encode alike. Assumes behaviour is fully described by the expressions: a subclass
+    /// overriding <c>ConvertToProviderTyped</c> with outside state, or a captured constant with a lax <c>Equals</c>, defeats it.
     /// </remarks>
     internal static bool ConvertersEquivalent(ValueConverter? converter1, ValueConverter? converter2)
         => (converter1, converter2) switch

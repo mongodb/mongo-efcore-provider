@@ -22,20 +22,12 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// named array field (not the <c>$group</c> accumulator of the same name).
 /// </summary>
 /// <remarks>
-/// Used in the flattening <c>$project</c> after <c>$group</c> for <c>g.Select(e =&gt; e.Field).Distinct().Average()</c>
-/// and friends: <c>NativeGroupByBinder.TryBindAccumulator</c> collects distinct values with <c>$addToSet</c>, and
-/// this reduces that array to the scalar. Holds a field name rather than a <see cref="MongoFieldExpression"/>
-/// because the accumulator alias has no backing property. No null-safety wrap: a <c>$group</c> accumulator field is
-/// always present.
+/// Used in the flattening <c>$project</c> after <c>$group</c> for <c>g.Select(e =&gt; e.Field).Distinct().Average()</c>:
+/// the binder collects distinct values with <c>$addToSet</c> and this reduces that array. Holds a field name because
+/// the accumulator alias has no backing property. No null-safety wrap: a <c>$group</c> accumulator field is always present.
 /// </remarks>
 internal sealed class MongoArrayReduceExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoArrayReduceExpression"/> over the named <c>$addToSet</c> accumulator field.
-    /// </summary>
-    /// <param name="operatorName">The MQL array-reduce operator: <c>"$avg"</c>, <c>"$max"</c>, <c>"$min"</c>, or <c>"$sum"</c>.</param>
-    /// <param name="fieldName">The accumulator's own output field name (a top-level <c>$group</c>-stage alias).</param>
-    /// <param name="type">The CLR type of the resulting reduced value.</param>
     public MongoArrayReduceExpression(string operatorName, string fieldName, Type type)
     {
         OperatorName = operatorName;
@@ -46,7 +38,6 @@ internal sealed class MongoArrayReduceExpression : MongoExpression
     /// <summary>The MQL array-reduce operator: <c>"$avg"</c>, <c>"$max"</c>, <c>"$min"</c>, or <c>"$sum"</c>.</summary>
     public string OperatorName { get; }
 
-    /// <summary>The accumulator's own output field this reduces over.</summary>
     public string FieldName { get; }
 
     /// <inheritdoc />
