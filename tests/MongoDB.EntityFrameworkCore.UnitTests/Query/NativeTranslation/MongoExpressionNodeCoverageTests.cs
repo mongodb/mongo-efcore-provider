@@ -145,6 +145,8 @@ public class MongoExpressionNodeCoverageTests
             rankField,
             new MongoOuterFieldExpression(rank, "Rank"),
             new MongoElementRefExpression("Total", typeof(int)),
+            new MongoLookupNullCheckExpression("_lookup_Manager", isNotNull: false),
+            new MongoNumericTypeBracketExpression(rankField),
             rankConstant,
             new MongoParameterExpression("p0", rank),
             new MongoBinaryExpression(MongoBinaryOperator.Equal, rankField, rankConstant),
@@ -152,10 +154,12 @@ public class MongoExpressionNodeCoverageTests
             new MongoSizeExpression("Tags", typeof(int)),
             new MongoFilteredSizeExpression("Tags", flagField, typeof(int)),
             new MongoInExpression(rankField, new MongoConstantExpression(new[] { 1, 2 }, rank), negated: false),
+            new MongoValueListExpression([new MongoParameterExpression("p0", rank), rankConstant]),
             new MongoComputedInExpression(
                 headingField, new MongoConstantExpression(new[] { "a", "b" }, heading), negated: false),
             new MongoArrayContainsExpression(
                 new MongoFieldExpression(tags, "Tags"), new MongoConstantExpression("a", null), negated: false),
+            new MongoArrayReduceExpression("$avg", "Total", typeof(double)),
             new MongoRegexExpression(
                 headingField, MongoRegexKind.StartsWith, new MongoConstantExpression("a", heading), negated: false),
             new MongoElemMatchExpression("Posts", flagField, negated: false),
@@ -165,11 +169,16 @@ public class MongoExpressionNodeCoverageTests
                 MongoExpressionTranslator.MongoQuantifierKind.Any),
             new MongoConvertExpression(rankField, typeof(long)),
             new MongoConditionalExpression(flagField, rankField, rankConstant),
+            new MongoCoalesceExpression(rankField, rankConstant),
             new MongoDatePartExpression(new MongoFieldExpression(when, "When"), MongoDatePart.Year),
+            new MongoDateAddExpression(
+                new MongoFieldExpression(when, "When"), MongoDateAddUnit.Minute, new MongoConstantExpression(5, null)),
             new MongoDateTimeOffsetLocalExpression(new MongoFieldExpression(stamp, "Stamp")),
             new MongoConcatExpression([headingField, new MongoConstantExpression("x", heading)]),
+            new MongoStringIndexOfExpression(headingField, new MongoConstantExpression("x", heading)),
             new MongoDocumentConstructionExpression(
-                Expression.New(typeof(object)), [(nameof(Post.Rank), rankField)])
+                Expression.New(typeof(object)), [(nameof(Post.Rank), rankField)]),
+            new MongoTupleExpression([rankField, rankConstant])
         };
 
         return samples.ToDictionary(s => s.GetType());
@@ -342,6 +351,40 @@ public class MongoExpressionNodeCoverageTests
         }
     }
 
+    /// <summary>
+    /// Pins the four dispatcher answers for a field-to-field <see cref="MongoRegexExpression"/> (Term is a
+    /// <see cref="MongoFieldExpression"/>, e.g. <c>c.ContactName.StartsWith(c.ContactName)</c>) — a shape the
+    /// type-keyed matrix above cannot see. <see cref="BuildSamples"/> keys its one-sample-per-node-TYPE
+    /// dictionary by <c>GetType()</c>, but <see cref="MongoRegexExpression"/> is the first node type whose
+    /// behavior in all four of these dispatchers depends on the SHAPE of its <c>Term</c> (constant/parameter vs.
+    /// field), not just its type: the single sample the matrix carries is constant-term, so a regression in any
+    /// of these four arms for the field-term variant specifically would go undetected by
+    /// <see cref="Dispatcher_coverage_matrix_is_unchanged"/>. This is a dedicated, hand-written test rather than
+    /// a second matrix row on purpose — see <c>Query/AGENTS.md</c>'s note on this gap.
+    /// </summary>
+    [Fact]
+    public void Field_to_field_regex_term_shape_is_pinned_across_all_four_dispatchers()
+    {
+        var heading = PostProperty(nameof(Post.Heading), valueConverted: false);
+        var headingField = new MongoFieldExpression(heading, "Heading");
+        var fieldToFieldRegex = new MongoRegexExpression(
+            headingField, MongoRegexKind.StartsWith, new MongoFieldExpression(heading, "Heading"), negated: false);
+
+        // No query-dialect form exists for a field-to-field term ($regularExpression's pattern must be a
+        // literal), but QL.Render still succeeds — it falls through to the $expr catch-all rather than throwing.
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(fieldToFieldRegex));
+        Assert.Equal("rendered", Probe(QueryRenderer, fieldToFieldRegex));
+
+        // The aggregation-expression dialect is exactly where a field-to-field term DOES have a form
+        // ($indexOfCP/$strLenCP), so both the classifier and the renderer must agree it's supported.
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(fieldToFieldRegex));
+        Assert.Equal("rendered", Probe(AggRenderer, fieldToFieldRegex));
+
+        // The negator's field-to-field-regex exemption (MongoExpressionNegator's own remarks): admitted past the
+        // query-dialect gate ungated, because it is aggregation-expression-only by design.
+        Assert.Equal("true", Probe(Negator, fieldToFieldRegex));
+    }
+
     // ------------------------------------------------------------------
     // The baked-in matrix.
 
@@ -350,7 +393,7 @@ public class MongoExpressionNodeCoverageTests
     /// behaviour so it cannot change silently; it does not claim every cell is desirable.
     /// </summary>
     /// <remarks>
-    /// <para>Four cross-cutting facts this matrix makes visible, all of them pre-existing:</para>
+    /// <para>Three cross-cutting facts this matrix makes visible, all of them pre-existing:</para>
     /// <list type="number">
     /// <item>
     /// <c>QL.Render</c> is <c>rendered</c> for <b>every</b> node type, including the 12 the query-dialect
@@ -366,15 +409,12 @@ public class MongoExpressionNodeCoverageTests
     /// <see cref="MongoQueryMode"/>).
     /// </item>
     /// <item>
-    /// <c>MongoDocumentConstructionExpression</c> has <c>Agg.Render = rendered</c> but
-    /// <c>Agg.CanRender = false</c> — the renderer has an arm the classifier does not. Not unsafe (it only
-    /// declines a shape that would in fact render), but it is a missing <c>CanRender</c> arm.
-    /// </item>
-    /// <item>
     /// In the <c>(converted)</c> column, exactly the nine arm-bearing node kinds report <c>false</c>. The other
-    /// twelve fall open to <c>true</c>. Three of those are deliberate and documented in
-    /// <c>AllFieldsDefaultSerialized</c>'s own remarks (<c>In</c>, <c>Size</c>, <c>ArrayContains</c>) and three
-    /// carry no reachable property (<c>Constant</c>, <c>Parameter</c>, <c>ElementRef</c>). The remaining six —
+    /// thirteen fall open to <c>true</c>. Three of those are deliberate and documented in
+    /// <c>AllFieldsDefaultSerialized</c>'s own remarks (<c>In</c>, <c>Size</c>, <c>ArrayContains</c>) and four
+    /// carry no reachable property (<c>Constant</c>, <c>Parameter</c>, <c>ElementRef</c>, <c>ArrayReduce</c> —
+    /// the last's <c>FieldName</c> is a synthetic <c>$group</c>-stage alias with no backing
+    /// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>). The remaining six —
     /// <c>ComputedIn</c>, <c>FilteredSize</c>, <c>ElemMatch</c>, <c>Quantifier</c>, <c>Regex</c>,
     /// <c>DocumentConstruction</c> — are undocumented omissions in the one dispatcher that fails OPEN.
     /// </item>
@@ -390,6 +430,22 @@ public class MongoExpressionNodeCoverageTests
         ["MongoArrayContainsExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoArrayContainsExpression|QL.IsQueryDialectRenderable"] = "true",
         ["MongoArrayContainsExpression|QL.Render"] = "rendered",
+
+        // No query-dialect form at all (aggregation-expression-only, over a synthetic $group-stage alias —
+        // see the node's own remarks), so the negator declines and the query renderer falls through to
+        // $expr. Agg.CanRender has no arm for it — Agg.Render has an arm the classifier does not (the same
+        // missing-arm pattern MongoDocumentConstructionExpression below used to have, before EF-322 gave it
+        // its own CanRender arm). The FieldName carries no backing IProperty, so both serialization columns
+        // read true for the same reason MongoConstantExpression/MongoParameterExpression/
+        // MongoElementRefExpression do (see remark 4 below).
+        ["MongoArrayReduceExpression|Agg.CanRender"] = "false",
+        ["MongoArrayReduceExpression|Agg.Render"] = "rendered",
+        ["MongoArrayReduceExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoArrayReduceExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoArrayReduceExpression|Negator.TryNegate"] = "false",
+        ["MongoArrayReduceExpression|PrefixRewriter.Rewrite"] = "declined",
+        ["MongoArrayReduceExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoArrayReduceExpression|QL.Render"] = "rendered",
 
         ["MongoBinaryExpression|Agg.CanRender"] = "true",
         ["MongoBinaryExpression|Agg.Render"] = "rendered",
@@ -427,6 +483,15 @@ public class MongoExpressionNodeCoverageTests
         ["MongoConditionalExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoConditionalExpression|QL.Render"] = "rendered",
 
+        ["MongoCoalesceExpression|Agg.CanRender"] = "true",
+        ["MongoCoalesceExpression|Agg.Render"] = "rendered",
+        ["MongoCoalesceExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoCoalesceExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoCoalesceExpression|Negator.TryNegate"] = "false",
+        ["MongoCoalesceExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoCoalesceExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoCoalesceExpression|QL.Render"] = "rendered",
+
         ["MongoConstantExpression|Agg.CanRender"] = "true",
         ["MongoConstantExpression|Agg.Render"] = "rendered",
         ["MongoConstantExpression|AllFieldsDefaultSerialized"] = "true",
@@ -444,6 +509,17 @@ public class MongoExpressionNodeCoverageTests
         ["MongoConvertExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoConvertExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoConvertExpression|QL.Render"] = "rendered",
+
+        // Same treatment as MongoDatePartExpression below throughout: a $dateAdd renders directly against
+        // StartDate's raw BSON representation, has no query-dialect form, and needs no negator arm.
+        ["MongoDateAddExpression|Agg.CanRender"] = "true",
+        ["MongoDateAddExpression|Agg.Render"] = "rendered",
+        ["MongoDateAddExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoDateAddExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoDateAddExpression|Negator.TryNegate"] = "false",
+        ["MongoDateAddExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoDateAddExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoDateAddExpression|QL.Render"] = "rendered",
 
         ["MongoDatePartExpression|Agg.CanRender"] = "true",
         ["MongoDatePartExpression|Agg.Render"] = "rendered",
@@ -463,8 +539,9 @@ public class MongoExpressionNodeCoverageTests
         ["MongoDateTimeOffsetLocalExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoDateTimeOffsetLocalExpression|QL.Render"] = "rendered",
 
-        // Agg.Render has an arm this node reaches; Agg.CanRender does not — see remark 3 above.
-        ["MongoDocumentConstructionExpression|Agg.CanRender"] = "false",
+        // EF-322 follow-up: Agg.CanRender now has its own arm (see remark 3 above), closing what used to be
+        // a "renderer wider than classifier" gap.
+        ["MongoDocumentConstructionExpression|Agg.CanRender"] = "true",
         ["MongoDocumentConstructionExpression|Agg.Render"] = "rendered",
         ["MongoDocumentConstructionExpression|AllFieldsDefaultSerialized"] = "true",
         ["MongoDocumentConstructionExpression|AllFieldsDefaultSerialized(converted)"] = "true",
@@ -518,6 +595,34 @@ public class MongoExpressionNodeCoverageTests
         ["MongoInExpression|QL.IsQueryDialectRenderable"] = "true",
         ["MongoInExpression|QL.Render"] = "rendered",
 
+        // Query-dialect-only by design (see the node's own remarks): it is produced only for the exact
+        // `ti.Inner == null`/`!= null` top-level Where shape, never nested under Not/a quantifier/$elemMatch,
+        // so none of the other six dispatchers need an arm for it — each fails closed/open exactly the way an
+        // unrecognized node already does, safely, because this recognizer never hands them one.
+        ["MongoLookupNullCheckExpression|Agg.CanRender"] = "false",
+        ["MongoLookupNullCheckExpression|Agg.Render"] = "declined",
+        ["MongoLookupNullCheckExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoLookupNullCheckExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoLookupNullCheckExpression|Negator.TryNegate"] = "false",
+        ["MongoLookupNullCheckExpression|PrefixRewriter.Rewrite"] = "declined",
+        ["MongoLookupNullCheckExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoLookupNullCheckExpression|QL.Render"] = "rendered",
+
+        // Query-dialect-only by design (see the node's own remarks): produced only as the Left conjunct of an
+        // AndAlso the translator itself builds, beside an un-renderable $expr sibling under the SAME AndAlso —
+        // it is never negated, never prefix-rewritten in practice (though a rule exists for completeness), and
+        // never asked to render inside $expr. AllFieldsDefaultSerialized falls open to the catch-all's "true":
+        // this node is only ever constructed once CanFallThroughToExpr has already confirmed the field is
+        // default-serialized, so there is nothing left for that check to catch here.
+        ["MongoNumericTypeBracketExpression|Agg.CanRender"] = "false",
+        ["MongoNumericTypeBracketExpression|Agg.Render"] = "declined",
+        ["MongoNumericTypeBracketExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoNumericTypeBracketExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoNumericTypeBracketExpression|Negator.TryNegate"] = "false",
+        ["MongoNumericTypeBracketExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoNumericTypeBracketExpression|QL.IsQueryDialectRenderable"] = "true",
+        ["MongoNumericTypeBracketExpression|QL.Render"] = "rendered",
+
         ["MongoOuterFieldExpression|Agg.CanRender"] = "true",
         ["MongoOuterFieldExpression|Agg.Render"] = "rendered",
         ["MongoOuterFieldExpression|AllFieldsDefaultSerialized"] = "true",
@@ -546,8 +651,11 @@ public class MongoExpressionNodeCoverageTests
         ["MongoQuantifierExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoQuantifierExpression|QL.Render"] = "rendered",
 
-        ["MongoRegexExpression|Agg.CanRender"] = "false",
-        ["MongoRegexExpression|Agg.Render"] = "declined",
+        // EF-322 (Include_collection_with_conditional_order_by): a constant-term regex is now aggregation-
+        // renderable too — every Agg.CanRender/Agg.Render caller is already past the point where a
+        // $regularExpression query-dialect form would have been an option (see the renderer's own remarks).
+        ["MongoRegexExpression|Agg.CanRender"] = "true",
+        ["MongoRegexExpression|Agg.Render"] = "rendered",
         ["MongoRegexExpression|AllFieldsDefaultSerialized"] = "true",
         ["MongoRegexExpression|AllFieldsDefaultSerialized(converted)"] = "true",
         ["MongoRegexExpression|Negator.TryNegate"] = "true",
@@ -564,6 +672,17 @@ public class MongoExpressionNodeCoverageTests
         ["MongoSizeExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoSizeExpression|QL.Render"] = "rendered",
 
+        // No query-dialect form (it produces an integer VALUE, not a predicate) and needs no negator arm —
+        // same treatment as MongoDateAddExpression/MongoDatePartExpression throughout.
+        ["MongoStringIndexOfExpression|Agg.CanRender"] = "true",
+        ["MongoStringIndexOfExpression|Agg.Render"] = "rendered",
+        ["MongoStringIndexOfExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoStringIndexOfExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoStringIndexOfExpression|Negator.TryNegate"] = "false",
+        ["MongoStringIndexOfExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoStringIndexOfExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoStringIndexOfExpression|QL.Render"] = "rendered",
+
         ["MongoUnaryExpression|Agg.CanRender"] = "true",
         ["MongoUnaryExpression|Agg.Render"] = "rendered",
         ["MongoUnaryExpression|AllFieldsDefaultSerialized"] = "true",
@@ -571,6 +690,38 @@ public class MongoExpressionNodeCoverageTests
         ["MongoUnaryExpression|Negator.TryNegate"] = "true",
         ["MongoUnaryExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoUnaryExpression|QL.IsQueryDialectRenderable"] = "true",
-        ["MongoUnaryExpression|QL.Render"] = "rendered"
+        ["MongoUnaryExpression|QL.Render"] = "rendered",
+
+        // EF-322: MongoValueListExpression is deliberately NOT a top-level-renderable node — it exists only
+        // as a shape MongoInExpression.Values (and MongoComputedInExpression.Values) can carry, dispatched
+        // by RenderInValues/CanRenderInValues, not by the top-level Render/CanRender switches. As a BARE node
+        // (never how it's actually used) it falls closed everywhere the same way an unrecognized node would,
+        // which is exactly right: nothing constructs one outside MongoInExpression.Values.
+        ["MongoValueListExpression|Agg.CanRender"] = "false",
+        ["MongoValueListExpression|Agg.Render"] = "declined",
+        ["MongoValueListExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoValueListExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoValueListExpression|Negator.TryNegate"] = "false",
+        ["MongoValueListExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoValueListExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoValueListExpression|QL.Render"] = "declined",
+
+        // EF-322 follow-up: MongoTupleExpression is the OPPOSITE of MongoValueListExpression above — it is
+        // ONLY ever a top-level $eq/$ne operand (a constructed-tuple comparison's per-side array), never an
+        // $in haystack, so it IS wired into the ordinary Agg dispatch rather than a dedicated helper. It has
+        // no query-dialect form at all (an array-vs-array $eq only exists inside $expr), so
+        // QL.IsQueryDialectRenderable is false — which is also why Negator.TryNegate declines: its public
+        // entry gates on IsQueryDialectRenderable before ever reaching a switch case for this node's parent
+        // MongoBinaryExpression. QL.Render still "renders" a BARE tuple (never how one is actually reached)
+        // because RenderNode's catch-all wraps anything in $expr rather than throwing — harmless, since a
+        // bare array is never constructed as a whole predicate in practice.
+        ["MongoTupleExpression|Agg.CanRender"] = "true",
+        ["MongoTupleExpression|Agg.Render"] = "rendered",
+        ["MongoTupleExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoTupleExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoTupleExpression|Negator.TryNegate"] = "false",
+        ["MongoTupleExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoTupleExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoTupleExpression|QL.Render"] = "rendered"
     };
 }

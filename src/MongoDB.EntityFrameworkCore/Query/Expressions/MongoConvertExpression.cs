@@ -53,8 +53,10 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// oversight. An <c>onError: null</c> fallback was considered and rejected: a converted-to-<c>null</c> operand
 /// participates in BSON's total-ordering comparisons (<c>Null</c> sorts below every number) and would quietly
 /// move the row into or out of the result depending on the operator — reintroducing exactly the
-/// silent, operator-dependent behavior the relational/nullable guard in
-/// <c>MongoExpressionTranslator.CanFallThroughToExpr</c> exists to prevent. A loud abort is the only option
+/// silent, operator-dependent behavior <c>MongoExpressionTranslator.NeedsNumericTypeBracket</c> and its
+/// <see cref="MongoNumericTypeBracketExpression"/> conjunct exist to prevent for a STORED null/missing value;
+/// an <c>onError</c>-produced null would bypass that bracket entirely, since the bracket tests the stored
+/// field's own BSON type, not the conversion's output. A loud abort is the only option
 /// that can't be mistaken for a valid answer, and out-of-range data reaching a narrowing cast is a genuine
 /// defect in the query or the data. <c>UseQueryMode(MongoQueryMode.DriverLinq)</c> is the mitigation for
 /// anyone who needs the old silent-drop behavior.

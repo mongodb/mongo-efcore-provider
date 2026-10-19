@@ -78,6 +78,30 @@ internal sealed partial class MongoExpressionTranslator
             node = nullableReceiver;
         }
 
+        // EF-322 gap-3: a BARE-scalar Distinct's own key selector parameter (never a member access — the
+        // projected result IS the scalar directly, e.g. Select(o => o.Country).Distinct().OrderBy(x =>
+        // x.IndexOf(term))) resolves to the Distinct's sole flattened key part directly, by parameter IDENTITY
+        // against SelfParam — same discipline as every other SelfParam use in this file, never by name. Scoped
+        // to a SINGLE-key, FIELD-backed grouping (list-pattern match): a composite/named projection has real
+        // members to access instead (handled by the ordinary DistinctAliasScope branch below), and a computed
+        // sole key part has no IProperty this method could hand back (that shape, if it arises, still declines
+        // here and falls back to driver-LINQ, exactly like any other unsupported member access).
+        //
+        // Accumulators.Count == 0 is load-bearing, not redundant: a GroupBy(key).Select(g => g.Sum(...))
+        // scope ALSO has a single field-backed Key part (the group key), but there a bare SelfParam names the
+        // Select's accumulator output, not the key — that shape is resolved by
+        // TranslateComparisonCore's bare-accumulator-alias branch instead, which must run first for
+        // comparisons; this branch would otherwise wrongly bind the accumulator's value against the key's
+        // property serializer.
+        if (SelfParam is not null && ReferenceEquals(node, SelfParam)
+            && DistinctAliasScope is { Accumulators.Count: 0, Key: [{ FieldRef: MongoFieldExpression soleField } soleKeyPart] })
+        {
+            property = soleField.Property;
+            fieldPath = soleKeyPart.Name!;
+            isOuter = false;
+            return true;
+        }
+
         // Fast path: a top-level scalar access on the query parameter, in either spelling EF produces — a
         // bare member (p.Foo) or the shadow-safe EF.Property<T>(p, "Foo") call. Both name one hop off the
         // parameter and must resolve identically.
@@ -115,6 +139,27 @@ internal sealed partial class MongoExpressionTranslator
         // root; every other member is inner-scoped. Identity (ReferenceEquals), never name — so a member name
         // shared between the two scopes cannot be mis-routed.
         isOuter = _outerParam is not null && ReferenceEquals(param, _outerParam);
+
+        // EF-322: a post-Distinct predicate/sort-key member resolves against the Distinct's OWN flattened
+        // output schema (DistinctAliasScope), never the entity — see DistinctAliasScope's remarks. A member
+        // name that is not one of the Distinct's own key parts declines outright (does NOT fall through to
+        // the entity below): the whole point is that a projected member's name is independent of any
+        // real entity property of the same name, so falling through would silently resolve the wrong field.
+        if (!isOuter && DistinctAliasScope is { } distinctScope)
+        {
+            foreach (var part in distinctScope.Key)
+            {
+                if (part.Name == memberName && part.FieldRef is MongoFieldExpression aliasField)
+                {
+                    property = aliasField.Property;
+                    fieldPath = part.Name;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         var scopeType = isOuter ? _outerEntityType! : _entityType;
 
         var resolved = scopeType.FindProperty(memberName);
@@ -132,6 +177,61 @@ internal sealed partial class MongoExpressionTranslator
             fieldPath = _innerPrefix + "." + fieldPath;
 
         return true;
+    }
+
+    /// <summary>
+    /// EF-322 gap-2: resolves a single-hop member access on a Distinct alias whose flattened key part is a
+    /// COMPUTED expression (e.g. <c>Select(c =&gt; new { A = c.CustomerID + c.City }).Distinct()</c>'s own
+    /// <c>A</c>), which <see cref="TryResolveMember"/> cannot express — that method hands back an
+    /// <see cref="IProperty"/>, and a computed key part has none. Used only by the small set of callers that
+    /// need nothing but the flattened document path (currently the StartsWith/EndsWith/Contains regex case in
+    /// <see cref="TryTranslate"/>'s main switch) — every other operator (equality, ordering, date/array
+    /// functions, …) still resolves a computed alias member through <see cref="TryResolveMember"/> alone and
+    /// correctly declines, since widening THAT method's IProperty-based contract to admit a property-less field
+    /// would touch every one of its ~10 call sites for a single narrow shape.
+    /// </summary>
+    /// <remarks>
+    /// Declines whenever <see cref="DistinctAliasScope"/> is unset, the node is not a single-hop member access,
+    /// or the matched key part IS a plain field (that shape is already handled — and pinned — by
+    /// <see cref="TryResolveMember"/>'s own <see cref="DistinctAliasScope"/> branch, so the two must never both
+    /// claim the same member).
+    /// </remarks>
+    private bool TryResolveDistinctAliasComputedField(
+        Expression node, [NotNullWhen(true)] out MongoElementRefExpression? fieldRef)
+    {
+        fieldRef = null;
+
+        if (DistinctAliasScope is not { } scope || node is not MemberExpression { Expression: ParameterExpression } me)
+            return false;
+
+        foreach (var part in scope.Key)
+        {
+            if (part.Name == me.Member.Name && part.FieldRef is not MongoFieldExpression)
+            {
+                fieldRef = new MongoElementRefExpression(part.Name!, part.FieldRef.Type);
+                return true;
+            }
+        }
+
+        // A member naming an ACCUMULATOR alias from a prior GroupBy(key).Select(aggregate) stage nested
+        // directly under a further GroupBy — e.g. .GroupBy(k).Select(g => new { g.Key, Count = g.Count() })
+        // .GroupBy(e => e.Key).Select(g => new { g.Key, Total = g.Sum(e => e.Count) }) — resolves to that
+        // accumulator's OWN flattened output field, the same top-level-pass-through mechanism as a computed
+        // key part above: the prior stage's flatten $project already wrote the accumulator's value under its
+        // own alias, so this stage's document has a top-level field of that exact name. An accumulator alias
+        // never has a backing IProperty (it is always a computed aggregate), so — unlike a key part — there is
+        // no companion branch in TryResolveMember to avoid double-claiming; every accumulator alias is
+        // resolved here. `scope.Accumulators` is empty for a plain Distinct, so this is a no-op there.
+        foreach (var acc in scope.Accumulators)
+        {
+            if (acc.OutputField == me.Member.Name)
+            {
+                fieldRef = new MongoElementRefExpression(acc.OutputField, me.Type);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

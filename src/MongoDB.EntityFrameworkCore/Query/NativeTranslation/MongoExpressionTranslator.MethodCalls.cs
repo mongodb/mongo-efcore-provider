@@ -353,7 +353,7 @@ internal sealed partial class MongoExpressionTranslator
     /// (<c>List&lt;T&gt;</c>, <c>HashSet&lt;T&gt;</c>, <c>IList&lt;T&gt;</c>, <c>ICollection&lt;T&gt;</c>).
     /// Matches by <see cref="System.Reflection.MethodInfo"/> shape, not by name string alone.
     /// </summary>
-    private static bool TryMatchContainsMethod(
+    internal static bool TryMatchContainsMethod(
         MethodCallExpression call,
         [NotNullWhen(true)] out Expression? collection,
         [NotNullWhen(true)] out Expression? item)
@@ -440,6 +440,32 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Recognizes the single-argument, ordinal overload of <c>string.IndexOf(string)</c> — the only overload
+    /// the driver-LINQ v3 provider translates (empirically: it renders <c>$indexOfCP</c> for exactly this
+    /// shape). Matching only this overload keeps native and fallback behavior identical; a
+    /// <c>StringComparison</c>/<c>startIndex</c>-taking overload, or a receiver that isn't <see cref="string"/>,
+    /// is left unmatched and falls through to the driver-LINQ path unchanged. Mirrors
+    /// <see cref="TryMatchRegexMethod"/>'s own overload-matching discipline.
+    /// </summary>
+    private static bool TryMatchIndexOfMethod(
+        Expression node, [NotNullWhen(true)] out Expression? receiver, [NotNullWhen(true)] out Expression? term)
+    {
+        receiver = null;
+        term = null;
+
+        if (node is not MethodCallExpression call || call.Method.IsStatic || call.Object is null
+            || call.Object.Type != typeof(string) || call.Method.Name != nameof(string.IndexOf))
+            return false;
+
+        if (call.Arguments.Count != 1 || call.Arguments[0].Type != typeof(string))
+            return false;
+
+        receiver = call.Object;
+        term = call.Arguments[0];
+        return true;
+    }
+
+    /// <summary>
     /// Translates the collection side of a <c>Contains</c> call into a <see cref="MongoConstantExpression"/>
     /// (a captured/inline collection) or <see cref="MongoParameterExpression"/> (a query-parameter
     /// collection), using <paramref name="property"/> as the element serialization context. Returns
@@ -456,7 +482,16 @@ internal sealed partial class MongoExpressionTranslator
 
         var propertyType = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
         var underlyingElementType = Nullable.GetUnderlyingType(elementType) ?? elementType;
-        if (underlyingElementType != propertyType)
+
+        // `object[]`/`List<object>` (an EF-boxed heterogeneously-typed collection, e.g.
+        // `orderIds.Contains(o.OrderID)` where `orderIds` is `object[]`) declares its element type as `object`
+        // rather than the property's own CLR type. There's no static mismatch to catch here — every element
+        // (constant or parameter-array) is coerced/serialized individually through the property's own
+        // serializer at render/build time (see `RenderInValues`'s per-item `MongoValueRenderer.RenderValue`
+        // call and `MongoPipelineFactory.SerializeParameter`'s `BsonValueSerializer.Coerce`), so a genuinely
+        // wrong-typed element still fails there, just later — the same place a same-shape mismatch inside a
+        // strongly-typed collection would also be caught.
+        if (underlyingElementType != propertyType && underlyingElementType != typeof(object))
             return null; // collection element type mismatches the property — not supported
 
         if (unwrapped is ConstantExpression { Value: System.Collections.IEnumerable } constant)
@@ -467,22 +502,51 @@ internal sealed partial class MongoExpressionTranslator
 
         // EF8 hands an inline array literal (`new[] { .. }.Contains(..)`) as a NewArrayExpression
         // rather than a pre-folded ConstantExpression (the constant-folding that produces the latter
-        // only happens on EF9/net9+). Recognize this shape too, but only when every element is itself
-        // a constant — anything else (a captured variable reference, a computed element, etc.) is left
-        // unmatched here and falls back to driver-LINQ rather than attempting to evaluate arbitrary
-        // sub-expressions.
+        // only happens on EF9/net9+). Recognize this shape too, when every element is itself a constant —
+        // anything else falls through to the per-element loop below.
         if (unwrapped is NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray)
         {
             var values = Array.CreateInstance(elementType, newArray.Expressions.Count);
+            var allConstant = true;
             for (var i = 0; i < newArray.Expressions.Count; i++)
             {
                 if (Unwrap(newArray.Expressions[i]) is not ConstantExpression elementConstant)
-                    return null; // non-constant element — not supported
+                {
+                    allConstant = false;
+                    break;
+                }
 
                 values.SetValue(elementConstant.Value, i);
             }
 
-            return new MongoConstantExpression(values, property);
+            if (allConstant)
+                return new MongoConstantExpression(values, property);
+
+            // Not every element folded to a constant — this is `new[] { prm1, prm2 }.Contains(...)` where
+            // prm1/prm2 are SEPARATELY closure-captured locals: EF hoists each element as its own
+            // independently-named query parameter rather than the whole array as one parameter (that
+            // single-parameter shape is handled above by TryGetQueryParameterName). Build a
+            // MongoValueListExpression of per-element constant/parameter nodes; decline (return null) if
+            // any element is neither — a computed element or other sub-expression is not supported here.
+            var elements = new MongoExpression[newArray.Expressions.Count];
+            for (var i = 0; i < newArray.Expressions.Count; i++)
+            {
+                var elementExpr = Unwrap(newArray.Expressions[i]);
+                if (elementExpr is ConstantExpression elementConstant)
+                {
+                    elements[i] = new MongoConstantExpression(elementConstant.Value, property);
+                }
+                else if (NativeQueryParameter.TryGetQueryParameterName(elementExpr, out var elementParameterName))
+                {
+                    elements[i] = new MongoParameterExpression(elementParameterName, property);
+                }
+                else
+                {
+                    return null; // unsupported element shape
+                }
+            }
+
+            return new MongoValueListExpression(elements);
         }
 
         return null; // any other node shape (method call, sub-expression, etc.) is not supported
@@ -533,7 +597,7 @@ internal sealed partial class MongoExpressionTranslator
         // IProperty); RenderInValues' parameter arm falls back to a plain element serializer keyed on
         // elementClrType for that reason — see its own remarks.
         if (NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var parameterName))
-            return new MongoParameterExpression(parameterName, forSerialization: null);
+            return new MongoParameterExpression(parameterName, forSerialization: null, rawElementType: elementClrType);
 
         return null; // any other shape is not supported for a computed needle
     }

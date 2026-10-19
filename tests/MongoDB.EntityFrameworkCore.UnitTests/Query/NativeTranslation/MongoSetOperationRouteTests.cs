@@ -26,11 +26,8 @@ public class MongoSetOperationRouteTests
     [Fact]
     public void SetOperation_keeps_WholeEntity_route()
     {
-        var select = new MongoSelectDefinition
-        {
-            SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, OperandSelect(), "customers", operandEntityType: null!),
-            IsSetOp = true
-        };
+        var select = new MongoSelectDefinition { IsSetOp = true };
+        select.AppendSetOperation(new MongoSetOperation(MongoSetOperationKind.Union, OperandSelect(), "customers", operandEntityType: null!));
         Assert.Equal(NativeRoute.WholeEntity, select.Route);
     }
 
@@ -66,11 +63,8 @@ public class MongoSetOperationRouteTests
     [Fact]
     public void Intersect_setoperation_keeps_WholeEntity_route_and_is_terminal()
     {
-        var select = new MongoSelectDefinition
-        {
-            SetOperation = new MongoSetOperation(MongoSetOperationKind.Intersect, OperandSelect(), "customers", operandEntityType: null!),
-            IsSetOp = true
-        };
+        var select = new MongoSelectDefinition { IsSetOp = true };
+        select.AppendSetOperation(new MongoSetOperation(MongoSetOperationKind.Intersect, OperandSelect(), "customers", operandEntityType: null!));
         Assert.Equal(NativeRoute.WholeEntity, select.Route);
         Assert.True(select.HasTerminalOperator);
     }

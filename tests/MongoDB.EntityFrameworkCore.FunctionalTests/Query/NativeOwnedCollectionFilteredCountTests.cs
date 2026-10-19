@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -420,19 +420,33 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         }
     }
 
+    // EF-322 RE-BASELINE. Was Element_predicate_outside_the_renderable_set_declines, which pinned
+    // MongoAggregationExpressionRenderer.CanRender declining a regex whose Term is a CONSTANT (the arm was
+    // scoped to a field-to-field term, on the reasoning that a constant term already had a query-dialect
+    // $regularExpression form to fall back to). That arm now admits any Term shape, because at every
+    // CanRender call site the expression is already inside an $expr/$addFields/$sort/quantifier scope where
+    // no $regularExpression alternative exists — so there was no fallback disposition left to preserve.
+    //
+    // A decline test cannot simply be deleted when the decline goes away: the disposition it pinned is now
+    // a RESULT, so it has to be re-pinned as one. Hence the second seeded row — "z" must NOT come back, or a
+    // regex rendered as match-everything would pass a single-row version of this test.
     [Fact]
-    public void Element_predicate_outside_the_renderable_set_declines()
+    public void Regex_element_predicate_in_a_Where_goes_native_EF322()
     {
         var collection = Seed(
-            nameof(Element_predicate_outside_the_renderable_set_declines),
-            Row("x", new BsonArray { PostDoc(rank: 1, heading: "hello") }));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+            nameof(Regex_element_predicate_in_a_Where_goes_native_EF322),
+            Row("x", new BsonArray { PostDoc(rank: 1, heading: "hello") }),
+            Row("z", new BsonArray { PostDoc(rank: 1, heading: "world") }));
 
-        // A regex predicate has no aggregation-dialect rendering (CanRender declines it), so the whole predicate
-        // declines at TRANSLATE time rather than throwing at render time.
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.AsNoTracking()
-                .Where(b => b.Posts.Count(p => p.Heading!.StartsWith("h")) > 0).ToList());
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(collection, mode, BlogModel);
+            var titles = db.Entities.AsNoTracking()
+                .Where(b => b.Posts.Count(p => p.Heading!.StartsWith("h")) > 0)
+                .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
+
+            Assert.Equal(["x"], titles);
+        }
     }
 
     [Fact]
@@ -667,36 +681,6 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             ["x=0", "y=0"]);
     }
 
-    // EF-365 RE-BASELINE. This was Non_renderable_element_predicate_filtered_projection_still_hard_fails_in_
-    // every_mode, kept as a SEPARATE Fact from the three declines above precisely so EF-365 could flip THIS row
-    // alone. EF-365 deleted the translate-time MongoAggregationExpressionRenderer.CanRender gate in
-    // MongoExpressionTranslator's filtered-count branch: the leaf is now ADMITTED (Route == Projection, so the
-    // alias-addressed DOM shaper is built and the crashing generic fall-through in
-    // MongoProjectionBindingExpressionVisitor is never reached), the renderer's own throw arrives later, at
-    // pipeline-build time, and TryBuildPipeline's typed
-    // `catch (NativeTranslationNotSupportedException) when (mode != NativeOnly)` turns it into a graceful
-    // driver-LINQ fallback that renders the count correctly. NativeOnly still throws — but now the NATIVE
-    // decline (NativeTranslationNotSupportedException), not an InvalidOperationException crash.
-    //
-    // The three declines above are UNAFFECTED and stay hard failures: they decline at TranslateNode /
-    // TryResolveOwnedCollectionPath, upstream of the gate this ticket removed, so the leaf is never admitted at
-    // all and Route stays Fallback.
-    private void AssertNonRenderableElementPredicateFallsBackGracefully(
-        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, List<string>> run, string[] expected)
-    {
-        // Native AND explicit DriverLinq must both return the CORRECT values — the point of the ticket is that
-        // the driver renders this count itself, so the late fallback is a working query, not merely a
-        // non-crashing one. Native is listed first because it is the one that changed.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
-        {
-            using var db = CreateContext(collection, mode, BlogModel);
-            Assert.Equal(expected, run(db.Entities.AsNoTracking()));
-        }
-
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => run(nativeOnly.Entities.AsNoTracking()));
-    }
-
     // The three rows below are seeded WITHOUT the ragged (empty/missing/null Posts) rows MatchRows() carries.
     // That is deliberate and is not a coverage gap: on the late-fallback route the pipeline is the DRIVER's, so
     // ragged-array behaviour there is the driver's own pre-existing disposition and has nothing to do with
@@ -709,14 +693,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         => rows.ToList().Select(read).OrderBy(r => r.Title).Select(r => $"{r.Title}={r.N}").ToList();
 
     [Fact]
-    public void Regex_element_predicate_filtered_projection_falls_back_gracefully_EF365()
+    public void Regex_element_predicate_filtered_projection_goes_native_EF365()
     {
         // The row previously measured by the ticket author — a StartsWith regex, which has no aggregation
         // dialect at all.
-        var collection = Seed(nameof(Regex_element_predicate_filtered_projection_falls_back_gracefully_EF365),
+        var collection = Seed(nameof(Regex_element_predicate_filtered_projection_goes_native_EF365),
             MatchRowsNoRagged());
 
-        AssertNonRenderableElementPredicateFallsBackGracefully(
+        AssertElementPredicateGoesNative(
             collection,
             q => ProjectTitleAndCount(
                 q.Select(b => new { b.Title, N = b.Posts.Count(p => p.Heading!.StartsWith("m")) }),
@@ -734,7 +718,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     // through this very renderer, regardless of position (sort key or filtered-count projection) — now
     // succeeds instead of throwing. There is no separate gate to update for this position: the projection-side
     // filtered-count branch was already deliberately gate-free (see the comment above
-    // AssertNonRenderableElementPredicateFallsBackGracefully), so adding a Render arm is *sufficient* on its own
+    // AssertElementPredicateGoesNative), so adding a Render arm is *sufficient* on its own
     // to flip these two rows from graceful-fallback to genuinely-native, including under NativeOnly.
 
     [Fact]
@@ -771,9 +755,20 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             ["none=3", "one=2", "three=0"]);
     }
 
-    // EF-413's counterpart to AssertNonRenderableElementPredicateFallsBackGracefully: unlike that helper,
-    // NativeOnly must SUCCEED here (not throw) — the whole point of the two tests above is that these element
-    // predicates now render natively rather than declining in any mode.
+    // NativeOnly must SUCCEED here (not throw): every caller is an element predicate that renders natively
+    // rather than declining in any mode. The list has grown by re-baselining, one renderer arm at a time —
+    // EF-413 added RenderIn/RenderUnary (Contains, unary not), and EF-322 widened the regex arm to admit a
+    // CONSTANT/parameter term and not just a field-to-field one, which moved the three StartsWith rows here
+    // from the graceful-fallback helper that used to sit above (now deleted — nothing declines any more).
+    //
+    // Why a Render arm is *sufficient* on its own to flip a row, with no separate gate to update: the
+    // projection-side filtered-count branch is deliberately gate-free. MongoFilteredSizeExpression's element
+    // predicate is NOT checked at translate time (see MongoExpressionTranslator's count-branch remarks and
+    // NativeComputedSortTests.Filtered_owned_collection_count_sort_key_goes_native — a blanket translate-time
+    // check was tried once for this position and MEASURED WRONG: it hard-fails the whole leaf with
+    // InvalidOperationException in EVERY mode, including DriverLinq, instead of declining gracefully). The
+    // leaf is admitted, the renderer decides, and a render-time throw is what the typed catch in
+    // TryBuildPipeline turns into a fallback. So when the renderer stops throwing, the row goes native.
     private void AssertElementPredicateGoesNative(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, List<string>> run, string[] expected)
     {
@@ -867,7 +862,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     }
 
     [Fact]
-    public void Mixed_projection_with_a_non_renderable_filtered_count_falls_back_gracefully_EF365()
+    public void Mixed_projection_with_a_regex_filtered_count_goes_native_EF365()
     {
         // THE RISK CASE (see Query/AGENTS.md, "alias-agreement and sibling-readability for mixed projections").
         // The shaper is built alias-addressed BEFORE native-vs-fallback is decided, so a late fallback must
@@ -876,10 +871,10 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         // stays in place, and the driver names those members identically. THREE leaves — two plain scalars
         // either side of the computed count — so a member/alias mis-pairing (not just a missing read) would
         // show up as swapped VALUES, which a single-leaf test cannot detect.
-        var collection = Seed(nameof(Mixed_projection_with_a_non_renderable_filtered_count_falls_back_gracefully_EF365),
+        var collection = Seed(nameof(Mixed_projection_with_a_regex_filtered_count_goes_native_EF365),
             MatchRowsNoRagged());
 
-        AssertNonRenderableElementPredicateFallsBackGracefully(
+        AssertElementPredicateGoesNative(
             collection,
             q => q.Select(b => new
                 {
@@ -934,7 +929,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     }
 
     [Fact]
-    public void Primitive_collection_sibling_of_a_non_renderable_filtered_count_falls_back_with_correct_data_EF365()
+    public void Primitive_collection_sibling_of_a_regex_filtered_count_goes_native_EF365()
     {
         // MEASURED, and it corrected a prediction: a PRIMITIVE-collection leaf (`b.Tags`) is a
         // MongoFieldExpression, not a MongoElementRefExpression, so NativeProjectionBinder does NOT count it as
@@ -945,11 +940,11 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         // override, so the late fallback does not strip the driver's $project and every alias is still the
         // projection member name the driver emits.
         var collection = Seed(
-            nameof(Primitive_collection_sibling_of_a_non_renderable_filtered_count_falls_back_with_correct_data_EF365),
+            nameof(Primitive_collection_sibling_of_a_regex_filtered_count_goes_native_EF365),
             TagsAndPostsRow("x", ["a", "bb"], matching: 2, nonMatching: 1),
             TagsAndPostsRow("y", ["c"], matching: 0, nonMatching: 1));
 
-        AssertNonRenderableElementPredicateFallsBackGracefully(
+        AssertElementPredicateGoesNative(
             collection,
             q => q.Select(b => new { b.Title, b.Tags, N = b.Posts.Count(p => p.Heading!.StartsWith("m")) })
                 .ToList()

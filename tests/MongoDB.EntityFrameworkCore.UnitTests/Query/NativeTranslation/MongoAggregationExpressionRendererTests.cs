@@ -35,6 +35,7 @@ public class MongoAggregationExpressionRendererTests
         public int Age { get; set; }
         public int Score { get; set; }
         public string Status { get; set; } = "";
+        public string Nickname { get; set; } = "";
         public bool IsActive { get; set; }
     }
 
@@ -244,6 +245,34 @@ public class MongoAggregationExpressionRendererTests
     }
 
     [Fact]
+    public void CanRender_reports_true_for_MongoInExpression_over_value_list_of_parameters()
+    {
+        // EF-322: `new[] { prm1, prm2 }.Contains(c.Age)` where prm1/prm2 are separately-parameterized
+        // locals — the same MongoValueListExpression shape TranslateInValues now produces.
+        var status = GetProperty<Customer>("Status");
+        var field = new MongoFieldExpression(status, "Status");
+        var values = new MongoValueListExpression(
+        [
+            new MongoParameterExpression("p0", status),
+            new MongoParameterExpression("p1", status)
+        ]);
+        var node = new MongoInExpression(field, values, negated: false);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+
+        var placeholders = new PlaceholderTable();
+        var rendered = Assert.IsType<BsonDocument>(MongoAggregationExpressionRenderer.Render(node, placeholders));
+        var operands = Assert.IsType<BsonArray>(rendered["$in"]);
+        Assert.Equal("$Status", operands[0]);
+        var inArray = Assert.IsType<BsonArray>(operands[1]);
+        Assert.Equal(2, inArray.Count);
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(inArray[0], out var index0));
+        Assert.Equal(0, index0);
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(inArray[1], out var index1));
+        Assert.Equal(1, index1);
+    }
+
+    [Fact]
     public void CanRender_reports_false_for_MongoInExpression_over_unrenderable_values()
     {
         // Neither a constant enumerable nor a parameter — CanRenderInValues must decline this shape the same
@@ -384,16 +413,6 @@ public class MongoAggregationExpressionRendererTests
 
     public static IEnumerable<object[]> UnrenderableNodes()
     {
-        var age = GetProperty<Customer>("Age");
-
-        // A MongoRegexExpression.
-        yield return
-        [
-            new MongoRegexExpression(
-                new MongoFieldExpression(age, "Age"), MongoRegexKind.StartsWith,
-                new MongoConstantExpression("x", forSerialization: null), negated: false)
-        ];
-
         // A MongoElemMatchExpression.
         yield return
         [
@@ -409,9 +428,11 @@ public class MongoAggregationExpressionRendererTests
         [
             new MongoFilteredSizeExpression(
                 "Posts",
-                new MongoRegexExpression(
-                    new MongoFieldExpression(age, "Age"), MongoRegexKind.StartsWith,
-                    new MongoConstantExpression("x", forSerialization: null), negated: false),
+                new MongoElemMatchExpression(
+                    "Comments",
+                    new MongoBinaryExpression(MongoBinaryOperator.GreaterThan,
+                        new MongoElementRefExpression("Rank", typeof(int)), new MongoConstantExpression(0, forSerialization: null)),
+                    negated: false),
                 typeof(int))
         ];
     }
@@ -459,14 +480,14 @@ public class MongoAggregationExpressionRendererTests
     [Fact]
     public void Convert_node_reports_unrenderable_when_its_OPERAND_is()
     {
-        // MongoRegexExpression is one of the node kinds the aggregation dialect cannot express (CanRender admits
-        // field/element refs, constants/parameters, binaries over its listed operators, the two size nodes, $in,
-        // and Not over a renderable operand — nothing else). Wrapping it in a convert must not launder it into
-        // renderability.
-        var age = GetProperty<Customer>("Age");
-        var unrenderable = new MongoRegexExpression(
-            new MongoFieldExpression(age, "Age"), MongoRegexKind.StartsWith,
-            new MongoConstantExpression("x", forSerialization: null), negated: false);
+        // A MongoElemMatchExpression is one of the node kinds the aggregation dialect cannot express (it's a
+        // $match-only construct — a hard server error inside $expr, see the Query AGENTS.md invariant on
+        // $elemMatch nesting). Wrapping it in a convert must not launder it into renderability.
+        var unrenderable = new MongoElemMatchExpression(
+            "Posts",
+            new MongoBinaryExpression(MongoBinaryOperator.GreaterThan,
+                new MongoElementRefExpression("Rank", typeof(int)), new MongoConstantExpression(0, forSerialization: null)),
+            negated: false);
 
         Assert.False(MongoAggregationExpressionRenderer.CanRender(
             new MongoConvertExpression(unrenderable, typeof(int))));
@@ -554,6 +575,90 @@ public class MongoAggregationExpressionRendererTests
             MongoExpressionTranslator.MongoQuantifierKind.Any);
 
         Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+    }
+
+    // ------------------------------------------------------------------
+    // MongoRegexExpression with a field Term (EF-322 Task 2) — native $indexOfCP/$strLenCP rendering
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Renders_field_to_field_starts_with_via_indexOfCP()
+    {
+        var status = GetProperty<Customer>("Status");
+        var nickname = GetProperty<Customer>("Nickname");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.StartsWith,
+            new MongoFieldExpression(nickname, "Nickname"), negated: false);
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$eq" : [{ "$indexOfCP" : ["$Status", "$Nickname"] }, 0] }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Renders_field_to_field_contains_via_indexOfCP()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Contains,
+            new MongoFieldExpression(status, "Status"), negated: false);
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$gte" : [{ "$indexOfCP" : ["$Status", "$Status"] }, 0] }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Renders_negated_field_to_field_ends_with_via_indexOfCP_and_strLenCP()
+    {
+        var status = GetProperty<Customer>("Status");
+        var nickname = GetProperty<Customer>("Nickname");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.EndsWith,
+            new MongoFieldExpression(nickname, "Nickname"), negated: true);
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$not" : [{ "$let" : { "vars" : { "start" : { "$subtract" : [{ "$strLenCP" : "$Status" }, { "$strLenCP" : "$Nickname" }] } }, "in" : { "$and" : [{ "$gte" : ["$$start", 0] }, { "$eq" : [{ "$indexOfCP" : ["$Status", "$Nickname", "$$start"] }, "$$start"] }] } } }] }""",
+            result.ToJson());
+    }
+
+    // ------------------------------------------------------------------
+    // MongoRegexExpression with a constant Term (EF-322: Include_collection_with_conditional_order_by) —
+    // every CanRender caller is already inside an $expr/$addFields/$sort/quantifier scope with no
+    // $regularExpression alternative available, so there is no fallback disposition to preserve here; a
+    // constant-term regex must render exactly like a field-to-field one via $indexOfCP/$strLenCP.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void CanRender_reports_true_for_a_constant_term_regex()
+    {
+        var status = GetProperty<Customer>("Status");
+        var node = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.StartsWith,
+            new MongoConstantExpression("S", forSerialization: null), negated: false);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+    }
+
+    [Fact]
+    public void Renders_constant_term_starts_with_via_indexOfCP()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.StartsWith,
+            new MongoConstantExpression("S", forSerialization: null), negated: false);
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$eq" : [{ "$indexOfCP" : ["$Status", "S"] }, 0] }""",
+            result.ToJson());
     }
 
     // --- Helper methods ---

@@ -486,10 +486,10 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     }
 
     [Fact]
-    public void Computed_selector_sum_falls_back()
+    public void Computed_selector_sum_goes_native()
     {
-        using var db = CreateContext([1, 2], MongoQueryMode.NativeOnly, nameof(Computed_selector_sum_falls_back));
-        Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.Sum(e => e.Value * 2));
+        using var db = CreateContext([1, 2], MongoQueryMode.NativeOnly, nameof(Computed_selector_sum_goes_native));
+        Assert.Equal(6, db.Entities.Sum(e => e.Value * 2));
     }
 
     // ── Non-int scalar coverage for DeserializeScalar<TResult> (EF-SP4 Task 5 review fix M1) ───────

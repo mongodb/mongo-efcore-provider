@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -26,6 +27,9 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// dependent hop's <c>$lookup</c> localField unscoped, or dropped the hop's own <c>$lookup</c>
 /// entirely, once a later join forced flat mode — silently dropping every row. Covers the bare hop
 /// in first, second, and both positions, plus the shared <c>GroupJoin</c> translator path.
+/// EF-322 (navigation-less join native eligibility): these same bare-hop chain shapes are also now
+/// eligible for native translation, not merely fallback-correct — the <c>_go_native_under_NativeOnly</c>
+/// facts assert that explicitly under <see cref="MongoQueryMode.NativeOnly"/>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
@@ -56,6 +60,25 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Bare_first_hop_then_navigation_backed_second_hop_goes_native_under_NativeOnly()
+    {
+        var (rootsName, midsName, leavesName) = Seed();
+
+        using var db = new NavigationlessJoinDbContext(
+            database, rootsName, midsName, leavesName, queryMode: MongoQueryMode.NativeOnly);
+
+        var results =
+            db.NRoots
+                .Join(db.NMids, r => r.MidKey, m => m.Id, (r, m) => new { r, m })
+                .Join(db.NLeaves, x => x.m.LeafId, l => l.Id, (x, l) => new { x.r, l })
+                .ToList();
+
+        var result = Assert.Single(results);
+        Assert.Equal("R1", result.r.Name);
+        Assert.Equal("A", result.l.Label);
+    }
+
+    [Fact]
     public void Navigation_backed_first_hop_then_bare_second_hop_returns_correct_rows_and_scopes_lookup()
     {
         var (rootsName, midsName, leavesName) = Seed();
@@ -81,6 +104,26 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Navigation_backed_first_hop_then_bare_second_hop_goes_native_under_NativeOnly()
+    {
+        var (rootsName, midsName, leavesName) = Seed();
+
+        using var db = new NavigationlessJoinDbContext(
+            database, rootsName, midsName, leavesName, firstHopHasNavigation: true, secondHopHasNavigation: false,
+            queryMode: MongoQueryMode.NativeOnly);
+
+        var results =
+            db.NRoots
+                .Join(db.NMids, r => r.MidKey, m => m.Id, (r, m) => new { r, m })
+                .Join(db.NLeaves, x => x.m.LeafId, l => l.Id, (x, l) => new { x.r, l })
+                .ToList();
+
+        var result = Assert.Single(results);
+        Assert.Equal("R1", result.r.Name);
+        Assert.Equal("A", result.l.Label);
+    }
+
+    [Fact]
     public void Both_hops_bare_key_equality_joins_return_correct_rows_and_scope_lookup()
     {
         var (rootsName, midsName, leavesName) = Seed();
@@ -101,6 +144,25 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
 
         Assert.Contains(logs, l => l.Contains("\"as\" : \"_lookup_NMid\""));
         Assert.Contains(logs, l => l.Contains("\"localField\" : \"_lookup_NMid.LeafId\""));
+    }
+
+    [Fact]
+    public void Both_hops_bare_key_equality_joins_go_native_under_NativeOnly()
+    {
+        var (rootsName, midsName, leavesName) = Seed();
+
+        using var db = new NavigationlessJoinDbContext(
+            database, rootsName, midsName, leavesName, secondHopHasNavigation: false, queryMode: MongoQueryMode.NativeOnly);
+
+        var results =
+            db.NRoots
+                .Join(db.NMids, r => r.MidKey, m => m.Id, (r, m) => new { r, m })
+                .Join(db.NLeaves, x => x.m.LeafId, l => l.Id, (x, l) => new { x.r, l })
+                .ToList();
+
+        var result = Assert.Single(results);
+        Assert.Equal("R1", result.r.Name);
+        Assert.Equal("A", result.l.Label);
     }
 
 #if !EF8 && !EF9
@@ -167,20 +229,43 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
         public string Label { get; set; }
     }
 
-    class NavigationlessJoinDbContext(
-        TemporaryDatabaseFixture database, string rootsCollection, string midsCollection, string leavesCollection,
-        Action<string>? logAction = null, bool firstHopHasNavigation = false, bool secondHopHasNavigation = true)
-        : DbContext(new DbContextOptionsBuilder<NavigationlessJoinDbContext>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
-            .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
-            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
-            .LogTo(l => logAction?.Invoke(l))
-            .EnableSensitiveDataLogging()
-            .Options)
+    class NavigationlessJoinDbContext : DbContext
     {
+        private readonly string _rootsCollection;
+        private readonly string _midsCollection;
+        private readonly string _leavesCollection;
+        private readonly bool _firstHopHasNavigation;
+        private readonly bool _secondHopHasNavigation;
+
         public DbSet<NRoot> NRoots { get; set; }
         public DbSet<NMid> NMids { get; set; }
         public DbSet<NLeaf> NLeaves { get; set; }
+
+        public NavigationlessJoinDbContext(
+            TemporaryDatabaseFixture database, string rootsCollection, string midsCollection, string leavesCollection,
+            Action<string>? logAction = null, bool firstHopHasNavigation = false, bool secondHopHasNavigation = true,
+            MongoQueryMode queryMode = MongoQueryMode.Native)
+            : base(BuildOptions(database, logAction, queryMode))
+        {
+            _rootsCollection = rootsCollection;
+            _midsCollection = midsCollection;
+            _leavesCollection = leavesCollection;
+            _firstHopHasNavigation = firstHopHasNavigation;
+            _secondHopHasNavigation = secondHopHasNavigation;
+        }
+
+        private static DbContextOptions BuildOptions(
+            TemporaryDatabaseFixture database, Action<string>? logAction, MongoQueryMode queryMode)
+        {
+            var optionsBuilder = new DbContextOptionsBuilder<NavigationlessJoinDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .LogTo(l => logAction?.Invoke(l))
+                .EnableSensitiveDataLogging();
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(queryMode);
+            return optionsBuilder.Options;
+        }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -188,9 +273,9 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
 
             modelBuilder.Entity<NRoot>(b =>
             {
-                b.ToCollection(rootsCollection);
+                b.ToCollection(_rootsCollection);
                 b.HasKey(r => r.Id);
-                if (firstHopHasNavigation)
+                if (_firstHopHasNavigation)
                 {
                     b.HasOne(r => r.Mid).WithMany().HasForeignKey(r => r.MidKey);
                 }
@@ -205,9 +290,9 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
 
             modelBuilder.Entity<NMid>(b =>
             {
-                b.ToCollection(midsCollection);
+                b.ToCollection(_midsCollection);
                 b.HasKey(m => m.Id);
-                if (secondHopHasNavigation)
+                if (_secondHopHasNavigation)
                 {
                     b.HasOne(m => m.Leaf).WithMany().HasForeignKey(m => m.LeafId);
                 }
@@ -219,7 +304,7 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
 
             modelBuilder.Entity<NLeaf>(b =>
             {
-                b.ToCollection(leavesCollection);
+                b.ToCollection(_leavesCollection);
                 b.HasKey(l => l.Id);
             });
         }

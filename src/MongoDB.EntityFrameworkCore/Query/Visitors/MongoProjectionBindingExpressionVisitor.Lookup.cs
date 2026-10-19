@@ -599,8 +599,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             parentLookup.PipelineStages.Add(BuildLookupDocument(nestedLookup));
             // Never re-stamp a kind an earlier registration already chose (mirrors the write-once discipline
             // LookupExpression.PipelineKind documents): if the constructor already claimed FallbackOnly (a TPH
-            // discriminator-narrowed target), or a sibling filtered-Include stage already did, this ThenInclude
-            // must not silently promote that lookup to NestedInclude's native eligibility.
+            // discriminator-narrowed target), or ExtractFilteredIncludePipeline already claimed FilteredInclude
+            // for a sibling filtered-Include stage, this ThenInclude must not silently overwrite that kind.
             if (parentLookup.PipelineKind == LookupPipelineKind.None)
             {
                 parentLookup.PipelineKind = LookupPipelineKind.NestedInclude;
@@ -786,7 +786,15 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         if (stages.Count > 0)
         {
             lookup.PipelineStages.AddRange(stages);
-            lookup.PipelineKind = LookupPipelineKind.FallbackOnly;
+
+            // Never re-stamp a kind an earlier registration already chose: the constructor may already have
+            // set FallbackOnly (a TPH discriminator-narrowed target, EF-374) and prepended its own $match
+            // stage. That combination isn't validated as native-eligible yet, so it must stay conservatively
+            // fallback-only rather than being promoted to FilteredInclude's native path by this method.
+            if (lookup.PipelineKind == LookupPipelineKind.None)
+            {
+                lookup.PipelineKind = LookupPipelineKind.FilteredInclude;
+            }
         }
     }
 

@@ -69,6 +69,36 @@ internal static class NativeSlotPopulator
             return;
         }
 
+        // EF-TBD: OrderBy/OrderByDescending/ThenBy/ThenByDescending composed DIRECTLY on the still-ungrouped
+        // GroupBy(key) result — e.g. GroupBy(o => o.CustomerID).OrderBy(o => o.Count()).ThenBy(o => o.Key) —
+        // cannot be resolved here: an ordering aggregate (g.Count() etc.) needs a $group accumulator that does
+        // not exist yet (the $group is only built once the terminal Select runs). Defer the raw key selector
+        // onto MongoSelectDefinition.PendingGroupOrderings instead of declining; NativeGroupByBinder
+        // .TryBindGroupProjection resolves it once the Select arrives, and marks the query non-native itself
+        // (via its ordinary `return false` contract) if the ordering shape turns out to be unsupported.
+        // Scoped to Grouping == null (not yet finalized) so this can never fire for the OPPOSITE composition
+        // order (OrderBy composed AFTER the Select, over a projected alias) — that shape must keep falling
+        // through to the general guard below unchanged (see GroupBy_post_group_OrderBy_by_aggregate_matches_
+        // driver_linq in NativeGroupByTests). A GroupBy nested on an already-finalized prior grouping
+        // (PriorGrouping set — a projected Distinct or an ordinary prior GroupBy) is naturally excluded too,
+        // since Grouping stays non-null in that shape (set by SnapshotPriorGroupingForNestedGroupBy's sibling
+        // machinery) even before this carve-out's own Select runs — so this Grouping == null condition should
+        // not be loosened to "fix" that case; it is already excluded on purpose.
+        if (mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping == null && mongoQ.Select.PendingGroupKey != null
+            && (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending
+                || methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending))
+        {
+            var orderKeySelector = call.Arguments[1].UnwrapLambdaFromQuote();
+            var ascending = methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.ThenBy;
+            var isThenBy = methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending;
+
+            if (isThenBy && mongoQ.Select.PendingGroupOrderings is { } existingOrderings)
+                existingOrderings.Add((ascending, orderKeySelector));
+            else
+                mongoQ.Select.PendingGroupOrderings = [(ascending, orderKeySelector)];
+            return;
+        }
+
         // Post-group slot-operator guard. Once a GroupBy or projected Distinct has been seen on this query
         // (IsGroupBy / IsDistinct — both bind the same degenerate-$group machinery), a slot operator applied
         // after it — a Where (HAVING) / OrderBy / ThenBy / Skip / Take — operates over the grouped result,
@@ -85,8 +115,20 @@ internal static class NativeSlotPopulator
         // their arms below and record into TrailingOps (MongoSelectDefinition.ActiveOps flips once
         // SetOperation is attached), filtering/sorting/paging the combined result and emitting after the
         // set-op stage. A GroupBy/Distinct/SelectMany terminal (or a mixed one) still trips this guard.
+        // EF-322 carve-out: any of the seven slot operators composed directly after a projected Distinct
+        // (IsDistinct, never a genuine IsGroupBy) is NOT the aggregate-alias hazard this guard exists for —
+        // TryBindDistinctFromProjection's key parts are the Distinct's own flattened output schema, so each arm
+        // below resolves against THAT instead of the entity (OrderBy/ThenBy via
+        // NativeGroupByBinder.TryResolveDistinctOrderingKey, falling through to
+        // MongoExpressionTranslator.DistinctAliasScope for a genuinely computed key; Where via
+        // MongoExpressionTranslator.DistinctAliasScope directly), declining (falling through to
+        // MarkNotNativelyRepresentable there) for anything else. Skip/Take have no field reference to get
+        // wrong at all, so they need no alias-aware treatment — just letting them through here is enough.
+        var isPostDistinctSlot = mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping != null
+            && IsSevenSlotOperator(methodDefinition);
+
         if (mongoQ.Select.HasTerminalOperator && !mongoQ.Select.IsSetOpTerminalOnly
-            && IsSevenSlotOperator(methodDefinition))
+            && IsSevenSlotOperator(methodDefinition) && !isPostDistinctSlot)
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;
@@ -144,8 +186,30 @@ internal static class NativeSlotPopulator
             // element predicate (Count(pred)/Any/All) whose free parameter is identical to it can be built
             // as a two-scope translator instead of declining outright — see MongoExpressionTranslator.SelfParam.
             translator.SelfParam = predicate.Parameters[0];
+            // EF-322: a Where composed directly after a projected Distinct (never a genuine IsGroupBy —
+            // NativeSlotPopulator's post-terminal carve-out only lets this through for IsDistinct) resolves its
+            // predicate against the Distinct's OWN flattened output alias, never the entity — see
+            // MongoExpressionTranslator.DistinctAliasScope's remarks for why the entity-scoped resolution must
+            // not even be attempted for this shape (a renamed projection member can share a name with a real,
+            // unrelated entity property).
+            if (mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping is { } distinctScope)
+                translator.DistinctAliasScope = distinctScope;
             if (translator.TryTranslate(predicate.Body, out var predicateNode))
                 mongoQ.Select.AddPredicateConjunct(predicateNode);
+            // `customers.Contains(od.Order)` (EF Core's own Where_navigation_contains spec shape), arriving
+            // here as `customers.Contains(ti.Inner)` — EF's nav-expansion of the bare reference-navigation
+            // access. Structurally references Inner (so the Outer-only ReferencesInnerScope arm below would
+            // decline it), but semantically needs no $lookup at all: the navigation's own FK property already
+            // lives on the OUTER document. So this stays an Outer-side ($match-before-$lookup) predicate,
+            // like the arm above — it deliberately does NOT call MarkJoinInnerAccessConfirmedFromWhere,
+            // unlike every other Inner-referencing arm below, because it never reads the $lookup's joined
+            // field and has no ordering dependency on it. See NativeJoinScopeTranslator.TryMatchInnerListContains.
+            else if (mongoQ.Select.JoinScope is { Levels.Count: 1 }
+                     && mongoQ.Joins.Count == 1
+                     && mongoQ.Joins[0].Navigation is { } containsNavigation
+                     && NativeJoinScopeTranslator.TryMatchInnerListContains(
+                         predicate.Parameters[0], predicate.Body, containsNavigation, out var innerListContainsNode))
+                mongoQ.Select.AddPredicateConjunct(innerListContainsNode);
             // Outer-side-only: PipelineOps ($match) always lower BEFORE the $lookup stage that materializes
             // the join's Inner side, so a Where reaching Inner would filter on a not-yet-joined field —
             // NativeJoinScopeTranslator.ReferencesInnerScope declines that here, deferring Inner access to
@@ -172,6 +236,65 @@ internal static class NativeSlotPopulator
                      && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
                          chainedScope, predicate.Parameters[0], predicate.Body, valueMode: false, out var chainedPredicateNode))
                 mongoQ.Select.AddPredicateConjunct(chainedPredicateNode);
+            // A reference-Include's own null check (`Include(e => e.Manager).First(e => e.Manager == null)`,
+            // EF's nav-expansion producing `ti.Inner == null` over the Include-generated LeftJoin). DELIBERATELY
+            // does NOT call AddLookup/MarkReferenceIncludeConfirmed itself: EF's nav-expansion ALWAYS inserts a
+            // mandatory `Select(ti => ti.Outer)` unwrap AFTER a join's result — as the very NEXT operator here,
+            // since this Where's predicate is the pending selector's OWN precursor, not a user operator composed
+            // after the unwrap — and that unwrap's existing arm (IsTransparentIdentifierMemberAccessSelector +
+            // IsSingleEligibleNativeJoinScope, above in TranslateSelect) is what actually confirms/registers a
+            // reference-Include's join, whether or not a Where preceded it. Registering here TOO would double-
+            // count MarkReferenceIncludeConfirmed against the single candidate MarkSawCandidateReferenceIncludeJoin
+            // recorded, permanently tripping HasUnconfirmedCandidateJoin (measured; a first attempt at this arm
+            // did exactly that). This arm's only two jobs are (1) translate the predicate instead of declining,
+            // and (2) flip ActiveOps to PostJoinOps so this predicate — and the trailing First()'s own $limit,
+            // since the reducer is bound only after the confirming Select runs — land after the $lookup/$unwind
+            // once lowered, which is required for correctness: the null check IS the filter that decides
+            // "first", so it must run before, never after, the reducer's $limit. Joins.Count == 1 makes
+            // `mongoQ.Joins[0]` safe to read directly (JoinScope is recorded only for the first join, so "one
+            // join recorded" and "the scope describes it" are the same fact). The IsLeftOuter/non-collection
+            // conjunct is the one place this null check is even meaningful: an INNER join's $unwind drops an
+            // unmatched row entirely (preserveNullAndEmptyArrays: false), so `Inner == null` can never be true
+            // and `!= null` always is — a degenerate shape this declines rather than "succeeding" with a vacuous
+            // $match; a COLLECTION navigation's $unwind is 1:N, so "the joined field is null" doesn't mean what
+            // it means for a 1:1 reference.
+            else if (mongoQ.Select.JoinScope != null
+                     && mongoQ.Joins.Count == 1
+                     && mongoQ.Joins[0] is { IsLeftOuter: true, Lookup: { Navigation.IsCollection: false } lookup }
+                     && NativeJoinScopeTranslator.TryMatchInnerNullCheck(
+                         predicate.Parameters[0], predicate.Body, out var isNotNull))
+            {
+                // Flip BEFORE AddPredicateConjunct: see this arm's remarks above.
+                mongoQ.Select.MarkJoinInnerAccessConfirmed();
+                mongoQ.Select.AddPredicateConjunct(new MongoLookupNullCheckExpression(lookup.As, isNotNull));
+            }
+            // A GENERAL predicate reaching a single-level join's Inner side (`o.Customer.City != "London"`,
+            // EF's nav-expansion producing this over a LeftJoin the same way the null-check shape above does).
+            // TryTranslatePredicate is the SAME two-scope translator the Outer-only arm above already calls
+            // (guarded there by !ReferencesInnerScope) — its own remarks state mixed Outer/Inner predicates
+            // translate fine structurally, resolving an Inner member through JoinScope.Levels[0].InnerPrefix,
+            // the alias the $lookup this arm defers to will actually produce. So the only new work here is
+            // ROUTING: try the narrower null-check recognizer first (a bare entity-vs-null comparison is not a
+            // property path TryTranslatePredicate can represent, so it correctly declines that shape, but
+            // trying it first avoids wasting a translation attempt on the common null-check case), then this
+            // general arm for everything else. Same non-collection restriction as the null-check arm (a
+            // COLLECTION navigation's 1:N $unwind is a different, unexamined post-join filtering shape) but,
+            // unlike the null-check arm, no IsLeftOuter requirement: an inner join's $unwind already drops
+            // unmatched rows before this $match runs, which is correct for a general comparison (unlike the
+            // null-check's degenerate always-true/never-true concern, which does not apply here). Mirrors the
+            // null-check arm's own division of labor: does NOT call AddLookup/MarkReferenceIncludeConfirmed/
+            // MarkJoinLookupConfirmed — that stays owned by the trailing Select(ti => ti.Outer) EF's
+            // nav-expansion always synthesizes next, to avoid double-counting MongoSelectDefinition's
+            // confirmed/candidate join counters. See docs/superpowers/specs/2026-09-08-native-join-where-inner-scope-design.md.
+            else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } innerScope
+                     && mongoQ.Joins.Count == 1
+                     && mongoQ.Joins[0].Lookup is { Navigation.IsCollection: false }
+                     && NativeJoinScopeTranslator.TryTranslatePredicate(
+                         innerScope, predicate.Parameters[0], predicate.Body, out var innerPredicateNode))
+            {
+                mongoQ.Select.MarkJoinInnerAccessConfirmed();
+                mongoQ.Select.AddPredicateConjunct(innerPredicateNode);
+            }
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }
@@ -195,10 +318,19 @@ internal static class NativeSlotPopulator
         {
             // Repeated / non-canonical-order paging is natively representable: each Skip appends a $skip op
             // at its arrival position, and the lowerer emits ops verbatim.
+            //
+            // Joins.Count == 0 here means this Skip is genuinely positioned BEFORE any join on this select
+            // (e.g. Customers.Take(1).GroupJoin(...)) — see MongoSelectDefinition.HasPagingRecordedBeforeAnyJoin
+            // for why that must never be deferred past a LATER join the same way EF's hoisted-forward
+            // Join(...).Select(...).Skip()/Take() shape safely is.
+            if (mongoQ.Joins.Count == 0)
+                mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendSkip);
         }
         else if (methodDefinition == QueryableMethods.Take)
         {
+            if (mongoQ.Joins.Count == 0)
+                mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendLimit);
         }
         else if (methodDefinition == QueryableMethods.Reverse)
@@ -286,6 +418,29 @@ internal static class NativeSlotPopulator
         var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
         translator.SelfParam = keySelector.Parameters[0];
 
+        // Post-Distinct ordering (EF-322): resolve against the Distinct's OWN flattened output alias, never
+        // the entity. NativeGroupByBinder.TryResolveDistinctOrderingKey handles the identity key (bare-scalar
+        // Distinct's OrderBy(c => c)) and a bare member naming one of the Distinct's own key parts — including
+        // a COMPUTED key part (EF-322 gap-2, e.g. Select(c => new { A = c.CustomerID + c.City })), which it
+        // resolves via a MongoElementRefExpression onto that part's flattened alias rather than an IProperty.
+        // Anything ELSE it declines — most notably a genuinely COMPUTED expression built from the key selector's
+        // own parameter (EF-322 gap-3, e.g. a bare-scalar Distinct's OrderBy(x => x.IndexOf(term))) — falls
+        // through to the SAME MongoExpressionTranslator.DistinctAliasScope mechanism Where/Count(pred) already
+        // use, letting TryTranslateComputedSortKey resolve it exactly like the non-Distinct case does. Either
+        // way, a member name that is not one of the Distinct's own key parts never falls through to the entity
+        // below, so a renamed projection member can never resolve against a colliding, unrelated entity property.
+        if (mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping is { } distinctGrouping)
+        {
+            if (NativeGroupByBinder.TryResolveDistinctOrderingKey(
+                    distinctGrouping, keySelector.Parameters[0], keySelector.Body, out var distinctKey))
+            {
+                record(new MongoOrdering(distinctKey, ascending));
+                return;
+            }
+
+            translator.DistinctAliasScope = distinctGrouping;
+        }
+
         if (translator.TryTranslateField(keySelector.Body, out var keyNode))
             record(new MongoOrdering(keyNode, ascending));
         else if (TryTranslateComputedSortKey(translator, keySelector.Body, out var computedKey))
@@ -295,6 +450,40 @@ internal static class NativeSlotPopulator
                  && NativeJoinScopeTranslator.TryTranslateValue(
                      singleLevelScope, keySelector.Parameters[0], keySelector.Body, out var joinSortKey))
             record(new MongoOrdering(joinSortKey, ascending));
+        // A sort key reaching a single-level join's Inner side (`o.OrderID`), e.g.
+        // `Customers.Join(Orders, ...).OrderBy(x => x.Inner.OrderID)`. Mirrors NativeSlotPopulator's Where
+        // Inner arm (docs/superpowers/specs/2026-09-08-native-join-where-inner-scope-design.md): translates
+        // via the same general-purpose two-scope TryTranslateValue the Outer-only arm above already calls
+        // (guarded there by !ReferencesInnerScope), then defers this sort — and anything recorded after it —
+        // into PostJoinOps so it lowers past the $lookup/$unwind block that materializes Inner.
+        //
+        // UNLIKE the Where arm, this is NOT restricted to a non-collection-navigation/reference lookup: a
+        // $sort changes neither row count nor row identity, so — unlike paging
+        // (docs/superpowers/specs/2026-09-22-native-post-join-paging-design.md), which DOES need to reason
+        // about 1:1-safety — sorting the post-$unwind rows is correct for ANY join cardinality, collection
+        // navigation or not. This matters in practice, not just in theory: the motivating test
+        // (Join_Customers_Orders_Skip_Take family) is `Customers.Join(Orders, c => c.CustomerID, o =>
+        // o.CustomerID, ...)`, whose Navigation resolves to Customer.Orders — a COLLECTION navigation
+        // (Lookup.IsReference is false) — not the reference nav Order.Customer, because TranslateJoinCore
+        // resolves the navigation from the OUTER (Customer) side's key selector. Requiring IsReference here
+        // (as Where's arm does) would keep this exact family declining. Joins.Count == 1 makes Joins[0] safe
+        // to read directly (JoinScope is only ever recorded for the first/only join at this depth); no
+        // further conjunct is needed; see
+        // docs/superpowers/specs/2026-09-23-native-join-orderby-inner-scope-design.md.
+        else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } innerSortScope
+                 && mongoQ.Joins.Count == 1
+                 && NativeJoinScopeTranslator.TryTranslateValue(
+                     innerSortScope, keySelector.Parameters[0], keySelector.Body, out var innerSortKey))
+        {
+            // Relocate BEFORE flipping/recording: an earlier Outer-only key in this SAME chain (e.g.
+            // `OrderBy(o.OrderID).ThenBy(o.Customer.CustomerID)`) is still sitting in PipelineOps as a
+            // MongoSortOp — it must move into PostJoinOps too, so both keys end up in ONE $sort stage. See
+            // DeferTrailingSortPastConfirmedJoin's own remarks for why splitting them across two stages is a
+            // silent wrong-order bug, not just a cosmetic difference.
+            mongoQ.Select.DeferTrailingSortPastConfirmedJoin();
+            mongoQ.Select.MarkJoinInnerAccessConfirmed();
+            record(new MongoOrdering(innerSortKey, ascending));
+        }
         else if (mongoQ.Select.JoinScope is { Levels.Count: > 1 } chainedScope
                  && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
                      chainedScope, keySelector.Parameters[0], keySelector.Body, valueMode: true, out var chainedSortKey))
@@ -500,11 +689,28 @@ internal static class NativeSlotPopulator
         if (!MongoAggregationExpressionRenderer.CanRender(translated))
             return false;
 
-        if (!TryProbeBareValueRenders(translated, keySelectorBody.Type))
+        if (!TryProbeBareValueRenders(translated, UnwrapBoxingToObjectType(keySelectorBody)))
             return false;
 
         result = translated;
         return true;
+    }
+
+    /// <summary>
+    /// Strips top-level boxing-to-<see cref="object"/> <c>Convert</c> layers (e.g. <c>(object)i</c> over a
+    /// captured <c>int</c>) to recover the actual declared type of a bare value/parameter sort key, matching
+    /// what <c>MongoExpressionTranslator.TranslateOperand</c> itself unwraps unconditionally. Without this, a
+    /// boxed key's <c>Type</c> stays <see cref="object"/> and <see cref="TryProbeBareValueRenders"/> would
+    /// reject a <see cref="MongoParameterExpression"/> under its reference-type allowlist even though the
+    /// value underneath boxes cleanly.
+    /// </summary>
+    internal static Type UnwrapBoxingToObjectType(Expression e)
+    {
+        while (e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked, Type: var t } u
+               && t == typeof(object))
+            e = u.Operand;
+
+        return e.Type;
     }
 
     /// <summary>
@@ -522,7 +728,7 @@ internal static class NativeSlotPopulator
     /// no property serializer, so both paths reach <c>BsonValue.Create</c>, whose admission decision is keyed
     /// on the CLR type rather than the value.
     /// </remarks>
-    private static bool TryProbeBareValueRenders(MongoExpression translated, Type declaredType)
+    internal static bool TryProbeBareValueRenders(MongoExpression translated, Type declaredType)
     {
         switch (translated)
         {
