@@ -497,6 +497,27 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
                 .First(c => c.FullName == "Alice"));
     }
 
+#if !EF8 && !EF9
+    [Fact]
+    public void Filtered_include_with_paging_still_runs_and_is_correct()
+    {
+        // CONTROL against an over-broad decline on "there is paging inside a $lookup sub-pipeline" (see
+        // NativeJoinInnerDeclineTests for the Queryable.Join inner boundary). A FILTERED Include puts
+        // $sort/$skip/$limit inside a native "_lookup_<Nav>" sub-pipeline too, but there the per-outer-row
+        // semantics are exactly what Include means, so the result is CORRECT and must not be declined. The
+        // paging here lives on a NAVIGATION, not on a Queryable.Join inner — this test is what keeps that true.
+        var (ordersCollection, customersCollection) = SetupOrdersAndCustomers();
+        using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
+
+        var alice = db.Customers
+            .Where(c => c.FullName == "Alice")
+            .Include(c => c.Orders.OrderBy(o => o.OrderDescription).Take(1))
+            .Single();
+
+        Assert.Equal(["Order 1"], alice.Orders.Select(o => o.OrderDescription).ToArray());
+    }
+#endif
+
     // BSON uses: desc, cust_id for Orders; name for Customers
     // C# uses:   OrderDescription, CustomerId for Orders; FullName for Customers
     private (string ordersCollection, string customersCollection) SetupOrdersAndCustomers()
