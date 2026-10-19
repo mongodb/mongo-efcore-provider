@@ -34,12 +34,25 @@ internal static class NativeModeAssert
     /// Asserts the shape goes native (doesn't throw under <see cref="MongoQueryMode.NativeOnly"/>) and matches the
     /// driver-LINQ oracle exactly. Returns the results for further assertions.
     /// </summary>
-    internal static List<T> NativeAndParity<T>(Func<MongoQueryMode, List<T>> run)
+    /// <param name="run">Creates a context for the mode and reduces the query to a comparable list.</param>
+    /// <param name="allowEmpty">
+    /// By default an empty result fails the assertion: two empty lists agree trivially, so parity over no rows proves
+    /// nothing (a filter that wrongly matches nothing in both modes would pass). Set only when the shape legitimately
+    /// returns no rows.
+    /// </param>
+    internal static List<T> NativeAndParity<T>(Func<MongoQueryMode, List<T>> run, bool allowEmpty = false)
     {
         var nativeOnly = run(MongoQueryMode.NativeOnly);
         var driver = run(MongoQueryMode.DriverLinq);
 
         Assert.Equal(driver, nativeOnly);
+        if (!allowEmpty)
+        {
+            Assert.True(nativeOnly.Count > 0,
+                "NativeAndParity compared two empty results, which proves nothing. Seed data the query returns, "
+                + "or pass allowEmpty: true if the shape legitimately returns no rows.");
+        }
+
         return nativeOnly;
     }
 
