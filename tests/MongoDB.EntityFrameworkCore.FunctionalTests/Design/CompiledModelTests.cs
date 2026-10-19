@@ -87,6 +87,9 @@ public partial class CompiledModelTests(TemporaryDatabaseFixture database)
         : DbContext(options)
     {
         public DbSet<EveryType> EveryTypes { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+            => modelBuilder.Entity<EveryType>().Property(e => e.anIntRepresentedAsAString).HasOrderPreservingStorage();
     }
 
     [Fact]
@@ -173,6 +176,7 @@ public partial class CompiledModelTests(TemporaryDatabaseFixture database)
             var representation = property.GetBsonRepresentation();
             Assert.NotNull(representation);
             Assert.Equal(BsonType.String, representation.BsonType);
+            Assert.True(property.IsOrderPreservingStorage());
 
             scope.Dispose();
         }

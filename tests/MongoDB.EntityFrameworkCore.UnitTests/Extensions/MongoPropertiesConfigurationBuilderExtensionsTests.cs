@@ -16,6 +16,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Extensions;
 
@@ -71,6 +72,55 @@ public class MongoPropertiesConfigurationBuilderExtensionsTests
 
         var foundDateTimeKind = property.GetDateTimeKind();
         Assert.Equal(dateTimeKind, foundDateTimeKind);
+    }
+
+    [Fact]
+    public void HaveOrderPreservingStorage_declares_the_matching_properties_order_preserving()
+    {
+        using var db = new OrderPreservingContext(cb => cb.Properties<DateTimeOffset>().HaveOrderPreservingStorage());
+
+        Assert.True(db.GetProperty((TestEntity t) => t.DateTimeOffsetProperty).IsOrderPreservingStorage());
+        Assert.False(db.GetProperty((TestEntity t) => t.StringProperty).IsOrderPreservingStorage());
+    }
+
+    [Fact]
+    public void HaveOrderPreservingStorage_false_does_not_store_the_annotation()
+    {
+        using var db = new OrderPreservingContext(cb => cb.Properties<DateTimeOffset>().HaveOrderPreservingStorage(false));
+
+        var property = db.GetProperty((TestEntity t) => t.DateTimeOffsetProperty);
+        Assert.False(property.IsOrderPreservingStorage());
+        Assert.Null(property.FindAnnotation(MongoAnnotationNames.OrderPreservingStorage));
+    }
+
+    [Fact]
+    public void HaveOrderPreservingStorage_convention_value_loses_to_the_fluent_API()
+    {
+        using var db = new OrderPreservingContext(
+            cb => cb.Properties<DateTimeOffset>().HaveOrderPreservingStorage(),
+            mb => mb.Entity<TestEntity>().Property(e => e.DateTimeOffsetProperty).HasOrderPreservingStorage(false));
+
+        var property = db.GetProperty((TestEntity t) => t.DateTimeOffsetProperty);
+        Assert.False(property.IsOrderPreservingStorage());
+        Assert.Null(property.FindAnnotation(MongoAnnotationNames.OrderPreservingStorage));
+    }
+
+    private class OrderPreservingContext(
+        Action<ModelConfigurationBuilder> configureConventions,
+        Action<ModelBuilder>? configureModel = null) : DbContext
+    {
+        public DbSet<TestEntity> Tests { get; set; }
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+            => optionsBuilder
+                .UseMongoDB("mongodb://localhost:27017", $"UnitTests{Guid.NewGuid()}")
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+
+        protected override void ConfigureConventions(ModelConfigurationBuilder cb)
+            => configureConventions(cb);
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+            => configureModel?.Invoke(modelBuilder);
     }
 
     private class TestEntity

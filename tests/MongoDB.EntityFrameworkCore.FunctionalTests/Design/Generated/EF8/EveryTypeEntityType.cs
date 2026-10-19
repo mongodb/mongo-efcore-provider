@@ -444,6 +444,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                     (int v) => v),
                 clrType: typeof(int));
             anIntRepresentedAsAString.AddAnnotation("Mongo:BsonRepresentation", new Dictionary<string, object> { ["BsonType"] = BsonType.String, ["AllowOverflow"] = false, ["AllowTruncation"] = false });
+            anIntRepresentedAsAString.AddAnnotation("Mongo:OrderPreservingStorage", true);
 
             var key = runtimeEntityType.AddKey(
                 new[] { id });
