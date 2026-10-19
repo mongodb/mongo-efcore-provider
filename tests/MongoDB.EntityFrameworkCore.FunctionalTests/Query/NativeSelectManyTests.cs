@@ -125,6 +125,26 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // `o.Rank * 2m` inside a SelectMany trailing projection exercises the scope-0 (no-prefix, "$Rank")
         // re-rooting path end-to-end, not just Item.Price's scope-1 ("$Items.Price") path.
         public decimal Rank { get; set; }
+
+        // Final-review fix (EF-421 Finding 2): a NULLABLE outer property, so a correlated inner filter with a
+        // RELATIONAL operator (o.NullableRank &lt; 5) can pin that the query dialect's type-bracketing
+        // (matches neither a missing nor an explicit null field) is preserved for the pre-existing SelectMany
+        // two-scope translator — not silently un-type-bracketed into $expr's BSON-total-order semantics, where
+        // null sorts below every number and would wrongly satisfy $lt.
+        public int? NullableRank { get; set; }
+
+        // Final-review fix 2 (EF-421 round 2): a value-converted (non-default-serialized) bare outer BOOL, so
+        // a correlated inner filter that references it BARE (`o.Items.Where(i => o.ConvertedFlag)`, no
+        // comparison/Not/&&/|| around it) exercises the bare-boolean-member default arm of
+        // MongoExpressionTranslator.TranslateNode. Only the dedicated test below
+        // (Owned_correlated_beyond_outer_bare_converted_bool_...) configures an explicit converter on this
+        // property (stored as "True"/"False", BOTH of which are non-empty, therefore TRUTHY, BSON strings
+        // regardless of the CLR value) — every other test leaves it unmapped/default, so a regression that
+        // emits MongoOuterFieldExpression unconditionally here (routing through $expr raw truthiness instead
+        // of the property's own converter) would silently include every owner's items rather than only the
+        // ones whose ConvertedFlag is genuinely true.
+        public bool ConvertedFlag { get; set; }
+
         public List<Item> Items { get; set; } = [];
     }
 
@@ -134,24 +154,36 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // conflates the outer (unprefixed "$Name") and inner ("$Items.Name") field refs.
         public string Name { get; set; } = "";
         public decimal Price { get; set; }
+
+        // Regression coverage (MongoFieldPrefixRewriter throwing instead of declining on
+        // MongoConditionalExpression/MongoDatePartExpression cross-scope leaves): a DateTime field so an
+        // inner-scope date-part extraction (i.Occurred.Year) and a conditional (i.Flag ? ... : ...) can appear
+        // as a computed result-selector leaf that requires the scope-1 ("$Items.Occurred") prefix.
+        public DateTime Occurred { get; set; }
+        public bool Flag { get; set; }
     }
 
     private static Owner[] SeedOwners() =>
     [
         new()
         {
-            Id = ObjectId.GenerateNewId(), Name = "Alice", Rank = 3m,
+            // NullableRank is deliberately NULL here: the type-bracketing regression test relies on Alice
+            // having items AND a null NullableRank, so an un-type-bracketed $expr:{$lt:[null,5]} (which BSON
+            // total order admits — null sorts below every number) would wrongly include these rows.
+            Id = ObjectId.GenerateNewId(), Name = "Alice", Rank = 3m, NullableRank = null,
             Items =
             [
-                new Item { Name = "Widget", Price = 9.99m },
-                new Item { Name = "Gadget", Price = 19.99m },
+                new Item { Name = "Widget", Price = 9.99m, Occurred = new DateTime(2020, 3, 15), Flag = true },
+                new Item { Name = "Gadget", Price = 19.99m, Occurred = new DateTime(2021, 7, 4), Flag = false },
             ],
         },
-        new() { Id = ObjectId.GenerateNewId(), Name = "Bob", Rank = 5m, Items = [] }, // empty owned collection
+        new() { Id = ObjectId.GenerateNewId(), Name = "Bob", Rank = 5m, NullableRank = 2, Items = [] }, // empty owned collection
         new()
         {
-            Id = ObjectId.GenerateNewId(), Name = "Carol", Rank = 7m,
-            Items = [new Item { Name = "Thing", Price = 5m }],
+            // NullableRank is non-null but NOT less than 5, so the type-bracketing test's expected exclusion
+            // of Carol's items is for an ordinary VALUE reason, not a null/missing one.
+            Id = ObjectId.GenerateNewId(), Name = "Carol", Rank = 7m, NullableRank = 10,
+            Items = [new Item { Name = "Thing", Price = 5m, Occurred = new DateTime(2022, 12, 25), Flag = true }],
         },
         // EF-347 correlated-beyond-outer: discriminating owner so a correlated predicate like
         // i.Name == o.Name has both a satisfying row (Match/Match) and a non-satisfying one (Match/NoMatch) —
@@ -159,7 +191,9 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // correlated-equality test below would pass vacuously (empty == empty).
         new()
         {
-            Id = ObjectId.GenerateNewId(), Name = "Match", Rank = 11m,
+            // NullableRank IS less than 5, so the type-bracketing test's expectation of INCLUDING Match's
+            // items is a genuine value match, discriminating it from Alice's null-exclusion case above.
+            Id = ObjectId.GenerateNewId(), Name = "Match", Rank = 11m, NullableRank = 3,
             Items =
             [
                 new Item { Name = "Match", Price = 3m }, // i.Name == o.Name → included
@@ -580,6 +614,54 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
+    public void Explicit_result_selector_form_computed_date_part_leaf_goes_native()
+    {
+        // Regression test for the MongoFieldPrefixRewriter gap: a date-part extraction (i.Occurred.Year) over
+        // the INNER (scope-1) unwound element requires MongoFieldPrefixRewriter.Rewrite to prefix a
+        // MongoDatePartExpression's operand with the unwind path ("$Items.Occurred"). Before the fix, this
+        // reached the switch's default arm and threw NativeTranslationNotSupportedException in every
+        // MongoQueryMode instead of falling back gracefully — asserted here under both Native and NativeOnly
+        // to prove it now succeeds outright (native), not merely falls back.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = i.Occurred.Year + 1 })
+            .OrderBy(r => r.X).ToList();
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Explicit_result_selector_form_computed_date_part_leaf_goes_native) + mode);
+            var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { X = i.Occurred.Year + 1 })
+                .AsEnumerable().OrderBy(r => r.X).ToList();
+            Assert.Equal(expected, result);
+        }
+    }
+
+    [Fact]
+    public void Explicit_result_selector_form_computed_conditional_leaf_goes_native()
+    {
+        // Regression test for the MongoFieldPrefixRewriter gap: a ternary (i.Flag ? ... : ...) over the INNER
+        // (scope-1) unwound element requires MongoFieldPrefixRewriter.Rewrite to prefix a
+        // MongoConditionalExpression's Test/IfTrue/IfFalse operands with the unwind path. Before the fix, this
+        // hit the switch's default arm and threw NativeTranslationNotSupportedException in every
+        // MongoQueryMode instead of falling back gracefully. NativeSelectManyBinder.IsArithmeticComputedLeaf
+        // only admits a leaf whose TOP node is arithmetic (a bare top-level ternary declines there, unrelated
+        // to this bug), so the conditional is nested inside a top-level `+` to reach the same computed-leaf
+        // re-rooting path Explicit_result_selector_form_computed_date_part_leaf_goes_native exercises.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = (i.Flag ? 1m : 2m) + 0m })
+            .OrderBy(r => r.X).ToList();
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Explicit_result_selector_form_computed_conditional_leaf_goes_native) + mode);
+            var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { X = (i.Flag ? 1m : 2m) + 0m })
+                .AsEnumerable().OrderBy(r => r.X).ToList();
+            Assert.Equal(expected, result);
+        }
+    }
+
+    [Fact]
     public void Inner_select_form_filtered_goes_native()
     {
         var seed = SeedOwners();
@@ -724,6 +806,35 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
+    public void Correlated_relational_operator_over_a_nullable_outer_property_still_excludes_null_rows()
+    {
+        // Final-review fix (EF-421 Finding 2): MongoOuterFieldExpression construction inside TranslateComparison
+        // must be confined to the NEW element-scope two-scope translators (Count(pred)/quantifier), never this
+        // PRE-EXISTING SelectMany two-scope translator — MongoOuterFieldExpression has no query-dialect form,
+        // so using it here would route this comparison through $expr's BSON-total-order semantics (null sorts
+        // below every number, so {$lt: [null, 5]} is TRUE) instead of the query dialect's type-bracketing
+        // (neither a missing nor an explicit null field matches a relational operator). Alice's items have a
+        // null NullableRank and must stay EXCLUDED; only Match's items (NullableRank = 3, genuinely < 5) are
+        // included; Carol's items (NullableRank = 10) are excluded for an ordinary value reason. If this
+        // regressed, Alice's 2 items would incorrectly also appear, doubling the expected 2-item result to 4.
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Correlated_relational_operator_over_a_nullable_outer_property_still_excludes_null_rows));
+
+        var result = db.Entities.AsNoTracking()
+            .SelectMany(o => o.Items.Where(i => o.NullableRank < 5))
+            .AsEnumerable().OrderBy(i => i.Name).ToList();
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => o.NullableRank < 5))
+            .OrderBy(i => i.Name).ToList();
+
+        Assert.Equal(expected.Select(i => i.Name), result.Select(i => i.Name));
+        Assert.Equal(2, result.Count); // both of Match's items; Alice (null) and Carol (10) excluded
+        Assert.DoesNotContain(result, i => i.Name is "Widget" or "Gadget" or "Thing");
+    }
+
+    [Fact]
     public void Owned_correlated_beyond_outer_explicit_form_goes_native()
     {
         var seed = SeedOwners();
@@ -833,6 +944,137 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         Assert.Contains("$expr", message);
         Assert.Contains("Items.Name", message); // inner field, unwind-path-prefixed
         Assert.Contains("$Name", message); // outer field, root-relative
+    }
+
+    [Fact]
+    public void Owned_correlated_beyond_outer_against_a_plain_value_goes_native_with_correct_rows()
+    {
+        // Task-3 review fix (EF-421, Finding 2): the correlated shapes above (e.g.
+        // Owned_correlated_beyond_outer_inner_select_form_goes_native) all compare the outer member against
+        // ANOTHER FIELD (i.Name == o.Name). This test covers the previously-untested sibling shape: the outer
+        // member compared against a SIMPLE VALUE (here a captured local, so it also exercises the parameter —
+        // not just constant — form).
+        //
+        // Mechanism (traced, not just executed): before this task, the correlated conjunct's outer member
+        // resolved to a MongoFieldExpression, and MongoQueryLanguageRenderer.IsQueryNativeComparison
+        // (`Left is MongoFieldExpression && Right is MongoConstantExpression or MongoParameterExpression`)
+        // matched this shape, producing a query-dialect `{Name: "Match"}` conjunct. After this task, the outer
+        // member resolves to a MongoOuterFieldExpression instead (a DIFFERENT node type, deliberately excluded
+        // from IsQueryNativeComparison — see MongoQueryLanguageRenderer.IsQueryDialectRenderable's explicit
+        // `MongoOuterFieldExpression => false` arm), so this shape no longer matches and instead renders via
+        // MongoAggregationExpressionRenderer as `{$expr: {$eq: ["$Name", ownerName]}}`. This is still CORRECT:
+        // the $match runs AFTER $unwind, where the outer field sits at the document root either way, and MQL
+        // shape is not contract per this repo's own versioning rubric (see the top-level AGENTS.md) — but
+        // nothing exercised this exact shape until now.
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Owned_correlated_beyond_outer_against_a_plain_value_goes_native_with_correct_rows));
+
+        var ownerName = "Match";
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => o.Name == ownerName), (o, i) => new { o.Name, i.Price })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => o.Name == ownerName), (o, i) => new { o.Name, i.Price })
+            .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        // "Match" owner has TWO items ("Match" and "NoMatch") and the predicate does not reference i.Name at
+        // all, so BOTH are included — a non-vacuous, non-trivial result: neither empty nor "every row".
+        Assert.Equal(expected, result);
+        Assert.Equal(2, result.Count);
+        Assert.All(result, r => Assert.Equal("Match", r.Name));
+    }
+
+    [Fact]
+    public void Owned_correlated_beyond_outer_against_a_plain_constant_goes_native_with_correct_rows()
+    {
+        // Sibling of the test above using a literal CONSTANT rather than a captured-local parameter, so both
+        // MongoConstantExpression and MongoParameterExpression right-hand shapes are covered on the
+        // MongoOuterFieldExpression comparison this task introduced.
+        var seed = SeedOwners();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Owned_correlated_beyond_outer_against_a_plain_constant_goes_native_with_correct_rows));
+
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => o.Name == "Match"), (o, i) => new { o.Name, i.Price })
+            .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => o.Name == "Match"), (o, i) => new { o.Name, i.Price })
+            .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+
+        Assert.Equal(expected, result);
+        Assert.Equal(2, result.Count);
+    }
+
+    [Fact]
+    public void Owned_correlated_beyond_outer_bare_converted_bool_uses_property_serializer_not_raw_truthiness()
+    {
+        // Final-review fix (EF-421 round 2, Finding 1 — CRITICAL, silent wrong-data): a value-converted bare
+        // outer bool referenced BARE inside a correlated SelectMany inner filter
+        // (o.Items.Where(i => o.ConvertedFlag) — no comparison/Not/&&/|| wrapping it) exercises the
+        // bare-boolean-member DEFAULT arm of MongoExpressionTranslator.TranslateNode, not TranslateComparison.
+        // Stored as "True"/"False" via an explicit converter — BOTH non-empty, therefore TRUTHY, BSON strings
+        // regardless of the CLR value — so a regression that constructs MongoOuterFieldExpression
+        // unconditionally in that arm (instead of confining it to `_innerPrefix is null`, the NEW
+        // element-scope two-scope translators only) would route this through {$expr: "$ConvertedFlag"} raw
+        // truthiness and silently include EVERY owner's items, not just Carol's (whose ConvertedFlag is
+        // genuinely true) — doubling this test's expected 1-row result to 2.
+        //
+        // Raw BsonDocument seeding (bypassing the mapped Owner serializer) controls the STORED shape directly:
+        // "ConvertedFlag" is written as the literal string "True"/"False" — exactly what the model's explicit
+        // converter itself produces — so this test genuinely exercises the converter's stored representation,
+        // not merely a native BSON bool that would happen to truthiness-test correctly either way.
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Owned_correlated_beyond_outer_bare_converted_bool_uses_property_serializer_not_raw_truthiness))
+            + Guid.NewGuid().ToString("N")[..8];
+
+        var rawCollection = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
+        rawCollection.InsertMany(
+        [
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "ConvertedFlag", "False" },
+                {
+                    "Items", new BsonArray
+                    { new BsonDocument { { "Name", "Widget" }, { "Price", new BsonDecimal128(9.99m) } } }
+                },
+            },
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "ConvertedFlag", "True" },
+                {
+                    "Items", new BsonArray
+                    { new BsonDocument { { "Name", "Thing" }, { "Price", new BsonDecimal128(5m) } } }
+                },
+            },
+        ]);
+
+        var collection = database.MongoDatabase.GetCollection<Owner>(collectionName);
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb =>
+            {
+                mb.Entity<Owner>().OwnsMany(o => o.Items);
+                // Explicit converter (rather than the parameterless HasConversion<string>(), whose built-in
+                // BoolToStringConverter default maps false/true to "0"/"1", not "True"/"False") so the STORED
+                // representation matches this test's raw-seeded documents exactly.
+                mb.Entity<Owner>().Property(o => o.ConvertedFlag)
+                    .HasConversion(v => v ? "True" : "False", v => v == "True");
+            },
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
+        var result = db.Entities
+            .SelectMany(o => o.Items.Where(i => o.ConvertedFlag), (o, i) => new { o.Name, i.Price })
+            .ToList();
+
+        Assert.Single(result);
+        Assert.Equal("Carol", result[0].Name);
     }
 
     [Fact]
@@ -2508,6 +2750,15 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 .AsEnumerable().OrderBy(x => x.Name).ToList());
     }
 
+    // SUPERSEDED (EF-448): `r.Tag + "!"` used to be this test's example of a computed leaf
+    // TryBindTransparentIdentifierProjection declines. `IsArithmeticComputedLeaf` only checks the
+    // BinaryExpression NodeType (Add/Subtract/Multiply/Divide/Modulo), not operand type, so it already
+    // admitted a string `+`; it used to decline downstream in MongoExpressionTranslator, which had no
+    // $concat branch. Now that EF-448 added native string-concatenation translation, this exact leaf goes
+    // fully native under Native/NativeOnly (proven correct against the in-memory oracle — see
+    // Reference_form_string_concat_computed_leaf_goes_native below) — it no longer reaches this test's
+    // decline path at all. `r.Tag.ToUpper()` is a MethodCallExpression, not a BinaryExpression, so
+    // IsArithmeticComputedLeaf still declines it, preserving the scenario this test exists to cover.
     [Fact]
     public void Reference_form_computed_leaf_hard_fails_in_every_mode()
     {
@@ -2517,27 +2768,51 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // TryBindReferenceNavUnwind still succeeds on STRUCTURE alone (the collectionSelector is a valid
         // FK-correlated reference nav) before it can know the trailing projection is unsupported, so
         // UnwindSource is set unconditionally; the SEPARATE trailing Select's
-        // TryBindTransparentIdentifierProjection then rejects the computed leaf (r.Tag + "!" is not a bare
-        // ti.Outer.<m>/ti.Inner.<m> access) and calls the ordinary MarkNotNativelyRepresentable() guard — the
-        // SAME "graceful fallback" mechanism the owned form's sibling test relies on. But here the graceful
-        // fallback does not actually work (empirically confirmed, not assumed): the reference form has no
-        // driver-LINQ baseline at all (see the DriverLinq test above), so the fallback attempt itself throws
-        // the SAME "Unsupported cross-DbSet query" InvalidOperationException under BOTH Native and DriverLinq;
-        // NativeOnly (which forbids the fallback attempt entirely) throws its own distinct
-        // NativeTranslationNotSupportedException before ever reaching that fallback code, hence ThrowsAny there.
+        // TryBindTransparentIdentifierProjection then rejects the computed leaf (r.Tag.ToUpper() is not a bare
+        // ti.Outer.<m>/ti.Inner.<m> access, nor an arithmetic/string-concat BinaryExpression) and calls the
+        // ordinary MarkNotNativelyRepresentable() guard — the SAME "graceful fallback" mechanism the owned
+        // form's sibling test relies on. But here the graceful fallback does not actually work (empirically
+        // confirmed, not assumed): the reference form has no driver-LINQ baseline at all (see the DriverLinq
+        // test above), so the fallback attempt itself throws the SAME "Unsupported cross-DbSet query"
+        // InvalidOperationException under BOTH Native and DriverLinq; NativeOnly (which forbids the fallback
+        // attempt entirely) throws its own distinct NativeTranslationNotSupportedException before ever
+        // reaching that fallback code, hence ThrowsAny there.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_computed_leaf_hard_fails_in_every_mode) + mode, out _, out _);
 
             Assert.Throws<InvalidOperationException>(() =>
-                db.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag + "!" }).ToList());
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag.ToUpper() }).ToList());
         }
 
         using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
             nameof(Reference_form_computed_leaf_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
 
         Assert.ThrowsAny<Exception>(() =>
-            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag + "!" }).ToList());
+            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag.ToUpper() }).ToList());
+    }
+
+    [Fact]
+    public void Reference_form_string_concat_computed_leaf_goes_native()
+    {
+        // EF-448: string concatenation (r.Tag + "!") is a single-scope BinaryExpression Add leaf, so it goes
+        // through the exact same TryTranslateSingleScopeComputedLeaf path an arithmetic leaf uses, and now
+        // that MongoExpressionTranslator has a $concat branch, it translates successfully — no different from
+        // Reference_form_computed_arithmetic_leaf_goes_native below except for the operator. Proven under
+        // NativeOnly (no driver-LINQ baseline exists for this shape at all) against the in-memory oracle.
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_string_concat_computed_leaf_goes_native), out var owners, out var items);
+
+        var actual = db.Owners
+            .SelectMany(o => o.Refs, (o, r) => new { X = r.Tag + "!" })
+            .AsEnumerable()
+            .OrderBy(x => x.X).ToList();
+
+        var expected = owners
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id), (o, r) => new { X = r.Tag + "!" })
+            .OrderBy(x => x.X).ToList();
+
+        Assert.Equal(expected.Select(x => x.X), actual.Select(x => x.X));
     }
 
     [Fact]

@@ -471,4 +471,92 @@ public class MongoAggregationExpressionRendererTests
         Assert.False(MongoAggregationExpressionRenderer.CanRender(
             new MongoConvertExpression(unrenderable, typeof(int))));
     }
+
+    // ------------------------------------------------------------------
+    // MongoOuterFieldExpression — always renders at document root (EF-421)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void MongoOuterFieldExpression_renders_at_document_root_with_no_element_variable()
+    {
+        var status = GetProperty<Customer>("Status");
+        var node = new MongoOuterFieldExpression(status, "Status");
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable());
+
+        Assert.Equal((BsonValue)"$Status", rendered);
+    }
+
+    [Fact]
+    public void MongoOuterFieldExpression_renders_at_document_root_even_inside_a_filter_scope()
+    {
+        // The whole point of this node: unlike MongoFieldExpression, an elementVariable in scope must NOT
+        // change its rendering — it always means "the enclosing document", never "the filter's own element".
+        var status = GetProperty<Customer>("Status");
+        var node = new MongoOuterFieldExpression(status, "Status");
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable(), elementVariable: "e");
+
+        Assert.Equal((BsonValue)"$Status", rendered);
+    }
+
+    [Fact]
+    public void MongoOuterFieldExpression_can_render()
+    {
+        var status = GetProperty<Customer>("Status");
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(new MongoOuterFieldExpression(status, "Status")));
+    }
+
+    [Fact]
+    public void MongoQuantifierExpression_Any_renders_as_anyElementTrue_over_map()
+    {
+        var elementPredicate = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoFieldExpression(NameProperty(), "Rank"),
+            new MongoConstantExpression(5, forSerialization: null));
+        var node = new MongoQuantifierExpression(
+            new MongoElementRefExpression("Posts", typeof(object)), elementPredicate, MongoExpressionTranslator.MongoQuantifierKind.Any);
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable());
+
+        Assert.Equal(
+            BsonDocument.Parse(
+                "{ $anyElementTrue: { $map: { input: { $ifNull: ['$Posts', []] }, as: 'e', "
+                + "in: { $gt: ['$$e.Rank', 5] } } } }"),
+            rendered);
+    }
+
+    [Fact]
+    public void MongoQuantifierExpression_All_renders_as_allElementsTrue_over_map()
+    {
+        var elementPredicate = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoFieldExpression(NameProperty(), "Rank"),
+            new MongoConstantExpression(5, forSerialization: null));
+        var node = new MongoQuantifierExpression(
+            new MongoElementRefExpression("Posts", typeof(object)), elementPredicate, MongoExpressionTranslator.MongoQuantifierKind.All);
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable());
+
+        Assert.Equal(
+            BsonDocument.Parse(
+                "{ $allElementsTrue: { $map: { input: { $ifNull: ['$Posts', []] }, as: 'e', "
+                + "in: { $gt: ['$$e.Rank', 5] } } } }"),
+            rendered);
+    }
+
+    [Fact]
+    public void MongoQuantifierExpression_can_render()
+    {
+        var node = new MongoQuantifierExpression(
+            new MongoElementRefExpression("Posts", typeof(object)),
+            new MongoFieldExpression(NameProperty(), "Active"),
+            MongoExpressionTranslator.MongoQuantifierKind.Any);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+    }
+
+    // --- Helper methods ---
+
+    private static IProperty NameProperty() => GetProperty<Customer>("Age");
 }
