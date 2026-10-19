@@ -31,6 +31,9 @@ internal static class MongoAssert
         var exception = await Assert.ThrowsAnyAsync<Exception>(query);
         if (exception is NativeTranslationNotSupportedException)
         {
+            // The native-only refusal for a shape it cannot represent; pin the message so an unrelated
+            // native refusal (e.g. a different unsupported-shape guard) is not accepted here.
+            Assert.Contains("not natively representable", exception.Message);
             return;
         }
 
