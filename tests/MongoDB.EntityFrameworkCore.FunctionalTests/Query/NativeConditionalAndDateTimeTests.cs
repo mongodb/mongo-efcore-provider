@@ -285,6 +285,28 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
         Assert.Equal([2024, 1999, 2024, 1969], native);
     }
 
+    // EF-461: a group key or $min/$max/$avg accumulator over a date part of a null date must not read the null as 0
+    // (EF throws "Nullable object must have a value."); the shape declines to the fallback instead.
+    [Fact]
+    public void GroupBy_key_over_a_date_part_of_a_nullable_date_declines()
+    {
+        var collection = SeedTimeRows(nameof(GroupBy_key_over_a_date_part_of_a_nullable_date_declines));
+        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.AsNoTracking()
+            .GroupBy(x => x.MaybeWhen!.Value.Year).Select(g => new { g.Key, C = g.Count() }).ToList());
+    }
+
+    [Fact]
+    public void GroupBy_Max_over_a_date_part_of_a_nullable_date_declines()
+    {
+        var collection = SeedTimeRows(nameof(GroupBy_Max_over_a_date_part_of_a_nullable_date_declines));
+        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.AsNoTracking()
+            .GroupBy(x => x.Label).Select(g => g.Max(x => x.MaybeWhen!.Value.Year)).ToList());
+    }
+
     // Operators over the projected TimeOfDay alias. Each must either read the milliseconds correctly or decline; the
     // oracle is in-memory LINQ over the seeded rows.
     private static readonly TimeSpan SeededDuration = TimeSpan.FromHours(12) + TimeSpan.FromMilliseconds(1);

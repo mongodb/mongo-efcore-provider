@@ -1342,8 +1342,8 @@ public class MongoAggregationExpressionRendererTests
         // Non-nullable start date: plain.
         Assert.Equal(NonNullableValueRead.Plain, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
             typeof(DateTime), new MongoDateAddExpression(new MongoElementRefExpression("E", typeof(DateTime)), MongoDateAddUnit.Day, one)));
-        // Group keys / accumulators don't count date operators yet (EF-461).
-        Assert.False(MongoAggregationExpressionRenderer.MayBeNullBehindNonNullableType(
+        // A group key / accumulator over a date operator counts too: it declines rather than read the null as 0 (EF-461).
+        Assert.True(MongoAggregationExpressionRenderer.MayBeNullBehindNonNullableType(
             new MongoDateAddExpression(nullableDate, MongoDateAddUnit.Day, one)));
     }
 
