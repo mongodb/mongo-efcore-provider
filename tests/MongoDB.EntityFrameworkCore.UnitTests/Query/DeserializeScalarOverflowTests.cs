@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.Reflection;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -22,8 +23,8 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query;
 
 /// <summary>
 /// BCL <c>Enumerable.Sum</c> is checked, but <c>$sum</c> silently widens (int32 -&gt; int64 -&gt; double), so
-/// <c>DeserializeScalar</c> may narrow a widened value back to TResult. Pins the accepted divergence: narrowing
-/// never throws, though it doesn't reproduce BCL's checked semantics.
+/// <c>DeserializeScalar</c> narrows a widened value back to TResult with checked arithmetic: a total that doesn't fit
+/// throws <see cref="OverflowException"/> like BCL's Sum, and one that fits round-trips.
 /// </summary>
 public class DeserializeScalarOverflowTests
 {
@@ -38,14 +39,10 @@ public class DeserializeScalarOverflowTests
     }
 
     [Fact]
-    public void Sum_int_narrowing_from_widened_int64_does_not_throw()
+    public void Sum_int_narrowing_from_widened_int64_throws_OverflowException()
     {
-        // An int32 $sum overflow widens to int64; long -> int narrowing is unchecked (modulo 2^32), so the
-        // value can be pinned exactly.
-        long widened = 4_000_000_000L;
-        var result = DeserializeScalar<int>(new BsonInt64(widened));
-
-        Assert.Equal(unchecked((int)widened), result);
+        Assert.IsType<OverflowException>(
+            Assert.Throws<TargetInvocationException>(() => DeserializeScalar<int>(new BsonInt64(4_000_000_000L))).InnerException);
     }
 
     [Fact]
@@ -57,13 +54,10 @@ public class DeserializeScalarOverflowTests
     }
 
     [Fact]
-    public void Sum_long_narrowing_from_widened_double_does_not_throw()
+    public void Sum_long_narrowing_from_widened_double_throws_OverflowException()
     {
-        // An int64 $sum overflow widens to double; Convert.ChangeType would throw for this value. Only
-        // "doesn't throw" is pinned, not the returned value.
-        var exception = Record.Exception(() => DeserializeScalar<long>(new BsonDouble(1e20)));
-
-        Assert.Null(exception);
+        Assert.IsType<OverflowException>(
+            Assert.Throws<TargetInvocationException>(() => DeserializeScalar<long>(new BsonDouble(1e20))).InnerException);
     }
 
     [Fact]

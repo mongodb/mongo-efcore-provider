@@ -1664,12 +1664,38 @@ internal static class NativeGroupByBinder
             if (MongoDatePartExpression.IsTimeOfDay(projection.Expression))
                 return false;
 
+            // A computed key over a non-nullable field (`x.Rank + 1`) is null when a document omits the field; the flatten
+            // is read strictly like the leaf itself (read side only: ThrowsOnMalformedNull flags nothing downstream).
+            // One that selects the field itself (`x.Rank > 1 ? -1 : x.Rank`, DefaultOnMalformedMissing) is MISSING
+            // there instead: the key part carries a missing marker (MarksMissing; a lone `$group` `_id` sub-key would
+            // answer null for MISSING) and the flatten restores MISSING from it, so a missing and a null value are two
+            // groups and read 0 and throw, as driver-LINQ (grouping on the projected document) did.
+            // A bare stored field (`x.Rank`, `(int)x.Score`, `(long)x.Rank`) classifies the same way against the type it is
+            // read back as (the selector's, recorded as Source): its key would otherwise merge a MISSING and a null value
+            // into one null group read as 0, where driver-LINQ read 0 and threw.
+            var malformedRead = projection.ThrowsOnMalformedNull
+                ? NonNullableValueRead.ThrowOnMalformedNull
+                : projection.Expression is MongoFieldExpression or MongoOuterFieldExpression
+                    ? MongoAggregationExpressionRenderer.ClassifyMalformedFieldRead(
+                        projection.Source?.Type ?? projection.Expression.Type, projection.Expression)
+                    : MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(projection.Expression.Type, projection.Expression);
+            var marksMissing = malformedRead == NonNullableValueRead.DefaultOnMalformedMissing || projection.DefaultsOnMalformedMissing;
+
             // ThrowsOnNull carries over to both: the deduped value is the same possibly-null value, read back from
             // "_id.<alias>" by the flatten, and by operators over the Distinct through the key part (DistinctAliasScope).
-            keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression, projection.ThrowsOnNull));
+            keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression, projection.ThrowsOnNull, marksMissing));
+            var keyRef = new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type);
             flatten.Add(new MongoProjection(projection.Alias,
-                new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type),
-                ThrowsOnNull: projection.ThrowsOnNull));
+                marksMissing
+                    ? new MongoConditionalExpression(
+                        new MongoElementRefExpression(
+                            "_id." + projection.Alias + MongoGroupingKeyPart.MissingMarkerSuffix, typeof(bool)),
+                        new MongoElementRefExpression(MongoElementRefExpression.RemoveSentinelPath, projection.Expression.Type),
+                        keyRef)
+                    : keyRef,
+                ThrowsOnNull: projection.ThrowsOnNull,
+                ThrowsOnMalformedNull: !marksMissing && malformedRead == NonNullableValueRead.ThrowOnMalformedNull,
+                DefaultsOnMalformedMissing: marksMissing));
         }
 
         select.ClearProjections();

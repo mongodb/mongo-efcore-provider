@@ -238,9 +238,11 @@ internal sealed class MongoSelectLowerer
                 MongoAggregateOperator.Sum
                     => new MongoGroupAccumulatorStage("$sum", cardinality.Selector!, BsonValueSerializer.ScalarField),
                 MongoAggregateOperator.Min
-                    => new MongoGroupAccumulatorStage("$min", cardinality.Selector!, BsonValueSerializer.ScalarField),
+                    => new MongoGroupAccumulatorStage("$min", NativeAggregateReadBack.ReductionOperand(select, cardinality),
+                        BsonValueSerializer.ScalarField, NativeAggregateReadBack.ReducesWrappedValue(cardinality)),
                 MongoAggregateOperator.Max
-                    => new MongoGroupAccumulatorStage("$max", cardinality.Selector!, BsonValueSerializer.ScalarField),
+                    => new MongoGroupAccumulatorStage("$max", NativeAggregateReadBack.ReductionOperand(select, cardinality),
+                        BsonValueSerializer.ScalarField, NativeAggregateReadBack.ReducesWrappedValue(cardinality)),
                 MongoAggregateOperator.Average
                     => new MongoGroupAccumulatorStage("$avg", cardinality.Selector!, BsonValueSerializer.ScalarField),
                 MongoAggregateOperator.Any or MongoAggregateOperator.All

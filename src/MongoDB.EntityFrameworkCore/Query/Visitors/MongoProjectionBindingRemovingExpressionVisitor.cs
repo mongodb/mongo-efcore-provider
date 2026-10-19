@@ -156,6 +156,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         typeof(MongoProjectionBindingRemovingExpressionVisitor)
             .GetMethod(nameof(IsElementAbsentOrNull), BindingFlags.NonPublic | BindingFlags.Static)!;
 
+    /// <summary>
+    /// Whether <paramref name="elementName"/> is absent from <paramref name="document"/> (an explicit BSON null is
+    /// present): a <c>$project</c> output the server answered MISSING for.
+    /// </summary>
+    internal static bool IsElementAbsent(BsonDocument document, string elementName)
+        => !document.Contains(elementName);
+
+    private static readonly MethodInfo IsElementAbsentMethodInfo =
+        typeof(MongoProjectionBindingRemovingExpressionVisitor)
+            .GetMethod(nameof(IsElementAbsent), BindingFlags.NonPublic | BindingFlags.Static)!;
+
     private static readonly ConstructorInfo SequenceContainsNoElementsConstructorInfo =
         typeof(InvalidOperationException).GetConstructor([typeof(string)])!;
 
@@ -171,7 +182,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     var computedProjection = GetProjection(computedLeaf.Binding);
                     return TryCreateThrowOnNullAliasRead(computedProjection.Alias!, computedLeaf.Type, out var throwingComputedRead)
                         ? throwingComputedRead
-                        : BsonBinding.CreateGetElementValue(DocParameter, computedProjection.Alias!, computedLeaf.Type);
+                        : TryCreateThrowOnMalformedNullAliasRead(computedProjection.Alias!, computedLeaf.Type, out var strictComputedRead)
+                            ? strictComputedRead
+                            : BsonBinding.CreateGetElementValue(DocParameter, computedProjection.Alias!, computedLeaf.Type);
                 }
 
             case ProjectionBindingExpression projectionBindingExpression:
@@ -202,6 +215,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         return throwingRead;
                     }
 
+                    // A computed leaf over a non-nullable property's field (`x.Rank + 1`) is null only when a malformed
+                    // document omits that field; read it strictly too, so it throws as driver-LINQ did instead of 0.
+                    if (TryCreateThrowOnMalformedNullAliasRead(projection.Alias, projectionBindingExpression.Type, out var strictRead))
+                    {
+                        return strictRead;
+                    }
+
                     // FirstOrDefault over a non-nullable value-type member: with no related row the alias is missing
                     // and a raw read throws, so emit default(T) explicitly for absent/null.
                     //
@@ -222,9 +242,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     // use the raw alias read like other computed leaves. Safe because the emit side
                     // (AllFieldsDefaultSerialized) never admits a cast over a converted/non-default-representation
                     // field. A nullable cast over a Local-kind DateTime still reads with that kind (CreateAliasRead).
-                    if (projection.Expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked })
+                    if (projection.Expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } castLeaf)
                     {
-                        return CreateAliasRead(projection.Alias, projectionBindingExpression.Type);
+                        return TryCreateRequiredScalarCastRead(castLeaf, projection.Alias, projectionBindingExpression.Type, out var castRead)
+                            ? castRead
+                            : CreateAliasRead(projection.Alias, projectionBindingExpression.Type);
                     }
 
                     // Native string-to-char-sequence leaf: only the raw string was pushed down (BSON has no
@@ -260,11 +282,27 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     {
                         ThrowIfAliasedTypeMismatch(fieldAccess.Property, projectionBindingExpression.Type);
 
-                        var valueExpression = BsonBinding.CreateGetValueExpression(
-                            DocParameter,
-                            projection.Alias,
-                            fieldAccess.Property,
-                            projectionBindingExpression.Type);
+                        // Projection route: a bare stored scalar whose element is missing reads default(T), as the driver's
+                        // $project push-down did (decision D-F10). So does a projected Distinct's flattened key over a
+                        // default-serialized property that got no missing marker (a bool: `new { x.Title, x.Flag }`,
+                        // whose composite `_id` omits a MISSING sub-key; the driver grouped the projected document, so
+                        // a missing member read default). A marked key, including a value-converted one read as its own
+                        // type, is read by TryCreateThrowOnMalformedNullAliasRead above
+                        // (MongoAggregationExpressionRenderer.ClassifyMalformedFieldRead). Whole-entity routes stay
+                        // strict. Computed leaves never reach here (they are aliased reads above).
+                        var valueExpression = (_queryExpression.Select.Route == NativeRoute.Projection
+                                               || _queryExpression.Select is { Route: NativeRoute.GroupBy, IsDistinct: true, IsGroupBy: false }
+                                               && NativeGroupByBinder.HasDefaultKeySerialization(fieldAccess.Property))
+                            && !ReadsUnprojectedDocuments
+                            && fieldAccess.Property.ClrType.UnwrapNullableType() != typeof(BsonDocument)
+                            && fieldAccess.Property.ClrType.UnwrapNullableType() != typeof(BsonArray)
+                            ? BsonBinding.CreateGetScalarProjectionValueExpression(
+                                DocParameter, projection.Alias, fieldAccess.Property, projectionBindingExpression.Type)
+                            : BsonBinding.CreateGetValueExpression(
+                                DocParameter,
+                                projection.Alias,
+                                fieldAccess.Property,
+                                projectionBindingExpression.Type);
 
                         // The read expression's type is the property's CLR type widened to nullable when
                         // the property is nullable; the assert above permits the binding type to be the
@@ -288,6 +326,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                                     Expression.Constant("Sequence contains no elements")),
                                 projectionBindingExpression.Type),
                             CreateAliasRead(projection.Alias, projectionBindingExpression.Type));
+                    }
+
+                    // A join-scope bare scalar leaf (`o.Customer!.Rank`) reads like a root bare leaf: missing → default
+                    // (an unmatched optional reference), null → throws (D-F10).
+                    if (TryCreateJoinScopeBareScalarRead(projection.Alias, projectionBindingExpression.Type, out var joinScopeRead))
+                    {
+                        return joinScopeRead;
                     }
 
                     // Non-property expressions (arithmetic, constants, Mql.Field) and key-property bindings carry
@@ -928,6 +973,186 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         read = value.ConvertIfRequired(type);
         return true;
     }
+
+    /// <summary>
+    /// On the native <see cref="NativeRoute.Projection"/> route, when this select's own output under
+    /// <paramref name="alias"/> classifies <see cref="NonNullableValueRead.ThrowOnMalformedNull"/> (a computation over a
+    /// non-nullable property's field, <c>x.Rank + 1</c>), reads it as a nullable and takes
+    /// <see cref="Nullable{T}.Value"/>, so the null the server answers when a document omits that field throws EF's
+    /// "Nullable object must have a value." (driver-LINQ's deserializer threw <see cref="FormatException"/>) instead of
+    /// reading as <c>default(T)</c>. When it classifies <see cref="NonNullableValueRead.DefaultOnMalformedMissing"/> (the
+    /// leaf may select the omitted field itself: <c>x.Rank > 1 ? -1 : x.Rank</c>), a MISSING output reads
+    /// <c>default(T)</c>, as driver-LINQ's deserializer read it, and a null still throws.
+    /// </summary>
+    /// <remarks>
+    /// Read side only: the emit side treats both classifications as <see cref="NonNullableValueRead.Plain"/>, so no later
+    /// operator declines over them. A projected Distinct's flattened key (on the <see cref="NativeRoute.GroupBy"/> route)
+    /// reads through <see cref="MongoProjection.ThrowsOnMalformedNull"/> or
+    /// <see cref="MongoProjection.DefaultsOnMalformedMissing"/>, which NativeGroupByBinder sets from the same
+    /// classification of the upstream leaf.
+    /// Whole-document reads (<see cref="ReadsUnprojectedDocuments"/>) are unaffected.
+    /// </remarks>
+    private bool TryCreateThrowOnMalformedNullAliasRead(string alias, Type type, [NotNullWhen(true)] out Expression? read)
+    {
+        read = null;
+        var route = _queryExpression.Select.Route;
+        if (route is not (NativeRoute.Projection or NativeRoute.GroupBy)
+            || ReadsUnprojectedDocuments
+            || !type.IsValueType
+            || Nullable.GetUnderlyingType(type) is not null)
+        {
+            return false;
+        }
+
+        foreach (var projection in _queryExpression.Select.Projection)
+        {
+            if (projection.Alias != alias)
+            {
+                continue;
+            }
+
+            // A projected Distinct's flattened key carries its upstream leaf's classification (ThrowsOnMalformedNull);
+            // otherwise only this select's own computed leaf on the Projection route qualifies.
+            var malformedRead = projection.ThrowsOnMalformedNull
+                ? NonNullableValueRead.ThrowOnMalformedNull
+                : projection.DefaultsOnMalformedMissing
+                    ? MongoAggregationExpressionRenderer.ReclassifyMalformedReadAs(
+                        NonNullableValueRead.DefaultOnMalformedMissing, projection.Expression.Type, type)
+                    : route == NativeRoute.Projection
+                        ? MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(type, projection.Expression)
+                        : NonNullableValueRead.Plain;
+            if (malformedRead is not (NonNullableValueRead.ThrowOnMalformedNull or NonNullableValueRead.DefaultOnMalformedMissing))
+            {
+                return false;
+            }
+
+            // A marked Distinct key over a value-converted field (ClassifyMalformedFieldRead) is read through its property,
+            // so the converter applies: MISSING reads default, an explicit null throws, as main's converter did.
+            if (malformedRead == NonNullableValueRead.DefaultOnMalformedMissing
+                && projection.DefaultsOnMalformedMissing
+                && _queryExpression.Select.Grouping?.Key.FirstOrDefault(k => k.Name == alias) is { MarksMissing: true } keyPart
+                && MongoAggregationExpressionRenderer.ReadsConvertedDistinctKeyThroughProperty(type, keyPart.FieldRef))
+            {
+                read = BsonBinding.CreateGetScalarProjectionValueExpression(
+                    DocParameter, alias, ((MongoFieldExpression)keyPart.FieldRef).Property, type);
+                return true;
+            }
+
+            read = malformedRead == NonNullableValueRead.DefaultOnMalformedMissing
+                ? CreateDefaultOnMissingAliasRead(alias, type)
+                : CreateStrictAliasRead(alias, type);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// On the native <see cref="NativeRoute.Projection"/> route, reads a non-nullable cast of a stored scalar that the
+    /// emit side staged as the bare field (<c>(int)x.Rank</c>, <c>(int)x.Score</c>, <c>(long)x.Rank</c>) the way
+    /// driver-LINQ's rendering of the same cast answers for that document: an identity cast (also over a nullable
+    /// source), which the driver drops, reads a missing element as <c>default(T)</c> and throws on an explicit null; a
+    /// cast the driver renders as <c>$toX</c> (<see cref="MongoConvertExpression.ToOperatorFor"/>; <c>(long)x.Rank</c>,
+    /// and over a nullable source <c>(long)x.Score</c>), which answers null for a missing or null field, reads strictly and
+    /// throws for both, rather than reading a null as <c>0</c>.
+    /// </summary>
+    private bool TryCreateRequiredScalarCastRead(UnaryExpression castLeaf, string alias, Type type, [NotNullWhen(true)] out Expression? read)
+    {
+        read = null;
+        if (_queryExpression.Select.Route != NativeRoute.Projection
+            || ReadsUnprojectedDocuments
+            || !type.IsValueType
+            || Nullable.GetUnderlyingType(type) is not null
+            || TryResolveFieldAccess(castLeaf).Property is not { } property
+            || !property.ClrType.UnwrapNullableType().IsValueType
+            || !_queryExpression.Select.Projection.Any(p => p.Alias == alias && p.Expression is MongoFieldExpression))
+        {
+            return false;
+        }
+
+        if (castLeaf.Operand.Type.UnwrapNullableType() == type)
+        {
+            read = property.IsNullable
+                ? CreateDefaultOnMissingAliasRead(alias, type)
+                : BsonBinding.CreateGetScalarProjectionValueExpression(DocParameter, alias, property, type);
+            return true;
+        }
+
+        // An enum's cast to its underlying type, staged bare by the translator (IsEnumUnderlyingRelabel): the alias holds
+        // the stored integer, read as such; missing → default, null → throws, as the driver (which drops the cast) did.
+        if (MongoExpressionTranslator.IsEnumUnderlyingRelabel(castLeaf.Operand.Type, type))
+        {
+            read = CreateDefaultOnMissingAliasRead(alias, type);
+            return true;
+        }
+
+        // Any other enum cast (to a wider integral type) keeps the plain alias read.
+        if (MongoConvertExpression.ToOperatorFor(type) is null
+            || castLeaf.Operand.Type.UnwrapNullableType().IsEnum)
+        {
+            return false;
+        }
+
+        read = CreateStrictAliasRead(alias, type);
+        return true;
+    }
+
+    /// <summary>
+    /// On the native <see cref="NativeRoute.Projection"/> route over a join scope, reads a bare stored scalar leaf of a
+    /// non-nullable property (<see cref="MongoAggregationExpressionRenderer.ReadsJoinScopeBareScalarThroughProperty"/>:
+    /// <c>o.Customer!.Rank</c>) through that property, as a root bare leaf is read: a MISSING alias (an unmatched optional
+    /// reference after <c>$lookup</c>) reads <c>default(T)</c>, as driver-LINQ's <c>$project</c> push-down did, and an
+    /// explicit null throws (a <c>bool</c> reads false). Without it the generic alias read threw for MISSING and read
+    /// an explicit null as <c>0</c>.
+    /// </summary>
+    private bool TryCreateJoinScopeBareScalarRead(string alias, Type type, [NotNullWhen(true)] out Expression? read)
+    {
+        read = null;
+        if (_queryExpression.Select is not { Route: NativeRoute.Projection, JoinScope: not null } select
+            || ReadsUnprojectedDocuments)
+        {
+            return false;
+        }
+
+        foreach (var projection in select.Projection)
+        {
+            if (projection.Alias != alias)
+            {
+                continue;
+            }
+
+            if (projection.ThrowsOnNull
+                || !MongoAggregationExpressionRenderer.ReadsJoinScopeBareScalarThroughProperty(type, projection.Expression))
+            {
+                return false;
+            }
+
+            read = BsonBinding.CreateGetScalarProjectionValueExpression(
+                DocParameter, alias, ((MongoFieldExpression)projection.Expression).Property, type);
+            return true;
+        }
+
+        return false;
+    }
+
+    // `type` read as T? and unwrapped: a missing or null alias throws EF's "Nullable object must have a value.". A bool
+    // reads both as false instead: driver-LINQ's BooleanSerializer reads null as false
+    // (MongoAggregationExpressionRenderer.DriverReadsNullAsDefault).
+    private Expression CreateStrictAliasRead(string alias, Type type)
+        => MongoAggregationExpressionRenderer.DriverReadsNullAsDefault(type)
+            ? Expression.Condition(
+                Expression.Call(IsElementAbsentOrNullMethodInfo, DocParameter, Expression.Constant(alias)),
+                Expression.Default(type),
+                CreateAliasRead(alias, type))
+            : Expression.Property(
+                CreateAliasRead(alias, type.MakeNullable()), type.MakeNullable().GetProperty(nameof(Nullable<int>.Value))!);
+
+    // A missing alias reads default(T) (driver-LINQ's deserializer reading an omitted member); a null one throws.
+    private Expression CreateDefaultOnMissingAliasRead(string alias, Type type)
+        => Expression.Condition(
+            Expression.Call(IsElementAbsentMethodInfo, DocParameter, Expression.Constant(alias)),
+            Expression.Default(type),
+            CreateStrictAliasRead(alias, type));
 
     /// <summary>
     /// Reads a projection output by alias through the generic serializer for <paramref name="type"/>. When the alias

@@ -43,7 +43,20 @@ internal sealed class MongoGrouping(
 /// <c>MongoExpressionTranslator.DistinctAliasScope</c>, which sees only this grouping) mark their element reference
 /// with it.
 /// </param>
-internal sealed record MongoGroupingKeyPart(string? Name, MongoExpression FieldRef, bool ThrowsOnNull = false);
+/// <param name="MarksMissing">
+/// A named key part over a value that may be MISSING (<c>NonNullableValueRead.DefaultOnMalformedMissing</c>: a projected
+/// Distinct's <c>x.Rank > 1 ? -1 : x.Rank</c>). The <c>$group</c> <c>_id</c> also carries
+/// <c>&lt;Name&gt;</c><see cref="MissingMarkerSuffix"/>: <c>{ $eq: [ { $type: value }, "missing" ] }</c>, since an
+/// <c>_id</c> whose only sub-key is MISSING answers <c>{ Name: null }</c>, one group with an explicit null. With the
+/// marker a missing and a null value form two groups, as driver-LINQ's grouping on the projected document did, and the
+/// flatten restores MISSING from it.
+/// </param>
+internal sealed record MongoGroupingKeyPart(
+    string? Name, MongoExpression FieldRef, bool ThrowsOnNull = false, bool MarksMissing = false)
+{
+    /// <summary>Suffix of the <c>_id</c> sub-key holding a <see cref="MarksMissing"/> part's missing marker.</summary>
+    internal const string MissingMarkerSuffix = "__isMissing";
+}
 
 /// <summary>One <c>$group</c> accumulator. <paramref name="Operand"/> is null for count (<c>$sum: 1</c>).</summary>
 internal sealed record MongoGroupAccumulator(string OutputField, string Operator, MongoExpression? Operand);

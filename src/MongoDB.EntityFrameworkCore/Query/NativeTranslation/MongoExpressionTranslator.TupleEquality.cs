@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
+using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -55,6 +56,14 @@ internal sealed partial class MongoExpressionTranslator
             return false;
         }
 
+        // A constant/parameter element whose CLR type BsonValue.Create rejects (Guid, ...) must serialize through
+        // the property it is compared with; with no such counterpart the whole comparison declines.
+        if (!TryRebindUnserializableElements(leftElements, rightElements)
+            || !TryRebindUnserializableElements(rightElements, leftElements))
+        {
+            return false;
+        }
+
         var leftTuple = new MongoTupleExpression(leftElements);
         var rightTuple = new MongoTupleExpression(rightElements);
 
@@ -67,6 +76,44 @@ internal sealed partial class MongoExpressionTranslator
             be.NodeType == ExpressionType.NotEqual ? MongoBinaryOperator.NotEqual : MongoBinaryOperator.Equal,
             leftTuple,
             rightTuple);
+        return true;
+    }
+
+    /// <summary>
+    /// Replaces, in place, each constant/parameter element of <paramref name="elements"/> that
+    /// <see cref="NativeSlotPopulator.TryProbeBareValueRenders"/> says <c>BsonValue.Create</c> cannot serialize
+    /// (<see cref="Guid"/>, ...) with a copy bound to the <see cref="IProperty"/> of the
+    /// <see cref="MongoFieldExpression"/> at the same position in <paramref name="others"/>, so it serializes through
+    /// the property's serializer. Returns <see langword="false"/> when such an element has no field counterpart.
+    /// Elements <c>BsonValue.Create</c> handles are left untouched, so the MQL of already-working tuples is unchanged.
+    /// </summary>
+    private static bool TryRebindUnserializableElements(MongoExpression[] elements, MongoExpression[] others)
+    {
+        for (var i = 0; i < elements.Length; i++)
+        {
+            var declaredType = elements[i] switch
+            {
+                MongoConstantExpression { ForSerialization: null } constant => constant.Type,
+                MongoParameterExpression { ForSerialization: null, ValueType: { } valueType } => valueType,
+                _ => null
+            };
+
+            if (declaredType is null || NativeSlotPopulator.TryProbeBareValueRenders(elements[i], declaredType))
+                continue;
+
+            if (others[i] is not MongoFieldExpression field)
+                return false;
+
+            elements[i] = elements[i] switch
+            {
+                MongoConstantExpression constant => new MongoConstantExpression(constant.Value, field.Property),
+                MongoParameterExpression parameter => new MongoParameterExpression(
+                    parameter.Name, field.Property, arrayElementIndex: parameter.ArrayElementIndex,
+                    valueType: parameter.ValueType, runtimeEvaluator: parameter.RuntimeEvaluator),
+                _ => elements[i]
+            };
+        }
+
         return true;
     }
 
@@ -108,12 +155,12 @@ internal sealed partial class MongoExpressionTranslator
                 // (ArrayElementIndex 0..n-1); MongoPipelineFactory extracts each position from the runtime ITuple.
                 if (NativeQueryParameter.TryGetQueryParameterName(operand, out var parameterName))
                 {
-                    var arity = operand.Type.GetGenericArguments().Length;
-                    var parameterElements = new MongoExpression[arity];
-                    for (var i = 0; i < arity; i++)
+                    var elementTypes = operand.Type.GetGenericArguments();
+                    var parameterElements = new MongoExpression[elementTypes.Length];
+                    for (var i = 0; i < elementTypes.Length; i++)
                     {
-                        parameterElements[i] =
-                            new MongoParameterExpression(parameterName, forSerialization: null, arrayElementIndex: i);
+                        parameterElements[i] = new MongoParameterExpression(
+                            parameterName, forSerialization: null, arrayElementIndex: i, valueType: elementTypes[i]);
                     }
 
                     elements = parameterElements;

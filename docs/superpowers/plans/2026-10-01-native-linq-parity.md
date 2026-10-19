@@ -411,12 +411,19 @@ Branch probe (EF8 and EF10, model below, `Code != Id`; correct answer by `Code`)
 |---|---|---|---|---|
 | `from c in Customers from o in db.Orders.Where(o => o.CustomerId == c.Code) select (c.Id, o.Id)` | `1-20, 3-10, 3-11, 3-12` | `1-10, 1-11, 1-12, 2-20` **wrong** | same **wrong** | throws `Unsupported cross-DbSet query` |
 | same, reversed operands `c.Code == o.CustomerId` | same | **wrong** (key rows) | **wrong** | throws |
-| same, `o.CustomerId == c.Code && o.Id > 10` | `3-11, 3-12` | `1-11, 1-12, 2-20` **wrong** | **wrong** | throws |
+| same, `o.CustomerId == c.Code && o.Id > 10` | `1-20, 3-11, 3-12` (corrected: customer 1 has `Code` 2, so order 20 qualifies) | `1-11, 1-12, 2-20` **wrong** | **wrong** | throws |
 | `Select(c => new { c.Id, F = db.Orders.Where(o => o.CustomerId == c.Code).OrderBy(o => o.Id).Select(o => o.Id).FirstOrDefault() })` | `1:20, 2:0, 3:10` | `1:10, 2:20, 3:0` **wrong** | **wrong** | throws |
 | `Where(c => db.Orders.Where(o => o.CustomerId == c.Code).Count() > 0)` | `[1, 3]` | `[1, 2]` **wrong** | **wrong** | `[1, 2]` **wrong** (the native slot populator registers the count `$lookup` before routing; main's RefCount family threw here) |
 | `Select(c => db.Orders.Where(o => o.CustomerId == c.Code).Count())` | `[1, 0, 3]` | `[3, 1, 0]` wrong | wrong | wrong: **main bug M35** (`ResolveCollectionNavigation`, identical on main) |
 | `Select(c => db.Orders.Count(o => o.CustomerId == c.Code))`, `Select(c => db.Orders.Where(…).Select(o => o.Id).ToList())` | — | throw `DbSet<Order>() could not be translated` in all modes (EF; same as main) | | |
 | key-correlated controls (`o.CustomerId == c.Id`) of the SelectMany / FirstOrDefault / Count shapes | key rows | correct, native | correct | SelectMany/FOD throw; Count correct |
+
+**Main oracle (Task 1.11 Step 2, built and run):** `upstream/main` at `dec7e26f`, Debug EF8/EF9/EF10, same model and raw
+seeds. Every shape above except the bare projected count throws `InvalidOperationException`, key-correlated or not:
+the SelectMany shapes (incl. nested and nullable-FK) and the correlated `FirstOrDefault` reducer with "The LINQ
+expression 'DbSet<…>()' could not be translated", the `Where(… Count() > 0)` shapes with "Unsupported cross-DbSet
+query". The bare projected `Where(corr).Count()` returns `[3, 1, 0]` for both the key and the non-key correlation
+(M35). No shape returns correct data on main that native would now refuse.
 
 **Files:**
 - Modify: `src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeCorrelationMatcher.cs` (`TryMatchCorrelatedCollection`; also the null-guard arm of `TryGetCorrelationEqualitySides`, which accepts `x != null && equality` without checking `x` is the compared key)
@@ -496,9 +503,248 @@ Apply the same principal-key identity to the null-guard arm of `TryGetCorrelatio
 - [ ] **Step 5:** Full suite EF8/EF9/EF10 (shared correlation recognizer feeding several dispatch paths) plus `MONGODB_EF_QUERY_MODE=NativeOnly` functional run: no previously-native key-correlated test may start declining. Behaviour change vs released versions: none (main throws for every newly-declining shape) → no `BREAKING-CHANGES.md` entry.
 - [ ] **Step 6: Commit** — `EF-322: correlated-collection matcher requires the outer principal key`
 
+### Task 1.12: F3(c) — non-nullable computed projection over a MISSING non-nullable field reads 0 (driver threw)
+
+(Controller-authored task; added to the plan during Phase 1 execution.)
+
+**Problem.** `Select(x => x.Rank + 1)` (also `new { V = x.Rank + 1 }`, `x.Rank * 2`, `Math.Abs(x.Rank)`, conditional over `x.Rank`) where `int Rank` is non-nullable and the element is MISSING from a document: canonical main (driver LINQ) throws `FormatException` (server `$add` of missing → null; the driver can't deserialize null into int). Native returns `0` for that row (observed: `[2, 3, 0]` for Rank 1/2/missing) — loud-on-main became silent wrong data, which the owner's goal forbids. Task 1.3 fixed the NULLABLE-operand case (`x.Score!.Value + 1`) via the ThrowsOnNull classification and deliberately did not flag non-nullable fields (doing so naively cascades declines over every `Select(x => x.A + x.B).Distinct()`/`.Sum()`).
+
+**Design (g4-projection.md §T7 option (c)).** On the **Projection route only**, read every NON-NULLABLE COMPUTED projection leaf strictly: read the alias as `T?` and apply `.Value` (or an equivalent null check that throws `InvalidOperationException("Nullable object must have a value.")`), so a server null — from a missing non-nullable operand — throws instead of reading `default(T)`. This is a READ-side strictness change; it must NOT change emit-side classification (no new declines for Distinct/Sum/GroupBy over computed leaves — those operators don't read the computed leaf through the projection shaper, or if they do, measure it).
+- Bare field leaves are excluded (Task 1.10 made a missing bare required scalar read `default(T)` on the Projection route, matching main — keep that; explicit BSON null on a bare leaf throws, also from 1.10).
+- Computed leaves over NULLABLE operands are already ThrowsOnNull (Task 1.3) — keep them.
+- Find where computed non-nullable leaves are read on the Projection route (MongoProjectionBindingRemovingExpressionVisitor alias reads → `BsonBinding.TryReadElementValue`), and add the strict read only for leaves classified Plain + computed (not bare field) + non-nullable CLR type. Prefer reusing the existing ThrowsOnNull read machinery with a new classification value or flag set at bind time by the same classifier (gate calls the fix's predicate).
+
+**Measure first.** The plan says (c) "needs a full-suite measurement first": implement behind the narrowest condition, run the full suite ×3 AND an EF10 functional+spec run under `MONGODB_EF_QUERY_MODE=NativeOnly`, and report every test whose outcome changes (expected: none, other than the new tests). Any test that previously expected `0` for a computed leaf over a missing/null non-nullable operand must be checked against main (driver) — if main threw, the new throw is correct; if main returned a value, stop and report.
+
+**Tests** (raw BsonDocument seeds: `{Title:"a",Rank:1}`, `{Title:"b",Rank:2}`, `{Title:"c"}`; 3 modes):
+- Theory over shapes `x.Rank + 1`, `x.Rank * 2`, `Math.Abs(x.Rank)`, `x.Rank > 1 ? x.Rank : -1`, `new { V = x.Rank + 1 }`: NativeOnly and Native throw `InvalidOperationException` ("Nullable object must have a value" or the read's message — assert a stable fragment), DriverLinq throws `FormatException` (main parity — confirm the driver exception per shape; if the driver doesn't throw for some shape, assert its actual result and make native match).
+- Well-formed rows only (`Where(x => x.Title != "c")`): all shapes return correct values in all modes (no regression).
+- Bare `Select(x => x.Rank)` still reads `[1,2,0]` (Task 1.10 behavior unchanged).
+- `Select(x => x.Rank + 1).Distinct()` and `.Sum()` over well-formed rows still go native (no new declines) — `NativeModeAssert.NativeAndParity`.
+- Mutation check: disable the strict read → the theory fails.
+- Full suite ×3.
+
+**Commit:** `EF-322: throw for computed projections over missing non-nullable fields, matching driver LINQ`
+
+### Task 1.13: F12 — closed local-collection filter folding bakes clock members into the cached plan
+
+(Controller-authored task; added during Phase 1 execution from the Task 1.2 review.)
+
+**Suspected problem.** `LocalCollectionFilterFoldingVisitor` evaluates `constantSource.Where(pred).ToArray()` at compile time when `pred` is closed; its `FreeVariableFinder` ignores clock members, so the first execution's reading is baked into the cached plan.
+
+**Probe (EF10, `MONGODB_URI`/`ATLAS_URI` unset; one context, one cached compilation, 3.5 s wait; rows seeded at past and now+2 s).**
+
+| Spelling | Branch (Native / NativeOnly / DriverLinq) | `upstream/main` `dec7e26f` |
+|---|---|---|
+| Captured array `candidates.Where(d => d < DateTime.UtcNow).Contains(r.Created)` (EF parameterizes the source; the fold takes the per-execution runtime-parameter path) | `[1]` then `[1,2]` in all three: correct, not reproducible | `[1]` then `[1,2]` |
+| Constant source (inline literal array / `Expression.Constant(array)`, which EF leaves a `ConstantExpression`) | `[1]` then `[1]` in all three: **reproduced** (baked) | `[1]` then `[1,2]` |
+
+The fold runs after EF's funcletizer, so only a literal/constant source folds at compile time. Because the preprocessor is mode independent, all three modes regressed against main. `Guid.NewGuid()` in the same predicate was also folded silently (main throws the EF-255 error); `Random.Shared.Next` is not affected (EF parameterizes `Random.Shared`, so the predicate is not closed).
+
+**Fix.** (1) A predicate containing a non-deterministic call is never folded (`NonDeterministicCalls.ContainsNonDeterministicCall`, moved out of `MongoExpressionTranslator` so the translator and the visitor share one predicate). (2) A constant source whose predicate contains a clock (`RuntimeClock.ContainsClock`) takes the existing runtime-parameter path (extractor re-applies the filter on every execution) instead of the compile-time fold, so it stays native in NativeOnly (declining the fold instead left NativeOnly with a "not natively representable" gap, where main returned correct results).
+
+**Tests** (`NonDeterministicFunctionTests`): constant-source clock fold per execution, captured-array clock fold per execution (pins the already-correct path), and `Guid.NewGuid` in a folded predicate not evaluated once; all in three modes. Mutation (revert the visitor): the constant-source and Guid tests fail in all three modes.
+
+**Commit:** `EF-322: never fold local-collection filters that read the clock`
+
+### Task 1.14: F13 — a computed projection whose server result is MISSING reads default on main but throws natively
+
+(Controller-authored task; found by the Task 1.12 review.)
+
+**Problem.** For a non-nullable computed leaf whose server expression evaluates to MISSING (not null), e.g. `Select(x => x.Rank > 1 ? -1 : x.Rank)` with `int Rank` missing from a document, canonical main returns `0` for that row: `$cond` selecting `"$Rank"` makes `$project` omit `_v`, and the driver's deserializer reads an omitted member as `default`. Natively the same query threw (Task 1.12's strict read). A blanket "missing → default" is wrong too: native renders `(long)x.Rank` as a bare `"$Rank"` (MISSING) where the driver renders `$toLong` (null, FormatException).
+
+**Probe (Step 1).** Raw seeds a `{Rank:1, Score:5, Big:10}`, b `{Rank:2, Big:20}`, c `{}`, d `{Rank:null, Score:null, Big:null}`; `int Rank`, `int? Score`, `long Big`. Main = `upstream/main` `dec7e26f` exported with `git archive`, no `UseQueryMode`, EF10. Branch = EF-322c NativeOnly (Native identical in every row; DriverLinq identical to main in every row). Rows a/b agree everywhere. "after" is ea0d63cf; cells marked "(fix 1)" changed in fix round 1 (re-run of the theory, 3 modes). "throws" natively is `InvalidOperationException` (EF's "Nullable object must have a value." unless noted); main's "throws FE" is `FormatException` (`Cannot deserialize a 'Int32' from BsonType 'Null'`).
+
+| Shape | c missing: main | c: before | c: after | d null: main | d: before | d: after |
+|---|---|---|---|---|---|---|
+| `x.Rank > 1 ? -1 : x.Rank` | 0 | throws | 0 | throws FE | throws | throws |
+| `x.Rank > 1 ? x.Rank : -1` | -1 | -1 | -1 | -1 | -1 | -1 |
+| `x.Rank > 1 ? x.Rank : x.Rank` | 0 | throws | 0 | throws FE | throws | throws |
+| `x.Title == "c" ? x.Rank : 0` | 0 | throws | 0 | 0 | 0 | 0 |
+| `x.Rank > 1 ? -1 : (x.Rank > 0 ? 5 : x.Rank)` | 0 | throws | 0 | throws FE | throws | throws |
+| `x.Rank > 1 ? -1 : (int)x.Rank` | 0 | throws | 0 | throws FE | throws | throws |
+| `x.Rank > 1 ? -1L : x.Big` | 0 | throws | 0 | throws FE | throws | throws |
+| `x.Rank > 1 ? -1 : x.Rank + 1` | throws FE | throws | throws | throws FE | throws | throws |
+| `x.Rank > 1 ? -1L : (long)x.Rank` | throws FE | throws | throws | throws FE | throws | throws |
+| `(long)(x.Rank > 1 ? -1 : x.Rank)` | throws FE | throws | throws | throws FE | throws | throws |
+| `x.Title == "c" ? x.Big : x.Rank (long)` | 0 | throws | throws | throws FE | throws | throws |
+| `(int?)(x.Rank > 1 ? -1 : x.Rank)` | null | null | null | null | null | null |
+| `x.Score ?? x.Rank` | 0 | throws (missing) | 0 | throws FE | 0 | throws |
+| `x.Score ?? x.Rank + 1` | throws FE | 0 | throws | throws FE | 0 | throws |
+| `(int)x.Rank` | 0 | throws (missing) | 0 | throws FE | 0 | throws |
+| `(long)x.Rank` | throws FE | throws (missing) | throws | throws FE | 0 | throws |
+| `(double)x.Rank` | throws FE | throws (missing) | throws | throws FE | 0 | throws |
+| `(int?)x.Rank` | null | null | null | null | null | null |
+| `x.Rank` | 0 | 0 | 0 | throws FE | throws | throws |
+| `x.Rank + 0 (also - 0, 0 +, + captured 0)` | 0 | throws | throws | throws FE | throws | throws |
+| `-x.Rank` | throws FE | throws | throws | throws FE | throws | throws |
+| `Math.Abs(x.Rank)` | throws FE | throws | throws | throws FE | throws | throws |
+| `new { V = x.Rank > 1 ? -1 : x.Rank }` | 0 | throws | 0 | throws FE | throws | throws |
+| `new { V = (int)x.Rank }` | 0 | throws (missing) | 0 | throws FE | 0 | throws |
+| `new { V = (long)x.Rank }` | throws FE | throws (missing) | throws | throws FE | 0 | throws |
+| `condelse, then First()` | 0 | throws | 0 | throws FE | throws | throws |
+| `condelse, then Where(v => v < 100)` | 0 | throws | 0 | throws FE | throws | throws |
+| `condelse, then OrderBy(v => v)` | 0 | throws | 0 | throws FE | throws | throws |
+| `condelse Concat condelse` | 0,0 | throws | 0,0 | throws FE | throws | throws |
+| `condelse Union condelse` | 0 | throws | 0 | throws FE | throws | throws |
+| `condelse, then Distinct()` | 0 | throws | 0 (fix 1) | throws FE | throws | throws |
+| `new { x.Title, V = condelse }, then Distinct()` | 0 | throws | 0 (fix 1) | throws FE | throws | throws |
+| `x.Score ?? x.Rank, then Distinct()` | 0 | 0 | 0 (fix 1) | throws FE | 0 | throws |
+| `castlongcond, then Distinct()` | throws FE | throws | throws | throws FE | throws | throws |
+| `condelse, then Max()` | 0 | 0 | 0 | throws FE | 0 | 0 |
+| `x.Rank, then Distinct()` | 0 | 0 | 0 | throws FE | 0 | 0 |
+| `(int)x.Score (Score is int?)` | 0 | throws (missing) | 0 (fix 1) | throws FE | 0 | throws (fix 1) |
+| `x.Score.Value` | 0 | throws | throws | throws FE | throws | throws |
+| `x.Rank > 1 ? -1 : x.Score.Value` | 0 | throws | throws | throws FE | throws | throws |
+
+**Discriminator (Step 2), from the table.** Native and driver render `$cond`/`$ifNull` identically, so the server's own answer is the oracle wherever the renderings agree: MISSING → `default`, null → throw. They disagree in three places: (1) native unwraps a widening cast (`TryTranslateValue`), so `(long)x.Rank` / `-1L : (long)x.Rank` / `(long)(cond)` are bare natively where the driver emits `$toLong`; (2) the driver simplifies `x + 0`, `x - 0`, `0 + x` and `x + <captured 0>` to `x`; (3) a projected `Distinct` groups natively on the value (`$group: {_id: {_v: …}}`, and a lone `$group` key turns MISSING into null) where the driver groups the projected document (`$$ROOT`, MISSING kept).
+
+**Fix.**
+- `ClassifyNonNullableValueRead` gains `DefaultOnMalformedMissing` (emit side: `Plain`): a leaf already `ThrowOnMalformedNull` whose value positions (`$cond` branches, `$ifNull` fallback) reach a stored field of exactly the read type (`MayAnswerMissing`). A reachable field of another type sits under a dropped widening (the driver's `$toX` answers null), which keeps the whole leaf strict. The missing-fields walk now also follows `$ifNull`'s fallback (`x.Score ?? x.Rank + 1` was read silently as `0` for c/d; main throws).
+- Read side (`TryCreateThrowOnMalformedNullAliasRead`, same classifier call): `DefaultOnMalformedMissing` reads `default(T)` when the alias is absent, else `T?` + `.Value`.
+- A projected Distinct's key part over such a leaf carries a marker sub-key `<alias>__isMissing: {$eq: [{$type: <expr>}, "missing"]}` (`MongoGroupingKeyPart.MarksMissing`), and the flatten projects `{$cond: ["$_id.<alias>__isMissing", "$$REMOVE", "$_id.<alias>"]}`, read as `DefaultOnMalformedMissing` (`MongoProjection.DefaultsOnMalformedMissing`; strict when read as a wider type than the key, `ReclassifyMalformedReadAs`). This fixes (3): a missing and a null value form two groups, as on main, so `(x.Score ?? x.Rank).Distinct()` reads 0 again for a document missing both fields (fix round 1; the first cut made the key strict, which regressed that row), and `Select(cond).Distinct().Count()` over one missing and one null row is 2, not 1. Emitted MQL and native path shape are not contract (root AGENTS.md), and the native path is unreleased.
+- Bare cast leaves staged as the field (`TryCreateRequiredScalarCastRead`, Projection route): an identity cast (`(int)x.Rank`, and over a nullable source `(int)x.Score`; dropped by the driver) reads missing → `0`, null → throws, as main; a `$toX` cast of a required non-nullable property (`(long)x.Rank`, `(double)x.Rank`) reads strictly, so an explicit null throws as on main instead of reading `0`.
+
+**Residual divergences (loud; pinned in `Missing_required_element_divergences_from_main_are_loud`).** (2) additive-zero simplification (parameter-value dependent, which a compiled-once template can't follow); (1) a conditional mixing a same-typed field and a widened field (`c ? x.Big : x.Rank` as long) whose same-typed branch is MISSING. (3) is fixed by the marker (above). Out of scope, filed separately as F14: `Max` over a field-selecting leaf with an explicit null reads `0` (main throws); bare `x.Rank.Distinct()` and `(int)x.Rank` Distinct read an explicit null as `0` (main throws; no marker: a bare field classifies Plain); `(long)x.Score` with Score null reads `0` (main throws); `x.Score.Value` (Task 1.3's C# semantics: throws, main `0` for missing).
+
+**Tests** (`NativeMissingRequiredScalarProjectionTests`): `Projection_over_a_missing_or_null_required_element_matches_main`, a theory over 37 shapes (after fix round 1) asserting main's per-row outcome (a/b/c/d) in NativeOnly, Native and DriverLinq; the Task 1.12 pin `Conditional_selecting_a_missing_required_element_throws_natively_and_reads_default_on_driver_linq` becomes `Conditional_selecting_a_missing_required_element_reads_default` (`[1, -1, 0]` in all modes); the residual pin above; `Distinct_count_keeps_a_missing_and_a_null_value_apart` (`[2]`, 3 modes).
+
+**Commit:** `EF-322: computed projections that evaluate to missing read default, matching driver LINQ`
+
+### Task 1.15: F14 — explicit BSON null / MISSING reaching non-projection reads (aggregates, bare Distinct)
+
+(Controller-authored task; consolidates residuals found by the Task 1.12/1.14 reviews.)
+
+**Problem.** Tasks 1.10–1.14 made projection reads of a malformed document (a required non-nullable element MISSING, or an explicit BSON null) match driver LINQ. Values read some other way still read `0` natively where canonical main throws: a terminal `Min`/`Max`/`Average`, and a projected `Distinct` over a bare stored field (a bare field classifies `Plain`, so its key got no missing marker and its flatten read a null as `0`).
+
+**Probe (Step 1).** Raw seeds a `{Rank:1, Score:5, Big:10, Flag:true, …}`, b `{Rank:2, Big:20, Flag:false, …}` (Score missing), c `{}` (everything missing), d (every value an explicit null); `int Rank`, `int? Score`, `long Big`, `bool Flag`, plus `Guid`, `DateTime`, enum, `decimal`, `DateOnly` members. Row sets c, d, a+b+c, a+b+d, c+d, none (empty). Main = `upstream/main` `dec7e26f` exported with `git archive` (no worktree), no `UseQueryMode`, EF10. Branch = EF-322c NativeOnly; Native equals NativeOnly in every row except where NativeOnly declines, and DriverLinq equals main in every row (apart from `GroupBy`, which main can't translate). Cells read `main / before / after` (`main / native` where the branch didn't change); "throws" is main's `FormatException` (`Cannot deserialize a 'Int32' from BsonType 'Null'`) or the branch's `InvalidOperationException`; "empty-throws" is "Sequence contains no elements". Raw outputs are in the task's scratch dir (`sdd-task-1.15/`: `main-probe-final.txt`, `branch-probe-before-full.txt`, `branch-probe-final.txt`). Class: PARITY, LOUD->SILENT (main threw, native a value), WORKED->FAILS (main a value, native throws/declines), VALUE-DIFF (both values, different), MAIN-UNTRANSLATABLE; "-> fixed" = PARITY after this task.
+
+**Settled questions.** (1) `Max(x => <computed leaf over Rank>)` with an explicit-null row: main throws, native read `0` — confirmed (also for bare `x.Rank`, `Min`, `Average`, `(long)x.Rank`, `Big`, `x.Score.Value`). (2) Bare `Select(x => x.Rank).Distinct()` and `(int)x.Rank` over an explicit null: **main throws** (the F14 record was right; the reviewer's "main reads 0" was wrong), native read `0`. (3) Main's `Min`/`Max` reduce `{_v: value}` documents (`{$min: {_v: "$Rank"}}`, then `$replaceRoot`), so a MISSING row (`{}`) sorts below a null (`{_v: null}`) below every number: `Min` over a+b+c is `0` on main (native read `1`), `Min` over a+b+d throws. Main's `Average` is a bare `$avg`, null (throws) when no row has a number. Main's projected `Distinct` groups the projected document (`$group: {_id: "$$ROOT"}`), so MISSING and null are two values (`Distinct().Count()` over c+d is 2; native answered 1). (4) `GroupBy(x => x.Rank)` doesn't translate on main: out of scope. (5) The driver's `BooleanSerializer` reads an explicit null as `false`: main never throws for a malformed `bool`, and Tasks 1.10/1.12/1.14's strict reads were wrongly throwing for one (`Select(x => x.Flag)`, `new { x.Flag }`, `c ? true : x.Flag`, `First()`), and `new { x.Title, x.Flag }.Distinct()` threw for a MISSING `Flag`.
+
+| Shape | c | d | abc | abd | cd | none | Class |
+|---|---|---|---|---|---|---|---|
+| `max_bare` | 0 / 0 | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `min_bare` | 0 / 0 | throws / 0 / throws | 0 / 1 / 0 | throws / 1 / throws | 0 / 0 | empty-throws / empty-throws | LOUD->SILENT,VALUE-DIFF -> fixed |
+| `sum_bare` | 0 / 0 | 0 / 0 | 3 / 3 | 3 / 3 | 0 / 0 | 0 / 0 | PARITY |
+| `avg_bare` | throws / 0 / throws | throws / 0 / throws | 1.5 / 1.5 | 1.5 / 1.5 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `selmax_bare` | 0 / 0 | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_condelse` | 0 / 0 | throws / 0 / throws | 1 / 1 | 1 / 1 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `min_condelse` | 0 / 0 | throws / 0 / throws | 0 / -1 / 0 | throws / -1 / throws | 0 / 0 | empty-throws / empty-throws | LOUD->SILENT,VALUE-DIFF -> fixed |
+| `sum_condelse` | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | PARITY |
+| `avg_condelse` | throws / 0 / throws | throws / 0 / throws | 0 / 0 | 0 / 0 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `selmax_condelse` | 0 / 0 | throws / 0 / throws | 1 / 1 | 1 / 1 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_add1` | throws / 0 / throws | throws / 0 / throws | 3 / 3 | 3 / 3 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `min_add1` | throws / 0 / throws | throws / 0 / throws | throws / 2 / throws | throws / 2 / throws | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `sum_add1` | 0 / 0 | 0 / 0 | 5 / 5 | 5 / 5 | 0 / 0 | 0 / 0 | PARITY |
+| `avg_add1` | throws / 0 / throws | throws / 0 / throws | 2.5 / 2.5 | 2.5 / 2.5 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `selmax_add1` | throws / 0 / throws | throws / 0 / throws | 3 / 3 | 3 / 3 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_castlong` | throws / 0 / throws | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `sum_castlong` | 0 / 0 | 0 / 0 | 3 / 3 | 3 / 3 | 0 / 0 | 0 / 0 | PARITY |
+| `max_castint` | 0 / 0 | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_big` | 0 / 0 | throws / 0 / throws | 20 / 20 | 20 / 20 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_condtitle` | 0 / 0 | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_nullable` | null / null | null / null | 2 / 2 | 2 / 2 | null / null | empty-throws / null | MAIN-BUG (M37, `none` only) |
+| `max_score` | null / null | null / null | 5 / 5 | 5 / 5 | null / null | empty-throws / null | MAIN-BUG (M37, `none` only) |
+| `sum_score` | 0 / 0 | 0 / 0 | 5 / 5 | 5 / 5 | 0 / 0 | 0 / 0 | PARITY |
+| `max_scorevalue` | 0 / 0 | throws / 0 / throws | 5 / 5 | 5 / 5 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `count_pred` | 0 / 0 | 0 / 0 | 2 / 2 | 2 / 2 | 0 / 0 | 0 / 0 | PARITY |
+| `distinct_bare` | 0 / 0 | throws / 0 / throws | 0,1,2 / 0,1,2 | throws / 0,1,2 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_castint` | 0 / 0 | throws / 0 / throws | 0,1,2 / 0,1,2 | throws / 0,1,2 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_castlong` | throws / 0 / throws | throws / 0 / throws | throws / 0,1,2 / throws | throws / 0,1,2 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_add1` | throws / throws | throws / throws | throws / throws | throws / throws | throws / throws | [] / [] | PARITY |
+| `distinct_anon_bare` | 0 / 0 | throws / 0 / throws | 0,1,2 / 0,1,2 | throws / 0,1,2 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_bare_count` | 1 / 1 | 1 / 1 | 3 / 3 | 3 / 3 | 2 / 1 / 2 | 0 / 0 | VALUE-DIFF -> fixed |
+| `distinct_bare_max` | 0 / 0 | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `distinct_bare_sum` | 0 / 0 | 0 / 0 | 3 / 3 | 3 / 3 | 0 / 0 | 0 / 0 | PARITY |
+| `distinct_bare_first` | 0 / 0 | throws / 0 / throws | 0 / 0 | throws / 0 / throws | throws / 0 | empty-throws / empty-throws | LOUD->SILENT |
+| `distinct_castint_count` | 1 / 1 | 1 / 1 | 3 / 3 | 3 / 3 | 2 / 1 / 2 | 0 / 0 | VALUE-DIFF -> fixed |
+| `distinct_big` | 0 / 0 | throws / 0 / throws | 0,10,20 / 0,10,20 | throws / 0,10,20 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_castlongscore` | throws / 0 / throws | throws / 0 / throws | throws / 0,5 / throws | throws / 0,5 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `castlongscore` | throws / throws | throws / 0 / throws | throws / throws | throws / throws | throws / throws | [] / [] | LOUD->SILENT -> fixed |
+| `first_bare` | 0 / 0 | throws / throws | 1 / 1 | 1 / 1 | 0 / 0 | empty-throws / empty-throws | PARITY |
+| `firstod_bare` | 0 / 0 | throws / throws | 1 / 1 | 1 / 1 | 0 / 0 | 0 / 0 | PARITY |
+| `single_bare` | 0 / 0 | throws / throws | 0 / 0 | throws / throws | 0 / 0 | empty-throws / empty-throws | PARITY |
+| `first_add1` | throws / throws | throws / throws | 2 / 2 | 2 / 2 | throws / throws | empty-throws / empty-throws | PARITY |
+| `first_condelse` | 0 / 0 | throws / throws | 1 / 1 | 1 / 1 | 0 / 0 | empty-throws / empty-throws | PARITY |
+| `last_bare` | 0 / 0 | throws / throws | 0 / 0 | throws / throws | throws / throws | empty-throws / empty-throws | PARITY |
+| `elementat_bare` | 0 / declines | throws / declines | 1 / declines | 1 / declines | 0 / declines | empty-throws / declines | NATIVEONLY-DECLINE (Native = main) |
+| `groupby_key` | untranslatable / declines | untranslatable / declines | untranslatable / declines | untranslatable / declines | untranslatable / declines | untranslatable / declines | MAIN-UNTRANSLATABLE |
+| `groupby_count` | untranslatable / 1 | untranslatable / 1 | untranslatable / 1,1,1 | untranslatable / 1,1,1 | untranslatable / 2 | untranslatable / [] | MAIN-UNTRANSLATABLE |
+| `orderby_bare` | 0 / 0 | throws / throws | 0,1,2 / 0,1,2 | throws / throws | throws / throws | [] / [] | PARITY |
+| `where_bare` | [] / [] | [] / [] | 1,2 / 1,2 | 1,2 / 1,2 | [] / [] | [] / [] | PARITY |
+| `contains_bare` | False / False | False / False | False / False | False / False | False / False | False / False | PARITY |
+| `any_bare` | False / False | False / False | False / False | False / False | False / False | False / False | PARITY |
+| `union_bare` | 0 / 0 | throws / throws | 0,1,2 / 0,1,2 | throws / throws | throws / throws | [] / [] | PARITY |
+| `concat_bare` | 0,0 / 0,0 | throws / throws | 0,0,1,1,2,2 / 0,0,1,1,2,2 | throws / throws | throws / throws | [] / [] | PARITY |
+| `skiptake_bare` | 0 / 0 | throws / throws | 1,2,0 / 1,2,0 | throws / throws | throws / throws | [] / [] | PARITY |
+| `min_nullable` | null / null | null / null | null / 1 | null / 1 | null / null | empty-throws / null | MAIN-BUG (M36, M37) |
+| `min_score` | null / null | null / null | null / 5 | null / 5 | null / null | empty-throws / null | MAIN-BUG (M36, M37) |
+| `avg_score` | null / null | null / null | 5 / 5 | 5 / 5 | null / null | null / null | PARITY |
+| `avg_nullable` | null / null | null / null | 1.5 / 1.5 | 1.5 / 1.5 | null / null | null / null | PARITY |
+| `min_scorevalue` | 0 / 0 | throws / 0 / throws | 0 / 5 / 0 | 0 / 5 / 0 | 0 / 0 | empty-throws / empty-throws | LOUD->SILENT,VALUE-DIFF -> fixed |
+| `max_title` | c / c | d / d | c / c | d / d | d / d | empty-throws / empty-throws | PARITY |
+| `max_id` | False / False | False / False | False / False | False / False | False / False | empty-throws / empty-throws | PARITY |
+| `distinct_bare_min` | 0 / 0 | throws / 0 / throws | 0 / 1 / 0 | throws / 1 / throws | 0 / 0 | empty-throws / empty-throws | LOUD->SILENT,VALUE-DIFF -> fixed |
+| `distinct_bare_longcount` | 1 / 1 | 1 / 1 | 3 / 3 | 3 / 3 | 2 / 1 / 2 | 0 / 0 | VALUE-DIFF -> fixed |
+| `distinct_score` | null / null | null / null | null,5 / null,5 | null,null,5 / null,5 | null,null / null | [] / [] | MAIN-BUG (M4) |
+| `distinct_anon_title_rank` | 0 / throws / 0 | throws / 0 / throws | 0,1,2 / throws / 0,1,2 | throws / 0,1,2 / throws | throws / throws | [] / [] | LOUD->SILENT,WORKED->FAILS -> fixed |
+| `distinct_guid` | G0 / G0 | throws / G0 / throws | G0,G1,G2 / G0,G1,G2 | throws / G0,G1,G2 / throws | throws / G0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_when` | min / min | throws / min / throws | min,2020-01-01,2021-01-01 / min,2020-01-01,2021-01-01 | throws / min,2020-01-01,2021-01-01 / throws | throws / min / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_enum` | Red / Red | throws / Red / throws | Red,Green,Blue / Red,Green,Blue | throws / Red,Green,Blue / throws | throws / Red / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_dec` | 0 / 0 | throws / 0 / throws | 0,1.5,2.5 / 0,1.5,2.5 | throws / 0,1.5,2.5 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_flag` | False / False | False / False | False,False,True / False,False,True | False,False,True / False,False,True | False,False / False | [] / [] | MAIN-BUG (M38) |
+| `distinct_day` | min / min | throws / min / throws | min,2020-01-01,2021-01-01 / min,2020-01-01,2021-01-01 | throws / min,2020-01-01,2021-01-01 / throws | throws / min / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_anon_guid_when` | G0/min / throws / G0/min | throws / G0/min / throws | G0/min,G1/2020-01-01,G2/2021-01-01 / throws / G0/min,G1/2020-01-01,G2/2021-01-01 | throws / G0/min,G1/2020-01-01,G2/2021-01-01 / throws | throws / throws | [] / [] | LOUD->SILENT,WORKED->FAILS -> fixed |
+| `max_guid_when` | min / min | throws / min / throws | 2021-01-01 / 2021-01-01 | 2021-01-01 / 2021-01-01 | throws / min / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_enum` | Red / Red | throws / Red / throws | Blue / Blue | Blue / Blue | throws / Red / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `min_dec` | 0 / 0 | throws / 0 / throws | 0 / 1.5 / 0 | throws / 1.5 / throws | 0 / 0 | empty-throws / empty-throws | LOUD->SILENT,VALUE-DIFF -> fixed |
+| `max_day` | min / min | throws / min / throws | 2021-01-01 / 2021-01-01 | 2021-01-01 / 2021-01-01 | throws / min / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_flag` | False / False | False / False | True / True | True / True | False / False | empty-throws / empty-throws | PARITY |
+| `flag_bare` | False / False | False / throws / False | True,False,False / True,False,False | True,False,False / throws / True,False,False | False,False / throws / False,False | [] / [] | WORKED->FAILS -> fixed |
+| `flag_anon` | False / False | False / throws / False | True,False,False / True,False,False | True,False,False / throws / True,False,False | False,False / throws / False,False | [] / [] | WORKED->FAILS -> fixed |
+| `flag_cond` | False / False | False / throws / False | True,False,False / True,False,False | True,False,False / throws / True,False,False | False,False / throws / False,False | [] / [] | WORKED->FAILS -> fixed |
+| `flag_not` | True / True | True / True | False,True,True / False,True,True | False,True,True / False,True,True | True,True / True,True | [] / [] | PARITY |
+| `flag_first` | False / False | False / throws / False | True / True | True / True | False / False | empty-throws / empty-throws | WORKED->FAILS -> fixed |
+| `min_flag` | False / False | False / False | False / False | False / False | False / False | empty-throws / empty-throws | PARITY |
+| `distinct_anon_flag` | False / throws / False | False / False | False,False,True / throws / False,False,True | False,False,True / False,False,True | False,False / throws / False,False | [] / [] | WORKED->FAILS -> fixed |
+| `distinct_castint_enum` | 0 / throws / 0 | throws / throws | 0,1,2 / throws / 0,1,2 | throws / throws | throws / throws | [] / [] | WORKED->FAILS -> fixed (fix 1) |
+| `castint_enum` | 0 / throws / 0 | throws / throws | 1,2,0 / throws / 1,2,0 | throws / throws | throws / throws | [] / [] | WORKED->FAILS -> fixed (fix 1) |
+| `distinct_conv` | 0 / 0 | throws / 0 | 0,1,2 / 0,1,2 | throws / 0,1,2 | throws / 0 | [] / [] | LOUD->SILENT |
+| `distinct_anon_conv` | 0 / declines | throws / declines | 0,1,2 / declines | throws / declines | throws / declines | [] / declines | VALUE-DIFF,WORKED->FAILS |
+| `conv_bare` | 0 / 0 | throws / throws | 1,2,0 / 1,2,0 | throws / throws | throws / throws | [] / [] | PARITY |
+| `max_where_distinct` | empty-throws / empty-throws | empty-throws / empty-throws | 2 / 2 | 2 / 2 | empty-throws / empty-throws | empty-throws / empty-throws | PARITY |
+
+Rows still not PARITY after this task: `max_nullable`/`max_score`/`min_nullable`/`min_score` (`none`, and `abc`/`abd` for `Min`), `distinct_score` and `distinct_flag` `cd` are main bugs (M37, M36, M4, M38), native is correct; `distinct_bare_first` `cd` (sort tie, order-dependent); `groupby_*` (main can't translate); `elementat_bare` (a NativeOnly decline; Native falls back to main's answer); `distinct_conv`, `distinct_anon_conv` (residual below; unchanged by this task). `castint_enum`/`distinct_castint_enum` were fixed in fix round 1.
+
+**Fix (Step 2).** Every rule reuses the Task 1.10/1.12/1.14 read modes and classifier; no new declines.
+- Terminal non-nullable `Min`/`Max` reduce `{_v: operand}` documents, as main does (`MongoGroupAccumulatorStage.WrapsOperand`, rendered `{$min: {_v: <operand>}}`). The read unwraps the winner: MISSING (`{}`) reads `default`, an explicit null throws "Nullable object must have a value.", a value reads as before (property serializer / kind-aware / checked narrowing). One predicate, `NativeAggregateReadBack.ReducesWrappedValue(cardinality)`, drives both the lowerer and the reader. Nullable results keep the bare reduction (main's wrapped one is wrong there: M36). An operand that is MISSING natively where the driver's `$toLong` is null (a dropped widening: `Max(x => (long)x.Rank)`, `Select(x => (long)x.Rank).Max()`, `Min(x => (long)x.Score)`; `MongoAggregationExpressionRenderer.MayAnswerUnfaithfulMissing`, the Task 1.14 `MayAnswerMissing` walk) is wrapped as `$ifNull: [operand, null]` so it throws like main.
+- A non-nullable `Average` (or any scalar aggregate) whose server value is null throws instead of reading `0` (`ReadNullScalar`).
+- A projected `Distinct` over a bare stored field classifies with `ClassifyMalformedFieldRead(readType, field)` (read type = the selector's type, `MongoProjection.Source`): the field's own type → `DefaultOnMalformedMissing` (Task 1.14's `$type` missing marker on the key part; the flatten restores MISSING); under a dropped widening (`(long)x.Rank`, `(long)x.Score`) → `ThrowOnMalformedNull` (strict flatten read). This also fixes `new { x.Title, x.Rank }.Distinct()` (a composite `_id` omits a MISSING sub-key: it threw "missing but required" where main read 0, and read a null as 0). Excluded (`Plain`, no marker): nullable reads, the primary key (never missing; MQL only), non-default-serialized keys (a marked flatten takes a converted key off the converted set-op paths; see residuals), `bool`. An unmarked default-serialized key (in practice a `bool`: `new { x.Title, x.Flag }.Distinct()`) is read by the field-access arm with Task 1.10's `GetScalarProjectionValueAtElement` on the Distinct route too (MISSING → `default`); converted keys keep their previous read.
+- `(long)x.Score` (a `$toX` cast over a nullable source) reads strictly on the Projection route (`TryCreateRequiredScalarCastRead` no longer requires a non-nullable property).
+- Fix round 1: an enum field's cast to its exact underlying type (`(int)x.E`; `MongoExpressionTranslator.IsEnumUnderlyingRelabel`, the identity-like subset of `IsIdentityLikeConvert`) is staged bare instead of `$toInt` (the driver drops the cast), for a default-serialized field only (a string-stored enum still declines; a computed enum such as `(int)o.OrderDate.DayOfWeek` keeps `$toInt`). The projection read takes it as an identity cast (MISSING → `default`, null → throws), and `MayAnswerMissing`/`ReclassifyMalformedReadAs` treat it as the field's own type, so `Select(x => (int)x.E).Distinct()` gets the marker. Before, a single MISSING row made the whole query throw (main read 0). Also in fix round 1: the primary key never takes the unfaithful-MISSING `$ifNull` (it is never missing), so `Max(o => (long)o.OrderID)` renders `{_v: "$_id"}`.
+- `bool`: the driver's `BooleanSerializer` reads null as `false`, so a malformed bool never throws (`MongoAggregationExpressionRenderer.DriverReadsNullAsDefault`). Honoured by the strict alias read (absent or null → `false`), the wrapped `Min`/`Max` read, `ClassifyMalformedFieldRead`, and `GetScalarProjectionValueAtElement` (checks the property serializer is the driver's `BooleanSerializer`).
+
+**Residuals (not fixed; for the owner).**
+- Converted bare `Distinct` key (`HasConversion<string>()` int): a lone `$group` key merges MISSING and null, so the explicit-null row reads `0` where main throws `ArgumentNullException` (LOUD→SILENT; unchanged from before this task, MISSING still reads 0 as on main). The marker would fix it but makes `Distinct().Union(...)` over a converted key decline under NativeOnly (`NativeDistinctTests.Converted_Distinct_set_ops_*`), so it is left for a decision. Main translates `Distinct` + `Union`/`Concat` over a converted key correctly, so the marker would cost NativeOnly coverage there (`Intersect`/`Except` over converted keys have no main oracle). The no-trade-off option is to teach the set-op gate (`OperandSerializationsMatch` / the projection-shape match) to accept a marked flatten.
+- `Select(x => x.Rank).Distinct().OrderBy(v => v).First()` over one MISSING and one null row: the two groups tie in the sort, so which one comes first (0 or throws) is server-order dependent on both paths.
+- `GroupBy(x => x.Rank)` (main can't translate) and `ElementAt` (NativeOnly declines; Native falls back to main's answer) are out of scope.
+- Main bugs, recorded in `main-issues.md`: M36 (nullable `Min` over a MISSING/null row answers null), M37 (nullable `Min`/`Max` over an empty sequence throw). Native is correct for both. Main's nullable `Distinct` keeping MISSING and null apart is M4.
+
+**Tests** (`NativeMalformedAggregateAndDistinctTests`, raw `BsonDocument` seeds, three modes, per row set c/d/abc/abd/c+d): `Aggregate_or_distinct_over_a_missing_or_null_required_element_matches_main` (a theory over the must-fix shapes plus parity pins, asserting main's per-row-set answer in NativeOnly, Native and DriverLinq); `Nullable_aggregate_or_distinct_where_main_is_wrong_stays_correct` (M36, M4, M38: native answer vs main's); `Distinct_over_a_bare_local_kind_date_keeps_its_kind`, `Distinct_over_a_converted_key_reads_a_missing_row_as_default`, and (fix round 1) the enum rows `castint_enum`, `anon_castint_enum`, `distinct_castint_enum`, `distinct_castint_enum_count` plus `Underlying_cast_of_a_string_stored_enum_still_declines`. 21 spec MQL baselines change (`{$min: "$x"}` → `{$min: {_v: "$x"}}`).
+
+**Commit:** `EF-322: explicit null and missing in aggregate and Distinct reads match driver LINQ`
+
 ---
 
-## Phase 2 — Implicit-mode NativeOnly gaps (the 129 tests in `nativeonly-gaps.tsv`)
+## Phase 2 — Implicit-mode NativeOnly gaps (the 125 test methods in `nativeonly-gaps-2026-10-02.tsv`)
+
+**Inventory regenerated after Phase 1 (2026-10-02, HEAD `3d8dd75a`, `tests/tools/native-parity-diff.sh` per version):**
+125 test methods pass under DriverLinq and fail under NativeOnly (was 129 in `nativeonly-gaps.tsv`): 93 in all three
+versions, 19 EF8+EF9, 8 EF9-only, 4 EF10-only, 1 EF8-only. Per version (methods; spec / functional): EF8 113 (24 / 89),
+EF9 120 (31 / 89), EF10 97 (4 / 93); test runs (theory rows counted): EF8 54 / 102, EF9 68 / 102, EF10 10 / 106. The
+only change from the Phase 0 list is Task 1.2 closing `NorthwindWhereQueryMongoTest.Where_datetime_now/_today/_utcnow`
+and `Where_datetimeoffset_utcnow` (EF8, EF9); Phase 1 added no new gap. Known gaps outside this file (no implicit-mode test reaches them): rows
+2.2.12 and 2.7.10. Bucket task lists below still cite their original test names, all of which remain in the new file.
 
 For every task: (1) run the listed existing tests with `MONGODB_EF_QUERY_MODE=NativeOnly` and confirm the predicted decline (if the decline site differs, add the temporary decline-reason capture from g6 §Task 0 — never committed — and update the design); (2) add the listed parity tests; (3) implement per the referenced design section; (4) run the bucket's tests in all three modes, mutation-check, full suite ×3; (5) commit `EF-322: native <bucket short name>`.
 
@@ -529,6 +775,8 @@ Derived-`DbSet` root narrowing for `Join(db.Dogs)` (M2) is **out of scope** (wro
 | 2.2.8 | Owned-collection element `Select` leaf (g2 T8 option B) | `OwnedEntity_collection_projection_alias_with_bson_representation_uses_owned_property_serializer`, `SharedClrTypeProjectionTests.*` (3) | resolve element type from the navigation, never CLR type |
 | 2.2.9 | Test-only: `DateTimeOffsetMemberProjectionTests.*_throws` → `TestQueryMode.AssertRefusal<NotSupportedException>`; refresh stale EF-337 comments in `ProjectionTests.cs` (g2 T9) | `Select_DateTimeOffset_DateTime_component_with_string_representation_throws`, `…_with_value_converter_throws` | — |
 | 2.2.10 | Restore the original `OrderBy(p => p.orderFromSun)` in the four `Select_projection_alias_with_bson_representation_*` tests **only if** D-EF337 extends to representation sorts; otherwise leave `OrderBy(name)` and record M16 | (mainworks rows 2–5) | default: leave + record |
+| 2.2.11 | Teach the set-op gate (`OperandSerializationsMatch` / shape match) to accept a marked Distinct flatten (restores NativeOnly coverage for converted Distinct+Union/Concat). **Status (Phase 1 final fix wave):** the converted-key marker landed with `StoredField` seeing through the marked flatten, so converted `Distinct()` + `Union`/`Concat` (with a marked or a plain operand of an equivalently stored key) stayed native and match main (`NativeMalformedAggregateAndDistinctTests` `distinct_conv_*`, `NativeDistinctTests.Converted_Distinct_set_ops_*`); no coverage was lost. Keep the row as a check: re-verify under NativeOnly before Phase 4 and close it | `NativeDistinctTests.Converted_Distinct_set_ops_over_the_same_property_go_native`, `Cross_collection_converted_set_ops_with_the_same_converter_go_native_with_hand_oracle` (currently green) | mismatched stored forms must still decline (`Cross_collection_set_ops_with_mismatched_stored_forms_decline`) |
+| 2.2.12 | Byte-backed (and other non-int/long) enum cast to its underlying type (`(byte)x.EB`) declines under NativeOnly; Native falls back to main's answers. Extend the relabel (`MongoExpressionTranslator.IsEnumUnderlyingRelabel` / `TryCreateRequiredScalarCastRead`) to every integral underlying type the driver stores as an integer | `NativeMalformedAggregateAndDistinctTests.Underlying_cast_of_a_byte_backed_enum_declines_and_falls_back_to_main` (flip to a main-parity row) | found by the final fix wave's relabel pins |
 
 ### 2.3 Owned entities — design `g3-owned.md`
 
@@ -590,6 +838,7 @@ Harness: `GuidesDbContext.Create(…, MongoQueryMode? queryMode = null)`; `Nativ
 | 2.7.7 | Bitwise `& | ^ ~` on int/long (`MongoBinaryOperator.BitAnd/BitOr/BitXor`, `MongoUnaryOperator.BitNot`, new `MapBitwiseOperator`; gate the `and` override on `TestServer.SupportsBitwiseOperators` or special-case `$bitsAllSet`) | `Where_bitwise_binary_and/or/not` (8,9), `…_xor` (9) |
 | 2.7.8 | `g.Key` accumulator operand via `TryResolveKeyReferenceAsRawExpression` in `TryBindAccumulator` (NativeGroupByBinder.cs:810-815); remove `IsNativeOnly` branch | `GroupBy_aggregate_using_grouping_key_Pushdown` (8,9,10) |
 | 2.7.9 | AdHocJson: Task 0 decline capture for rows 1–2; row 2 (`Project_top_level_entity_with_null_value_required_scalars`, main-correct) made native; rows 1, 3, 4 (main threw) pinned with `AssertNativeTranslationFailedAsync` under NativeOnly | `AdHocJsonQueryMongoTest.*` (9) |
+| 2.7.10 | Inline array WITH clock elements filtered by a clock predicate (`new[] { DateTime.UtcNow.AddYears(50) }.Where(d => d > DateTime.UtcNow).Contains(x.When)`): Task 1.13's fold correctly refuses to fold it (clock), and the unfolded local-collection `Where(...).Contains` then declines under NativeOnly, while the driver (and main, probe on `dec7e26f` EF10: count `0`, no throw) handles it. Make the per-execution evaluation (`RuntimeEvaluator`, as for a closed clock subtree) cover a clock-holding local-collection filter | new: 3-mode test with a past and a future clock element (main parity) |
 
 ---
 

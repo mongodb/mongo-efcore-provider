@@ -339,12 +339,16 @@ internal sealed class MongoPipelineFactory
         => new("$unset", new BsonArray(stage.FieldNames));
 
     private static BsonDocument RenderGroup(MongoGroupAccumulatorStage stage, PlaceholderTable placeholders)
-        => new BsonDocument("$group", new BsonDocument
+    {
+        var operand = MongoAggregationExpressionRenderer.Render(stage.Operand, placeholders);
+        return new BsonDocument("$group", new BsonDocument
         {
             { "_id", BsonNull.Value },
             { stage.OutputField, new BsonDocument(
-                stage.Accumulator, MongoAggregationExpressionRenderer.Render(stage.Operand, placeholders)) }
+                stage.Accumulator,
+                stage.WrapsOperand ? new BsonDocument(NativeAggregateReadBack.WrappedValueField, operand) : operand) }
         });
+    }
 
     private static BsonDocument RenderKeyedGroup(MongoGroupStage stage, PlaceholderTable placeholders)
     {
@@ -355,7 +359,17 @@ internal sealed class MongoPipelineFactory
         {
             var idDoc = new BsonDocument();
             foreach (var part in grouping.Key)
+            {
                 idDoc.Add(part.Name, RenderCompositeKeyPart(part.FieldRef, placeholders));
+                if (part.MarksMissing)
+                {
+                    // `$type` answers "missing" only for MISSING (an explicit null is "null"); see MarksMissing.
+                    idDoc.Add(part.Name + MongoGroupingKeyPart.MissingMarkerSuffix, new BsonDocument("$eq", new BsonArray
+                    {
+                        new BsonDocument("$type", MongoAggregationExpressionRenderer.RenderBranch(part.FieldRef, placeholders)), "missing"
+                    }));
+                }
+            }
             id = idDoc;
         }
         else
@@ -526,6 +540,9 @@ internal sealed class MongoPipelineFactory
                 + "Call Build(in MongoNativeBuildContext) instead. "
                 + "This is a bug in the query compilation pipeline.");
 
+        // Runtime-computed values (a closed clock subtree) are evaluated per Build, never baked into the template.
+        parameterValues = RuntimeParameterValues.Wrap(parameterValues, _placeholders.RuntimeEvaluators);
+
         var result = new BsonDocument[_template.Count];
         for (var i = 0; i < _template.Count; i++)
             result[i] = SubstituteDocument(_template[i].CloneDocument(), parameterValues);
@@ -541,14 +558,17 @@ internal sealed class MongoPipelineFactory
     /// </summary>
     public BsonDocument[] Build(in MongoNativeBuildContext context)
     {
-        var parameterValues = context.ParameterValues;
+        // Runtime-computed values (a closed clock subtree) are evaluated per Build, never baked into the template.
+        // Deferred slots see the same wrapped values.
+        var parameterValues = RuntimeParameterValues.Wrap(context.ParameterValues, _placeholders.RuntimeEvaluators);
+        var buildContext = context with { ParameterValues = parameterValues };
         var result = new BsonDocument[_template.Count];
 
         for (var i = 0; i < _template.Count; i++)
         {
             var slot = _template[i];
 
-            var document = slot.IsDeferred ? slot.Build(context) : slot.CloneDocument();
+            var document = slot.IsDeferred ? slot.Build(buildContext) : slot.CloneDocument();
 
             result[i] = SubstituteDocument(document, parameterValues);
         }
@@ -660,7 +680,7 @@ internal sealed class MongoPipelineFactory
         // Coerces to the serializer's ValueType (which differs from the property ClrType the compile-time path
         // uses when a value converter is present) and serializes via the shared path used for constants.
         BsonValue Serialize(object? value)
-            => BsonValueSerializer.SerializeThroughWriter(serializer!, BsonValueSerializer.Coerce(serializer!.ValueType, value));
+            => BsonValueSerializer.SerializeNullAware(serializer!, BsonValueSerializer.Coerce(serializer!.ValueType, value));
 
         if (!parameterValues.TryGetValue(name, out var rawValue))
             throw new InvalidOperationException(

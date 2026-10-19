@@ -3257,7 +3257,7 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "_id" : 
 
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$max" : "$_id" } } }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_id" } } } }
 """);
     }
 
@@ -3267,7 +3267,7 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "_id" : 
 
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$min" : "$_id" } } }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_id" } } } }
 """);
     }
 
@@ -3337,7 +3337,7 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$skip" : 10 }, { "$project" : { "_id" : "
 
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$skip" : 10 }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$max" : "$_id" } } }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$skip" : 10 }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_id" } } } }
 """);
     }
 
@@ -3347,7 +3347,7 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$skip" : 10 }, { "$project" : { "_id" : "
 
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$skip" : 10 }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$min" : "$_id" } } }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$skip" : 10 }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_id" } } } }
 """);
     }
 
@@ -3397,7 +3397,7 @@ Orders.{ "$group" : { "_id" : { "_id" : "$_id" } } }, { "$project" : { "_id" : "
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "_id" : "$_id" } } }, { "$project" : { "_id" : "$_id._id" } }, { "$group" : { "_id" : null, "v" : { "$max" : "$_id" } } }
+Orders.{ "$group" : { "_id" : { "_id" : "$_id" } } }, { "$project" : { "_id" : "$_id._id" } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_id" } } } }
 """);
     }
 
@@ -3407,7 +3407,7 @@ Orders.{ "$group" : { "_id" : { "_id" : "$_id" } } }, { "$project" : { "_id" : "
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "_id" : "$_id" } } }, { "$project" : { "_id" : "$_id._id" } }, { "$group" : { "_id" : null, "v" : { "$min" : "$_id" } } }
+Orders.{ "$group" : { "_id" : { "_id" : "$_id" } } }, { "$project" : { "_id" : "$_id._id" } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_id" } } } }
 """);
     }
 

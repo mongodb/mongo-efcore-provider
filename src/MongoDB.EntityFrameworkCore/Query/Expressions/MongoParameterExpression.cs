@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
@@ -40,9 +41,11 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// <paramref name="extractFromEntityValue"/>; mutually exclusive with it and <paramref name="arrayElementIndex"/>.
     /// </param>
     /// <param name="valueType">See <see cref="ValueType"/>.</param>
+    /// <param name="runtimeEvaluator">See <see cref="RuntimeEvaluator"/>.</param>
     public MongoParameterExpression(
         string name, IProperty? forSerialization, bool extractFromEntityValue = false, int? arrayElementIndex = null,
-        Type? rawElementType = null, bool extractEntityKeyFromArrayElements = false, Type? valueType = null)
+        Type? rawElementType = null, bool extractEntityKeyFromArrayElements = false, Type? valueType = null,
+        Func<IReadOnlyDictionary<string, object?>, object?>? runtimeEvaluator = null)
     {
         Name = name;
         ForSerialization = forSerialization;
@@ -51,6 +54,7 @@ internal sealed class MongoParameterExpression : MongoExpression
         RawElementType = rawElementType;
         ExtractEntityKeyFromArrayElements = extractEntityKeyFromArrayElements;
         ValueType = valueType;
+        RuntimeEvaluator = runtimeEvaluator;
     }
 
     /// <summary>The parameter name.</summary>
@@ -88,7 +92,18 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// </summary>
     public Type? ValueType { get; }
 
+    /// <summary>
+    /// When set, <see cref="Name"/> is not an EF query parameter: the value is computed by this delegate (over the
+    /// execution's EF query-parameter values) once per <c>MongoPipelineFactory.Build</c>. Used for a closed subtree
+    /// holding a clock member (<see cref="RuntimeClock"/>), which must never be baked into the cached template.
+    /// </summary>
+    public Func<IReadOnlyDictionary<string, object?>, object?>? RuntimeEvaluator { get; }
+
     /// <inheritdoc />
+    /// <remarks>
+    /// A property-less runtime-evaluated value reports its evaluated CLR type, as the constant it replaces did
+    /// (e.g. so a <c>$dateAdd</c> over <c>DateTime.UtcNow</c> stays <c>DateTime</c>-typed).
+    /// </remarks>
     public override Type Type
-        => ForSerialization?.ClrType ?? typeof(object);
+        => ForSerialization?.ClrType ?? (RuntimeEvaluator is not null ? ValueType : null) ?? typeof(object);
 }
