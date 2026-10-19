@@ -26,7 +26,7 @@ internal static class StreamingEligibility
 {
     /// <summary>
     /// Eligible: a simple primary key, no TPH hierarchy, no skip navigations, and every navigation's target is
-    /// itself eligible; collection navigations must be owned and their elements must have no navigations.
+    /// itself eligible; collection navigations must be owned and their elements' navigations must all be owned.
     /// </summary>
     public static bool IsEligible(IEntityType entityType)
         => IsEligible(entityType, new HashSet<IEntityType>());
@@ -71,9 +71,17 @@ internal static class StreamingEligibility
                 return false;
             }
 
-            // FindCollectionShaper doesn't descend into a collection element, so the rewriter would throw
-            // NativeTranslationNotSupportedException at shaper compile; reject so the query uses the DOM shaper.
-            if (navigation.IsCollection && navigation.TargetEntityType.GetNavigations().Any())
+            // RewriteOwnedNavigation reads an owned reference's sub-document with only single owned references beneath it, so a collection
+            // anywhere below an owned reference stays on the DOM shaper.
+            if (!IsOwnerBackReference(navigation) && !navigation.IsCollection && navigation.TargetEntityType.IsOwned()
+                && OwnsCollectionBelow(navigation.TargetEntityType))
+            {
+                return false;
+            }
+
+            // The rewriter streams owned subtrees inside a collection element (references and collections, to any depth); a
+            // non-owned navigation there has no $lookup plan, so the query uses the DOM shaper.
+            if (navigation.IsCollection && HasNonOwnedNavigation(navigation.TargetEntityType))
             {
                 return false;
             }
@@ -86,4 +94,15 @@ internal static class StreamingEligibility
 
         return true;
     }
+
+    // Both walks skip an owned type's navigation back to its owner: it makes the graph cyclic and is not part of the owned subtree.
+    private static bool IsOwnerBackReference(INavigation navigation)
+        => navigation.IsOnDependent && navigation.ForeignKey.IsOwnership;
+
+    private static bool HasNonOwnedNavigation(IEntityType entityType)
+        => entityType.GetNavigations().Any(
+            n => !IsOwnerBackReference(n) && (!n.TargetEntityType.IsOwned() || HasNonOwnedNavigation(n.TargetEntityType)));
+
+    private static bool OwnsCollectionBelow(IEntityType entityType)
+        => entityType.GetNavigations().Any(n => !IsOwnerBackReference(n) && (n.IsCollection || OwnsCollectionBelow(n.TargetEntityType)));
 }

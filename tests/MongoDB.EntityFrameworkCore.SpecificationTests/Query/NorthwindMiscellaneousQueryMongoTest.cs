@@ -1129,7 +1129,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
         await base.Join_Customers_Orders_Orders_Skip_Take_Same_Properties(async);
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer_1" } }, { "$unwind" : { "path" : "$_lookup_Customer_1", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : false } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "OrderID" : "$_id", "CustomerIDA" : "$_lookup_Customer._id", "CustomerIDB" : "$_lookup_Customer_1._id", "ContactNameA" : "$_lookup_Customer.ContactName", "ContactNameB" : "$_lookup_Customer_1.ContactName", "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer_1" } }, { "$match" : { "_lookup_Customer_1.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Customer_1" : { "$arrayElemAt" : ["$_lookup_Customer_1", 0] } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$match" : { "_lookup_Customer.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "OrderID" : "$_id", "CustomerIDA" : "$_lookup_Customer._id", "CustomerIDB" : "$_lookup_Customer_1._id", "ContactNameA" : "$_lookup_Customer.ContactName", "ContactNameB" : "$_lookup_Customer_1.ContactName", "_id" : 0 } }
 """);
     }
 
@@ -2388,7 +2388,7 @@ Orders.{ "$project" : { "_v" : { "$concat" : [{ "$literal" : "-" }, { "$ifNull" 
         await base.String_concat_with_navigation1(async);
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$concat" : [{ "$ifNull" : ["$CustomerID", ""] }, { "$literal" : " " }, { "$ifNull" : ["$_lookup_Customer.City", ""] }] }, "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "_v" : { "$concat" : [{ "$ifNull" : ["$CustomerID", ""] }, { "$literal" : " " }, { "$ifNull" : ["$_lookup_Customer.City", ""] }] }, "_id" : 0 } }
 """);
     }
 
@@ -2397,7 +2397,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
         await base.String_concat_with_navigation2(async);
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$concat" : [{ "$ifNull" : ["$_lookup_Customer.City", ""] }, { "$literal" : " " }, { "$ifNull" : ["$_lookup_Customer.City", ""] }] }, "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "_v" : { "$concat" : [{ "$ifNull" : ["$_lookup_Customer.City", ""] }, { "$literal" : " " }, { "$ifNull" : ["$_lookup_Customer.City", ""] }] }, "_id" : 0 } }
 """);
     }
 
@@ -3655,7 +3655,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "_id" : "ALFKI" } }], "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : false } }, { "$match" : { "_id" : { "$gt" : 690, "$lt" : 710 } } }, { "$limit" : 5 }, { "$count" : "v" }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "_id" : "ALFKI" } }], "as" : "_lookup_Customer" } }, { "$match" : { "_lookup_Customer.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "_id" : { "$gt" : 690, "$lt" : 710 } } }, { "$limit" : 5 }, { "$count" : "v" }
 """);
     }
 
@@ -3684,7 +3684,7 @@ Customers.{ "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", { "$literal" :
         await base.Manual_expression_tree_typed_null_equality(async);
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : "$_lookup_Customer.City", "_id" : 0 } }
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "_v" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
     }
 
@@ -3768,7 +3768,7 @@ Orders.
         await base.OrderBy_object_type_server_evals(async);
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "__sort0" : "$_id", "__sort1" : "$OrderDate" } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1, "_lookup_Customer._id" : 1, "_lookup_Customer.City" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$skip" : 0 }, { "$limit" : 20 }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$set" : { "__sort0" : "$_id", "__sort1" : "$OrderDate" } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1, "_lookup_Customer._id" : 1, "_lookup_Customer.City" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$skip" : 0 }, { "$limit" : 20 }
 """);
     }
 
@@ -3813,7 +3813,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
         await base.Projection_skip_projection(async);
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "City" : "$_lookup_Customer.City", "_id" : 0 } }
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "City" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
     }
 
@@ -3822,7 +3822,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }
         await base.Projection_take_projection(async);
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "City" : "$_lookup_Customer.City", "_id" : 0 } }
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "City" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
     }
 
@@ -3831,7 +3831,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }
         await base.Projection_skip_take_projection(async);
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$limit" : 10 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "City" : "$_lookup_Customer.City", "_id" : 0 } }
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$limit" : 10 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "City" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
     }
 
@@ -4414,7 +4414,7 @@ Employees.{ "$project" : { "Title" : "$Title", "_id" : 0 } }
         await base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$lt" : 10500 } } }], "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Orders.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "c" : "$$ROOT", "_lookup_Orders" : "$_lookup_Orders", "_lookup_Customer" : "$_lookup_Customer", "_id" : 0 } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$lt" : 10500 } } }], "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Orders.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "c" : "$$ROOT", "_lookup_Orders" : "$_lookup_Orders", "_lookup_Customer" : "$_lookup_Customer", "_id" : 0 } }
 """);
     }
 
@@ -5234,7 +5234,7 @@ Customers.{ "$match" : { "$expr" : { "$in" : [{ "$concat" : [{ "$ifNull" : ["$_i
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "$expr" : { "$in" : [{ "$concat" : [{ "$ifNull" : ["$CustomerID", ""] }, { "$ifNull" : ["$_lookup_Customer._id", ""] }] }, { "$literal" : ["ALFKIALFKI", "ALFKI", "ANATRAna Trujillo Emparedados y helados", "ANATRANATR"] }] } } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "$expr" : { "$in" : [{ "$concat" : [{ "$ifNull" : ["$CustomerID", ""] }, { "$ifNull" : ["$_lookup_Customer._id", ""] }] }, { "$literal" : ["ALFKIALFKI", "ALFKI", "ANATRAna Trujillo Emparedados y helados", "ANATRANATR"] }] } } }
 """);
     }
 

@@ -40,7 +40,7 @@ public static class BenchmarkSeeder
         ctx.SaveChanges();
     }
 
-    public static void SeedExtended(BenchmarkDbContext ctx, int accountCount, int orderCount, int wideCount)
+    public static void SeedExtended(BenchmarkDbContext ctx, int accountCount, int orderCount, int wideCount, int mediumCount = 0)
     {
         ctx.Database.EnsureCreated();
 
@@ -85,6 +85,11 @@ public static class BenchmarkSeeder
         for (var i = 0; i < wideCount; i++)
         {
             ctx.Wides.Add(new WideEntity().Fill(i));
+        }
+
+        for (var i = 0; i < mediumCount; i++)
+        {
+            ctx.Mediums.Add(new MediumEntity().Fill(i));
         }
         ctx.SaveChanges();
     }

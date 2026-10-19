@@ -100,6 +100,8 @@ internal sealed class MongoPipelineFactory
                 template.AddRange(RenderSetDifference(setDiff, renderer, placeholders).Select(StageSlot.Rendered));
             else if (stage is MongoVectorSearchStage vectorSearch)
                 template.Add(StageSlot.Deferred(CreateVectorSearchBuilder(vectorSearch.Search, renderer, placeholders)));
+            else if (stage is MongoUnwindStage { AtMostOneMatch: true } singleMatch)
+                template.AddRange(RenderSingleMatchUnwind(singleMatch).Select(StageSlot.Rendered));
             else
                 template.Add(StageSlot.Rendered(RenderStage(stage, renderer, placeholders)));
         }
@@ -564,6 +566,22 @@ internal sealed class MongoPipelineFactory
 
     private static BsonDocument RenderUnwind(LookupExpression lookup, bool preserveNullAndEmptyArrays)
         => lookup.ToUnwindStageDocument(preserveNullAndEmptyArrays);
+
+    // An $unwind of a lookup that matches at most one document, as the lookup's array field replaced by its first element. An inner
+    // unwind drops the rows whose array is empty, so a $match precedes the $set; a left-outer one keeps them, and $arrayElemAt of an
+    // empty array is missing, which $set leaves out, as $unwind with preserveNullAndEmptyArrays does.
+    private static IEnumerable<BsonDocument> RenderSingleMatchUnwind(MongoUnwindStage stage)
+    {
+        var field = stage.Lookup.As;
+
+        if (!stage.PreserveNullAndEmptyArrays)
+        {
+            yield return new BsonDocument("$match", new BsonDocument(field + ".0", new BsonDocument("$exists", true)));
+        }
+
+        yield return new BsonDocument("$set", new BsonDocument(
+            field, new BsonDocument("$arrayElemAt", new BsonArray { "$" + field, 0 })));
+    }
 
     // Renders $unionWith with the operand pipeline in the shared placeholder table, then, for Union, the
     // full-document dedup.

@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
@@ -63,7 +64,9 @@ internal static class MongoIncludeFixups
         INavigation navigation,
         INavigation? inverseNavigation,
         Action<TIncludingEntity, TIncludedEntity> fixup,
-        bool _)
+        bool _,
+        bool notifyLazyLoader,
+        bool notifyInverseLazyLoader)
     {
         if (entity == null
             || !navigation.DeclaringEntityType.IsAssignableFrom(entityType))
@@ -74,11 +77,16 @@ internal static class MongoIncludeFixups
         if (entry == null)
         {
             var includingEntity = (TIncludingEntity)entity;
-            navigation.SetIsLoadedWhenNoTracking(includingEntity);
+            if (notifyLazyLoader)
+            {
+                navigation.SetIsLoadedWhenNoTracking(includingEntity);
+            }
+
             if (relatedEntity != null)
             {
                 fixup(includingEntity, relatedEntity);
-                if (inverseNavigation != null
+                if (notifyInverseLazyLoader
+                    && inverseNavigation != null
                     && !inverseNavigation.IsCollection)
                 {
                     inverseNavigation.SetIsLoadedWhenNoTracking(relatedEntity);
@@ -104,7 +112,9 @@ internal static class MongoIncludeFixups
         INavigation navigation,
         INavigation? inverseNavigation,
         Action<TIncludingEntity, TIncludedEntity> fixup,
-        bool setLoaded)
+        bool setLoaded,
+        bool notifyLazyLoader,
+        bool notifyInverseLazyLoader)
     {
         if (entity == null
             || !navigation.DeclaringEntityType.IsAssignableFrom(entityType))
@@ -115,14 +125,20 @@ internal static class MongoIncludeFixups
         if (entry == null)
         {
             var includingEntity = (TIncludingEntity)entity;
-            navigation.SetIsLoadedWhenNoTracking(includingEntity);
+            if (notifyLazyLoader)
+            {
+                navigation.SetIsLoadedWhenNoTracking(includingEntity);
+            }
 
             if (relatedEntities != null)
             {
                 foreach (var relatedEntity in relatedEntities)
                 {
                     fixup(includingEntity, relatedEntity);
-                    inverseNavigation?.SetIsLoadedWhenNoTracking(relatedEntity!);
+                    if (notifyInverseLazyLoader)
+                    {
+                        inverseNavigation?.SetIsLoadedWhenNoTracking(relatedEntity!);
+                    }
                 }
             }
         }
@@ -183,8 +199,19 @@ internal static class MongoIncludeFixups
                 Expression.Constant(navigation),
                 Expression.Constant(inverseNavigation, typeof(INavigation)),
                 Expression.Constant(fixup),
-                Expression.Constant(setLoaded)));
+                Expression.Constant(setLoaded),
+                Expression.Constant(HasLazyLoader(navigation)),
+                Expression.Constant(inverseNavigation != null && HasLazyLoader(inverseNavigation))));
     }
+
+    /// <summary>
+    /// Whether <c>SetIsLoadedWhenNoTracking</c> on <paramref name="navigation"/> can do anything: it only acts on an
+    /// <see cref="ILazyLoader"/> service property of the declaring type or a derived type. The answer is fixed by the model, so
+    /// it is worked out once when the fix-up is built; asking per entity allocates several LINQ iterators each time.
+    /// </summary>
+    private static bool HasLazyLoader(INavigationBase navigation)
+        => navigation.DeclaringEntityType.GetDerivedTypesInclusive()
+            .Any(type => type.GetServiceProperties().Any(property => property.ClrType == typeof(ILazyLoader)));
 
     /// <summary>
     /// Compiles the fix-up delegate that wires <c>relatedEntity</c> onto <c>entity</c> through

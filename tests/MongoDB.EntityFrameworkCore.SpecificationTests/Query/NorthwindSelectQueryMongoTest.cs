@@ -208,7 +208,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
         await base.Projection_of_multiple_entity_types_into_object_array(async);
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_ctorArg0" : "$$ROOT", "_lookup_Customer" : "$_lookup_Customer", "_id" : 0 } }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "_ctorArg0" : "$$ROOT", "_lookup_Customer" : "$_lookup_Customer", "_id" : 0 } }
 """);
     }
 
@@ -925,7 +925,7 @@ Orders.{ "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }
         await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
         AssertMql(
             """
-Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "A" : "$_lookup_Customer._id", "B" : "$CustomerID", "_id" : 0 } }
+Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "A" : "$_lookup_Customer._id", "B" : "$CustomerID", "_id" : 0 } }
 """);
     }
 
@@ -1180,7 +1180,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexO
         await base.Select_entity_compared_to_null(async);
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$eq" : [{ "$ifNull" : ["$_lookup_Customer", null] }, null] }, "_id" : 0 } }
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "_v" : { "$eq" : [{ "$ifNull" : ["$_lookup_Customer", null] }, null] }, "_id" : 0 } }
 """);
     }
 
@@ -1536,7 +1536,7 @@ Customers.
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "OrderID" : "$_id", "Customer" : { "CustomerID" : "$_lookup_Customer._id", "City" : "$_lookup_Customer.City" }, "OrderDate" : "$OrderDate", "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$project" : { "OrderID" : "$_id", "Customer" : { "CustomerID" : "$_lookup_Customer._id", "City" : "$_lookup_Customer.City" }, "OrderDate" : "$OrderDate", "_id" : 0 } }
 """);
     }
 

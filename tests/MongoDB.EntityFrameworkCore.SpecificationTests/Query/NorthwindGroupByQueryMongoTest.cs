@@ -983,7 +983,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$avg" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$match" : { "_lookup_Customer.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$avg" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
     }
 
@@ -993,7 +993,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : "$_lookup_Order.CustomerID", "Count" : { "$sum" : 1 } } }, { "$project" : { "CustomerId" : "$_id", "Count" : "$Count", "_id" : 0 } }
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$match" : { "_lookup_Order.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Order" : { "$arrayElemAt" : ["$_lookup_Order", 0] } } }, { "$group" : { "_id" : "$_lookup_Order.CustomerID", "Count" : { "$sum" : 1 } } }, { "$project" : { "CustomerId" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
     }
 
@@ -1043,7 +1043,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$CustomerID", "Average" : { "$avg" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Average" : "$Average", "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$group" : { "_id" : "$CustomerID", "Average" : { "$avg" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Average" : "$Average", "_id" : 0 } }
 """);
     }
 
@@ -1063,7 +1063,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_id", "Average" : { "$avg" : "$_id" } } }, { "$project" : { "Value" : "$_id", "Average" : "$Average", "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$group" : { "_id" : "$_id", "Average" : { "$avg" : "$_id" } } }, { "$project" : { "Value" : "$_id", "Average" : "$Average", "_id" : 0 } }
 """);
     }
 
@@ -1073,7 +1073,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer.Country", "Count" : { "$sum" : 1 } } }, { "$project" : { "Country" : "$_id", "Count" : "$Count", "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$group" : { "_id" : "$_lookup_Customer.Country", "Count" : { "$sum" : 1 } } }, { "$project" : { "Country" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
     }
 
@@ -1104,7 +1104,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$lt" : 10400 } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : "$CustomerID", "Count" : { "$avg" : "$_lookup_Order._id" } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+Orders.{ "$match" : { "_id" : { "$lt" : 10400 } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$match" : { "_lookup_Order.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Order" : { "$arrayElemAt" : ["$_lookup_Order", 0] } } }, { "$group" : { "_id" : "$CustomerID", "Count" : { "$avg" : "$_lookup_Order._id" } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
     }
 
@@ -1114,7 +1114,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10400 } } }, { "$lookup" : { "from" : "O
 
         AssertMql(
             """
-OrderDetails.{ "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$unwind" : { "path" : "$_lookup_Product", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_lookup_Order.CustomerID", null] }, "ProductName" : { "$ifNull" : ["$_lookup_Product.ProductName", null] } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "CompositeKey" : "$_id", "Count" : "$Count", "_id" : 0 } }
+OrderDetails.{ "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$match" : { "_lookup_Product.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Product" : { "$arrayElemAt" : ["$_lookup_Product", 0] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$match" : { "_lookup_Order.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Order" : { "$arrayElemAt" : ["$_lookup_Order", 0] } } }, { "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_lookup_Order.CustomerID", null] }, "ProductName" : { "$ifNull" : ["$_lookup_Product.ProductName", null] } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "CompositeKey" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
     }
 
@@ -1144,7 +1144,7 @@ Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$unionWith" : { "coll"
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
     }
 
@@ -1164,7 +1164,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_lookup_Customer._id", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$_lookup_Customer._id", 0, 1] } } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$group" : { "_id" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_lookup_Customer._id", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$_lookup_Customer._id", 0, 1] } } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
     }
 
@@ -2008,7 +2008,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : "$_lookup_Order.CustomerID", "Aggregate" : { "$sum" : "$_id.OrderID" } } }, { "$project" : { "Key" : "$_id", "Aggregate" : "$Aggregate", "_id" : 0 } }
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$match" : { "_lookup_Order.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Order" : { "$arrayElemAt" : ["$_lookup_Order", 0] } } }, { "$group" : { "_id" : "$_lookup_Order.CustomerID", "Aggregate" : { "$sum" : "$_id.OrderID" } } }, { "$project" : { "Key" : "$_id", "Aggregate" : "$Aggregate", "_id" : 0 } }
 """);
     }
 
@@ -2018,7 +2018,7 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
 
         AssertMql(
             """
-OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer.Country", "Aggregate" : { "$sum" : "$_id.OrderID" } } }, { "$project" : { "Key" : "$_id", "Aggregate" : "$Aggregate", "_id" : 0 } }
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$match" : { "_lookup_Order.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Order" : { "$arrayElemAt" : ["$_lookup_Order", 0] } } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$group" : { "_id" : "$_lookup_Customer.Country", "Aggregate" : { "$sum" : "$_id.OrderID" } } }, { "$project" : { "Key" : "$_id", "Aggregate" : "$Aggregate", "_id" : 0 } }
 """);
     }
 
@@ -2120,7 +2120,7 @@ Customers.{ "$group" : { "_id" : "$City", "_orderAgg0" : { "$sum" : 1 }, "Count"
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$match" : { "$expr" : { "$ne" : ["$Count", 2] } } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$match" : { "$expr" : { "$ne" : ["$Count", 2] } } }
 """);
     }
 
@@ -2132,7 +2132,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$match" : { "$or" : [{ "$expr" : { "$lt" : ["$Count", 2] } }, { "$expr" : { "$gt" : ["$Count", 2] } }] } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$match" : { "$or" : [{ "$expr" : { "$lt" : ["$Count", 2] } }, { "$expr" : { "$gt" : ["$Count", 2] } }] } }
 """);
     }
 

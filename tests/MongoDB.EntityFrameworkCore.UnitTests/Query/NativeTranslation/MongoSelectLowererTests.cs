@@ -503,6 +503,60 @@ public class MongoSelectLowererTests
             s => Assert.Equal("Items", Assert.IsType<MongoReplaceRootStage>(s).NewRoot));
     }
 
+    private class SingleRefTarget
+    {
+        public ObjectId Id { get; set; }
+    }
+
+    private class SingleRefOwner
+    {
+        public ObjectId Id { get; set; }
+        public ObjectId TargetId { get; set; }
+        public SingleRefTarget? Target { get; set; }
+    }
+
+    private static (MongoQueryExpression Query, INavigation Navigation) TestSingleReferenceSelect()
+    {
+        using var db = SingleEntityDbContext.Create<SingleRefOwner>(mb =>
+        {
+            mb.Entity<SingleRefTarget>();
+            mb.Entity<SingleRefOwner>().HasOne(p => p.Target).WithMany().HasForeignKey(p => p.TargetId);
+        });
+        var entityType = db.Model.FindEntityType(typeof(SingleRefOwner))!;
+        return (new MongoQueryExpression(entityType), entityType.FindNavigation(nameof(SingleRefOwner.Target))!);
+    }
+
+    [Fact]
+    public void A_reference_lookup_keyed_on_the_target_id_lowers_to_an_unwind_that_matches_at_most_one_document()
+    {
+        var (query, navigation) = TestSingleReferenceSelect();
+        var lookup = new LookupExpression(navigation);
+        query.AddLookup(lookup);
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Equal("_id", lookup.ForeignField);
+        Assert.Collection(stages,
+            s => Assert.Same(lookup, Assert.IsType<MongoLookupStage>(s).Lookup),
+            s => Assert.True(Assert.IsType<MongoUnwindStage>(s).AtMostOneMatch));
+    }
+
+    [Fact]
+    public void A_reference_lookup_not_keyed_on_the_target_id_keeps_a_plain_unwind()
+    {
+        var (query, navigation) = TestSingleReferenceSelect();
+        var lookup = new LookupExpression(
+            navigation.TargetEntityType, "Targets", localField: "TargetKey", foreignField: "OtherKey", alias: "_lookup_Target",
+            forceUnwind: false);
+        query.AddLookup(lookup);
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.Same(lookup, Assert.IsType<MongoLookupStage>(s).Lookup),
+            s => Assert.False(Assert.IsType<MongoUnwindStage>(s).AtMostOneMatch));
+    }
+
     // AppendLookupStages already appends $lookup+$unwind for a Reference UnwindSource, so no
     // MongoUnwindFieldStage should appear for this Kind.
 
