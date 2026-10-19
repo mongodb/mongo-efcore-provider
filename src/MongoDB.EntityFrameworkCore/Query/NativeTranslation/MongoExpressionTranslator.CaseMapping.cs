@@ -20,15 +20,10 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
 /// <see cref="MongoExpressionTranslator"/>: <c>x.S.ToLower()/ToUpper() == constant</c> (either side, <c>==</c> or
-/// <c>!=</c>, including the <c>Invariant</c> forms). <c>$toLower</c>/<c>$toUpper</c> are ASCII-only, so instead: a
-/// constant not already in the target case can never be equal (folds to false/true); otherwise an anchored
-/// case-insensitive regex.
+/// <c>!=</c>, including <c>Invariant</c> forms). <c>$toLower</c>/<c>$toUpper</c> are ASCII-only, so a constant not
+/// already in the target case folds to false/true; otherwise an anchored case-insensitive regex. The invariant,
+/// culture-free mapping means Turkish-I and .NET vs server regex case-folding differences are accepted.
 /// </summary>
-/// <remarks>
-/// The translate-time check uses the invariant mapping, and the regex match is culture-free, so current-culture
-/// special cases (Turkish dotted/dotless I) and case-folding differences between .NET and the server's regex engine
-/// are accepted differences.
-/// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
     private bool TryTranslateCaseMappingComparison(BinaryExpression comparison, out MongoExpression? result)

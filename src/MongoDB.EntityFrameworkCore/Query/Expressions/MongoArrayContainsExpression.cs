@@ -29,10 +29,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </remarks>
 internal sealed class MongoArrayContainsExpression : MongoExpression
 {
-    /// <summary>Creates a <see cref="MongoArrayContainsExpression"/>.</summary>
-    /// <param name="field">The stored array field.</param>
-    /// <param name="value">The candidate element.</param>
-    /// <param name="negated"><see langword="true"/> for "not an element".</param>
     public MongoArrayContainsExpression(MongoFieldExpression field, MongoExpression value, bool negated)
     {
         Field = field;

@@ -28,8 +28,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// A non-nullable scalar of an optional reference navigation projected over the join scope (<c>o.Customer!.Rank</c>):
 /// an unmatched order (and a matched customer that omits the field) has no element after the <c>$lookup</c>, which
-/// reads <c>default</c>, as driver-LINQ's <c>$project</c> push-down did (decision D-F10, controller ruling in the
-/// Phase 1 final review); an explicit null still throws, except a <c>bool</c>, which the driver's
+/// reads <c>default</c>, as driver-LINQ's <c>$project</c> push-down did; an explicit null still throws, except a <c>bool</c>, which the driver's
 /// <c>BooleanSerializer</c> reads as false. Each row set is checked against canonical main (upstream/main dec7e26f,
 /// EF10 probe) in all three modes.
 /// </summary>
@@ -64,7 +63,7 @@ public class NativeJoinScopeMissingScalarTests(TemporaryDatabaseFixture database
         ["bare_flag"] = (q => Join(q.OrderBy(o => o.Id).Select(o => o.Customer!.Flag)), ["False", "False", "False", "True,False,False"]),
         ["anon_flag"] = (q => Join(q.OrderBy(o => o.Id).Select(o => new { o.Id, F = o.Customer!.Flag }).AsEnumerable()
             .Select(a => $"{a.Id}:{a.F}")), ["12:False", "13:False", "14:False", "10:True,11:False,12:False"]),
-        // Already matched main before the fix (Task 1.15's wrapped reduction: a MISSING winner reads default).
+        // Already matched main before the fix (wrapped reduction: a MISSING winner reads default).
         ["select_min"] = (q => q.Select(o => o.Customer!.Rank).Min().ToString(), ["0", Throws, "0", "0"]),
         ["select_max"] = (q => q.Select(o => o.Customer!.Rank).Max().ToString(), ["0", Throws, "0", "7"]),
     };

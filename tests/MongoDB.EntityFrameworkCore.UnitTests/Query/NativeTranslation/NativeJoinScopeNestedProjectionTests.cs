@@ -198,17 +198,16 @@ public class NativeJoinScopeNestedProjectionTests
     }
 
     [Fact]
-    public void Nested_leaf_containing_whole_entity_member_declines_whole_projection()
+    public void Nested_leaf_whose_members_are_all_whole_entities_stages_the_inner_document()
     {
-        // `new { A = new { Whole = r } }`: a whole-entity nested member isn't translatable by TryTranslateValue, and
-        // the whole-entity arm doesn't recurse into nested bodies, so the whole leaf declines.
+        // `new { A = new { Whole = r } }`: every member is a whole-entity Inner leaf, so the wrapper has no projection of
+        // its own and the level's document is staged whole (read back by index in BindResultMember).
         var mongoQ = TranslateJoinQuery((owners, orders) =>
             owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { A = new { Whole = r } }));
 
         Assert.NotNull(mongoQ.Select.JoinScope);
-        Assert.Empty(mongoQ.Select.Projection);
-        Assert.Empty(mongoQ.Lookups);
-        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+        var staged = Assert.Single(mongoQ.Select.Projection);
+        Assert.StartsWith("_lookup_", staged.Alias);
     }
 
     [Fact]

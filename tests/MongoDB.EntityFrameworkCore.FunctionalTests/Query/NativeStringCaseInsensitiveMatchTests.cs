@@ -103,7 +103,6 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
     [InlineData(RegexKindUnderTest.EndsWith)]
     public void Field_to_field_term_OrdinalIgnoreCase_declines_cleanly_rather_than_answer_wrong(RegexKindUnderTest kind)
     {
-        // The whole shape declines, even for ASCII data (see class remarks).
         var collection = Seed(
             nameof(Field_to_field_term_OrdinalIgnoreCase_declines_cleanly_rather_than_answer_wrong) + kind,
             ("match-same-case", "Seattle", "Sea"));
@@ -116,7 +115,6 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
 
-        // NativeOnly forbids the fallback, so the decline surfaces as its own exception.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList());
@@ -147,7 +145,6 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
             nameof(StartsWith_field_to_field_OrdinalIgnoreCase_non_ASCII_declines_instead_of_answering_wrong) + s,
             ("row", s, t));
 
-        // Guards the fixture: .NET does match.
         Assert.StartsWith(t, s, StringComparison.OrdinalIgnoreCase);
 
         using var native = CreateContext(collection, MongoQueryMode.Native);
@@ -195,7 +192,6 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
     [Fact]
     public void Field_to_field_term_Ordinal_case_sensitive_still_translates_natively()
     {
-        // The decline is case-insensitive-only; the case-sensitive field-to-field shape still goes native.
         var collection = Seed(
             nameof(Field_to_field_term_Ordinal_case_sensitive_still_translates_natively),
             ("match", "Seattle", "Sea"),
@@ -250,7 +246,6 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
                 () => nativeOnly.Entities.AsNoTracking()
                     .Where(x => x.S!.Equals(term, StringComparison.OrdinalIgnoreCase)).ToList());
 
-            // The constant form stays native.
             Assert.Equal(["value"], nativeOnly.Entities.AsNoTracking()
                 .Where(x => string.Equals(x.S, "SEATTLE", StringComparison.OrdinalIgnoreCase)).Select(x => x.Label).ToList());
         }
@@ -276,7 +271,6 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
         var oracle = oracleDb.Entities.AsNoTracking().ToList().Where(predicate.Compile()).Select(x => x.Label)
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
 
-        // OrderBy(comparer) runs after ToList(): a server-side OrderBy with a custom IComparer can't translate.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList()
             .OrderBy(x => x, StringComparer.Ordinal).ToList();

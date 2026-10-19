@@ -206,4 +206,49 @@ public class NativeLocalCollectionContainsTests(TemporaryDatabaseFixture databas
         else
             Assert.IsType<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(ex);
     }
+
+    // A local collection filtered by a clock predicate (`new[] {..}.Where(d => d > DateTime.UtcNow).Contains(r.T)`): the fold
+    // refuses to fold a clock (it would bake one instant into the cached plan), so the filter must be evaluated per execution.
+    [Fact]
+    public void Clock_predicate_filtering_a_local_collection_is_evaluated_per_execution()
+    {
+        var collection = database.MongoDatabase.GetCollection<Row>(
+            TemporaryDatabaseFixtureBase.CreateCollectionName("clockfilter") + Guid.NewGuid().ToString("N")[..8]);
+        var past = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var future = new DateTime(2999, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        collection.InsertMany(
+        [
+            new Row { Id = ObjectId.GenerateNewId(), Name = "past", T = past },
+            new Row { Id = ObjectId.GenerateNewId(), Name = "future", T = future },
+            new Row { Id = ObjectId.GenerateNewId(), Name = "other", T = new DateTime(2500, 1, 1, 0, 0, 0, DateTimeKind.Utc) }
+        ]);
+
+        NativeModeAssert.NativeAndExpected(
+            mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                return db.Entities
+                    .Where(r => new[] { past, future }.Where(d => d > DateTime.UtcNow).Contains(r.T))
+                    .Select(r => r.Name).ToList();
+            },
+            ["future"]);
+    }
+
+    [Fact]
+    public void Clock_elements_in_a_filtered_local_collection_match_nothing_stored_without_throwing()
+    {
+        var collection = Seed(nameof(Clock_elements_in_a_filtered_local_collection_match_nothing_stored_without_throwing));
+
+        // Main's answer: no row stores a value derived from the moment of the query, and nothing throws.
+        NativeModeAssert.NativeAndExpected(
+            mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                return db.Entities
+                    .Where(r => new[] { DateTime.UtcNow.AddYears(-50), DateTime.UtcNow.AddYears(50) }
+                        .Where(d => d > DateTime.UtcNow).Contains(r.T))
+                    .Select(r => r.Name).ToList();
+            },
+            []);
+    }
 }

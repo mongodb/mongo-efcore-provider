@@ -149,18 +149,16 @@ public class Ef362ArrayLeafPathTests
     }
 
     [Fact]
-    public void An_element_with_its_own_eager_navigation_is_still_declined_under_a_hop_too()
+    public void An_element_with_its_own_embedded_eager_navigation_is_admitted_under_a_hop_too()
     {
-        // The owns-a-collection conjunct still applies: `Post` owns `Comments`, so it is declined even at its
-        // root-declared path.
+        // `Post` owns `Comments` (an embedded eager navigation): the element shaper includes it (EagerNavigationsAreAllEmbedded),
+        // so the leaf is admitted at its root-declared path.
         var (root, _) = BuildModel();
         var posts = Navigation(root, nameof(Blog.Posts));
 
         Assert.Contains(posts.TargetEntityType.GetNavigations(), n => n.IsEagerLoaded);
-        Assert.False(NativeProjectionBinder.IsNativeArrayProjectionLeaf(posts, root, "Posts"));
+        Assert.True(NativeProjectionBinder.IsNativeArrayProjectionLeaf(posts, root, "Posts"));
     }
-
-    // ── The array leaf's sibling sweep keeps a "$$ROOT" leaf out of the strip path ────────
 
     /// <summary>DTO for the whole-root-entity + owned-hop-array selector under test.</summary>
     private class RootAndNotes

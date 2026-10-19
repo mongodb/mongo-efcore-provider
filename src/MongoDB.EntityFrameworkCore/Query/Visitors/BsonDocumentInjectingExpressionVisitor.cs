@@ -25,11 +25,7 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
 {
     private int _currentEntityIndex;
 
-    /// <summary>
-    /// All BsonDocument/BsonArray variables created during injection.
-    /// These are collected so they can also be declared at the lambda level,
-    /// making them accessible across entity boundaries in join projections.
-    /// </summary>
+    /// <summary>BsonDocument/BsonArray variables created during injection; also declared at the lambda level so they are accessible across entity boundaries in join projections.</summary>
     public List<ParameterExpression> AllVariables { get; } = [];
 
     protected override Expression VisitExtension(Expression extensionExpression)

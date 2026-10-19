@@ -93,8 +93,6 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_filtered_Count_predicate_goes_native()
     {
-        // "match": a post whose Title equals the OWNER's Title -> Count(pred) == 1 -> > 0 -> included.
-        // "other": no post's Title equals the owner's Title ("other" vs post titles "x"/"y") -> excluded.
         var collection = Seed(nameof(Correlated_filtered_Count_predicate_goes_native),
             ("match", [("match", 1), ("x", 2)]),
             ("other", [("x", 1), ("y", 2)]));
@@ -192,8 +190,6 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_All_goes_native()
     {
-        // "allMatch": every post's Title equals the owner's Title -> All true -> included.
-        // "notAll": one post's Title does NOT equal the owner's Title -> All false -> excluded.
         var collection = Seed(nameof(Correlated_All_goes_native),
             ("same", [("same", 1), ("same", 2)]),
             ("mixed", [("mixed", 1), ("other", 2)]));
@@ -247,7 +243,6 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     // branch used to decline ANY quantifier source not rooted on the outer param, which blocked this shape
     // even though it isn't the "array reached through the outer scope" case EF-421 explicitly declines —
     // p.Comments is a perfectly ordinary element-scoped collection; only its element PREDICATE reaches back to
-    // the root. See MongoExpressionTranslatorTests.GATE_AUDIT_probe_* for the isolated translator-level repro.
     public class DeepBlog
     {
         public ObjectId Id { get; set; }
@@ -292,8 +287,6 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Nested_quantifier_over_the_elements_own_collection_inside_a_correlated_outer_quantifier_goes_native()
     {
-        // "match": some post has a comment whose Title equals the OWNER's Title.
-        // "nomatch": no post has any comment matching the owner's Title.
         var collection = SeedDeep(
             nameof(Nested_quantifier_over_the_elements_own_collection_inside_a_correlated_outer_quantifier_goes_native),
             ("match", [("p1", ["x", "match"]), ("p2", ["y"])]),
@@ -590,7 +583,6 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // LINQ over-empty semantics: Any is false, All is vacuously true.
         var anyResults = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => p.Title == b.Title))
             .ToList();

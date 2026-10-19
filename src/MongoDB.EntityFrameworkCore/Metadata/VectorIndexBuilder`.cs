@@ -32,7 +32,6 @@ public class VectorIndexBuilder<TEntity>(IMutableIndex index, VectorIndexOptions
     /// Configures Type of automatic vector quantization for your vectors. Use this setting only if your embeddings are float or double vectors.
     /// </summary>
     /// <param name="quantization">Type of automatic vector quantization for your vectors.</param>
-    /// <returns>The same builder instance so that multiple configuration calls can be chained.</returns>
     public new VectorIndexBuilder<TEntity> HasQuantization(VectorQuantization? quantization)
         => (VectorIndexBuilder<TEntity>)base.HasQuantization(quantization);
 
@@ -41,7 +40,6 @@ public class VectorIndexBuilder<TEntity>(IMutableIndex index, VectorIndexOptions
     /// </summary>
     /// <param name="maxEdges">Maximum number of edges (or connections) that a node can have in the Hierarchical Navigable Small Worlds graph.</param>
     /// <param name="numEdgeCandidates">Analogous to numCandidates at query-time, this parameter controls the maximum number of nodes to evaluate to find the closest neighbors to connect to a new node.</param>
-    /// <returns>The same builder instance so that multiple configuration calls can be chained.</returns>
     public new VectorIndexBuilder<TEntity> HasEdgeOptions(int maxEdges, int numEdgeCandidates)
         => (VectorIndexBuilder<TEntity>)base.HasEdgeOptions(maxEdges, numEdgeCandidates);
 
@@ -49,7 +47,6 @@ public class VectorIndexBuilder<TEntity>(IMutableIndex index, VectorIndexOptions
     /// Adds the given property to those that can be used to filter in vector queries with this index.
     /// </summary>
     /// <param name="propertyPath">The name of the property that may be used for filters.</param>
-    /// <returns>The same builder instance so that multiple configuration calls can be chained.</returns>
     public new VectorIndexBuilder<TEntity> AllowsFiltersOn(string propertyPath)
         => (VectorIndexBuilder<TEntity>)base.AllowsFiltersOn(propertyPath);
 
@@ -57,7 +54,6 @@ public class VectorIndexBuilder<TEntity>(IMutableIndex index, VectorIndexOptions
     /// Adds the given property to those that can be used to filter in vector queries with this index.
     /// </summary>
     /// <param name="propertyExpression">A lambda expression representing the property on this or a nested type. </param>
-    /// <returns>The same builder instance so that multiple configuration calls can be chained.</returns>
     public VectorIndexBuilder<TEntity> AllowsFiltersOn<TProperty>(Expression<Func<TEntity, TProperty>> propertyExpression)
         => AllowsFiltersOn(string.Join('.', propertyExpression.GetMemberAccess<MemberInfo>().Select(m => m.Name)));
 }

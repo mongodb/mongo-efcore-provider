@@ -32,31 +32,18 @@ using IBsonArraySerializer = MongoDB.Bson.Serialization.IBsonArraySerializer;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// <see cref="MongoExpressionTranslator"/> — method-call recognizers. Matches the LINQ method shapes the
-/// translator understands (quantifiers, element counts, <c>Contains</c>, the string regex family) and the
-/// scope guard that keeps a correlated element predicate out of the element-scoped translator.
+/// <see cref="MongoExpressionTranslator"/> — method-call recognizers (quantifiers, element counts, <c>Contains</c>,
+/// string methods) and the scope guard that keeps a correlated element predicate out of the element-scoped translator.
 /// </summary>
 internal sealed partial class MongoExpressionTranslator
 {
-    /// <summary>Which quantifier <see cref="TryMatchQuantifierMethod"/> matched.</summary>
     internal enum MongoQuantifierKind
     {
-        /// <summary><c>Any</c> — at least one element satisfies the predicate (or, bare, the array is non-empty).</summary>
         Any,
-
-        /// <summary><c>All</c> — every element satisfies the predicate. Has no parameterless form.</summary>
         All
     }
 
-    /// <summary>
-    /// Matches <c>source.Any()</c>, <c>source.Any(pred)</c> or <c>source.All(pred)</c>, returning the source with its
-    /// <c>AsQueryable()</c> wrapper stripped and, for the predicate form, the unquoted element lambda.
-    /// </summary>
-    /// <remarks>
-    /// EF produces the <see cref="Queryable"/> spelling (<c>Queryable.Any(AsQueryable(EF.Property(b, "Posts")),
-    /// Quote(p =&gt; ...))</c>); the <see cref="Enumerable"/> spelling is also accepted so hand-built trees
-    /// translate the same.
-    /// </remarks>
+    // EF produces the Queryable spelling; the Enumerable spelling is accepted so hand-built trees translate the same.
     private static bool TryMatchQuantifierMethod(
         MethodCallExpression call,
         out MongoQuantifierKind kind,
@@ -81,7 +68,6 @@ internal sealed partial class MongoExpressionTranslator
         switch (call.Arguments.Count)
         {
             case 1:
-                // Bare Any(): array is non-empty. All has no parameterless overload, so reject anything else.
                 if (kind is not MongoQuantifierKind.Any)
                     return false;
                 source = UnwrapAsQueryable(call.Arguments[0]);
@@ -107,15 +93,154 @@ internal sealed partial class MongoExpressionTranslator
         }
     }
 
+    private static bool TryMatchElementAggregateMethod(
+        MethodCallExpression call,
+        [NotNullWhen(true)] out string? mqlOperator,
+        [NotNullWhen(true)] out Expression? source,
+        [NotNullWhen(true)] out LambdaExpression? selector)
+    {
+        source = null;
+        selector = null;
+        mqlOperator = call.Method.Name switch
+        {
+            nameof(Enumerable.Sum) => "$sum",
+            nameof(Enumerable.Min) => "$min",
+            nameof(Enumerable.Max) => "$max",
+            nameof(Enumerable.Average) => "$avg",
+            _ => null
+        };
+
+        if (mqlOperator is null
+            || (call.Method.DeclaringType != typeof(Enumerable) && call.Method.DeclaringType != typeof(Queryable))
+            || call.Arguments.Count != 2)
+        {
+            return false;
+        }
+
+        var argument = call.Arguments[1];
+        if (argument is UnaryExpression { NodeType: ExpressionType.Quote } quote)
+            argument = quote.Operand;
+
+        if (argument is not LambdaExpression { Parameters.Count: 1 } lambda)
+            return false;
+
+        source = UnwrapAsQueryable(call.Arguments[0]);
+        selector = lambda;
+        return true;
+    }
+
     /// <summary>
-    /// Matches an element count over a collection (<c>.Count</c> property, <c>Count()</c>/<c>LongCount()</c>, or
-    /// <c>Count(pred)</c>/<c>LongCount(pred)</c>), yielding the source with any <c>AsQueryable()</c> stripped and
-    /// the predicate lambda (<see langword="null"/> if none).
+    /// <c>Sum</c>/<c>Min</c>/<c>Max</c>/<c>Average</c> of one numeric element property over a referenced collection, as the
+    /// array operator over the looked-up array path (<c>{ $sum: "$_lookup_Orders.Total" }</c>). An empty array gives
+    /// <c>0</c> for <c>$sum</c> and <c>null</c> for the others (LINQ's answer for a nullable result; a non-nullable
+    /// result reads that <c>null</c> strictly and throws, as LINQ does).
     /// </summary>
     /// <remarks>
-    /// EF normalizes <c>.Count</c> into the call form; the property arm exists for hand-built trees. Must stay
-    /// pure: <see cref="TranslateComparison"/> can call it twice per query. Name-based matching is safe against a
-    /// mapped scalar named <c>Count</c> because every match is gated on <see cref="TryResolveOwnedCollectionPath"/>.
+    /// Only the referenced-collection resolver feeds this; owned collections stay declined. The selector must be one
+    /// numeric property stored as itself, so the server's reduction is the CLR one (<see cref="StoredOrdering"/>).
+    /// </remarks>
+    private MongoExpression? TranslateReferencedArrayAggregate(
+        MethodCallExpression call, string mqlOperator, Expression source, LambdaExpression selector)
+    {
+        if (ReferencedCollectionResolver?.Invoke(Unwrap(source)) is not { } referenced)
+            return null;
+
+        var body = selector.Body;
+        while (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } conversion)
+            body = conversion.Operand;
+
+        if (!body.TryGetMemberOrEFProperty(out var receiver, out var name)
+            || !ReferenceEquals(receiver.RemoveConvert(), selector.Parameters[0])
+            || referenced.ElementType.FindProperty(name) is not { } property
+            || property.IsShadowProperty())
+        {
+            return TranslateReferencedComputedAggregate(call, mqlOperator, referenced, selector);
+        }
+
+        var underlying = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
+        if (underlying != typeof(int) && underlying != typeof(long) && underlying != typeof(double)
+            && underlying != typeof(decimal) && underlying != typeof(float))
+        {
+            return null;
+        }
+
+        var preserved = mqlOperator is "$sum" or "$avg"
+            ? StoredOrdering.PreservesClrValueForNumericReduction(property)
+            : StoredOrdering.PreservesClrOrderingForAggregateAndSort(property);
+        if (!preserved || (property.GetValueConverter() is not null && !NativeGroupByBinder.HasDefaultKeySerialization(property)))
+            return null;
+
+        return new MongoArrayReduceExpression(
+            mqlOperator, $"{referenced.ArrayPath}.{LookupExpression.GetFieldPath(property)}", call.Type);
+    }
+
+    /// <summary>
+    /// <c>Sum</c>/<c>Min</c>/<c>Max</c>/<c>Average</c> of ARITHMETIC over the element (<c>c.Orders.Sum(o =&gt; o.Price * o.Qty)</c>), as the
+    /// reduction of a per-element <c>$map</c> over the looked-up array (<see cref="MongoMappedArrayReduceExpression"/>).
+    /// </summary>
+    /// <remarks>
+    /// Only numeric arithmetic over the element's own default-stored numeric properties, constants and query parameters (and numeric casts
+    /// of them): anything else (a string <c>Length</c>, a conditional, a date part, a member of another entity) declines, because the
+    /// native read of a null or missing operand differs from LINQ's and these are exactly the cases where it would be read as 0. Division
+    /// follows the result type (<c>MapArithmeticOperator</c>): integer division truncates per element, as C# does.
+    /// </remarks>
+    private MongoExpression? TranslateReferencedComputedAggregate(
+        MethodCallExpression call, string mqlOperator, ReferencedCollectionSource referenced, LambdaExpression selector)
+    {
+        var underlying = Nullable.GetUnderlyingType(call.Type) ?? call.Type;
+        if (underlying != typeof(int) && underlying != typeof(long) && underlying != typeof(double)
+            && underlying != typeof(decimal) && underlying != typeof(float))
+        {
+            return null;
+        }
+
+        var elementTranslator = new MongoExpressionTranslator(referenced.ElementType, selector.Parameters[0]);
+        if (!elementTranslator.TryTranslateValue(selector.Body, out var element)
+            || element is not (MongoBinaryExpression { IsArithmetic: true } or MongoConvertExpression or MongoUnaryExpression)
+            || !IsNumericArithmeticOverElement(element, mqlOperator is "$sum" or "$avg"))
+        {
+            return null;
+        }
+
+        return new MongoMappedArrayReduceExpression(mqlOperator, referenced.ArrayPath, element, call.Type);
+    }
+
+    private static bool IsNumericArithmeticOverElement(MongoExpression expression, bool numericReduction)
+        => expression switch
+        {
+            MongoFieldExpression field
+                => !field.Property.IsShadowProperty()
+                   && IsNumericClrType(field.Property.ClrType)
+                   && NativeGroupByBinder.HasDefaultKeySerialization(field.Property)
+                   && (numericReduction
+                       ? StoredOrdering.PreservesClrValueForNumericReduction(field.Property)
+                       : StoredOrdering.PreservesClrOrderingForAggregateAndSort(field.Property)),
+            // A parameter carries no static type here (no property supplies its serialization context), but it is an operand of numeric
+            // arithmetic, which the translator builds only from numeric operands.
+            MongoParameterExpression => true,
+            MongoConstantExpression => IsNumericClrType(expression.Type),
+            MongoBinaryExpression { IsArithmetic: true } binary
+                => IsNumericArithmeticOverElement(binary.Left, numericReduction) && IsNumericArithmeticOverElement(binary.Right, numericReduction),
+            MongoConvertExpression convert
+                => IsNumericClrType(convert.Type) && IsNumericArithmeticOverElement(convert.Operand, numericReduction),
+            _ => false
+        };
+
+    private static bool IsNumericClrType(Type type)
+    {
+        var underlying = Nullable.GetUnderlyingType(type) ?? type;
+        return underlying == typeof(int) || underlying == typeof(long) || underlying == typeof(double)
+               || underlying == typeof(decimal) || underlying == typeof(float);
+    }
+
+    /// <summary>
+    /// Matches an element count over a collection (<c>.Count</c>, <c>Count()</c>/<c>LongCount()</c>, with or without a
+    /// predicate), yielding the source and the predicate lambda (<see langword="null"/> if none).
+    /// </summary>
+    /// <remarks>
+    /// Must stay pure: <see cref="TranslateComparison"/> can call it twice per query. Name-based matching is safe
+    /// against a mapped scalar named <c>Count</c> because every match is gated on
+    /// <see cref="TryResolveOwnedCollectionPath"/>.
     /// </remarks>
     internal static bool TryMatchCountExpression(
         Expression node,
@@ -125,18 +250,25 @@ internal sealed partial class MongoExpressionTranslator
         source = null;
         predicate = null;
 
-        // Only int/long-valued nodes can be a count; this cheaply excludes unrelated members named "Count".
         if (node.Type != typeof(int) && node.Type != typeof(long))
             return false;
 
         switch (node)
         {
-            // b.Posts.Count — only from hand-built trees; EF normalizes this into the call form.
+            // b.Posts.Count: hand-built trees only; EF normalizes it into the call form.
             case MemberExpression { Member: PropertyInfo { Name: nameof(List<int>.Count) }, Expression: { } receiver }:
                 source = UnwrapAsQueryable(receiver);
                 return true;
 
-            // Parameterless Count(source)/LongCount(source): the shape every real EF query arrives in.
+            case UnaryExpression { NodeType: ExpressionType.ArrayLength, Operand: { } arrayOperand }:
+                source = arrayOperand;
+                return true;
+
+            // Member form of an array's length. Arrays only: string.Length must not match.
+            case MemberExpression { Member: PropertyInfo { Name: nameof(Array.Length) }, Expression: { Type.IsArray: true } arrayReceiver }:
+                source = arrayReceiver;
+                return true;
+
             case MethodCallExpression { Arguments.Count: 1 } call
                 when call.Method.Name is nameof(Enumerable.Count) or nameof(Enumerable.LongCount)
                      && (call.Method.DeclaringType == typeof(Enumerable)
@@ -144,8 +276,7 @@ internal sealed partial class MongoExpressionTranslator
                 source = UnwrapAsQueryable(call.Arguments[0]);
                 return true;
 
-            // Predicated overloads, compared as generic method definitions (a constructed instantiation is never
-            // reference-equal to the open definition).
+            // Compared as generic method definitions (a constructed instantiation is never reference-equal to the open one).
             case MethodCallExpression { Arguments.Count: 2 } call when IsCanonicalCountWithPredicate(call.Method):
                 source = UnwrapAsQueryable(call.Arguments[0]);
                 predicate = call.Arguments[1].UnwrapLambdaFromQuote();
@@ -170,15 +301,13 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Builds the translator for an owned-collection element predicate (<c>Any</c>/<c>All</c>/<c>Count(pred)</c>)
-    /// over <paramref name="elementType"/>: single-scope when the predicate is uncorrelated, two-scope
-    /// (<paramref name="isCorrelated"/>) when its sole free parameter is this translator's own
-    /// <see cref="SelfParam"/> (by reference) or, on a two-scope translator, its outer parameter. Any other
-    /// correlation, including two or more distinct free parameters, declines.
+    /// Builds the translator for an owned-collection element predicate: single-scope when uncorrelated, two-scope
+    /// (<paramref name="isCorrelated"/>) when its sole free parameter is this translator's own <see cref="SelfParam"/>
+    /// or, on a two-scope translator, its outer parameter. Any other correlation declines.
     /// </summary>
     /// <remarks>
-    /// The identity guard is load-bearing: single-scope <see cref="TryResolveMember"/> resolves by name, so without
-    /// it an enclosing member sharing a name with an element member would silently retarget to the element.
+    /// The identity guard is load-bearing: single-scope <see cref="TryResolveMember"/> resolves by name, so an enclosing
+    /// member sharing a name with an element member would silently retarget to the element.
     /// </remarks>
     private bool TryCreateElementPredicateTranslator(
         LambdaExpression predicate, IEntityType elementType,
@@ -192,34 +321,28 @@ internal sealed partial class MongoExpressionTranslator
             return true;
         }
 
-        // The root is SelfParam on a single-scope translator, or the already-established outer parameter on a
-        // two-scope one (EF-446): MongoOuterFieldExpression resolves at document root at any nesting depth, so a
-        // nested predicate correlating back to the same root is admitted. A correlation to an intermediate scope
-        // (neither identity) still declines.
+        // EF-446: on a two-scope translator the root is the established outer parameter (MongoOuterFieldExpression
+        // resolves at document root at any depth); a correlation to an intermediate scope still declines.
         var rootParam = SelfParam ?? _outerParam;
         var rootEntityType = SelfParam is not null ? _entityType : _outerEntityType;
         if (rootParam is null || rootEntityType is null || freeParam is null || !ReferenceEquals(freeParam, rootParam))
             return false;
 
-        // innerPrefix null, not "": the renderer prepends the element scope's variable itself (e.g. "$$e." via
-        // $filter's "as"; see the two-scope constructor).
+        // innerPrefix null, not "": the renderer prepends the element scope's variable itself.
         translator = new MongoExpressionTranslator(
             elementType, outerParam: rootParam, outerEntityType: rootEntityType, innerPrefix: null);
         return true;
     }
 
     /// <summary>
-    /// True when <paramref name="body"/> (an element-predicate lambda body) references a free parameter other
-    /// than <paramref name="elementParameter"/>, i.e. is correlated with an enclosing scope. Also reports the
-    /// sole free parameter via <paramref name="found"/> (<see langword="null"/> if none or more than one), so
-    /// <c>Count(pred)</c>/<c>Any</c>/<c>All</c> can build a two-scope translator only when that parameter is
-    /// exactly <see cref="MongoExpressionTranslator.SelfParam"/>.
+    /// True when <paramref name="body"/> references a free parameter other than <paramref name="elementParameter"/>
+    /// (is correlated with an enclosing scope); <paramref name="found"/> is the sole free parameter, or
+    /// <see langword="null"/> if none or more than one.
     /// </summary>
     /// <remarks>
-    /// Scope is decided by identity, not name: single-scope <see cref="TryResolveMember"/> resolves members by
-    /// name, so an outer-rooted <c>o.Name</c> would silently bind to the element's <c>Name</c> and return wrong
-    /// rows (cf. <c>NativeSelectManyBinder.ReferencesParameter</c>). Parameters bound by nested lambdas, and EF
-    /// query parameters (themselves <see cref="ParameterExpression"/>s on EF8/EF9, see
+    /// Scope is decided by identity, not name: an outer-rooted <c>o.Name</c> would otherwise silently bind to the
+    /// element's <c>Name</c> and return wrong rows (cf. <c>NativeSelectManyBinder.ReferencesParameter</c>). Parameters
+    /// bound by nested lambdas, and EF query parameters (<see cref="ParameterExpression"/>s on EF8/EF9, see
     /// <see cref="NativeQueryParameter.TryGetQueryParameterName"/>), are not free.
     /// </remarks>
     private static bool ReferencesEnclosingScope(
@@ -231,24 +354,17 @@ internal sealed partial class MongoExpressionTranslator
         return visitor.FoundFreeParameter;
     }
 
-    /// <summary>
-    /// Finds parameters free in the visited expression: not the element parameter, not bound by a nested lambda,
-    /// and not an EF query parameter. See <see cref="ReferencesEnclosingScope"/>.
-    /// </summary>
     private sealed class FreeParameterVisitor(ParameterExpression elementParameter) : ExpressionVisitor
     {
         private readonly List<ParameterExpression> _bound = [elementParameter];
 
-        // Tracked by reference identity so one parameter referenced twice isn't counted as two.
+        // By reference identity, so one parameter referenced twice isn't counted as two.
         private readonly List<ParameterExpression> _distinctFree = [];
 
         public bool FoundFreeParameter { get; private set; }
 
-        /// <summary>
-        /// The sole free parameter, or <see langword="null"/> if there are none or two or more distinct ones. A
-        /// multi-parameter body must not pass a caller's <c>ReferenceEquals(found, expectedScope)</c> check, or the
-        /// second parameter's members would be resolved by name against the element scope (wrong rows).
-        /// </summary>
+        // Null for two or more: a multi-parameter body must not pass a caller's ReferenceEquals check, or the second
+        // parameter's members would resolve by name against the element scope (wrong rows).
         public ParameterExpression? FoundParameter => _distinctFree.Count == 1 ? _distinctFree[0] : null;
 
         protected override Expression VisitLambda<T>(Expression<T> node)
@@ -265,7 +381,7 @@ internal sealed partial class MongoExpressionTranslator
 
             var result = base.VisitLambda(node);
 
-            // Pop only what this lambda actually pushed, so an outer binding of the same instance survives.
+            // Pop only what this lambda pushed, so an outer binding of the same instance survives.
             _bound.RemoveRange(_bound.Count - added, added);
             return result;
         }
@@ -296,7 +412,6 @@ internal sealed partial class MongoExpressionTranslator
         }
     }
 
-    // EF wraps a quantifier's source in one Queryable.AsQueryable(); strip it to expose the member/EF.Property chain.
     private static Expression UnwrapAsQueryable(Expression source)
     {
         if (source is MethodCallExpression { Arguments: [var inner] } call
@@ -309,11 +424,6 @@ internal sealed partial class MongoExpressionTranslator
         return source;
     }
 
-    /// <summary>
-    /// Recognizes <c>Enumerable.Contains(source, item)</c> or an instance <c>Contains(item)</c> on an
-    /// <c>ICollection&lt;T&gt;</c> implementation or a set interface that declares its own <c>Contains</c>
-    /// (<c>IReadOnlySet&lt;T&gt;</c>, <c>IImmutableSet&lt;T&gt;</c>), matched by method shape rather than name alone.
-    /// </summary>
     internal static bool TryMatchContainsMethod(
         MethodCallExpression call,
         [NotNullWhen(true)] out Expression? collection,
@@ -325,8 +435,7 @@ internal sealed partial class MongoExpressionTranslator
         if (call.Method.Name != nameof(Enumerable.Contains))
             return false;
 
-        // Static Enumerable.Contains<TSource>(IEnumerable<TSource>, TSource) — the two-argument form only;
-        // the three-argument IEqualityComparer<TSource> overload has no query-dialect equivalent.
+        // Two-argument form only; the IEqualityComparer overload has no query-dialect equivalent.
         if (call.Method.IsStatic && call.Method.DeclaringType == typeof(Enumerable) && call.Arguments.Count == 2)
         {
             collection = call.Arguments[0];
@@ -334,20 +443,17 @@ internal sealed partial class MongoExpressionTranslator
             return true;
         }
 
-        // Instance ICollection<T>.Contains(item) (List<T>, HashSet<T>, IList<T>, ...), plus the set interfaces that
-        // declare their own Contains. ISet<T> needs no entry: its Contains is inherited from ICollection<T>.
+        // ISet<T> needs no entry: its Contains is inherited from ICollection<T>.
         if (!call.Method.IsStatic && call.Object is not null && call.Arguments.Count == 1)
         {
             var declaringType = call.Method.DeclaringType;
             if (declaringType is { IsGenericType: true })
             {
                 var def = declaringType.GetGenericTypeDefinition();
-                // An explicit whitelist, deliberately: generalizing to "any IEnumerable<T> with a Contains(T)" would also
-                // capture string.Contains(char).
+                // Deliberately a whitelist: "any IEnumerable<T> with a Contains(T)" would capture string.Contains(char).
                 if (def == typeof(List<>) || def == typeof(HashSet<>) || def == typeof(IList<>) || def == typeof(ICollection<>)
                     || def == typeof(IReadOnlySet<>) || def == typeof(IImmutableSet<>)
-                    // EF8 hands these concrete-type instance calls over un-normalized (EF9+ rewrites them to
-                    // Enumerable.Contains before the provider sees them).
+                    // EF8 hands these over un-normalized (EF9+ rewrites them to Enumerable.Contains).
                     || def == typeof(System.Collections.ObjectModel.ReadOnlyCollection<>) || def == typeof(ImmutableHashSet<>))
                 {
                     collection = call.Object;
@@ -361,11 +467,9 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Recognizes <c>string.StartsWith/EndsWith/Contains(string)</c> or <c>(char)</c>, plus the
-    /// <see cref="StringComparison"/> overload for <see cref="StringComparison.Ordinal"/>/
-    /// <see cref="StringComparison.OrdinalIgnoreCase"/> only — the members MongoDB regex can reproduce exactly.
-    /// Culture-sensitive comparisons are left unmatched (the driver-LINQ path silently treats them as ordinal;
-    /// not replicated in a new native path).
+    /// Recognizes <c>string.StartsWith/EndsWith/Contains(string|char)</c> and the <see cref="StringComparison"/> overload
+    /// for Ordinal[IgnoreCase] and CurrentCulture[IgnoreCase] (matched ordinally, as driver-LINQ does: accepted
+    /// divergence). Invariant comparisons are left unmatched.
     /// </summary>
     private static bool TryMatchRegexMethod(
         MethodCallExpression call,
@@ -404,10 +508,12 @@ internal sealed partial class MongoExpressionTranslator
 
             case 2 when call.Arguments[0].Type == typeof(string)
                         && call.Arguments[1] is ConstantExpression { Value: StringComparison comparison }:
-                if (comparison is not (StringComparison.Ordinal or StringComparison.OrdinalIgnoreCase))
+                // D-CULTURE: CurrentCulture[IgnoreCase] is wrong for culture-special data on both paths.
+                if (comparison is not (StringComparison.Ordinal or StringComparison.OrdinalIgnoreCase
+                    or StringComparison.CurrentCulture or StringComparison.CurrentCultureIgnoreCase))
                     return false;
 
-                caseInsensitive = comparison == StringComparison.OrdinalIgnoreCase;
+                caseInsensitive = comparison is StringComparison.OrdinalIgnoreCase or StringComparison.CurrentCultureIgnoreCase;
                 break;
 
             default:
@@ -419,10 +525,7 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    /// <summary>
-    /// A <see langword="char"/> constant or query parameter as a one-character string operand. BSON has no char
-    /// type and the default char serialization is Int32, so string operators need the string form.
-    /// </summary>
+    // BSON has no char type and the default char serialization is Int32, so string operators need the string form.
     private static MongoExpression? TranslateCharAsString(Expression node)
     {
         if (node is ConstantExpression { Value: char ch })
@@ -434,10 +537,7 @@ internal sealed partial class MongoExpressionTranslator
         return null;
     }
 
-    /// <summary>
-    /// Recognizes <c>string.IndexOf(string|char)</c> and <c>IndexOf(string|char, int startIndex)</c> (<c>$indexOfCP</c>,
-    /// code points). <see cref="StringComparison"/> and count overloads fall through.
-    /// </summary>
+    // IndexOf(string|char[, int]) -> $indexOfCP (code points); StringComparison and count overloads fall through.
     private static bool TryMatchIndexOfMethod(
         Expression node,
         [NotNullWhen(true)] out Expression? receiver,
@@ -463,9 +563,6 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    /// <summary>
-    /// Recognizes <c>string.Substring(start[, length])</c> (<c>$substrCP</c>, code points).
-    /// </summary>
     private static bool TryMatchSubstring(
         Expression node, [NotNullWhen(true)] out Expression? receiver, [NotNullWhen(true)] out Expression? start,
         out Expression? length)
@@ -481,10 +578,7 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    /// <summary>
-    /// Recognizes <c>string.Replace(oldValue, newValue)</c> / <c>Replace(oldChar, newChar)</c> (<c>$replaceAll</c>).
-    /// The three-argument <see cref="StringComparison"/>/<see langword="bool"/> overloads fall through.
-    /// </summary>
+    // The three-argument StringComparison/bool overloads fall through.
     private static bool TryMatchReplace(
         Expression node, [NotNullWhen(true)] out Expression? receiver, [NotNullWhen(true)] out Expression? find,
         [NotNullWhen(true)] out Expression? replacement)
@@ -502,16 +596,8 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    /// <summary>
-    /// Recognizes <c>string.Length</c> (<c>x.Name.Length</c>) — the only member the aggregation dialect has a
-    /// dedicated operator for (<c>$strLenCP</c>). A receiver that isn't <see cref="string"/> is left unmatched.
-    /// </summary>
-    /// <remarks>
-    /// <c>$strLenCP</c> counts Unicode code points, whereas .NET counts UTF-16 code units, so a string with a
-    /// surrogate pair (e.g. an emoji) is one shorter per pair than in C#. That matches driver-LINQ, which also
-    /// renders <c>$strLenCP</c> (<c>LengthPropertyToAggregationExpressionTranslator</c>), and the other code-point
-    /// operators used here (<c>$indexOfCP</c>, <c>$substrCP</c>). Pinned by <c>NativeStringLengthTests</c>.
-    /// </remarks>
+    // $strLenCP counts Unicode code points, .NET counts UTF-16 units, so a surrogate pair is one shorter than in C#.
+    // Matches driver-LINQ and the other CP operators; pinned by NativeStringLengthTests.
     private static bool TryMatchStringLength(Expression node, [NotNullWhen(true)] out Expression? receiver)
     {
         receiver = null;
@@ -524,11 +610,8 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    /// <summary>
-    /// Recognizes <c>string.FirstOrDefault()</c>/<c>LastOrDefault()</c>, which bind to the static
-    /// <c>Enumerable.FirstOrDefault&lt;char&gt;(string)</c>/<c>LastOrDefault&lt;char&gt;(string)</c> overloads with no
-    /// cast wrapper. Predicated overloads and non-<see langword="char"/> sources fall through to driver-LINQ.
-    /// </summary>
+    // string.FirstOrDefault()/LastOrDefault() bind to the static Enumerable.*<char>(string) overloads with no cast
+    // wrapper. Predicated overloads and non-char sources fall through.
     private static bool TryMatchStringFirstOrLastMethod(
         MethodCallExpression call,
         out MongoStringFirstOrLastKind kind,
@@ -558,15 +641,13 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Recognizes <c>string.Join(separator, new[] { a, b, c })</c> over a fixed-length array literal of strings and
-    /// expands it at translate time into a <see cref="MongoConcatExpression"/> (<c>$concat</c>) with the separator
-    /// interleaved; there is no native join operator.
+    /// <c>string.Join(separator, new[] { a, b, c })</c> expanded at translate time into a <see cref="MongoConcatExpression"/>
+    /// with the separator interleaved (there is no native join operator).
     /// </summary>
     /// <remarks>
-    /// <c>$concat</c> nulls the whole result on any null operand, whereas .NET treats a null element as empty, so
-    /// each element is wrapped in <see cref="MongoCoalesceExpression"/> against <c>""</c>. Only a
-    /// <see cref="NewArrayExpression"/> argument is admitted (runtime collections have no translate-time arity),
-    /// and only string elements (non-string <c>T</c> would need an untested <c>$toString</c>).
+    /// <c>$concat</c> nulls the whole result on any null operand, whereas .NET treats null as empty, so each element is
+    /// coalesced against <c>""</c>. Only a <see cref="NewArrayExpression"/> of strings is admitted (runtime collections
+    /// have no translate-time arity; non-string elements would need an untested <c>$toString</c>).
     /// </remarks>
     private bool TryTranslateStringJoin(Expression node, [NotNullWhen(true)] out MongoExpression? result)
     {
@@ -584,8 +665,7 @@ internal sealed partial class MongoExpressionTranslator
         if (!TryTranslateValue(call.Arguments[0], out var separator))
             return false;
 
-        // Coalesce the separator too: a null separator would otherwise null the whole $concat, whereas .NET
-        // treats it as empty. Reused at every interleaved position.
+        // Coalesce the separator too: a null one would null the whole $concat.
         separator = new MongoCoalesceExpression(separator, new MongoConstantExpression(string.Empty, forSerialization: null));
 
         var elementsArg = call.Arguments[1];
@@ -620,22 +700,16 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    /// <summary>
-    /// Whether <paramref name="type"/> is one of the framework's own collection types (<c>List&lt;T&gt;</c>,
-    /// <c>HashSet&lt;T&gt;</c>, <c>ImmutableList&lt;T&gt;</c>, …) — whose parameterless constructor is known to produce an
-    /// empty collection — rather than a user-defined one.
-    /// </summary>
+    // Framework collection types have a parameterless constructor known to produce an empty collection; a user type's may not.
     private static bool IsFrameworkCollectionType(Type type)
         => type.Namespace?.StartsWith("System.Collections", StringComparison.Ordinal) == true
            && type.Assembly.GetName().Name is { } assemblyName
            && (assemblyName.StartsWith("System.", StringComparison.Ordinal) || assemblyName == "mscorlib");
 
     /// <summary>
-    /// Translates the collection side of a <c>Contains</c> call into a <see cref="MongoConstantExpression"/>
-    /// (a captured/inline collection) or <see cref="MongoParameterExpression"/> (a query-parameter
-    /// collection), using <paramref name="property"/> as the element serialization context. Returns
-    /// <see langword="null"/> for any other shape, or when the collection's element type does not match
-    /// the property's CLR type.
+    /// Translates the collection side of a <c>Contains</c> call into a constant or query-parameter node, using
+    /// <paramref name="property"/> as the element serialization context. <see langword="null"/> for any other shape or an
+    /// element-type mismatch.
     /// </summary>
     private static MongoExpression? TranslateInValues(Expression collectionExpr, IProperty property)
     {
@@ -648,20 +722,17 @@ internal sealed partial class MongoExpressionTranslator
         var propertyType = property.ClrType.UnwrapNullableType();
         var underlyingElementType = elementType.UnwrapNullableType();
 
-        // An EF-boxed `object[]`/`List<object>` has element type `object`, not the property's CLR type. No static
-        // check needed: each element is coerced through the property's serializer at render/build time
-        // (RenderInValues / MongoPipelineFactory.SerializeParameter), where a wrong-typed element still fails.
+        // An EF-boxed `object[]`/`List<object>` has element type `object`; each element is coerced through the
+        // property's serializer at render/build time, where a wrong-typed element still fails.
         if (underlyingElementType != propertyType && underlyingElementType != typeof(object))
-            return null; // collection element type mismatches the property — not supported
+            return null;
 
         if (unwrapped is ConstantExpression { Value: System.Collections.IEnumerable } constant)
             return new MongoConstantExpression(constant.Value, property);
 
-        // `new List<string>()` inline (EF's Contains_with_local_collection_empty_inline): EF's parameter extraction
-        // leaves an argument-less collection construction as a bare NewExpression rather than folding it to a
-        // constant. For a BCL collection type that is always empty, so it is an empty $in/$nin haystack. Restricted to
-        // the framework's own System.Collections* types: a user collection's parameterless constructor may
-        // pre-populate it, and treating that as empty would silently drop its elements from the match.
+        // `new List<string>()` inline (Contains_with_local_collection_empty_inline): EF leaves it as a bare
+        // NewExpression. Only framework collections are treated as empty: a user collection's parameterless
+        // constructor may pre-populate it, which would silently drop its elements from the match.
         if (unwrapped is NewExpression { Arguments.Count: 0 } emptyCollection
             && typeof(System.Collections.IEnumerable).IsAssignableFrom(emptyCollection.Type)
             && IsFrameworkCollectionType(emptyCollection.Type))
@@ -672,15 +743,13 @@ internal sealed partial class MongoExpressionTranslator
         if (NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var parameterName))
             return new MongoParameterExpression(parameterName, property);
 
-        // EF8 passes an inline array literal as a NewArrayExpression (EF9+ pre-folds it to a constant). Handle the
-        // all-constant case here; anything else falls through to the per-element loop.
+        // EF8 passes an inline array literal as a NewArrayExpression (EF9+ pre-folds it to a constant).
         if (unwrapped is NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray)
         {
             if (TryBuildConstantArray(newArray, elementType, out var values))
                 return new MongoConstantExpression(values, property);
 
-            // `new[] { prm1, prm2 }` with separately captured locals: EF hoists each element as its own query
-            // parameter. Build a MongoValueListExpression of per-element nodes; decline on any computed element.
+            // `new[] { prm1, prm2 }`: EF hoists each captured local as its own query parameter.
             var elements = new MongoExpression[newArray.Expressions.Count];
             for (var i = 0; i < newArray.Expressions.Count; i++)
             {
@@ -695,21 +764,19 @@ internal sealed partial class MongoExpressionTranslator
                 }
                 else
                 {
-                    return null; // unsupported element shape
+                    return null;
                 }
             }
 
             return new MongoValueListExpression(elements);
         }
 
-        return null; // any other node shape (method call, sub-expression, etc.) is not supported
+        return null;
     }
 
     /// <summary>
-    /// Like <see cref="TranslateInValues"/>, but for a <c>Contains</c> whose item is computed (no backing
-    /// <see cref="IProperty"/>), so values are serialized raw (<c>BsonValue.Create</c>). A query-parameter
-    /// collection declines here because <see cref="PlaceholderTable.CreateArrayPlaceholder"/> needs a real element
-    /// serializer.
+    /// Like <see cref="TranslateInValues"/>, but for a computed item (no backing <see cref="IProperty"/>), so values are
+    /// serialized raw (<c>BsonValue.Create</c>).
     /// </summary>
     private static MongoExpression? TranslateInValuesRaw(Expression collectionExpr, Type elementClrType)
     {
@@ -727,21 +794,16 @@ internal sealed partial class MongoExpressionTranslator
         {
             return TryBuildConstantArray(newArray, elementClrType, out var values)
                 ? new MongoConstantExpression(values, forSerialization: null)
-                : null; // non-constant element — not supported
+                : null;
         }
 
-        // A captured local arrives as an EF query parameter. ForSerialization stays null; RenderInValues'
-        // parameter arm falls back to an element serializer keyed on elementClrType.
+        // RenderInValues' parameter arm falls back to an element serializer keyed on elementClrType.
         if (NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var parameterName))
             return new MongoParameterExpression(parameterName, forSerialization: null, rawElementType: elementClrType);
 
-        return null; // any other shape is not supported for a computed needle
+        return null;
     }
 
-    /// <summary>
-    /// Folds an inline array literal whose every element is a constant into an <see cref="Array"/> of
-    /// <paramref name="elementType"/>; declines on the first non-constant element.
-    /// </summary>
     private static bool TryBuildConstantArray(
         NewArrayExpression newArray, Type elementType, [NotNullWhen(true)] out Array? values)
     {
@@ -761,21 +823,13 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Translates the item of <c>arrayField.Contains(constant)</c> to a <see cref="MongoConstantExpression"/>
-    /// serialized through the array's element serializer. Returns <see langword="null"/> if that can't be done
-    /// correctly.
+    /// Translates the item of <c>arrayField.Contains(constant)</c>, serialized through the array's element serializer
+    /// (<see cref="IBsonArraySerializer.TryGetItemSerializationInfo"/>) so element-level representation is honored;
+    /// <paramref name="arrayProperty"/> itself as context would coerce the scalar to the whole collection type.
+    /// <see langword="null"/> when that can't be done correctly (e.g. a whole-collection converter's serializer).
     /// </summary>
-    /// <remarks>
-    /// Using <paramref name="arrayProperty"/> as the serialization context would coerce the scalar to the whole
-    /// collection type. Instead the element serializer comes from
-    /// <see cref="IBsonArraySerializer.TryGetItemSerializationInfo"/> on the property's serializer, so element-level
-    /// representation is honored. A whole-collection value converter's serializer isn't an
-    /// <see cref="IBsonArraySerializer"/>, so this declines rather than mis-serializing. The value is rendered
-    /// eagerly because translate and render happen in the same compile-time phase for native queries.
-    /// </remarks>
     private static MongoConstantExpression? TranslateArrayContainsItem(Expression itemExpr, IProperty arrayProperty)
     {
-        // Only a constant item is supported (a parameterized item falls through and declines).
         if (itemExpr is not ConstantExpression constant)
             return null;
 
@@ -783,7 +837,6 @@ internal sealed partial class MongoExpressionTranslator
         if (elementType is null)
             return null;
 
-        // Defensive: the compiler already guarantees this for EF trees; guards hand-built ones.
         var underlyingElementType = elementType.UnwrapNullableType();
         var underlyingItemType = itemExpr.Type.UnwrapNullableType();
         if (underlyingItemType != underlyingElementType)
@@ -797,7 +850,7 @@ internal sealed partial class MongoExpressionTranslator
         if (arrayInfo.Serializer is not IBsonArraySerializer arraySerializer
             || !arraySerializer.TryGetItemSerializationInfo(out var itemInfo))
         {
-            return null; // e.g. a whole-collection value converter — no per-element serializer to resolve.
+            return null;
         }
 
         try
@@ -813,23 +866,17 @@ internal sealed partial class MongoExpressionTranslator
         }
     }
 
-    /// <summary>
-    /// Zero-arg <c>ToString()</c> on an integral receiver, whose <c>$toString</c> output matches .NET's invariant
-    /// integer formatting. Floating-point, decimal, bool and date receivers decline: <c>$toString</c> formats them
-    /// differently from .NET.
-    /// </summary>
+    // Integral receivers only: $toString formats floating-point, decimal, bool and date differently from .NET.
     private static bool TryMatchIntegralToString(Expression node, [NotNullWhen(true)] out Expression? receiver)
     {
         receiver = null;
         if (node is not MethodCallExpression { Method.Name: nameof(ToString), Object: { } obj, Arguments.Count: 0 })
             return false;
 
-        // Unsigned types are admitted because their default serializers store them exactly: uint/ushort as Int32,
-        // ulong as Int64, and a uint above int.MaxValue or a ulong above long.MaxValue is rejected at SaveChanges
-        // (overflow) rather than wrapped, so $toString never sees a wrapped negative (pinned by
-        // NativeComputedReceiverRegexTests). A non-default serialization declines at the call site
-        // (AllFieldsDefaultSerialized).
-        // IsIntegerType unwraps Nullable<T>, but a nullable receiver (Nullable<T>.ToString()) declines here.
+        // Unsigned types are admitted: their default serializers store them exactly (overflow is rejected at
+        // SaveChanges, not wrapped), so $toString never sees a wrapped negative (NativeComputedReceiverRegexTests).
+        // A non-default serialization declines at the call site (AllFieldsDefaultSerialized).
+        // IsIntegerType unwraps Nullable<T>, so a nullable receiver is declined explicitly.
         var type = obj.Type;
         if (type.IsNullableValueType() || !IsIntegerType(type))
             return false;
@@ -838,10 +885,7 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    /// <summary>
-    /// <c>string.Concat(string, string[, string[, string]])</c>: same semantics as the <c>+</c> operator, so the
-    /// operands go through <see cref="TranslateConcatOperand"/>. Object/array/span overloads decline.
-    /// </summary>
+    // string.Concat(string, string[, string[, string]]) has the semantics of `+` (TranslateConcatOperand); object/array/span overloads decline.
     private MongoExpression? TryTranslateStringConcatMethod(Expression node, bool allowNumericWidening)
     {
         if (node is not MethodCallExpression { Method.IsStatic: true } call

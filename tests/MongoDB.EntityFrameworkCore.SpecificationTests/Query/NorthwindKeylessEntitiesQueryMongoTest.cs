@@ -14,7 +14,6 @@ public class NorthwindKeylessEntitiesQueryMongoTest : NorthwindKeylessEntitiesQu
         : base(fixture)
     {
         ClearLog();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -158,7 +157,12 @@ Customers.{ "$group" : { "_id" : "$City", "Count" : { "$sum" : 1 }, "Sum" : { "$
 
     public override async Task Collection_correlated_with_keyless_entity_in_predicate_works(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_correlated_with_keyless_entity_in_predicate_works(async));
+        await base.Collection_correlated_with_keyless_entity_in_predicate_works(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Customers", "localField" : "City", "foreignField" : "City", "as" : "_lookup_Customer_City_City" } }, { "$match" : { "_lookup_Customer_City_City.0" : { "$exists" : true } } }, { "$sort" : { "ContactName" : 1 } }, { "$limit" : 2 }, { "$project" : { "City" : "$City", "ContactName" : "$ContactName", "_id" : 0 } }
+""");
     }
 
     public override async Task Auto_initialized_view_set(bool async)

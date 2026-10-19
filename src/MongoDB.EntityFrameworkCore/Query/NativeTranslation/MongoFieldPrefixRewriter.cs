@@ -24,19 +24,15 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// path, e.g. <c>Total</c> → <c>_lookup_Refs.Total</c> for a reference SelectMany's unwound element.
 /// </summary>
 /// <remarks>
-/// Declines, never throws, on an unhandled node kind, so a node kind added to <c>TryTranslateValue</c> without an
-/// arm here falls back rather than crashing every <c>MongoQueryMode</c>. <c>MongoExpressionNodeCoverageTests</c>
-/// pins which kinds reach the decline.
+/// Declines, never throws, on an unhandled node kind, so a kind added to <c>TryTranslateValue</c> without an arm here
+/// falls back rather than crashing. <c>MongoExpressionNodeCoverageTests</c> pins which kinds reach the decline.
 /// </remarks>
 internal static class MongoFieldPrefixRewriter
 {
     /// <summary>
-    /// Prefixes every document path in <paramref name="expr"/> with <paramref name="prefix"/>, or returns
-    /// <see langword="false"/> if the tree contains a node kind with no prefixing rule.
+    /// Prefixes every document path in <paramref name="expr"/>, or returns <see langword="false"/> for a node kind with no
+    /// prefixing rule. The recursion throws internally to decline; the throw is caught here.
     /// </summary>
-    /// <remarks>
-    /// The recursion uses a throw as its internal decline channel, caught here; it never escapes this class.
-    /// </remarks>
     public static bool TryRewrite(MongoExpression expr, string prefix, [NotNullWhen(true)] out MongoExpression? result)
     {
         try
@@ -77,8 +73,14 @@ internal static class MongoFieldPrefixRewriter
             // Required: an owned SelectMany's inner filter can contain a count
             // (SelectMany(b => b.Posts.Where(p => p.Comments.Count > 1), …)).
             MongoSizeExpression s => new MongoSizeExpression(prefix + "." + s.FieldName, s.Type, s.NullSafe),
+            MongoDictionaryEntryExpression d => new MongoDictionaryEntryExpression(d.DictionaryProperty, prefix + "." + d.Path, d.Type),
+            MongoFieldPresenceExpression p => new MongoFieldPresenceExpression(prefix + "." + p.Path, p.Kind, p.PathMayBeArray),
+            MongoDictionaryContainsKeyExpression k => new MongoDictionaryContainsKeyExpression(prefix + "." + k.Path, k.Negated),
             // Array path only; the element predicate is relative to the $filter variable.
             MongoFilteredSizeExpression f => new MongoFilteredSizeExpression(prefix + "." + f.ArrayPath, f.ElementPredicate, f.Type),
+            // Array path only; the element expression is relative to the $map variable.
+            MongoMappedArrayReduceExpression m => new MongoMappedArrayReduceExpression(
+                m.OperatorName, prefix + "." + m.ArrayPath, m.ElementExpression, m.Type),
             MongoConvertExpression c => new MongoConvertExpression(Rewrite(c.Operand, prefix), c.Type),
             MongoNumericTypeBracketExpression b => new MongoNumericTypeBracketExpression(
                 (MongoFieldExpression)Rewrite(b.Field, prefix)),

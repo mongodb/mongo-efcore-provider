@@ -20,24 +20,17 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// <summary>An <c>$unwind</c> aggregation stage over a lookup's array field.</summary>
 internal sealed class MongoUnwindStage : MongoPipelineStage
 {
-    /// <summary>Creates a <see cref="MongoUnwindStage"/>.</summary>
-    /// <param name="lookup">The lookup expression that specifies which array field to unwind.</param>
-    /// <param name="preserveNullAndEmptyArrays">
-    /// Whether a document with no match is kept (left-join) or dropped (inner-join, e.g. a reference SelectMany).
-    /// Defaults to <see langword="true"/> (the conservative choice). The reference-Include <c>$unwind</c> passes
-    /// <see cref="LookupExpression.PreserveNullAndEmptyArrays"/>, which follows the navigation's requiredness.
-    /// </param>
     public MongoUnwindStage(LookupExpression lookup, bool preserveNullAndEmptyArrays = true)
     {
         Lookup = lookup;
         PreserveNullAndEmptyArrays = preserveNullAndEmptyArrays;
     }
 
-    /// <summary>The lookup whose array field is unwound.</summary>
     public LookupExpression Lookup { get; }
 
     /// <summary>
-    /// Whether a document with no match is kept (<see langword="true"/>, left-join) or dropped (inner-join).
+    /// Whether a document with no match is kept (left-join) or dropped (inner-join, e.g. a reference SelectMany).
+    /// Reference-Include passes <see cref="LookupExpression.PreserveNullAndEmptyArrays"/> (the navigation's requiredness).
     /// </summary>
     public bool PreserveNullAndEmptyArrays { get; }
 }

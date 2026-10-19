@@ -29,16 +29,11 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// multi-member, <c>!=</c> and <c>Tuple.Create(...)</c> spellings).
 /// </summary>
 /// <remarks>
-/// Without this the comparison declines (no <see cref="NewExpression"/> case in <see cref="TranslateOperand"/>)
-/// and falls back to driver-LINQ. Like the driver, each tuple becomes an MQL array of its elements compared
-/// with <c>$eq</c>/<c>$ne</c>, each element translated via <see cref="TranslateOperand"/>.
-/// <para>
-/// <c>Tuple.Create(a, b)</c> arrives as a <see cref="MethodCallExpression"/>. When it has no free reference to
-/// the query source, EF's parameter extraction funcletizes it into a <see cref="ConstantExpression"/> holding
-/// the whole <see cref="ITuple"/> (measured), decomposed here into per-element constants; a whole-tuple query
-/// parameter is handled defensively by per-element <see cref="MongoParameterExpression"/>s that
-/// <see cref="MongoPipelineFactory"/> indexes positionally at execution.
-/// </para>
+/// Like the driver, each tuple becomes an MQL array of its elements compared with <c>$eq</c>/<c>$ne</c>. A
+/// <c>Tuple.Create(a, b)</c> with no free reference to the query source is funcletized by EF into a
+/// <see cref="ConstantExpression"/> holding the whole <see cref="ITuple"/>; a whole-tuple query parameter is handled
+/// defensively by per-element <see cref="MongoParameterExpression"/>s that <see cref="MongoPipelineFactory"/> indexes
+/// positionally at execution.
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
@@ -80,12 +75,10 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Replaces, in place, each constant/parameter element of <paramref name="elements"/> that
-    /// <see cref="NativeSlotPopulator.TryProbeBareValueRenders"/> says <c>BsonValue.Create</c> cannot serialize
-    /// (<see cref="Guid"/>, ...) with a copy bound to the <see cref="IProperty"/> of the
-    /// <see cref="MongoFieldExpression"/> at the same position in <paramref name="others"/>, so it serializes through
-    /// the property's serializer. Returns <see langword="false"/> when such an element has no field counterpart.
-    /// Elements <c>BsonValue.Create</c> handles are left untouched, so the MQL of already-working tuples is unchanged.
+    /// Rebinds, in place, each constant/parameter element that <c>BsonValue.Create</c> cannot serialize
+    /// (<see cref="NativeSlotPopulator.TryProbeBareValueRenders"/>; <see cref="Guid"/>, ...) to the <see cref="IProperty"/>
+    /// of the field at the same position in <paramref name="others"/>. Returns <see langword="false"/> when such an
+    /// element has no field counterpart. Elements <c>BsonValue.Create</c> handles are left untouched.
     /// </summary>
     private static bool TryRebindUnserializableElements(MongoExpression[] elements, MongoExpression[] others)
     {
@@ -117,18 +110,9 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    /// <summary>
-    /// Whether <paramref name="type"/> is a <see cref="Tuple"/> or <see cref="ValueTuple"/> type (both implement
-    /// <see cref="ITuple"/>).
-    /// </summary>
     private static bool IsTupleType(Type type)
         => typeof(ITuple).IsAssignableFrom(type);
 
-    /// <summary>
-    /// Decomposes one side of a tuple comparison into per-element <see cref="MongoExpression"/>s: a
-    /// <see cref="NewExpression"/>, a <c>Tuple.Create(...)</c> call, a funcletized <see cref="ConstantExpression"/>,
-    /// or a whole-tuple query parameter.
-    /// </summary>
     private bool TryDecomposeTupleOperand(Expression operand, out MongoExpression[] elements)
     {
         switch (operand)
@@ -139,7 +123,7 @@ internal sealed partial class MongoExpressionTranslator
             case MethodCallExpression call when IsTupleCreateCall(call):
                 return TryTranslateTupleArguments(call.Arguments, out elements);
 
-            // A funcletized Tuple.Create(...) with no free reference to the query source (the measured shape).
+            // A funcletized Tuple.Create(...) (the common shape).
             case ConstantExpression { Value: ITuple tupleValue }:
             {
                 var constantElements = new MongoExpression[tupleValue.Length];
@@ -151,8 +135,7 @@ internal sealed partial class MongoExpressionTranslator
             }
 
             default:
-                // Defensive: a whole-tuple query parameter. One MongoParameterExpression per element
-                // (ArrayElementIndex 0..n-1); MongoPipelineFactory extracts each position from the runtime ITuple.
+                // Defensive: a whole-tuple query parameter; MongoPipelineFactory extracts each ArrayElementIndex from the ITuple.
                 if (NativeQueryParameter.TryGetQueryParameterName(operand, out var parameterName))
                 {
                     var elementTypes = operand.Type.GetGenericArguments();
@@ -192,9 +175,6 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    /// <summary>
-    /// Whether <paramref name="call"/> is one of the generic <see cref="Tuple"/>.Create overloads.
-    /// </summary>
     private static bool IsTupleCreateCall(MethodCallExpression call)
         => call.Method is { IsStatic: true, IsGenericMethod: true, Name: nameof(Tuple.Create) }
             && call.Method.DeclaringType == typeof(Tuple);

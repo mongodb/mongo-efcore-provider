@@ -70,7 +70,6 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
     {
         var collection = SeedRange(nameof(Native_query_inside_transaction_returns_correct_rows_and_parity), 6);
 
-        // Values 0..5; Where(Value >= 2) ordered ascending => L00002, L00003, L00004, L00005.
         var expected = new[] { "L00002", "L00003", "L00004", "L00005" };
 
         List<string> RunInTransaction(MongoQueryMode mode)

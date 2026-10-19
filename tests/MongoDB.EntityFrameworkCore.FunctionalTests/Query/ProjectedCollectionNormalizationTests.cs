@@ -69,7 +69,6 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
     private static readonly Action<ModelBuilder> SetBlogModel = mb =>
         mb.Entity<SetBlog>().OwnsMany(b => b.Posts, p => p.OwnsMany(x => x.Comments));
 
-    // Generic over the root type so Blog and SetBlog share one helper.
     private static SingleEntityDbContext<T> CreateContext<T>(
         IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder> model) where T : class
         => SingleEntityDbContext.Create(
@@ -134,7 +133,6 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
     [Fact]
     public void Bare_count_projection_returns_zero_for_a_missing_or_null_array()
     {
-        // A bare Count over a missing/null array must return 0 rather than throw ArgumentNullException.
         var collection = Seed(nameof(Bare_count_projection_returns_zero_for_a_missing_or_null_array));
 
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })

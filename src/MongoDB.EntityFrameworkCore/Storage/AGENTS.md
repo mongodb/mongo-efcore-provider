@@ -38,14 +38,5 @@ Only Storage may call the driver client/collection/session types directly.
   translation delegates are invoked per execution (translation is parameter-value-dependent);
   `TranslateBulkOrThrow` maps failures to EF's canonical "could not be translated".
 - **Serializers come from `BsonSerializerFactory`** (`MongoUpdate.WriteProperty`); a `BsonWriter`/`BsonReader` here is
-  almost certainly a layering mistake. Storage reads metadata, never writes annotations.
-- **Queryable Encryption auto-schema is injected at client construction** in `MongoClientWrapper`;
-  `MongoOptionsExtension` (Infrastructure) builds the client.
-- **`MongoTypeMappingSource` has `#if EF8 || EF9` branches** (EF10 reworked dictionary-comparer signatures); must
-  compile on all three.
-- `MongoDatabaseWrapper` and `IMongoClientWrapper` are not meant to be implemented by users.
-
-## Testing
-
-`tests/…UnitTests/Storage/`; `…FunctionalTests/Storage/` (transactions, EnsureCreated, indexes) and `…/Update/`
-(SaveChanges states, concurrency, owned entities); filter `FullyQualifiedName~Storage|FullyQualifiedName~Update`.
+  almost certainly a layering mistake.
+- **Queryable Encryption auto-schema is injected at client construction** in `MongoClientWrapper`.

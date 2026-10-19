@@ -142,7 +142,7 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         using var db = SingleEntityDbContext.Create(collection, modelBuilderAction: mb =>
             mb.Entity<DateTimeOffsetEntity>().Property(e => e.DateTimeOffset).HasBsonRepresentation(BsonType.String));
 
-        Assert.Throws<NotSupportedException>(() => db.Entities.Select(e => e.DateTimeOffset.DateTime).Single());
+        TestQueryMode.AssertRefusal<NotSupportedException>(() => db.Entities.Select(e => e.DateTimeOffset.DateTime).Single());
     }
 
     [Fact]
@@ -154,7 +154,7 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
             mb.Entity<DateTimeOffsetEntity>().Property(e => e.DateTimeOffset)
                 .HasConversion(v => v.Ticks, v => new DateTimeOffset(v, TimeSpan.Zero)));
 
-        Assert.Throws<NotSupportedException>(() => db.Entities.Select(e => e.DateTimeOffset.DateTime).Single());
+        TestQueryMode.AssertRefusal<NotSupportedException>(() => db.Entities.Select(e => e.DateTimeOffset.DateTime).Single());
     }
 
     [Fact]

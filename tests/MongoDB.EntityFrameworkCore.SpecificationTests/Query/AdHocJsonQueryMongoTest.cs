@@ -59,7 +59,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : { "$lt" : 4 } } }
+            Entities.{ "$match" : { "_id" : { "$lt" : 4 } } }, { "$project" : { "Id" : "$_id", "OptionalReference" : "$OptionalReference", "RequiredReference" : "$RequiredReference", "Collection" : "$Collection", "_id" : "$_id" } }
             """);
     }
 
@@ -82,7 +82,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 4 } }
+            Entities.{ "$match" : { "_id" : 4 } }, { "$project" : { "Id" : "$_id", "RequiredReference" : "$RequiredReference", "_id" : "$_id" } }
             """);
     }
 
@@ -104,6 +104,14 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
     public override async Task Project_missing_required_navigation(bool async)
     {
         // Fails: Entity id=5 has no RequiredReference field EF-X005
+        // A bare owned-reference leaf is not a native projection (main threw here too): NativeOnly refuses it.
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Project_missing_required_navigation(async));
+            AssertMql();
+            return;
+        }
+
         Assert.Contains(
             "Field 'RequiredReference' required but not present",
             (await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -134,6 +142,14 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
     public override async Task Project_null_required_navigation(bool async)
     {
         // Fails: NestedRequiredReference is null in BsonDocument for entity id=6 EF-X005
+        // A bare owned-reference leaf is not a native projection (main threw here too): NativeOnly refuses it.
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Project_null_required_navigation(async));
+            AssertMql();
+            return;
+        }
+
         Assert.Contains(
             "Field 'NestedRequiredReference' required but not present",
             (await Assert.ThrowsAsync<InvalidOperationException>(

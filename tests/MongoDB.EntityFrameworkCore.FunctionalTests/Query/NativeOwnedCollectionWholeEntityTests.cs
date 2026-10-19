@@ -82,8 +82,6 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
                 new BsonDocument { { "Heading", p.heading }, { "Rank", p.rank } })) }
         };
 
-    // Runs the query under NativeOnly (routing proof) and under Native vs DriverLinq (parity), returning
-    // the NativeOnly result for the caller to assert values on.
     private List<Blog> AssertNativeAndParity(IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
     {
         List<Blog> nativeOnly;
@@ -147,8 +145,6 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
         Assert.Equal(["b"], blog.Posts.Select(p => p.Heading));
     }
 
-    // ── Mixed owned reference + owned collection on the same entity ──
-
     private class Shop
     {
         public ObjectId Id { get; set; }
@@ -198,8 +194,6 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
         Assert.Equal("NYC", shopD.Address.City);
         Assert.Equal(["A1", "B2"], shopD.Items.Select(i => i.Sku));
     }
-
-    // ── Nested owned reference inside a collection element ──
 
     private class Team
     {
@@ -251,8 +245,6 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
         Assert.Equal(["Ann", "Bob"], teamD.Members.Select(m => m.Name));
         Assert.Equal(["X1", "X2"], teamD.Members.Select(m => m.Badge.Code));
     }
-
-    // ── Collection-of-collection: still correct, via DOM (streaming-ineligible) ──
 
     private class Library
     {

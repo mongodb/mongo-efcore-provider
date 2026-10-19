@@ -732,7 +732,6 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         var result = NativeModeAssert.NativeAndParity(Run);
         Assert.Equal([9, 10], result.Select(r => r.L));
 
-        // An owner with no pet: its inner side is missing.
         database.MongoDatabase.GetCollection<JoinOwner>(owners).InsertOne(new JoinOwner { Id = "o3", Name = "C" });
         AssertThrowsNullableObjectMustHaveAValue(mode => Run(mode));
     }

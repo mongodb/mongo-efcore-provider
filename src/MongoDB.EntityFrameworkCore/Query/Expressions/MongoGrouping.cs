@@ -38,17 +38,15 @@ internal sealed class MongoGrouping(
 /// <param name="Name">The key part's name, or null for a scalar key.</param>
 /// <param name="FieldRef">The keyed value.</param>
 /// <param name="ThrowsOnNull">
-/// A projected Distinct's key part carried from its projection's <see cref="MongoProjection.ThrowsOnNull"/>: the value
-/// is a null-propagated scalar behind a non-nullable type. Operators resolving the flattened alias (through
-/// <c>MongoExpressionTranslator.DistinctAliasScope</c>, which sees only this grouping) mark their element reference
-/// with it.
+/// Carried from the projection's <see cref="MongoProjection.ThrowsOnNull"/> for a projected Distinct's key part.
+/// Operators resolving the flattened alias (through <c>MongoExpressionTranslator.DistinctAliasScope</c>, which sees only
+/// this grouping) mark their element reference with it.
 /// </param>
 /// <param name="MarksMissing">
-/// A named key part over a value that may be MISSING (<c>NonNullableValueRead.DefaultOnMalformedMissing</c>: a projected
-/// Distinct's <c>x.Rank > 1 ? -1 : x.Rank</c>). The <c>$group</c> <c>_id</c> also carries
-/// <c>&lt;Name&gt;</c><see cref="MissingMarkerSuffix"/>: <c>{ $eq: [ { $type: value }, "missing" ] }</c>, since an
-/// <c>_id</c> whose only sub-key is MISSING answers <c>{ Name: null }</c>, one group with an explicit null. With the
-/// marker a missing and a null value form two groups, as driver-LINQ's grouping on the projected document did, and the
+/// A named key part over a value that may be MISSING (<c>NonNullableValueRead.DefaultOnMalformedMissing</c>). The
+/// <c>$group</c> <c>_id</c> also carries <c>&lt;Name&gt;</c><see cref="MissingMarkerSuffix"/>
+/// (<c>{ $eq: [ { $type: value }, "missing" ] }</c>), since an <c>_id</c> whose only sub-key is MISSING answers
+/// <c>{ Name: null }</c>. With the marker a missing and a null value form two groups, as in driver-LINQ, and the
 /// flatten restores MISSING from it.
 /// </param>
 internal sealed record MongoGroupingKeyPart(

@@ -39,7 +39,6 @@ public sealed class AutoCompleteSearchIndexBuilder(SearchIndexAutoCompleteDefini
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/"/>.
     /// </remarks>
     /// <param name="analyzerName">The name of a well-known or custom analyzer.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AutoCompleteSearchIndexBuilder UseAnalyzer(string analyzerName)
     {
         definition.AnalyzerName = analyzerName;
@@ -54,7 +53,6 @@ public sealed class AutoCompleteSearchIndexBuilder(SearchIndexAutoCompleteDefini
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/"/>.
     /// </remarks>
     /// <param name="analyzer">The well-known analyzer to use, as defined by <see cref="BuiltInSearchAnalyzer"/>.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AutoCompleteSearchIndexBuilder UseAnalyzer(BuiltInSearchAnalyzer analyzer)
         => UseAnalyzer(SearchIndexBuilder.ToAnalyzerName(analyzer));
 
@@ -66,7 +64,6 @@ public sealed class AutoCompleteSearchIndexBuilder(SearchIndexAutoCompleteDefini
     /// the size of the index can become very large. We recommend the default value of 2 for edgeGram only.
     /// </remarks>
     /// <param name="minGrams">The minimum number of characters per indexed sequence.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AutoCompleteSearchIndexBuilder WithMinGrams(int minGrams)
     {
         definition.MinGrams = minGrams;
@@ -81,7 +78,6 @@ public sealed class AutoCompleteSearchIndexBuilder(SearchIndexAutoCompleteDefini
     /// MongoDB Search truncates the tokens to the maxGrams length.
     /// </remarks>
     /// <param name="maxGrams">The maximum number of characters per indexed sequence.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AutoCompleteSearchIndexBuilder WithMaxGrams(int maxGrams)
     {
         definition.MaxGrams = maxGrams;
@@ -99,7 +95,6 @@ public sealed class AutoCompleteSearchIndexBuilder(SearchIndexAutoCompleteDefini
     /// strings with or without diacritics in the query. For example, a search for cafè returns results only with the
     /// characters cafè. A search for cafe returns results only with the characters cafe.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AutoCompleteSearchIndexBuilder FoldDiacritics(bool normalize)
     {
         definition.FoldDiacritics = normalize;
@@ -114,7 +109,6 @@ public sealed class AutoCompleteSearchIndexBuilder(SearchIndexAutoCompleteDefini
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/tokenizers/"/>.
     /// </remarks>
     /// <param name="tokenization">The <see cref="SearchTokenization"/> to use.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AutoCompleteSearchIndexBuilder WithTokenization(SearchTokenization tokenization)
     {
         definition.Tokenization = tokenization;
@@ -129,7 +123,6 @@ public sealed class AutoCompleteSearchIndexBuilder(SearchIndexAutoCompleteDefini
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/score/get-details/#std-label-fts-similarity-algorithms"/>
     /// </remarks>
     /// <param name="similarityAlgorithm">The <see cref="SearchSimilarityAlgorithm"/> to use.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public AutoCompleteSearchIndexBuilder UseSimilarity(SearchSimilarityAlgorithm similarityAlgorithm)
     {
         definition.SimilarityAlgorithm = similarityAlgorithm;

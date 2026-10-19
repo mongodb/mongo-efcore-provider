@@ -84,7 +84,6 @@ public class NativeModeAssertTests(TemporaryDatabaseFixture database) : IClassFi
             null, ["missing", "null"],
             1, ["one"]);
 
-        // Exactly one compilation proves the second run reused the cached plan.
         Assert.Equal(1, compilations);
     }
 

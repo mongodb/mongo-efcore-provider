@@ -41,7 +41,6 @@ public class NativePipelineExecutionTests(TemporaryDatabaseFixture database)
     [Fact]
     public void NativePipeline_match_stage_returns_correct_BsonDocuments()
     {
-        // Arrange: seed a collection with a few entities
         var collection = database.CreateCollection<Customer>();
         collection.InsertMany([
             new Customer { Id = ObjectId.GenerateNewId(), Name = "Alice", Score = 10 },
