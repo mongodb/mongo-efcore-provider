@@ -245,7 +245,7 @@ Rendering (null/missing/dialect semantics):
     (it would decline `Min`/`Max`/`Average`/group keys over every `x.A + x.B`).
   - `ThrowOnNull`: every operator between a null and the leaf propagates it (`Length`/`IndexOf`, date operator over a
     nullable date, `x.Score.Value + 1`): read as `T?`; an operator that may absorb the null declines. Group
-    keys/accumulators over a date operator still read `0` (EF-461).
+    keys/accumulators over a date operator over a nullable date decline (EF-461); `x.Score.Value + 1` there still reads `0`.
   - `ThrowOnMalformedNull`: computed leaf over a non-nullable field (`x.Rank + 1`), null only when a document omits the
     field: strict on the `Projection` route; read side only (emit-side callers treat it as `Plain`).
   - `DefaultOnMalformedMissing`: the leaf selects the field itself through `$cond`/`$ifNull` (`x.Rank > 1 ? -1 : x.Rank`):
