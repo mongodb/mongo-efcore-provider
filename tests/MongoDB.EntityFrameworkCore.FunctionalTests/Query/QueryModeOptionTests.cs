@@ -15,6 +15,7 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -31,10 +32,11 @@ public class QueryModeOptionTests
     }
 
     [Fact]
-    public void QueryMode_on_fresh_extension_defaults_to_Native()
+    public void QueryMode_on_fresh_extension_defaults_to_the_process_default()
     {
+        // Native unless MONGODB_EF_QUERY_MODE / MONGODB_EF_NATIVE_ONLY overrides the process-wide default.
         var ext = new MongoOptionsExtension();
-        Assert.Equal(MongoQueryMode.Native, ext.QueryMode);
+        Assert.Equal(TestQueryMode.Current, ext.QueryMode);
     }
 
     [Fact]
@@ -60,7 +62,7 @@ public class QueryModeOptionTests
     [Fact]
     public void WithQueryMode_does_not_mutate_original()
     {
-        var original = new MongoOptionsExtension();
+        var original = new MongoOptionsExtension().WithQueryMode(MongoQueryMode.Native);
         var clone = original.WithQueryMode(MongoQueryMode.DriverLinq);
 
         Assert.Equal(MongoQueryMode.Native, original.QueryMode);
@@ -88,7 +90,8 @@ public class QueryModeOptionTests
     [Fact]
     public void Differing_query_mode_yields_distinct_service_provider_hash_and_not_same_provider()
     {
-        var native = new MongoOptionsExtension().WithConnectionString("mongodb://localhost");
+        var native = new MongoOptionsExtension().WithConnectionString("mongodb://localhost")
+            .WithQueryMode(MongoQueryMode.Native);
         var driverLinq = native.WithQueryMode(MongoQueryMode.DriverLinq);
 
         Assert.NotEqual(native.Info.GetServiceProviderHashCode(), driverLinq.Info.GetServiceProviderHashCode());
@@ -98,7 +101,7 @@ public class QueryModeOptionTests
     [Fact]
     public void LogFragment_omits_query_mode_when_native_and_includes_when_not()
     {
-        var native = new MongoOptionsExtension();
+        var native = new MongoOptionsExtension().WithQueryMode(MongoQueryMode.Native);
         var driverLinq = native.WithQueryMode(MongoQueryMode.DriverLinq);
 
         Assert.DoesNotContain("QueryMode", native.Info.LogFragment);

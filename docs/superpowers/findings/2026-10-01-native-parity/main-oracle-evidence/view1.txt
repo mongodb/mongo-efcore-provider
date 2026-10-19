@@ -1,0 +1,628 @@
+
+### A post-group OrderBy/Skip/Take   [covered: new 3.1]
+== NativeGroupByTests.cs:2502 GroupBy_Select_then_Skip_0_take_0_unaffected_by_pending_paging_carveout
+   RES GroupBy_Select_then_Skip_0_take_0_unaffected_by_pending_paging_carveout Passed @ 
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          Total = g             .Count()      })     .Skip(@p)     .Take(@p)' could not be translated. Either rewrite the query in a form that can be translat
+== NativeGroupByTests.cs:3333 Post_group_order_by_declines_cleanly
+   RES Post_group_order_by_declines_cleanly Failed @NativeGroupByTests.cs:line 3334 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .OrderBy(x => x.N) .ThenBy(x => x.Land)' could not be translated. Either rewrite the query in a form th
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .OrderBy(x => x.N)     .ThenBy(x => x.Land)' could not be translated. Either rewrite the query in a form tha
+== NativeGroupByOverJoinTests.cs:583 Ordering_after_an_inner_side_where_and_a_navigation_group_declines_cleanly
+   RES Ordering_after_an_inner_side_where_and_a_navigation_group_declines_cleanly Failed @NativeGroupByOverJoinTests.cs:line 586 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .Where(o => o.Owner.Name != "Cara") .GroupBy(o => o.Owner.Region) .Select(g => new { Key = g.Key, Count = g .Count() }) .OrderByDescending(x => x.Count)' could not be translated. 
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .Where(o => o.Owner.Name != "Cara")     .GroupBy(o => o.Owner.Region)     .Select(g => new {          Key = g.Key,          Count = g             .Count()      })     .OrderByDescending(x => x.Count)' could not be translated. E
+
+### B ops after nested GroupBy   [covered: 3.2]
+== NativeGroupByTests.cs:3366 Post_group_where_after_a_nested_group_by_declines_cleanly
+   RES Post_group_where_after_a_nested_group_by_declines_cleanly Failed @NativeGroupByTests.cs:line 3368 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { Key = g.Key, M = g .Count() }) .Where(x => x.M > 1)' could not be
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          Key = g.Key,          M = g             .Count()      }) 
+== NativeGroupByTests.cs:3385 Post_group_terminal_aggregate_predicate_after_a_nested_group_by_declines_cleanly
+   RES Post_group_terminal_aggregate_predicate_after_a_nested_group_by_declines_cleanly Failed @NativeGroupByTests.cs:line 3391 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { Key = g.Key, M = g .Count() }) .All(x => x.M > 0)' could not be t
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          Key = g.Key,          M = g             .Count()      }) 
+
+### C >2 grouping levels / paging between levels   [covered: 3.3]
+== NativeGroupByTests.cs:2145 Nested_GroupBy_after_first_level_paging_declines_instead_of_dropping_the_paging
+   RES Nested_GroupBy_after_first_level_paging_declines_instead_of_dropping_the_paging Failed @NativeGroupByTests.cs:line 2121 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .OrderBy(g => g.Key) .Skip(@p) .Select(g => new { Key = g.Key, C = g .Count() }) .GroupBy(x => x.C) .Select(g => new { Key = g.Key, Count = g .Count() })'
+== NativeGroupByTests.cs:3917 Third_level_group_by_declines_cleanly(Count)
+   RES Third_level_group_by_declines_cleanly(shape: "Select") Failed @NativeGroupByTests.cs:line 3925 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { K = g.Key, M = g .Count() }) .GroupBy(x => x.M) .Select(g => new 
+   RES Third_level_group_by_declines_cleanly(shape: "Count") Failed @NativeGroupByTests.cs:line 3924 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { K = g.Key, M = g .Count() }) .GroupBy(x => x.M) .Count()' could n
+   RES Third_level_group_by_declines_cleanly(shape: "Having") Failed @NativeGroupByTests.cs:line 3926 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { K = g.Key, M = g .Count() }) .GroupBy(x => x.M) .Where(g => g.Key
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          K = g.Key,          M = g             .Count()      })   
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          K = g.Key,          M = g             .Count()      })   
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          K = g.Key,          M = g             .Count()      })   
+== NativeGroupByTests.cs:3917 Third_level_group_by_declines_cleanly(Select)
+   RES Third_level_group_by_declines_cleanly(shape: "Select") Failed @NativeGroupByTests.cs:line 3925 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { K = g.Key, M = g .Count() }) .GroupBy(x => x.M) .Select(g => new 
+   RES Third_level_group_by_declines_cleanly(shape: "Count") Failed @NativeGroupByTests.cs:line 3924 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { K = g.Key, M = g .Count() }) .GroupBy(x => x.M) .Count()' could n
+   RES Third_level_group_by_declines_cleanly(shape: "Having") Failed @NativeGroupByTests.cs:line 3926 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { K = g.Key, M = g .Count() }) .GroupBy(x => x.M) .Where(g => g.Key
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          K = g.Key,          M = g             .Count()      })   
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          K = g.Key,          M = g             .Count()      })   
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          K = g.Key,          M = g             .Count()      })   
+== NativeGroupByTests.cs:3917 Third_level_group_by_declines_cleanly(Having)
+   RES Third_level_group_by_declines_cleanly(shape: "Select") Failed @NativeGroupByTests.cs:line 3925 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { K = g.Key, M = g .Count() }) .GroupBy(x => x.M) .Select(g => new 
+   RES Third_level_group_by_declines_cleanly(shape: "Count") Failed @NativeGroupByTests.cs:line 3924 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { K = g.Key, M = g .Count() }) .GroupBy(x => x.M) .Count()' could n
+   RES Third_level_group_by_declines_cleanly(shape: "Having") Failed @NativeGroupByTests.cs:line 3926 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Land = g.Key, N = g .Count() }) .GroupBy(x => x.N) .Select(g => new { K = g.Key, M = g .Count() }) .GroupBy(x => x.M) .Where(g => g.Key
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          K = g.Key,          M = g             .Count()      })   
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          K = g.Key,          M = g             .Count()      })   
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Land = g.Key,          N = g             .Count()      })     .GroupBy(x => x.N)     .Select(g => new {          K = g.Key,          M = g             .Count()      })   
+
+### D group paging before terminal aggregate/HAVING   [covered: 3.4]
+== NativeGroupByTests.cs:1275 GroupBy_then_bare_Count_after_Skip_declines_instead_of_silently_dropping_paging
+   RES GroupBy_then_bare_Count_after_Skip_declines_instead_of_silently_dropping_paging Failed @NativeGroupByTests.cs:line 1266 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Skip(@p) .Count()' could not be translated. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inser
+== NativeGroupByTests.cs:1309 GroupBy_Skip_then_HAVING_declines_instead_of_misordering
+   RES GroupBy_Skip_then_HAVING_declines_instead_of_misordering Failed @NativeGroupByTests.cs:line 1290 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .OrderBy(g => g.Key) .Skip(@p) .Where(g => g .Count() >= 2) .Select(g => new { Key = g.Key, Total = g .Count() })' could not be translated. Either rewrite
+
+### E post-group Where alias shapes   [covered: 3.5]
+== NativeGroupByTests.cs:3435 Post_group_where_over_a_guid_key_alias_declines_cleanly
+   RES Post_group_where_over_a_guid_key_alias_declines_cleanly Failed @NativeGroupByTests.cs:line 3437 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.ExternalId) .Select(g => new { E = g.Key, N = g .Count() }) .Where(x => x.E == 00000000-0000-0000-0000-000000000000)' could not be translated. Either rewrite the q
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.ExternalId)     .Select(g => new {          E = g.Key,          N = g             .Count()      })     .Where(x => x.E == 00000000-0000-0000-0000-000000000000)' could not be translated. Either rewrite the query 
+== NativeGroupByTests.cs:3469 Post_group_where_over_a_nested_alias_never_resolves_an_owned_navigation_of_the_same_name(n
+   RES Post_group_where_over_a_nested_alias_never_resolves_an_owned_navigation_of_the_same_name(nullCheck: True) Failed @NativeGroupByTests.cs:line 3490 System.InvalidOperationException : The LINQ expression 'DbSet<Parcel>() .GroupBy(p => p.Region) .Select(g => new { Key = g.Key, Info = new { N = g .Count() } }) .Where(x => x.Info != null)' could not be translated. Either rewrite the query in a form 
+   RES Post_group_where_over_a_nested_alias_never_resolves_an_owned_navigation_of_the_same_name(nullCheck: False) Failed @NativeGroupByTests.cs:line 3490 System.InvalidOperationException : The LINQ expression 'DbSet<Parcel>() .GroupBy(p => p.Region) .Select(g => new { Key = g.Key, Info = new { N = g .Count() } }) .Where(x => x.Info.N > 1)' could not be translated. Either rewrite the query in a form th
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Parcel>()     .GroupBy(p => p.Region)     .Select(g => new {          Key = g.Key,          Info = new { N = g             .Count() }      })     .Where(x => x.Info.N > 1)' could not be translated. Either rewrite the query in a form that ca
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Parcel>()     .GroupBy(p => p.Region)     .Select(g => new {          Key = g.Key,          Info = new { N = g             .Count() }      })     .Where(x => x.Info != null)' could not be translated. Either rewrite the query in a form that 
+== NativeGroupByTests.cs:3469 Post_group_where_over_a_nested_alias_never_resolves_an_owned_navigation_of_the_same_name(n
+   RES Post_group_where_over_a_nested_alias_never_resolves_an_owned_navigation_of_the_same_name(nullCheck: True) Failed @NativeGroupByTests.cs:line 3490 System.InvalidOperationException : The LINQ expression 'DbSet<Parcel>() .GroupBy(p => p.Region) .Select(g => new { Key = g.Key, Info = new { N = g .Count() } }) .Where(x => x.Info != null)' could not be translated. Either rewrite the query in a form 
+   RES Post_group_where_over_a_nested_alias_never_resolves_an_owned_navigation_of_the_same_name(nullCheck: False) Failed @NativeGroupByTests.cs:line 3490 System.InvalidOperationException : The LINQ expression 'DbSet<Parcel>() .GroupBy(p => p.Region) .Select(g => new { Key = g.Key, Info = new { N = g .Count() } }) .Where(x => x.Info.N > 1)' could not be translated. Either rewrite the query in a form th
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Parcel>()     .GroupBy(p => p.Region)     .Select(g => new {          Key = g.Key,          Info = new { N = g             .Count() }      })     .Where(x => x.Info.N > 1)' could not be translated. Either rewrite the query in a form that ca
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Parcel>()     .GroupBy(p => p.Region)     .Select(g => new {          Key = g.Key,          Info = new { N = g             .Count() }      })     .Where(x => x.Info != null)' could not be translated. Either rewrite the query in a form that 
+== NativeGroupByTests.cs:3748 Post_group_where_over_a_pushed_list_alias_declines_cleanly
+   RES Post_group_where_over_a_pushed_list_alias_declines_cleanly Failed @NativeGroupByTests.cs:line 3750 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, Years = g .Select(e => e.Year) .ToList() }) .Where(x => x.Years.Count > 1)' could not be translated. Either rewrite the qu
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          Years = g             .Select(e => e.Year)             .ToList()      })     .Where(x => x.Years.Count > 1)' could not be translated. Either rewrite
+
+### F GetType over a non-entity row   [covered: 3.6]
+== NativeGroupByTests.cs:3508 Post_group_get_type_comparison_over_a_grouped_row_declines_cleanly(true)
+   RES Post_group_get_type_comparison_over_a_grouped_row_declines_cleanly(equal: False) Failed @NativeGroupByTests.cs:line 3514 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, N = g .Count() }) .Where(x => x.GetType() != (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Or
+   RES Post_group_get_type_comparison_over_a_grouped_row_declines_cleanly(equal: True) Failed @NativeGroupByTests.cs:line 3514 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, N = g .Count() }) .Where(x => x.GetType() == (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Or
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          N = g             .Count()      })     .Where(x => x.GetType() == (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Order)'
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          N = g             .Count()      })     .Where(x => x.GetType() != (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Order)'
+== NativeGroupByTests.cs:3508 Post_group_get_type_comparison_over_a_grouped_row_declines_cleanly(false)
+   RES Post_group_get_type_comparison_over_a_grouped_row_declines_cleanly(equal: False) Failed @NativeGroupByTests.cs:line 3514 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, N = g .Count() }) .Where(x => x.GetType() != (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Or
+   RES Post_group_get_type_comparison_over_a_grouped_row_declines_cleanly(equal: True) Failed @NativeGroupByTests.cs:line 3514 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, N = g .Count() }) .Where(x => x.GetType() == (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Or
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          N = g             .Count()      })     .Where(x => x.GetType() == (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Order)'
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          N = g             .Count()      })     .Where(x => x.GetType() != (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Order)'
+== NativeGroupByTests.cs:3526 Post_group_terminal_all_over_a_get_type_comparison_declines_cleanly(true)
+   RES Post_group_terminal_all_over_a_get_type_comparison_declines_cleanly(equal: False) Failed @NativeGroupByTests.cs:line 3529 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, N = g .Count() }) .All(x => x.GetType() != (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Orde
+   RES Post_group_terminal_all_over_a_get_type_comparison_declines_cleanly(equal: True) Failed @NativeGroupByTests.cs:line 3529 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, N = g .Count() }) .All(x => x.GetType() == (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Orde
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          N = g             .Count()      })     .All(x => x.GetType() != (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Order)' c
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          N = g             .Count()      })     .All(x => x.GetType() == (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Order)' c
+== NativeGroupByTests.cs:3526 Post_group_terminal_all_over_a_get_type_comparison_declines_cleanly(false)
+   RES Post_group_terminal_all_over_a_get_type_comparison_declines_cleanly(equal: False) Failed @NativeGroupByTests.cs:line 3529 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, N = g .Count() }) .All(x => x.GetType() != (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Orde
+   RES Post_group_terminal_all_over_a_get_type_comparison_declines_cleanly(equal: True) Failed @NativeGroupByTests.cs:line 3529 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, N = g .Count() }) .All(x => x.GetType() == (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Orde
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          N = g             .Count()      })     .All(x => x.GetType() != (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Order)' c
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          N = g             .Count()      })     .All(x => x.GetType() == (Type)MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeGroupByTests+Order)' c
+== NativeGroupByTests.cs:3543 Get_type_comparison_over_a_projected_distinct_row_declines_cleanly
+   RES Get_type_comparison_over_a_projected_distinct_row_declines_cleanly Passed @ 
+   ORC DeclinesCleanly OK []
+
+### G Distinct over grouped output   [covered: 3.7]
+== NativeDistinctTests.cs:200 Grouped_count_Distinct_then_Where_on_bare_parameter_declines_with_fallback_parity
+   RES Grouped_count_Distinct_then_Where_on_bare_parameter_declines_with_fallback_parity Failed @NativeDistinctTests.cs:line 203 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => g .Count()) .Distinct() .Where(c => c > 1)' could not be translated. Either rewrite the query in a form that can be translated, or switch to 
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => g         .Count())     .Distinct()     .Where(c => c > 1)' could not be translated. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly
+
+### H one-member wrapper structural equality   [covered: 3.8]
+== NativeDistinctTests.cs:217 One_member_anonymous_computed_Distinct_then_Where_on_bare_parameter_declines_with_fallback
+   RES One_member_anonymous_computed_Distinct_then_Where_on_bare_parameter_declines_with_fallback_parity Passed @ 
+   ORC DeclinesCleanly OK [{ S = 4042 }]
+== NativeDistinctTests.cs:235 One_member_anonymous_field_Distinct_then_Where_on_bare_parameter_declines_with_fallback_pa
+   RES One_member_anonymous_field_Distinct_then_Where_on_bare_parameter_declines_with_fallback_parity Passed @ 
+   ORC DeclinesCleanly OK [{ Country = US }]
+== NativeDistinctTests.cs:250 One_member_ValueTuple_field_Distinct_then_Where_on_bare_parameter_declines_with_fallback_p
+   RES One_member_ValueTuple_field_Distinct_then_Where_on_bare_parameter_declines_with_fallback_parity Passed @ 
+   ORC DeclinesCleanly OK [(US)]
+
+### I group/Distinct key with non-default serialization   [covered: 3.9]
+== NativeGroupByTests.cs:268 GroupBy_bson_represented_key_falls_back
+   RES GroupBy_bson_represented_key_falls_back Failed @NativeGroupByTests.cs:line 256 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Status) .Select(g => new { Key = g.Key, Count = g .Count() })' could not be translated. Either rewrite the query in a form that can be translated, or switch to cli
+== NativeDistinctTests.cs:732 One_member_anonymous_value_converted_Distinct_declines_cleanly
+   RES One_member_anonymous_value_converted_Distinct_declines_cleanly Passed @ 
+   ORC DeclinesCleanly OK [New, Shipped, Cancelled]
+== NativeDistinctTests.cs:744 Bare_scalar_bson_represented_Distinct_declines_cleanly
+   RES Bare_scalar_bson_represented_Distinct_declines_cleanly Passed @ 
+   ORC DeclinesCleanly OK [Shipped, Cancelled]
+== NativeDistinctTests.cs:1260 Distinct_bson_represented_projection_key_falls_back
+   RES Distinct_bson_represented_projection_key_falls_back Passed @ 
+   ORC Throws<NTNSE> OK [{ Status = New }, { Status = Shipped }]
+
+### J `$push` over non-default element   [covered: 3.10]
+== NativeGroupByTests.cs:3789 Push_list_over_a_date_time_kind_configured_property_matches_entity_materialization(Utc)
+   RES Push_list_over_a_date_time_kind_configured_property_matches_entity_materialization(kind: Local) Failed @NativeGroupByTests.cs:line 3775 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, Dates = g .Select(e => e.OrderDate) .ToList() })' could not be translated. Either rewrite the query in a form that can be 
+   RES Push_list_over_a_date_time_kind_configured_property_matches_entity_materialization(kind: Utc) Failed @NativeGroupByTests.cs:line 3775 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, Dates = g .Select(e => e.OrderDate) .ToList() })' could not be translated. Either rewrite the query in a form that can be 
+== NativeGroupByTests.cs:3789 Push_list_over_a_date_time_kind_configured_property_matches_entity_materialization(Local)
+   RES Push_list_over_a_date_time_kind_configured_property_matches_entity_materialization(kind: Local) Failed @NativeGroupByTests.cs:line 3775 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, Dates = g .Select(e => e.OrderDate) .ToList() })' could not be translated. Either rewrite the query in a form that can be 
+   RES Push_list_over_a_date_time_kind_configured_property_matches_entity_materialization(kind: Utc) Failed @NativeGroupByTests.cs:line 3775 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, Dates = g .Select(e => e.OrderDate) .ToList() })' could not be translated. Either rewrite the query in a form that can be 
+== NativeGroupByTests.cs:3798 Push_list_over_a_value_converted_property_declines_cleanly
+   RES Push_list_over_a_value_converted_property_declines_cleanly Failed @NativeGroupByTests.cs:line 3806 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { Key = g.Key, Statuses = g .Select(e => e.Status) .ToList() })' could not be translated. Either rewrite the query in a form that can be 
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          Statuses = g             .Select(e => e.Status)             .ToList()      })' could not be translated. Either rewrite the query in a form that can 
+
+### K group accumulator/key gaps   [covered: 3.11 (one commit per shape)]
+== NativeGroupByTests.cs:465 GroupBy_accumulator_named_id_falls_back_and_matches_driver_linq
+   RES GroupBy_accumulator_named_id_falls_back_and_matches_driver_linq Failed @NativeGroupByTests.cs:line 454 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => o.Country) .Select(g => new { _id = g .Count() })' could not be translated. Either rewrite the query in a form that can be translated, or switch to client evaluation
+== NativeGroupByTests.cs:718 GroupBy_OrderBy_computed_expression_before_select_falls_back_under_native_only
+   RES GroupBy_OrderBy_computed_expression_before_select_falls_back_under_native_only Passed @ 
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .OrderBy(g => g         .Count() * 2)     .Select(g => new {          Key = g.Key,          Count = g             .Count()      })' could not be translated. Either rewrite the query in a form that c
+== NativeGroupByTests.cs:1334 GroupBy_then_Any_with_compound_predicate_falls_back_under_native_only
+   RES GroupBy_then_Any_with_compound_predicate_falls_back_under_native_only Passed @ 
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Any(g => g         .Count() > 1 && g         .Count() < 10)' could not be translated. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserti
+== NativeGroupByTests.cs:1438 GroupBy_Select_with_distinct_aggregate_over_computed_selector_falls_back_under_native_only
+   RES GroupBy_Select_with_distinct_aggregate_over_computed_selector_falls_back_under_native_only Passed @ 
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => o.Country)     .Select(g => new {          Key = g.Key,          Count = g             .Select(o => o.Year * 2)             .Distinct()             .Count()      })' could not be translated. Either rewrite the que
+== NativeGroupByTests.cs:1821 GroupBy_single_member_anonymous_key_whole_Key_null_check_inside_accumulator_declines
+   RES GroupBy_single_member_anonymous_key_whole_Key_null_check_inside_accumulator_declines Failed @NativeGroupByTests.cs:line 1805 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => new { Country = o.Country }) .Select(g => new { Country = g.Key.Country, Count = g .Count(o => g.Key == null) })' could not be translated. Either rewrite the query i
+== NativeGroupByTests.cs:1858 GroupBy_nested_anonymous_key_Key_member_inside_accumulator_declines
+   RES GroupBy_nested_anonymous_key_Key_member_inside_accumulator_declines Failed @NativeGroupByTests.cs:line 1840 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => new { Inner = new { Country = o.Country } }) .Select(g => new { Country = g.Key.Inner.Country, UsCount = g .Count(o => g.Key.Inner.Country == "US") })' could not be 
+== NativeGroupByTests.cs:2447 Bare_accumulator_then_outer_Sum_still_declines_under_NativeOnly
+   RES Bare_accumulator_then_outer_Sum_still_declines_under_NativeOnly Failed @NativeGroupByTests.cs:line 2447 Assert.Throws() Failure: Exception type was not an exact match Expected: typeof(MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException) Actual: typeof(System.InvalidOperationException) ---- System.InvalidOperationE
+== NativeGroupByTests.cs:2561 GroupBy_select_with_nested_construction_referencing_per_element_value_declines_cleanly
+   RES GroupBy_select_with_nested_construction_referencing_per_element_value_declines_cleanly Passed @ 
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .GroupBy(o => new {  })     .Select(g => new NestedAggregateWrapper{ Container = new NestedAggregateContainer{              Name = g                 .First().Country,              Value = (object)g                 .Sum(o => o.A
+
+### L ops after projected-operand set op   [covered: 3.12]
+== NativeSetOpsTests.cs:1636 Where_after_projected_operand_union_falls_back_gracefully
+   RES Where_after_projected_operand_union_falls_back_gracefully Passed @ 
+   ORC Throws<NTNSE> OK [{ Name = Three, Value = 3 }, { Name = Five, Value = 5 }, { Name = Four, Value = 4 }]
+== NativeSetOpsTests.cs:1662 OrderBy_after_projected_operand_union_falls_back_gracefully
+   RES OrderBy_after_projected_operand_union_falls_back_gracefully Passed @ 
+   ORC Throws<NTNSE> OK [{ Name = One, Value = 1 }, { Name = Two, Value = 2 }, { Name = Three, Value = 3 }, { Name = Four, Value = 4 }, { Name = Five, Value = 5 }]
+== NativeSetOpsTests.cs:1688 Paging_after_projected_operand_union_falls_back_gracefully(Skip)
+   RES Paging_after_projected_operand_union_falls_back_gracefully Passed @ 
+   ORC Throws<NTNSE> OK [{ Name = Two, Value = 2 }, { Name = Three, Value = 3 }, { Name = Four, Value = 4 }, { Name = Five, Value = 5 }]
+   ORC Throws<NTNSE> OK [{ Name = One, Value = 1 }, { Name = Two, Value = 2 }]
+== NativeSetOpsTests.cs:1692 Paging_after_projected_operand_union_falls_back_gracefully(Take)
+   RES Paging_after_projected_operand_union_falls_back_gracefully Passed @ 
+   ORC Throws<NTNSE> OK [{ Name = Two, Value = 2 }, { Name = Three, Value = 3 }, { Name = Four, Value = 4 }, { Name = Five, Value = 5 }]
+   ORC Throws<NTNSE> OK [{ Name = One, Value = 1 }, { Name = Two, Value = 2 }]
+== NativeSetOpsTests.cs:1728 Count_after_projected_operand_union_falls_back_gracefully
+   RES Count_after_projected_operand_union_falls_back_gracefully Passed @ 
+   ORC Throws<NTNSE> OK 5
+== NativeSetOpsTests.cs:1753 GroupBy_after_projected_operand_union_falls_back_gracefully
+   RES GroupBy_after_projected_operand_union_falls_back_gracefully Failed @NativeSetOpsTests.cs:line 1763 System.InvalidOperationException : The LINQ expression 'DbSet<Item>() .Where(i => i.Value <= 3) .Select(i => new { Name = i.Name, Value = i.Value }) .Union(DbSet<Item>() .Where(i => i.Value >= 3) .Select(i => new { Name = i.Name, Value = i.Value })) 
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Item>()     .Where(i => i.Value <= 3)     .Select(i => new {          Name = i.Name,          Value = i.Value      })     .Union(DbSet<Item>()         .Where(i => i.Value >= 3)         .Select(i => new {              Name = i.Name,         
+== NativeSetOpsTests.cs:1780 Chained_set_op_after_projected_operand_union_falls_back_gracefully
+   RES Chained_set_op_after_projected_operand_union_falls_back_gracefully Passed @ 
+   ORC Throws<NTNSE> OK [{ Name = One, Value = 1 }, { Name = Three, Value = 3 }, { Name = Two, Value = 2 }, { Name = Four, Value = 4 }, { Name = Five, Value = 5 }]
+== NativeSetOpsTests.cs:1811 Distinct_after_projected_operand_union_falls_back_gracefully
+   RES Distinct_after_projected_operand_union_falls_back_gracefully Passed @ 
+   ORC Throws<NTNSE> OK [{ Name = One, Value = 1 }, { Name = Four, Value = 4 }, { Name = Two, Value = 2 }, { Name = Five, Value = 5 }, { Name = Three, Value = 3 }]
+== NativeSetOpsTests.cs:1838 Distinct_after_projected_operand_concat_falls_back_gracefully
+   RES Distinct_after_projected_operand_concat_falls_back_gracefully Passed @ 
+   ORC Throws<NTNSE> OK [{ Name = Four }, { Name = Three }, { Name = One }, { Name = Two }, { Name = Five }]
+== NativeSetOpsTests.cs:2339 GroupBy_after_Union_of_plain_projected_operand_declines_and_stays_correct
+   RES GroupBy_after_Union_of_plain_projected_operand_declines_and_stays_correct Failed @NativeSetOpsTests.cs:line 2330 System.InvalidOperationException : The LINQ expression 'DbSet<Item>() .Select(i => new { Name = i.Name }) .Union(DbSet<Item>() .Select(i => new { Name = i.Name })) .GroupBy(x => x.Name) .Select(g => new { Key = g.Key, Total = g .Count() })' could not
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Item>()     .Select(i => new { Name = i.Name })     .Union(DbSet<Item>()         .Select(i => new { Name = i.Name }))     .GroupBy(x => x.Name)     .Select(g => new {          Key = g.Key,          Total = g             .Count()      })' co
+
+### M grouped set-op operand with paging/HAVING/order   [covered: 3.13]
+== NativeSetOpsTests.cs:1213 GroupBy_operand_with_skip_before_terminal_select_declines_and_stays_correct
+   RES GroupBy_operand_with_skip_before_terminal_select_declines_and_stays_correct Failed @NativeSetOpsTests.cs:line 1205 System.InvalidOperationException : The LINQ expression 'DbSet<Item>() .Where(i => i.Value <= 3) .GroupBy(i => i.Value) .OrderBy(g => g.Key) .Skip(@p) .Select(g => new { Key = g.Key, Count = g .Count() }) .Concat(DbSet<Item>() .Where(i => i.Value >= 3
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Item>()     .Where(i => i.Value <= 3)     .GroupBy(i => i.Value)     .OrderBy(g => g.Key)     .Skip(@p)     .Select(g => new {          Key = g.Key,          Count = g             .Count()      })     .Concat(DbSet<Item>()         .Where(i 
+== NativeSetOpsTests.cs:1241 GroupBy_operand_with_having_predicate_before_terminal_select_declines_and_stays_correct
+   RES GroupBy_operand_with_having_predicate_before_terminal_select_declines_and_stays_correct Failed @NativeSetOpsTests.cs:line 1233 System.InvalidOperationException : The LINQ expression 'DbSet<Item>() .Where(i => i.Value <= 3) .GroupBy(i => i.Value <= 2) .Where(g => g .Count() >= 2) .Select(g => new { Key = g.Key, Count = g .Count() }) .Concat(DbSet<Item>() .Where(i => i.Value >
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Item>()     .Where(i => i.Value <= 3)     .GroupBy(i => i.Value <= 2)     .Where(g => g         .Count() >= 2)     .Select(g => new {          Key = g.Key,          Count = g             .Count()      })     .Concat(DbSet<Item>()         .W
+== NativeSetOpsTests.cs:1268 GroupBy_operand_with_order_only_before_terminal_select_declines_and_stays_correct
+   RES GroupBy_operand_with_order_only_before_terminal_select_declines_and_stays_correct Failed @NativeSetOpsTests.cs:line 1260 System.InvalidOperationException : The LINQ expression 'DbSet<Item>() .Where(i => i.Value <= 3) .GroupBy(i => i.Value) .OrderBy(g => g.Key) .Select(g => new { Key = g.Key, Count = g .Count() }) .Concat(DbSet<Item>() .Where(i => i.Value >= 3) .GroupBy
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Item>()     .Where(i => i.Value <= 3)     .GroupBy(i => i.Value)     .OrderBy(g => g.Key)     .Select(g => new {          Key = g.Key,          Count = g             .Count()      })     .Concat(DbSet<Item>()         .Where(i => i.Value >= 
+
+### N ops after whole-entity set op   [covered: 3.14]
+== NativeSetOpsTests.cs:765 Reference_include_after_union_still_falls_back
+   RES Reference_include_after_union_still_falls_back Passed @ 
+   ORC Throws<NTNSE> OK [LinkedDetail{Id=6abe4dcad82981d4d711ba01, Text="b1", LinkedItemId=6abe4dcad82981d4d711b9fd, Item=LinkedItem{Id=6abe4dcad82981d4d711b9fd, Value=2, Details=[LinkedDetail]}}, LinkedDetail{Id=6abe4dcad82981d4d711b9ff, Text="a1", LinkedItemId=6abe4dcad82981d4d711b9fc, Item=LinkedItem{Id=6abe4dcad8298
+== NativeSetOpsTests.cs:1062 OfType_after_union_falls_back
+   RES OfType_after_union_falls_back Passed @ 
+   ORC Throws<NTNSE> OK [SetOpDerived{Extra="x", Id=6abe4dcbd82981d4d711bb44, EntityType="Derived", Value=2}, SetOpDerived{Extra="y", Id=6abe4dcbd82981d4d711bb45, EntityType="Derived", Value=3}]
+
+### O join-scope set-op operands   [covered: 3.15]
+== NativeGroupByOverJoinTests.cs:1237 Union_of_a_join_scope_constant_operand_and_a_grouped_count_declines(Union)
+   RES Union_of_a_join_scope_constant_operand_and_a_grouped_count_declines Passed @ 
+   ORC DeclinesCleanly OK [1, 3, 7]
+   ORC DeclinesCleanly OK [1, 1, 3, 7, 7]
+== NativeGroupByOverJoinTests.cs:1246 same(Concat)
+== NativeGroupByOverJoinTests.cs:1281 Union_with_a_two_level_join_scope_first_operand_declines_cleanly
+   RES Union_with_a_two_level_join_scope_first_operand_declines_cleanly Passed @ 
+   ORC DeclinesCleanly OK [1, 10, 20, 30]
+
+### P case-mapping comparison over computed receiver   [covered: 3.16]
+== NativeDistinctTests.cs:1176 Distinct_then_Where_on_unrelated_computed_key_falls_back_under_native_only
+   RES Distinct_then_Where_on_unrelated_computed_key_falls_back_under_native_only Passed @ 
+   ORC Throws<NTNSE> OK [{ Country = US }]
+== NativeDistinctTests.cs:1386 Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only
+   RES Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only Passed @ 
+   ORC Throws<NTNSE> OK 1
+
+### Q Join over projected Distinct   [covered: 3.17]
+== NativeDistinctTests.cs:2004 Distinct_then_Join_throws_under_native_only
+   RES Distinct_then_Join_throws_under_native_only Passed @ 
+   ORC Throws<NTNSE> OK [{ Country = FR, Continent = EU }, { Country = US, Continent = NA }, { Country = UK, Continent = EU }]
+
+### R paging before grouped join   [covered: 3.18]
+== NativeGroupByOverJoinTests.cs:625 Paging_before_a_required_navigation_group_declines_cleanly
+   RES Paging_before_a_required_navigation_group_declines_cleanly Passed @ 
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<Order>()     .OrderBy(o => o.Total)     .Take(@p)     .GroupBy(o => o.Owner.Region)     .Select(g => new {          Key = g.Key,          Count = g             .Count()      })' could not be translated. Either rewrite the query in a form th
+== NativeGroupByOverJoinTests.cs:641 Paging_before_a_two_level_chain_group_declines_cleanly
+   RES Paging_before_a_two_level_chain_group_declines_cleanly Passed @ 
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'DbSet<OrderLine>()     .OrderBy(l => l.Quantity)     .Take(@p)     .GroupBy(l => l.Order.Owner.Region)     .Select(g => new {          Key = g.Key,          Count = g             .Count()      })' could not be translated. Either rewrite the query
+
+### owned-quantifier / quantifier aggregates `$expr`   [covered: 3.19]
+== NativeCastTests.cs:371 Cast_inside_a_quantifier_element_predicate_declines
+   RES Cast_inside_a_quantifier_element_predicate_declines Passed @ 
+   ORC Throws<NTNSE> OK [QuantBlog{Id=6abe4de2d82981d4d711d66b, Title="match", Posts=[QuantPost]}]
+== NativeOwnedCollectionPredicateTests.cs:423 Field_to_field_element_predicate_declines_cleanly (well-formed seed, via AssertDeclinesCle
+   RES Field_to_field_element_predicate_declines_cleanly Passed @ 
+   ORC Throws<NTNSE> THREW MongoCommandException: Command aggregate failed: Executor error during aggregate command on namespace: EFTest-2026-10-01T13-10-40-13.Field_to_field_element_predicate_declines_cleanly_aa43e1c8 :: caused by :: $anyElementTrue's argument must be an array, but is null.
+   ORC DeclinesCleanly OK ["match"]
+== NativeOwnedCollectionCountTests.cs:849 A_parameterized_count_inside_a_quantifier_declines_and_falls_back_to_correct_rows
+   RES A_parameterized_count_inside_a_quantifier_declines_and_falls_back_to_correct_rows Passed @ 
+   ORC DeclinesCleanly OK ["many"]
+== NativeOwnedCollectionAllTests.cs:430 All_with_a_field_to_field_element_predicate_declines_and_falls_back_to_correct_rows
+   RES All_with_a_field_to_field_element_predicate_declines_and_falls_back_to_correct_rows Passed @ 
+   ORC DeclinesCleanly OK ["allpass", "empty", "onefails"]
+== NativeOwnedCollectionFilteredCountTests.cs:420 Filtered_count_nested_inside_a_quantifier_declines_and_the_unfiltered_form_still_goes_nati
+   RES Filtered_count_nested_inside_a_quantifier_declines_and_the_unfiltered_form_still_goes_native Passed @ 
+   ORC Throws<NTNSE> OK []
+== NativeCardinalityTests.cs:400 All_with_a_field_to_field_predicate_still_falls_back (helper throw at :343)
+   RES All_with_a_field_to_field_predicate_still_falls_back Passed @ 
+   ORC Throws<NTNSE> OK False
+
+### primitive collections   [covered: 2.5.1 + 3.20]
+== NativeOwnedCollectionCountTests.cs:833 A_primitive_collection_Count_declines_and_falls_back_to_correct_rows
+   RES A_primitive_collection_Count_declines_and_falls_back_to_correct_rows Passed @ 
+   ORC DeclinesCleanly OK ["twotags"]
+== NativeOwnedCollectionAllTests.cs:512 Primitive_collection_All_with_equality_reaches_the_matcher_and_declines_at_path_resolution
+   RES Primitive_collection_All_with_equality_reaches_the_matcher_and_declines_at_path_resolution Passed @ 
+   ORC DeclinesCleanly OK ["allpass", "empty", "missingfield", "nullfield", "onefails"]
+== NativeOwnedCollectionFilteredCountTests.cs:405 Primitive_element_collection_filtered_count_declines
+   RES Primitive_element_collection_filtered_count_declines Passed @ 
+   ORC Throws<NTNSE> OK [Blog{Id=6abe4dd1d82981d4d711c280, Title="x", Home=Home{Notes=[]}, Posts=[], Tags=["a", "bb"]}]
+
+### array-leaf set-op operand   [covered: 3.21]
+== NativeArrayProjectionTests.cs:871 Array_leaf_in_a_projected_union_operand_is_declined_and_falls_back_with_correct_data
+   RES Array_leaf_in_a_projected_union_operand_is_declined_and_falls_back_with_correct_data Passed @ 
+   ORC Throws<NTNSE> OK [(b_one, h1), (c_two, h2|h3)]
+== NativeArrayProjectionTests.cs:910 Array_leaf_in_a_projected_union_operand_declines_so_dedup_stays_over_the_projected_values
+   RES Array_leaf_in_a_projected_union_operand_declines_so_dedup_stays_over_the_projected_values Passed @ 
+   ORC Throws<NTNSE> OK [(same, h1)]
+== NativeArrayProjectionTests.cs:938 Array_leaf_in_a_projected_concat_operand_is_declined_and_falls_back_with_correct_data
+   RES Array_leaf_in_a_projected_concat_operand_is_declined_and_falls_back_with_correct_data Passed @ 
+   ORC Throws<NTNSE> OK [(same, h1), (same, h1)]
+== NativeArrayProjectionTests.cs:1001 Array_leaf_in_a_projected_union_operand_with_a_shadow_key_element_falls_back_correctly
+   RES Array_leaf_in_a_projected_union_operand_with_a_shadow_key_element_falls_back_correctly Failed @NativeArrayProjectionTests.cs:line 985 System.InvalidOperationException : Document element is missing for required non-nullable property 'Id'.
+
+### array-leaf computed sibling   [covered: 3.22]
+== NativeArrayProjectionTests.cs:593 Array_leaf_alongside_a_count_leaf_declines_and_returns_correct_data_in_every_mode
+   RES Array_leaf_alongside_a_count_leaf_declines_and_returns_correct_data_in_every_mode Failed @NativeArrayProjectionTests.cs:line 576 System.ArgumentException : Expression of type 'System.Collections.Generic.List`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeArrayProjectionTests+Post]' cannot be used for parameter of type 'System.Linq.IQueryable`1[MongoDB.EntityFramewor
+== NativeArrayProjectionTests.cs:620 Array_leaf_alongside_an_arithmetic_leaf_declines_and_returns_correct_data_in_every_mode
+   RES Array_leaf_alongside_an_arithmetic_leaf_declines_and_returns_correct_data_in_every_mode Passed @ 
+   ORC Throws<NTNSE> OK [(a_empty, 2, 0), (b_one, 4, 1), (c_two, 6, 2)]
+== NativeArrayProjectionTests.cs:649 Array_leaf_alongside_an_arithmetic_leaf_whose_alias_collides_with_a_real_field_declines_an
+   RES Array_leaf_alongside_an_arithmetic_leaf_whose_alias_collides_with_a_real_field_declines_and_returns_correct_da Passed @ 
+   ORC Throws<NTNSE> OK [(a_empty, 2, 0), (b_one, 4, 1), (c_two, 6, 2)]
+== NativeArrayProjectionTests.cs:1228 Computed_sibling_still_declines_alongside_an_array_leaf
+   RES Computed_sibling_still_declines_alongside_an_array_leaf Failed @NativeArrayProjectionTests.cs:line 1211 System.ArgumentException : Expression of type 'System.Collections.Generic.List`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeArrayProjectionTests+Post]' cannot be used for parameter of type 'System.Linq.IQueryable`1[MongoDB.EntityFramewor
+
+### array-leaf alias / nav-leaf alias   [covered: 2.4.4 + 3.23]
+== NativeArrayProjectionTests.cs:287 Renamed_array_alias_is_declined_and_returns_correct_data_in_every_mode
+   RES Renamed_array_alias_is_declined_and_returns_correct_data_in_every_mode Passed @ 
+   ORC Throws<NTNSE> OK [(a_empty, 0), (b_one, 1), (c_two, 2)]
+== NativeArrayProjectionTests.cs:531 EF_Property_spelling_with_a_renamed_alias_declines_and_returns_correct_data_in_every_mode
+   RES EF_Property_spelling_with_a_renamed_alias_declines_and_returns_correct_data_in_every_mode Passed @ 
+   ORC Throws<NTNSE> OK [(a_empty, 0, ), (b_one, 1, h1), (c_two, 2, h2|h3)]
+== NativeOwnedReferenceWholeEntityTests.cs:813 Renamed_owned_reference_entity_leaf_falls_back_but_still_reads_correct_values
+   RES Renamed_owned_reference_entity_leaf_falls_back_but_still_reads_correct_values Passed @ 
+   ORC Throws<NTNSE> OK [{ Addr = MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeOwnedReferenceWholeEntityTests+Address, Title = Alpha }, { Addr = MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeOwnedReferenceWholeEntityTests+Address, Title = Beta }]
+== NativeOwnedReferenceWholeEntityTests.cs:856 Owned_reference_entity_leaf_beside_computed_leaf_declines_but_still_reads_correct_values
+   RES Owned_reference_entity_leaf_beside_computed_leaf_declines_but_still_reads_correct_values Passed @ 
+   ORC Throws<NTNSE> OK [{ Address = MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeOwnedReferenceWholeEntityTests+Address, Total = 9 }]
+== NativeCtorOnlyProjectionTests.cs:186 Select_with_owned_nav_entity_ctor_only_dto_still_declines_under_native_only
+   RES Select_with_owned_nav_entity_ctor_only_dto_still_declines_under_native_only Passed @ 
+   ORC Throws<NTNSE> THREW InvalidOperationException: A tracking query is attempting to project an owned entity without a corresponding owner in its result, but owned entities cannot be tracked without their owner. Either include the owner entity in the result or make the query non-tracking using 'AsNoTracking'.
+== NativeBareProjectionTests.cs:399 Bare_owned_hop_scalar_projection_declines
+   RES Bare_owned_hop_scalar_projection_declines Passed @ 
+   ORC Throws<NTNSE> OK ["Bristol", "Cardiff"]
+== Ef362OwnedHopArrayProjectionTests.cs:185 Renamed_owned_hop_array_alias_is_still_declined_and_returns_correct_data
+   RES Renamed_owned_hop_array_alias_is_still_declined_and_returns_correct_data Failed @Ef362OwnedHopArrayProjectionTests.cs:line 173 System.ArgumentNullException : Value cannot be null. (Parameter 'source')
+== Ef362OwnedHopArrayProjectionTests.cs:213 Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scala
+   RES Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_correctly Failed @Ef362OwnedHopArrayProjectionTests.cs:line 200 System.ArgumentNullException : Value cannot be null. (Parameter 'source')
+
+### array-leaf nested owned element   [covered: 2.3.5]
+== NativeArrayProjectionTests.cs:382 Element_with_its_own_navigation_is_declined_but_the_fallback_returns_correct_rows
+   RES Element_with_its_own_navigation_is_declined_but_the_fallback_returns_correct_rows Passed @ 
+   ORC Throws<NTNSE> OK [{ Title = a_empty, Posts = System.Collections.Generic.List`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeArrayProjectionTests+NestedPost] }, { Title = b_two, Posts = System.Collections.Generic.List`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeArrayProjectionTests+NestedP
+
+### list-init container   [covered: 3.24]
+== NativeArrayProjectionTests.cs:1814 Object_list_container_declines_cleanly
+   RES Object_list_container_declines_cleanly Passed @ 
+   ORC DeclinesCleanly OK ["1|String:abc", "1|<null>", "1|<null>"]
+
+### TimeOfDay downstream / predicate / shape   [covered: 3.25 (only if 0.4 confirms main worked — EF-218 rewrite not on main)]
+== NativeConditionalAndDateTimeTests.cs:303 TimeOfDay_projection_then_Distinct_declines
+   RES TimeOfDay_projection_then_Distinct_declines Passed @ 
+   ORC DeclinesCleanly OK [00:00:00, 12:00:00.0010000, 23:00:00.5000000, 23:30:15.1230000, 23:59:59.9990000]
+== NativeConditionalAndDateTimeTests.cs:317 TimeOfDay_projection_then_terminal_Max_declines
+   RES TimeOfDay_projection_then_terminal_Max_declines Passed @ 
+   ORC DeclinesCleanly OK [23:59:59.9990000]
+== NativeConditionalAndDateTimeTests.cs:376 TimeOfDay_projection_ordered_by_it_declines
+   RES TimeOfDay_projection_ordered_by_it_declines Passed @ 
+   ORC DeclinesCleanly OK ["b", "d", "e", "a", "c"]
+== NativeConditionalAndDateTimeTests.cs:409 TimeOfDay_group_key_declines
+   RES TimeOfDay_group_key_declines Failed @NativeConditionalAndDateTimeTests.cs:line 412 System.InvalidOperationException : The LINQ expression 'DbSet<TimeRow>() .AsNoTracking() .GroupBy(x => x.When.TimeOfDay) .Select(g => new { Key = g.Key, C = g .Count() })' could not be translated. Either rewrite the query in a form that can be transl
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<TimeRow>()     .AsNoTracking()     .GroupBy(x => x.When.TimeOfDay)     .Select(g => new {          Key = g.Key,          C = g             .Count()      })' could not be translated. Either rewrite the query in a form that can be translated,
+== NativeConditionalAndDateTimeTests.cs:395 TimeOfDay_in_a_filter_declines
+   RES TimeOfDay_in_a_filter_declines Passed @ 
+   ORC DeclinesCleanly OK ["a", "c", "d", "e"]
+== NativeConditionalAndDateTimeTests.cs:594 Boxed_TimeOfDay_projection_declines
+   RES Boxed_TimeOfDay_projection_declines Passed @ 
+   ORC DeclinesCleanly OK [23:30:15.1230000, 00:00:00, 23:59:59.9990000, 12:00:00.0010000, 23:00:00.5000000]
+== NativeConditionalAndDateTimeTests.cs:452 TimeOfDay_in_a_nested_construction_declines
+   RES TimeOfDay_in_a_nested_construction_declines Passed @ 
+   ORC DeclinesCleanly OK [(a, 23:30:15.1230000), (b, 00:00:00), (c, 23:59:59.9990000), (d, 12:00:00.0010000), (e, 23:00:00.5000000)]
+
+### TOD set-op Concat   [covered: 3.26 (conditional)]
+== NativeConditionalAndDateTimeTests.cs:360 TimeOfDay_concatenated_with_a_TimeSpan_property_declines
+   RES TimeOfDay_concatenated_with_a_TimeSpan_property_declines Passed @ 
+   ORC DeclinesCleanly OK [00:00:00, 12:00:00.0010000, 12:00:00.0010000, 12:00:00.0010000, 12:00:00.0010000, 12:00:00.0010000, 12:00:00.0010000, 23:00:00.5000000, 23:30:15.1230000, 23:59:59.9990000]
+
+### doc construction computed / client ternary / class-map ternary   [covered: 3.27]
+== NativeDocumentConstructionProjectionTests.cs:257 Document_construction_leaf_with_computed_member_falls_back_but_still_reads_correct_values
+   RES Document_construction_leaf_with_computed_member_falls_back_but_still_reads_correct_values Passed @ 
+   ORC Throws<NTNSE> OK [{ Copy = MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeDocumentConstructionProjectionTests+BookCopy }, { Copy = MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeDocumentConstructionProjectionTests+BookCopy }]
+== NativeDocumentConstructionProjectionTests.cs:478 Bare_ternary_whose_branches_read_different_fields_into_one_member_declines
+   RES Bare_ternary_whose_branches_read_different_fields_into_one_member_declines Passed @ 
+   ORC DeclinesCleanly OK ["PAY|Alpha", "REC|UK", "REC|DE", "REC|FR"]
+== NativeDocumentConstructionProjectionTests.cs:552 Wrapped_ternary_whose_branch_member_collides_with_a_sibling_alias_declines
+   RES Wrapped_ternary_whose_branch_member_collides_with_a_sibling_alias_declines Passed @ 
+   ORC DeclinesCleanly OK ["USA:PAY|Alpha", "UK:REC|Receive", "DE:REC|Receive", "FR:REC|Receive"]
+== NativeDocumentConstructionProjectionTests.cs:647 Join_scope_ternary_over_constructions_the_class_map_misreads_declines
+   RES Join_scope_ternary_over_constructions_the_class_map_misreads_declines Passed @ 
+   ORC DeclinesCleanly OK ["Alpha:PAY|Pay", "Beta:REC|Receive", "Delta:REC|Receive", "Gamma:REC|Receive"]
+== NativeDocumentConstructionProjectionTests.cs:675 Bare_boxed_join_scope_ternary_over_constructions_the_class_map_misreads_declines
+   RES Bare_boxed_join_scope_ternary_over_constructions_the_class_map_misreads_declines Passed @ 
+   ORC DeclinesCleanly OK ["PAY|Pay", "REC|Receive", "REC|Receive", "REC|Receive"]
+== NativeDocumentConstructionProjectionTests.cs:723 Grouped_ternary_over_constructions_the_class_map_misreads_declines
+   RES Grouped_ternary_over_constructions_the_class_map_misreads_declines Failed @NativeDocumentConstructionProjectionTests.cs:line 726 System.InvalidOperationException : The LINQ expression 'DbSet<Place>() .AsNoTracking() .GroupBy(p => p.Country) .Select(g => new { Key = g.Key, X = g.Key == "USA" ? new IdName{ Id = "PAY", Name = "Pay" } : new IdName{ Id = "REC", Name = "Receive" } }
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Place>()     .AsNoTracking()     .GroupBy(p => p.Country)     .Select(g => new {          Key = g.Key,          X = g.Key == "USA" ? new IdName{              Id = "PAY",              Name = "Pay"          }          : new IdName{           
+
+### client-evaluated leaves downstream / set ops / row-independent members   [covered: 3.28]
+== NativeClientEvaluatedLeafTests.cs:343 Union_over_client_evaluated_leaves_declines
+   RES Union_over_client_evaluated_leaves_declines Passed @ 
+   ORC DeclinesCleanly OK ["a|False", "a|True", "b|False", "b|True", "c|False", "c|True"]
+== NativeClientEvaluatedLeafTests.cs:365 Union_of_Distincts_over_client_evaluated_leaves_declines
+   RES Union_of_Distincts_over_client_evaluated_leaves_declines Passed @ 
+   ORC DeclinesCleanly OK ["a|False", "a|True", "b|False", "b|True", "c|False", "c|True"]
+== NativeClientEvaluatedLeafTests.cs:388 Concat_over_client_evaluated_leaves_declines
+   RES Concat_over_client_evaluated_leaves_declines Passed @ 
+   ORC DeclinesCleanly OK ["a|False", "a|False", "a|True", "a|True", "b|False", "b|True", "c|False", "c|True"]
+== NativeClientEvaluatedLeafTests.cs:414 Where_over_a_client_evaluated_leaf_declines
+   RES Where_over_a_client_evaluated_leaf_declines Passed @ 
+   ORC DeclinesCleanly OK ["a", "a", "b", "c"]
+== NativeClientEvaluatedLeafTests.cs:435 OrderBy_over_a_client_evaluated_leaf_declines
+   RES OrderBy_over_a_client_evaluated_leaf_declines Passed @ 
+   ORC DeclinesCleanly OK ["a", "a", "b", "c"]
+== NativeClientEvaluatedLeafTests.cs:477 Max_after_Distinct_over_an_all_client_projection_declines
+   RES Max_after_Distinct_over_an_all_client_projection_declines Passed @ 
+   ORC DeclinesCleanly OK [03:00:00]
+== NativeClientEvaluatedLeafTests.cs:492 Max_over_an_all_client_projection_declines
+   RES Max_over_an_all_client_projection_declines Passed @ 
+   ORC DeclinesCleanly OK [03:00:00]
+== NativeClientEvaluatedLeafTests.cs:509 Where_after_Distinct_over_an_all_client_projection_declines
+   RES Where_after_Distinct_over_an_all_client_projection_declines Passed @ 
+   ORC DeclinesCleanly OK [03:00:00]
+== NativeClientEvaluatedLeafTests.cs:524 OrderBy_after_Distinct_over_a_client_leaf_declines
+   RES OrderBy_after_Distinct_over_a_client_leaf_declines Passed @ 
+   ORC DeclinesCleanly OK ["a", "b", "c"]
+
+### set-op constant / construction / realias   [covered: 3.29]
+== NativeSetOperationProjectionTests.cs:213 Union_with_filtered_distinct_operand_of_a_different_alias_declines
+   RES Union_with_filtered_distinct_operand_of_a_different_alias_declines Passed @ 
+   ORC DeclinesCleanly OK [1, 2, 3, 4, 10, 20]
+== NativeSetOperationProjectionTests.cs:462 Union_of_distinct_constant_and_column_declines
+   RES Union_of_distinct_constant_and_column_declines Passed @ 
+   ORC DeclinesCleanly OK [8, 20]
+== NativeSetOperationProjectionTests.cs:469 Concat_of_distinct_constant_and_column_declines
+   RES Concat_of_distinct_constant_and_column_declines Passed @ 
+   ORC DeclinesCleanly OK [8, 8, 20]
+== NativeSetOperationProjectionTests.cs:476 Union_of_distinct_constant_and_constant_declines
+   RES Union_of_distinct_constant_and_constant_declines Passed @ 
+   ORC DeclinesCleanly OK [8, 9]
+== NativeSetOperationProjectionTests.cs:485 Union_of_distinct_parameter_and_column_declines
+   RES Union_of_distinct_parameter_and_column_declines Passed @ 
+   ORC DeclinesCleanly OK [8, 20]
+== NativeSetOperationProjectionTests.cs:493 Union_of_distinct_anonymous_operand_with_a_constant_member_declines
+   RES Union_of_distinct_anonymous_operand_with_a_constant_member_declines Passed @ 
+   ORC DeclinesCleanly OK ["1:7", "2:7", "8:20", "8:8"]
+== NativeSetOperationProjectionTests.cs:512 Union_of_grouped_constant_result_and_column_declines
+   RES Union_of_grouped_constant_result_and_column_declines Failed @NativeSetOperationProjectionTests.cs:line 74 System.InvalidOperationException : The LINQ expression 'DbSet<Entity>() .GroupBy(x => x.N) .Select(g => 8) .Union(DbSet<Entity>() .Select(x => x.N))' could not be translated. Either rewrite the query in a form that can be translated, or switch to cli
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Entity>()     .GroupBy(x => x.N)     .Select(g => 8)     .Union(DbSet<Entity>()         .Select(x => x.N))' could not be translated. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by ins
+== NativeSetOperationProjectionTests.cs:544 Union_of_grouped_anonymous_operand_with_a_constant_member_declines
+   RES Union_of_grouped_anonymous_operand_with_a_constant_member_declines Failed @NativeSetOperationProjectionTests.cs:line 547 System.InvalidOperationException : The LINQ expression 'DbSet<Entity>() .GroupBy(x => x.N) .Select(g => new { A = 8, C = g .Count() }) .Union(DbSet<Entity>() .Select(x => new { A = x.Id, C = x.N }))' could not be translated. Either rewrite the query 
+   ORC DeclinesCleanly THREW InvalidOperationException: The LINQ expression 'DbSet<Entity>()     .GroupBy(x => x.N)     .Select(g => new {          A = 8,          C = g             .Count()      })     .Union(DbSet<Entity>()         .Select(x => new {              A = x.Id,              C = x.N          }))' could not be
+== NativeSetOperationProjectionTests.cs:571 Union_of_DateTime_parameters_declines
+   RES Union_of_DateTime_parameters_declines Passed @ 
+   ORC DeclinesCleanly OK [01/01/2020 00:00:00, 01/01/2021 00:00:00]
+== NativeSetOperationProjectionTests.cs:584 Union_of_Guid_constants_declines
+   RES Union_of_Guid_constants_declines Passed @ 
+   ORC DeclinesCleanly OK [00000000-0000-0000-0000-000000000001, 00000000-0000-0000-0000-000000000002]
+== NativeSetOperationProjectionTests.cs:592 Union_of_enum_constants_declines
+   RES Union_of_enum_constants_declines Passed @ 
+   ORC DeclinesCleanly OK [Red, Green]
+== NativeSetOperationProjectionTests.cs:600 Union_of_anonymous_operands_with_a_constant_member_declines
+   RES Union_of_anonymous_operands_with_a_constant_member_declines Passed @ 
+   ORC DeclinesCleanly OK ["1:7", "2:7", "8:20", "8:8"]
+
+### chained-join paging / reducers / both-side paging / interleaved paging   [covered: 3.30]
+== NativeChainedJoinPagingTests.cs:69 Paging_between_joins_after_a_first_level_filter_pages_before_the_second_join
+   RES Paging_between_joins_after_a_first_level_filter_pages_before_the_second_join Failed @NativeChainedJoinPagingTests.cs:line 70 System.NotSupportedException : A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between th
+   ORC DeclinesCleanly THREW NotSupportedException: A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between the joins.
+== NativeChainedJoinPagingTests.cs:83 Paging_between_joins_after_a_first_level_filter_then_a_second_level_filter
+   RES Paging_between_joins_after_a_first_level_filter_then_a_second_level_filter Failed @NativeChainedJoinPagingTests.cs:line 84 System.NotSupportedException : A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between th
+   ORC DeclinesCleanly THREW NotSupportedException: A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between the joins.
+== NativeChainedJoinPagingTests.cs:98 Paging_between_joins_after_a_first_level_filter_with_a_wrapped_projection
+   RES Paging_between_joins_after_a_first_level_filter_with_a_wrapped_projection Failed @NativeChainedJoinPagingTests.cs:line 99 System.NotSupportedException : A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between th
+   ORC DeclinesCleanly THREW NotSupportedException: A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between the joins.
+== NativeChainedJoinPagingTests.cs:111 Skip_between_joins_after_a_first_level_filter_skips_before_the_second_join
+   RES Skip_between_joins_after_a_first_level_filter_skips_before_the_second_join Failed @NativeChainedJoinPagingTests.cs:line 112 System.NotSupportedException : A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between th
+   ORC DeclinesCleanly THREW NotSupportedException: A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between the joins.
+== NativeJoinTests.cs:491 Paging_on_both_sides_of_a_one_to_many_join_declines_and_falls_back_correctly
+   RES Paging_on_both_sides_of_a_one_to_many_join_declines_and_falls_back_correctly Passed @ 
+   ORC Throws<NTNSE> OK [{ Name = Alice, Quantity = 1 }, { Name = Alice, Quantity = 2 }]
+== NativeJoinTests.cs:715 First_after_a_confirmed_join_declines_cleanly_under_NativeOnly (First)
+   RES First_after_a_confirmed_join_declines_cleanly_under_NativeOnly Passed @ 
+   ORC Throws<NTNSE> OK Order{Id=6abe4decd82981d4d711ddac, OwnerId=6abe4decd82981d4d711ddab, Owner=<null>, Total=5, Region="South", OrderLines=[]}
+   ORC Throws<NTNSE> OK Order{Id=6abe4decd82981d4d711ddac, OwnerId=6abe4decd82981d4d711ddab, Owner=<null>, Total=5, Region="South", OrderLines=[]}
+== NativeJoinTests.cs:721 First_after_a_confirmed_join_declines_cleanly_under_NativeOnly (FirstOrDefault)
+   RES First_after_a_confirmed_join_declines_cleanly_under_NativeOnly Passed @ 
+   ORC Throws<NTNSE> OK Order{Id=6abe4decd82981d4d711ddac, OwnerId=6abe4decd82981d4d711ddab, Owner=<null>, Total=5, Region="South", OrderLines=[]}
+   ORC Throws<NTNSE> OK Order{Id=6abe4decd82981d4d711ddac, OwnerId=6abe4decd82981d4d711ddab, Owner=<null>, Total=5, Region="South", OrderLines=[]}
+== Ef373InterleavedPagingTests.cs:197 Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly [6 shapes]
+   RES Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly(shape: "LeftFirstJoinSkipTake") Passed @ 
+   RES Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly(shape: "WrappedThenTrailingSelect") Passed @ 
+   RES Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly(shape: "WrappedSkipTake") Passed @ 
+   RES Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly(shape: "WrappedTake") Passed @ 
+   RES Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly(shape: "WrappedBothScopes") Passed @ 
+   RES Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly(shape: "WrappedSkip") Passed @ 
+   ORC Throws<NTNSE> THREW NotSupportedException: A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between the joins.
+   ORC Throws<NTNSE> THREW NotSupportedException: A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between the joins.
+   ORC Throws<NTNSE> THREW NotSupportedException: A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between the joins.
+   ORC Throws<NTNSE> THREW NotSupportedException: A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between the joins.
+   ORC Throws<NTNSE> THREW NotSupportedException: A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between the joins.
+   ORC Throws<NTNSE> THREW NotSupportedException: A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. Move the operator so that it is not interleaved between the joins.
+
+### join misc   [covered: 3.31]
+== NativeJoinTests.cs:827 ?? not in tsv
+== NativeJoinTests.cs:1797 Computed_leaf_beside_a_whole_entity_leaf_declines_and_still_reads_correctly
+   RES Computed_leaf_beside_a_whole_entity_leaf_declines_and_still_reads_correctly Passed @ 
+   ORC Throws<NTNSE> OK [{ o = MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeJoinTests+Owner, X = 20 }, { o = MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeJoinTests+Owner, X = 40 }, { o = MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeJoinTests+Owner, X = 60 }]
+== NativeJoinTests.cs:2060 ?? not in tsv
+== NativeJoinScopeConditionalProjectionTests.cs:348 Wrapped_entity_null_check_beside_a_whole_entity_declines
+   RES Wrapped_entity_null_check_beside_a_whole_entity_declines Passed @ 
+   ORC DeclinesCleanly OK ["1:False", "2:True", "3:True"]
+== NativeJoinScopeConditionalProjectionTests.cs:371 Bare_entity_null_check_over_an_inner_join_declines [2]
+   RES Bare_entity_null_check_over_an_inner_join_declines(isNotNull: True) Passed @ 
+   RES Bare_entity_null_check_over_an_inner_join_declines(isNotNull: False) Passed @ 
+   ORC DeclinesCleanly OK [True]
+   ORC DeclinesCleanly OK [False]
+== NativeJoinScopeNestedProjectionTests.cs:150 Nested_projection_with_value_converted_member_falls_back [Native,NativeOnly]
+   RES Nested_projection_with_value_converted_member_falls_back(mode: Native) Passed @ 
+   RES Nested_projection_with_value_converted_member_falls_back(mode: NativeOnly) Passed @ 
+   ORC Throws<NTNSE> OK [{ OrderNo = 1, CustomerInfo = { Name = Alfreds, Tier = Gold } }]
+== NativeJoinScopeNestedProjectionTests.cs:165 Nested_projection_with_computed_member_falls_back [Native,NativeOnly]
+   RES Nested_projection_with_computed_member_falls_back(mode: Native) Passed @ 
+   RES Nested_projection_with_computed_member_falls_back(mode: NativeOnly) Passed @ 
+   ORC Throws<NTNSE> OK [{ OrderNo = 1, Wrap = { Combo = 8 } }]
+== NativeJoinScopeNestedProjectionTests.cs:180 Nested_projection_with_outer_sourced_member_falls_back [Native,NativeOnly]
+   RES Nested_projection_with_outer_sourced_member_falls_back(mode: Native) Passed @ 
+   RES Nested_projection_with_outer_sourced_member_falls_back(mode: NativeOnly) Passed @ 
+   ORC Throws<NTNSE> OK [{ Name = Alfreds, Copy = { N = 1 } }]
+== NativeChainedReferenceNavigationFilterTests.cs:122 Comparison_spanning_two_hops_declines_cleanly
+   RES Comparison_spanning_two_hops_declines_cleanly Passed @ 
+   ORC DeclinesCleanly OK [1, 4, 5]
+
+### bare computed over `$size`   [covered: 3.32]
+== NativeComputedBareProjectionTests.cs:535 Bare_arithmetic_over_a_collection_count_is_declined_and_answers_correctly
+   RES Bare_arithmetic_over_a_collection_count_is_declined_and_answers_correctly Failed @NativeComputedBareProjectionTests.cs:line 524 System.ArgumentException : Expression of type 'System.Collections.Generic.List`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeComputedBareProjectionTests+Post]' cannot be used for parameter of type 'System.Linq.IQueryable`1[MongoDB.EntityF
+== NativeComputedBareProjectionTests.cs:641 Set_typed_collection_navigation_bare_count_is_declined_and_answers_correctly (LegOutcome "
+   RES Set_typed_collection_navigation_bare_count_is_declined_and_answers_correctly Failed @NativeComputedBareProjectionTests.cs:line 635 Assert.Equal() Failure: Collections differ ↓ (pos 0) Expected: [Tuple ("Native direct", "[2,0,0,0,1]"), Tuple ("Native late-decline", "[2,0,0,0,1]"), Tuple ("DriverLinq direct", "[2,0,0,0,1]"), Tuple ("DriverLinq late-decline", "[2,0,0,0,1]"), Tuple 
+== NativeComputedBareProjectionTests.cs:957 Bare_count_leaf_through_an_owned_reference_HOP_is_declined_and_answers_correctly (LegOutco
+   RES Bare_count_leaf_through_an_owned_reference_HOP_is_declined_and_answers_correctly Failed @NativeComputedBareProjectionTests.cs:line 951 Assert.Equal() Failure: Collections differ ↓ (pos 0) Expected: [Tuple ("Native direct", "[2,0,0,0,1]"), Tuple ("Native late-decline", "[2,0,0,0,1]"), Tuple ("DriverLinq direct", "[2,0,0,0,1]"), Tuple ("DriverLinq late-decline", "[2,0,0,0,1]"), Tuple 
+== NativeComputedBareProjectionTests.cs:1001 Bare_FILTERED_count_leaf_through_an_owned_reference_HOP_is_declined_and_answers_correctly 
+   RES Bare_FILTERED_count_leaf_through_an_owned_reference_HOP_is_declined_and_answers_correctly Failed @NativeComputedBareProjectionTests.cs:line 995 Assert.Equal() Failure: Collections differ ↓ (pos 0) Expected: [Tuple ("Native direct", "[1,0,0,0,1]"), Tuple ("Native late-decline", "[1,0,0,0,1]"), Tuple ("DriverLinq direct", "[1,0,0,0,1]"), Tuple ("DriverLinq late-decline", "[1,0,0,0,1]"), Tuple 
+== NativeComputedBareProjectionTests.cs:1209 Negate_over_a_collection_count_goes_native_wrapped_and_declines_bare
+   RES Negate_over_a_collection_count_goes_native_wrapped_and_declines_bare Failed @NativeComputedBareProjectionTests.cs:line 1202 System.ArgumentException : Expression of type 'System.Collections.Generic.List`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeComputedBareProjectionTests+Post]' cannot be used for parameter of type 'System.Linq.IQueryable`1[MongoDB.EntityF
+   ORC NativeAndParity THREW ArgumentException: Expression of type 'System.Collections.Generic.List`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeComputedBareProjectionTests+Post]' cannot be used for parameter of type 'System.Linq.IQueryable`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.NativeComputedBar
+== NativeProjectionReducerTests.cs:196 (filtered count *2 bare)
+
+### ref-count composition   [covered: 3.33]
+== NativeReferenceCollectionCountPredicateTests.cs:146 Union_after_count_predicate_declines_cleanly_under_NativeOnly (ThrowsAny)
+   RES Union_after_count_predicate_declines_cleanly_under_NativeOnly Passed @ 
+== NativeReferenceCollectionCountPredicateTests.cs:189 Count_predicate_before_projected_Union_declines_cleanly_under_NativeOnly (ThrowsAny)
+   RES Count_predicate_before_projected_Union_declines_cleanly_under_NativeOnly Passed @ 
+== NativeReferenceCollectionCountPredicateTests.cs:234 Count_predicate_before_projected_Distinct_declines_cleanly_under_NativeOnly (ThrowsAny)
+   RES Count_predicate_before_projected_Distinct_declines_cleanly_under_NativeOnly Passed @ 
+== NativeReferenceCollectionCountPredicateTests.cs:267 Count_predicate_before_a_later_Join_declines_cleanly_under_NativeOnly (local ThrowsAny hel
+   RES Count_predicate_before_a_later_Join_declines_cleanly_under_NativeOnly Passed @ 
+
+### DateTimeOffset ToString client   [covered: 3.34]
+== DateTimeOffsetMemberProjectionTests.cs:266 Select_boxed_DateTimeOffset_ToString_matches_client_evaluation (1, NativeOnly leg)
+   RES Select_boxed_DateTimeOffset_ToString_matches_client_evaluation(mode: Native) Failed @DateTimeOffsetMemberProjectionTests.cs:line 374 Assert.Equal() Failure: Strings differ ↓ (pos 0) Expected: "15/03/2024 13:45:30 -05:00" Actual: "{"DateTime":"2024-03-15T18:45:30.250Z","T"··· ↑ (pos 0)
+   RES Select_boxed_DateTimeOffset_ToString_matches_client_evaluation(mode: DriverLinq) Failed @DateTimeOffsetMemberProjectionTests.cs:line 374 Assert.Equal() Failure: Strings differ ↓ (pos 0) Expected: "15/03/2024 13:45:30 -05:00" Actual: "{"DateTime":"2024-03-15T18:45:30.250Z","T"··· ↑ (pos 0)
+   RES Select_boxed_DateTimeOffset_ToString_matches_client_evaluation(mode: NativeOnly) Passed @ 
+   ORC Throws<NTNSE> OK "{"DateTime":"2024-03-15T18:45:30.250Z","Ticks":638461071302500000,"Offset":-300}"
+   ORC Throws<NTNSE> OK "{"DateTime":"2024-03-15T18:45:30.250Z","Ticks":638461071302500000,"Offset":-300}"
+   ORC Throws<NTNSE> OK "{"DateTime":"2024-03-15T18:45:30.250Z","Ticks":638461071302500000,"Offset":-300}"
+== DateTimeOffsetMemberProjectionTests.cs:268 Select_boxed_DateTimeOffset_ToString_matches_client_evaluation (2)
+   RES Select_boxed_DateTimeOffset_ToString_matches_client_evaluation(mode: Native) Failed @DateTimeOffsetMemberProjectionTests.cs:line 374 Assert.Equal() Failure: Strings differ ↓ (pos 0) Expected: "15/03/2024 13:45:30 -05:00" Actual: "{"DateTime":"2024-03-15T18:45:30.250Z","T"··· ↑ (pos 0)
+   RES Select_boxed_DateTimeOffset_ToString_matches_client_evaluation(mode: DriverLinq) Failed @DateTimeOffsetMemberProjectionTests.cs:line 374 Assert.Equal() Failure: Strings differ ↓ (pos 0) Expected: "15/03/2024 13:45:30 -05:00" Actual: "{"DateTime":"2024-03-15T18:45:30.250Z","T"··· ↑ (pos 0)
+   RES Select_boxed_DateTimeOffset_ToString_matches_client_evaluation(mode: NativeOnly) Passed @ 
+   ORC Throws<NTNSE> OK "{"DateTime":"2024-03-15T18:45:30.250Z","Ticks":638461071302500000,"Offset":-300}"
+   ORC Throws<NTNSE> OK "{"DateTime":"2024-03-15T18:45:30.250Z","Ticks":638461071302500000,"Offset":-300}"
+   ORC Throws<NTNSE> OK "{"DateTime":"2024-03-15T18:45:30.250Z","Ticks":638461071302500000,"Offset":-300}"
+== DateTimeOffsetMemberProjectionTests.cs:271 Select_boxed_DateTimeOffset_ToString_matches_client_evaluation (3)
+   RES Select_boxed_DateTimeOffset_ToString_matches_client_evaluation(mode: Native) Failed @DateTimeOffsetMemberProjectionTests.cs:line 374 Assert.Equal() Failure: Strings differ ↓ (pos 0) Expected: "15/03/2024 13:45:30 -05:00" Actual: "{"DateTime":"2024-03-15T18:45:30.250Z","T"··· ↑ (pos 0)
+   RES Select_boxed_DateTimeOffset_ToString_matches_client_evaluation(mode: DriverLinq) Failed @DateTimeOffsetMemberProjectionTests.cs:line 374 Assert.Equal() Failure: Strings differ ↓ (pos 0) Expected: "15/03/2024 13:45:30 -05:00" Actual: "{"DateTime":"2024-03-15T18:45:30.250Z","T"··· ↑ (pos 0)
+   RES Select_boxed_DateTimeOffset_ToString_matches_client_evaluation(mode: NativeOnly) Passed @ 
+   ORC Throws<NTNSE> OK "{"DateTime":"2024-03-15T18:45:30.250Z","Ticks":638461071302500000,"Offset":-300}"
+   ORC Throws<NTNSE> OK "{"DateTime":"2024-03-15T18:45:30.250Z","Ticks":638461071302500000,"Offset":-300}"
+   ORC Throws<NTNSE> OK "{"DateTime":"2024-03-15T18:45:30.250Z","Ticks":638461071302500000,"Offset":-300}"
+== DateTimeOffsetMemberProjectionTests.cs:338 Select_entity_and_concatenated_DateTimeOffset_matches_client_evaluation (NativeOnly leg)
+   RES Select_entity_and_concatenated_DateTimeOffset_matches_client_evaluation(mode: DriverLinq) Passed @ 
+   RES Select_entity_and_concatenated_DateTimeOffset_matches_client_evaluation(mode: NativeOnly) Passed @ 
+   RES Select_entity_and_concatenated_DateTimeOffset_matches_client_evaluation(mode: Native) Passed @ 
+   ORC Throws<NTNSE> OK "a15/03/2024 13:45:30 -05:00"
+
+### owned-leaf set-op / Distinct   [covered: 3.35]
+== NativeOwnedReferenceWholeEntityTests.cs:934 Owned_reference_entity_leaf_in_anonymous_type_with_Union_declines_under_NativeOnly
+   RES Owned_reference_entity_leaf_in_anonymous_type_with_Union_declines_under_NativeOnly Passed @ 
+   ORC Throws<NTNSE> THREW InvalidOperationException: The LINQ expression 'ProjectionBindingExpression: Title' could not be translated. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsyn
+== NativeOwnedReferenceWholeEntityTests.cs:947 Owned_reference_entity_leaf_in_anonymous_type_with_Distinct_declines_under_NativeOnly
+   RES Owned_reference_entity_leaf_in_anonymous_type_with_Distinct_declines_under_NativeOnly Passed @ 
+   ORC Throws<NTNSE> THREW InvalidCastException: Unable to cast object of type 'System.Linq.Expressions.UnaryExpression' to type 'Microsoft.EntityFrameworkCore.Query.ProjectionBindingExpression'.
+== NativeBareProjectionTests.cs:481 Bare_owned_array_projection_operand_still_declines_under_native_only
+   RES Bare_owned_array_projection_operand_still_declines_under_native_only Passed @ 
+   ORC Throws<NTNSE> OK [<null>]
+
+### small singles   [covered: 3.36 (one commit per item)]
+== NativeComputedSortTests.cs:465 Unrenderable_constant_type_sort_key_declines_instead_of_throwing
+   RES Unrenderable_constant_type_sort_key_declines_instead_of_throwing Passed @ 
+   ORC Throws<NTNSE> OK [SortItem{Id=6abe4de0d82981d4d711d4ad, A=9, B=1, Label="pC", Flag=False}, SortItem{Id=6abe4de0d82981d4d711d4ae, A=2, B=23, Label="pA", Flag=False}, SortItem{Id=6abe4de0d82981d4d711d4af, A=1, B=2, Label="pD", Flag=False}, SortItem{Id=6abe4de0d82981d4d711d4b0, A=14, B=3, Label="pB", Flag=False}]
+== NativeComputedSortTests.cs:562 Reference_type_parameter_sort_key_declines_instead_of_throwing_at_execution_time
+   RES Reference_type_parameter_sort_key_declines_instead_of_throwing_at_execution_time Passed @ 
+   ORC Throws<NTNSE> OK ["pA", "pB", "pC", "pD"]
+== Ef382ArrayContainsTests.cs:360 Array_contains_as_a_computed_sort_key_declines_cleanly
+   RES Array_contains_as_a_computed_sort_key_declines_cleanly Failed @Ef382ArrayContainsTests.cs:line 368 Assert.Contains() Failure: Sub-string not found String: "oracle-shim" Not found: "MongoQueryMode.NativeOnly forbids the dri"···
+   ORC Throws<NTNSE> OK ["B", "A", "C"]
+== Ef382ArrayContainsTests.cs:408 Array_contains_as_a_filtered_count_element_predicate_declines_at_render_time
+   RES Array_contains_as_a_filtered_count_element_predicate_declines_at_render_time Failed @Ef382ArrayContainsTests.cs:line 398 System.InvalidOperationException : The LINQ expression 'o' could not be translated. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToLi
+== NativeBoolBitwiseTests.cs:161 Where_or_with_a_nullable_bool_operand_declines_cleanly
+   RES Where_or_with_a_nullable_bool_operand_declines_cleanly Passed @ 
+   ORC DeclinesCleanly OK ["r1", "r2", "r4"]
+== NativeBoolBitwiseTests.cs:197 Where_or_of_a_bool_converted_to_nullable_bool_declines_cleanly
+   RES Where_or_of_a_bool_converted_to_nullable_bool_declines_cleanly Passed @ 
+   ORC DeclinesCleanly OK ["r1", "r2", "r3"]
+== NativeLocalCollectionContainsTests.cs:161 Filter_capturing_another_variable_is_not_folded_and_declines_cleanly
+   RES Filter_capturing_another_variable_is_not_folded_and_declines_cleanly Passed @ 
+   ORC DeclinesCleanly OK ["b"]
+== NativeLocalCollectionContainsTests.cs:207 Negated_contains_over_prepopulated_user_collection_does_not_treat_it_as_empty (tolerant)
+   RES Negated_contains_over_prepopulated_user_collection_does_not_treat_it_as_empty Passed @ 
+== NativeClientMethodProjectionTests.cs:137 Select_with_client_method_referencing_entity_twice_still_declines_under_native_only
+   RES Select_with_client_method_referencing_entity_twice_still_declines_under_native_only Passed @ 
+   ORC Throws<NTNSE> OK ["ALFKI", "AROUT"]
+== NativeOfTypeTests.cs:185 OfType_composed_with_Distinct_on_derived_members_falls_back_under_native_only
+   RES OfType_composed_with_Distinct_on_derived_members_falls_back_under_native_only Passed @ 
+   ORC Throws<NTNSE> OK [{ Name = SubCustomer 1, ShippingAddress = 3.5 Inch Dr. }, { Name = Customer 1, ShippingAddress = 123 Main St }, { Name = Customer 2, ShippingAddress = 123 Main St }]
+== NativeGroupByCtorProjectionTests.cs:205 GroupBy_select_with_member_init_dto_key_with_renamed_element_declines_to_driver_linq
+   RES GroupBy_select_with_member_init_dto_key_with_renamed_element_declines_to_driver_linq Failed @NativeGroupByCtorProjectionTests.cs:line 172 System.InvalidOperationException : The LINQ expression 'DbSet<Order>() .GroupBy(o => new RenamedElementCustomerKey{ CustomerId = o.CustomerId, EmployeeId = o.EmployeeId } ) .Select(g => new { Sum = g .Sum(o => o.Total), Key = g.Key })' could not be t
+== NativeContainsTerminalTests.cs:121 Contains_over_computed_projection_declines_cleanly
+   RES Contains_over_computed_projection_declines_cleanly Passed @ 
+   ORC DeclinesCleanly OK [True]
+== NativeComputedProjectionTests.cs:470 String_method_call_projection_falls_back_gracefully_except_under_NativeOnly
+   RES String_method_call_projection_falls_back_gracefully_except_under_NativeOnly Passed @ 
+   ORC Throws<NTNSE> OK [{ X = Alice }, { X = B }, { X = Car }]
+== NativeVectorSearchTests.cs:299 Mql_Field_for_a_non_score_element_declines (guard A)
+   RES Mql_Field_for_a_non_score_element_declines Passed @ 
+   ORC Throws<NTNSE> OK [{ Label = A, Value = 1 }, { Label = B, Value = 2 }, { Label = C, Value = 3 }, { Label = D, Value = 4 }]
+   ORC Throws<NTNSE> OK [{ Label = A, Score = 1 }, { Label = B, Score = 0.99029034 }, { Label = C, Score = 0.9472136 }, { Label = D, Score = 0.8535534 }]
+== NativeVectorSearchTests.cs:327 Mql_Field_for_a_non_score_element_declines (guard B)
+   RES Mql_Field_for_a_non_score_element_declines Passed @ 
+   ORC Throws<NTNSE> OK [{ Label = A, Value = 1 }, { Label = B, Value = 2 }, { Label = C, Value = 3 }, { Label = D, Value = 4 }]
+   ORC Throws<NTNSE> OK [{ Label = A, Score = 1 }, { Label = B, Score = 0.99029034 }, { Label = C, Score = 0.9472136 }, { Label = D, Score = 0.8535534 }]
+== NativeVectorSearchTests.cs:518 Parameterized_array_contains_pre_filter_still_falls_back_with_correct_rows
+   RES Parameterized_array_contains_pre_filter_still_falls_back_with_correct_rows Passed @ 
+   ORC Throws<NTNSE> OK [VectorDoc{Id=6abe4dc8d82981d4d711b7d9, Label="A", Embedding=[1, 0], Flag=False, Tags=["keep"], Weight=1, Meta=VectorMeta{Note="note-A", Pages=1}}, VectorDoc{Id=6abe4dc8d82981d4d711b7d8, Label="C", Embedding=[1, 0.5], Flag=True, Tags=["keep"], Weight=3, Meta=VectorMeta{Note="note-C", Pages=3}}, V
+== Ef425InterposedCollectionOperatorTests.cs:209 Owned_collection_Select_with_no_interposed_operator_is_a_driver_linq_fallback
+   RES Owned_collection_Select_with_no_interposed_operator_is_a_driver_linq_fallback Passed @ 
+   ORC Throws<NTNSE> OK [["a", "b", "a"], []]
