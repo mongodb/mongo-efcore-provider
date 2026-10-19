@@ -243,6 +243,10 @@ Rendering (null/missing/dialect semantics):
   (`HasClientCaseMappingProjectionLeaf`) value-reading operators decline. A GroupBy query that would run on driver-LINQ
   with a case mapping anywhere in its chain throws (`ThrowIfDriverLinqCaseMapsGroupedResult`); ungrouped driver-LINQ
   queries still emit `$toUpper`/`$toLower`.
+- **A retained pushed-down Select (`Select(..).Distinct()` / set op beside an owned reference) returns projected documents keyed by member
+  name** (EF-469): the mixed reader reads an owned reference through the member that selects its navigation
+  (`ResolveProjectedOwnedReferenceAlias`) and a bare root scalar through its alias (`CreateGetPropertyValueAtPath`); a server-evaluated
+  case mapping there fails loudly (the server answers `""` for null). Not covered: a retained Select over a Join.
 - **DateTime read-back must honour the property's `DateTimeKind`** (`NativeDateTimeKindReadBack`): untraceable values,
   whole-document class-map reads with kind-sensitive members, and set ops whose operands differ in kind decline. Don't fold
   this into `HasDefaultKeySerialization`. Date parts over Local-kind properties compute in UTC on both paths (EF-459).
