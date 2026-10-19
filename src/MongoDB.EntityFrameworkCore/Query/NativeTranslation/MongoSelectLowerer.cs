@@ -470,7 +470,7 @@ internal sealed class MongoSelectLowerer
                 // optional); a fixed default would get one wrong. Broader than IsStreamableReference: also admits transitive hops
                 // (localField prefixed by a prior lookup's alias), which IsStreamableReference excludes to keep them off the streaming materializer.
                 stages.Add(new MongoLookupStage(lookup));
-                stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays));
+                stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays, lookup.MatchesAtMostOneDocument));
             }
             else if (lookup.IsNativeCollectionLookup
                      // A renamed lookup must still be non-ForceUnwind and not DiscriminatorNarrowed, or a TPH-derived collection Include

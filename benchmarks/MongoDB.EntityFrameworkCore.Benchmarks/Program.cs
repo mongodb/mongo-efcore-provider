@@ -1,7 +1,13 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Benchmarks;
 using MongoDB.EntityFrameworkCore.Infrastructure;
+
+if (args.Contains("--server-only"))
+    return ServerOnly.Run();
+
+if (args.Contains("--profile"))
+    return ProfileHarness.Run(args);
 
 if (args.Contains("--verify-native"))
 {
@@ -34,11 +40,11 @@ if (args.Contains("--verify-native"))
                 if (expectFallback)
                     Console.WriteLine($"{label}: FALLBACK CONFIRMED (NativeTranslationNotSupportedException)");
                 else
-                    Console.WriteLine($"{label}: FALLBACK (unexpected) — {ex.Message[..Math.Min(80, ex.Message.Length)]}");
+                    Console.WriteLine($"{label}: FALLBACK (unexpected) — {ex.Message[..Math.Min(600, ex.Message.Length)]}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{label}: ERROR — {ex.GetType().Name}: {ex.Message[..Math.Min(80, ex.Message.Length)]}");
+                Console.WriteLine($"{label}: ERROR — {ex.GetType().Name}: {ex.Message[..Math.Min(600, ex.Message.Length)]}");
             }
         }
 
@@ -74,6 +80,28 @@ if (args.Contains("--verify-native"))
             Console.WriteLine($"ReferenceInclude:  NATIVE OK (count={count})");
         });
 
+        using (var ctx = new BenchmarkDbContext(seedOptions))
+            BenchmarkSeeder.SeedExtended(ctx, accountCount: 10, orderCount: 50, wideCount: 100);
+
+        RunShape("ComplexQuery:     ", () =>
+        {
+            using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
+            var count = ctx.Orders.AsNoTracking()
+                .Where(o => o.Shipping.Address.Zip > 10_000 && o.Code != null).Include(o => o.Account)
+                .OrderByDescending(o => o.Shipping.Address.City).ThenBy(o => o.Id).Skip(5).Take(30).ToList().Count;
+            Console.WriteLine($"ComplexQuery:      NATIVE OK (count={count})");
+        });
+        RunShape("WideWholeEntity:  ", () =>
+        {
+            using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
+            Console.WriteLine($"WideWholeEntity:   NATIVE OK (count={ctx.Wides.AsNoTracking().ToList().Count})");
+        });
+        RunShape("NestedWholeEntity:", () =>
+        {
+            using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
+            Console.WriteLine($"NestedWholeEntity: NATIVE OK (count={ctx.Orders.AsNoTracking().ToList().Count})");
+        });
+
         Console.WriteLine("=== verification done ===");
     }
     finally
@@ -81,7 +109,7 @@ if (args.Contains("--verify-native"))
         using var ctx = new BenchmarkDbContext(seedOptions);
         ctx.Database.EnsureDeleted();
     }
-    return;
+    return 0;
 }
 
 if (args.Contains("--extended-smoke"))
@@ -122,7 +150,7 @@ if (args.Contains("--extended-smoke"))
         using var ctx = new BenchmarkDbContext(options);
         ctx.Database.EnsureDeleted();
     }
-    return;
+    return 0;
 }
 
 if (args.Contains("--smoke"))
@@ -166,13 +194,12 @@ if (args.Contains("--smoke"))
         using var ctx = new BenchmarkDbContext(options);
         ctx.Database.EnsureDeleted();
     }
-    return;
+    return 0;
 }
 
-if (args.Contains("--extended"))
-{
-    BenchmarkDotNet.Running.BenchmarkRunner.Run<ExtendedBenchmarks>();
-    return;
-}
-
-BenchmarkDotNet.Running.BenchmarkRunner.Run<HeadlineBenchmarks>();
+// Remaining args (--filter, --job, ...) go to BenchmarkDotNet. --extended selects the extended class.
+var bdnArgs = args.Where(a => a != "--extended").ToArray();
+BenchmarkDotNet.Running.BenchmarkSwitcher
+    .FromTypes(args.Contains("--extended") ? new[] { typeof(ExtendedBenchmarks) } : new[] { typeof(HeadlineBenchmarks) })
+    .Run(bdnArgs);
+return 0;

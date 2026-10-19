@@ -1086,7 +1086,7 @@ Customers.{ "$match" : { } }
         await base.Where_expression_invoke_2(async);
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer._id" : "ALFKI" } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "_lookup_Customer._id" : "ALFKI" } }
 """);
     }
 
@@ -1301,7 +1301,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }, { "$lookup" : { 
 """,
             //
             """
-OrderDetails.{ "$match" : { "_id.OrderID" : { "$in" : [10643, 10692, 10702, 10835, 10952, 11011] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }
+OrderDetails.{ "$match" : { "_id.OrderID" : { "$in" : [10643, 10692, 10702, 10835, 10952, 11011] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$match" : { "_lookup_Order.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Order" : { "$arrayElemAt" : ["$_lookup_Order", 0] } } }
 """);
     }
 

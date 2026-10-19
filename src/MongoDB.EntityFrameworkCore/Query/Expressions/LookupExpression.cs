@@ -180,6 +180,17 @@ internal sealed class LookupExpression
     public string As { get; set; }
 
     /// <summary>
+    /// Whether this single-key lookup returns at most one document per outer row: it matches the target's whole <c>_id</c>, which is unique
+    /// by construction (a dotted key such as a composite <c>_id.Part</c>, or any other field, can repeat). A navigation declared on an owned
+    /// entity is excluded in case its local key sits inside an owned collection, where one outer row holds several keys.
+    /// </summary>
+    internal bool MatchesAtMostOneDocument
+        => CompositeKey is null
+           && ForeignField == "_id"
+           && !As.Contains('.')
+           && Navigation?.DeclaringEntityType.IsOwned() != true;
+
+    /// <summary>
     /// Whether this lookup's <see cref="LocalField"/> reads a field of <paramref name="other"/>'s output (is prefixed by
     /// <c>"&lt;other.As&gt;."</c>), so it must be emitted after <paramref name="other"/>.
     /// </summary>

@@ -1,0 +1,55 @@
+1c1
+< /* Copyright 2023-present MongoDB Inc.
+---
+> ﻿/* Copyright 2023-present MongoDB Inc.
+613c613,627
+<         var shaper = FindCollectionShaper(navExpression)
+---
+>         Console.WriteLine("DBG UNARY: " + (navExpression is UnaryExpression du ? du.Operand.GetType().Name + " / " + (du.Operand is System.Linq.Expressions.MethodCallExpression dm ? dm.Method.Name + " args0=" + dm.Arguments[0].GetType().Name + " args1=" + dm.Arguments[1].GetType().Name + " body=" + ((System.Linq.Expressions.LambdaExpression)dm.Arguments[1]).Body.GetType().Name : "") : ""));
+>         if (navExpression is UnaryExpression du2 && du2.Operand is System.Linq.Expressions.MethodCallExpression dm2) { var lb=(System.Linq.Expressions.LambdaExpression)dm2.Arguments[1]; var inc=(IncludeExpression)lb.Body; Console.WriteLine("DBG LAMBDA param=" + lb.Parameters[0].Type + " include nav=" + inc.Navigation.Name + " entityExpr=" + inc.EntityExpression.GetType().Name + " navExpr=" + inc.NavigationExpression.GetType().Name + " :: " + inc.EntityExpression.ToString().Replace("\n"," ").Substring(0, Math.Min(900, inc.EntityExpression.ToString().Length))); Console.WriteLine("DBG SRC-FIND-SHAPER=" + (FindCollectionShaper(dm2.Arguments[0]) != null) + " innerShaper=" + (FindCollectionShaper(dm2.Arguments[0])?.InnerShaper.GetType().Name) + " include chain=" + string.Join(">", ChainOf(lb.Body)));
+>           Console.WriteLine("DBG SRC " + dm2.Arguments[0].ToString().Replace("\n"," ").Substring(0,Math.Min(400,dm2.Arguments[0].ToString().Length))); }
+>         Console.WriteLine("DBG TREE: " + string.Join(" | ", navExpression.ToString().Split('\n').Take(40).Select(l=>l.Trim()).Where(l=>l.Length>0).Select(l=>l.Length>160?l[..160]:l)));
+>         Console.WriteLine("DBG navExpression type=" + navExpression.GetType().Name + " nodeType=" + navExpression.NodeType + " found=" + (FindCollectionShaper(navExpression) != null));
+>         if (navExpression is IncludeExpression dbgI) Console.WriteLine("DBG   Include.Entity=" + dbgI.EntityExpression.GetType().Name + " Nav=" + dbgI.NavigationExpression.GetType().Name + " " + dbgI.Navigation.Name);
+>         if (navExpression is System.Linq.Expressions.BlockExpression dbgB) foreach (var e in dbgB.Expressions) Console.WriteLine("DBG   block expr " + e.GetType().Name + " " + e.NodeType);
+>         Expression? innerShaper = null;
+>         { var e = navExpression; if (e is UnaryExpression u) e = u.Operand;
+>           if (e is System.Linq.Expressions.MethodCallExpression mc && mc.Method.Name == "Select" && mc.Arguments[1] is System.Linq.Expressions.LambdaExpression lam && lam.Body is IncludeExpression)
+>           {
+>               var cs = FindCollectionShaper(mc.Arguments[0]) ?? throw new NativeTranslationNotSupportedException("no shaper under Select");
+>               innerShaper = new ParamReplacer(lam.Parameters[0], cs.InnerShaper).Visit(lam.Body);
+>           } }
+>         innerShaper ??= (FindCollectionShaper(navExpression)
+615,620c629,633
+<                          $"Unexpected owned-collection materializer shape for '{collectionPlan.Element.EntityType.DisplayName()}'.");
+< 
+<         // The inner shaper is the per-element materializer; it may itself be an IncludeExpression (element owns further navigations), which
+<         // RewriteMaterializer handles recursively with the collection context threaded through for the ordinal key.
+<         collectionPlan.ElementConstructor =
+<             RewriteMaterializer(shaper.InnerShaper, collectionPlan.Element, collectionPlan);
+---
+>                          $"Unexpected owned-collection materializer shape for '{collectionPlan.Element.EntityType.DisplayName()}'.")).InnerShaper;
+>         Stack.Add(collectionPlan);
+>         try { collectionPlan.ElementConstructor =
+>             RewriteMaterializer(innerShaper, collectionPlan.Element, collectionPlan); }
+>         finally { Stack.RemoveAt(Stack.Count - 1); }
+622a636,639
+>     private static readonly List<CollectionPlan> Stack = new();
+>     private sealed class ParamReplacer(ParameterExpression p, Expression r) : System.Linq.Expressions.ExpressionVisitor
+>     { protected override Expression VisitParameter(ParameterExpression n) => n == p ? r : n; }
+>     private static IEnumerable<string> ChainOf(Expression e) { while (e is IncludeExpression i) { yield return i.Navigation.Name + (i.Navigation.IsCollection ? "[]" : ""); e = i.EntityExpression; } yield return e.GetType().Name + ":" + e.NodeType; }
+918a936,949
+>                 }
+> 
+>                 { // PROBE: ordinal key of an ENCLOSING collection element (nested collection FK)
+>                     var cur = property;
+>                     while (cur.IsOwnedTypeKey() && cur.FindFirstPrincipal() is { } pr && pr != cur)
+>                     {
+>                         cur = pr;
+>                         if (cur.IsOwnedTypeOrdinalKey())
+>                         {
+>                             foreach (var anc in Stack)
+>                                 if (anc.Element.EntityType == cur.DeclaringType)
+>                                     return Expression.Add(anc.Counter, Expression.Constant(1)).ConvertIfRequired(node.Type);
+>                         }
+>                     }
