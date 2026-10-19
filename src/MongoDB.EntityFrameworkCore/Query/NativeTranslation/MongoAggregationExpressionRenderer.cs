@@ -88,7 +88,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoConditionalExpression conditional
                 => new BsonDocument("$cond", new BsonDocument
                 {
-                    { "if", Render(conditional.Test, placeholders, elementVariable) },
+                    { "if", RenderConditionTest(conditional.Test, placeholders, elementVariable) },
                     { "then", RenderBranch(conditional.IfTrue, placeholders, elementVariable) },
                     { "else", RenderBranch(conditional.IfFalse, placeholders, elementVariable) }
                 }),
@@ -189,7 +189,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoConvertExpression convert
                 => MongoConvertExpression.ToOperatorFor(convert.Type) is not null && CanRender(convert.Operand),
             MongoConditionalExpression conditional
-                => CanRender(conditional.Test) && CanRender(conditional.IfTrue) && CanRender(conditional.IfFalse),
+                => CanRender(conditional.Test) && !IsUnsafeConditionTest(conditional.Test) && CanRender(conditional.IfTrue) && CanRender(conditional.IfFalse),
             MongoCoalesceExpression coalesce => CanRender(coalesce.Left) && CanRender(coalesce.Right),
             MongoDateTimeOffsetLocalExpression local => CanRender(local.Operand),
             MongoDatePartExpression datePart => CanRender(datePart.Operand),
@@ -724,6 +724,26 @@ internal static class MongoAggregationExpressionRenderer
     // re-check their own operands.
     private static void CheckBooleanRootSerialization(MongoExpression node)
         => ThrowIfUnsafeTruthinessRoot(node, "a bare boolean predicate root", "this position is evaluated by truthiness");
+
+    // A bare converted bool, or a coalesce one of whose sides is (`(x.NFlag ?? false) ? a : b` yields the stored value).
+    private static bool IsUnsafeConditionTest(MongoExpression test)
+        => MongoExpressionTranslator.IsUnsafeTruthinessRoot(test, out _)
+           || (test is MongoCoalesceExpression coalesce
+               && (IsUnsafeConditionTest(coalesce.Left) || IsUnsafeConditionTest(coalesce.Right)));
+
+    // A $cond tests its condition by truthiness: a converted bool (stored "True"/"False", both truthy) takes the wrong branch (EF-466).
+    private static BsonValue RenderConditionTest(MongoExpression test, PlaceholderTable placeholders, string? elementVariable)
+    {
+        ThrowIfUnsafeTruthinessRoot(test, "a conditional test", "a conditional is evaluated by truthiness");
+        if (IsUnsafeConditionTest(test))
+        {
+            throw new NativeTranslationNotSupportedException(
+                "Cannot render a conditional test that yields the stored value of a converted bool: it does not use default BSON "
+                + "serialization, and a conditional is evaluated by truthiness, which would answer the wrong boolean.");
+        }
+
+        return Render(test, placeholders, elementVariable);
+    }
 
     // { $in: [needle, haystack] }; negation wraps in $not (the query dialect has $nin, this one doesn't).
     private static BsonValue RenderIn(MongoInExpression inExpr, PlaceholderTable placeholders, string? elementVariable)

@@ -389,6 +389,46 @@ Unchanged:
 
 Store the property in a form the function can run over, or bring the rows to the client first: `context.Items.AsEnumerable().Where(x => x.Name.Contains("x"))`. A property whose converter is order-preserving cannot opt in yet (see EF-472).
 
+### A value-converted `bool` tested by truthiness in a conditional now throws
+
+#### Old behavior
+
+A `bool` property with a value converter (for example `HasConversion<string>()`, which stores `"1"` and `"0"`) used as the test of a conditional inside a filter or a count predicate was evaluated by the server against the stored value. A stored string such as `"1"` or `"0"` is always truthy, so the first branch was always taken:
+
+```c#
+context.Items.Where(x => x.Flag ? x.Seq > 1 : x.Seq > 2);   // behaved as x.Seq > 1
+context.Items.Where(x => (x.Flag ? 1 : 0) == 0);            // matched no row
+context.Items.Count(x => (x.Flag ? 1 : 0) == 1);            // counted every row
+```
+
+#### New behavior
+
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`). Unchanged: `Where(x => x.Flag)`, `Where(x => !x.Flag)`, `Where(x => x.Flag == false)`, and conditionals over a default-stored `bool`.
+
+#### Mitigations
+
+Evaluate the conditional on the client after `AsEnumerable()`, or keep the `bool` default-stored. Any converted `bool` is refused, including one whose stored values would happen to test correctly (for example a `0`/`1` converter), as for `!x.Flag` operands elsewhere.
+
+### Equality and `Contains` between two operands stored differently now throw
+
+#### Old behavior
+
+When both sides of an equality, or the list and the item of a `Contains`, were stored properties (not a constant or a parameter) whose converter or `BsonRepresentation` differed, the server compared the stored forms. The answer was wrong unless the two encodings happened to coincide:
+
+```c#
+// Scores is a default-stored List<int>; Num has HasConversion(v => v * 2, v => v / 2)
+context.Items.Where(x => x.Scores.Contains(x.Num));          // matched where Scores held the doubled value
+context.Items.Where(x => x.Scores.Any(s => s == x.Num));     // the same
+```
+
+#### New behavior
+
+These throw `NotSupportedException` naming both properties. Operands stored alike (same converter and representation), and operands that both store the .NET value itself (for example `int` and a `long`-casting converter), are unchanged, as are comparisons against a constant, a parameter or a captured list, which go through the property's own serializer.
+
+#### Mitigations
+
+Store both operands the same way (sharing one converter instance), or compare on the client after `AsEnumerable()`. Operands that happened to encode alike but are configured differently, such as an enum stored as its name against a plain string property, are refused too.
+
 ### `Random` and `Guid.NewGuid`/`Guid.CreateVersion7` calls inside a query now throw
 
 #### Old behavior
