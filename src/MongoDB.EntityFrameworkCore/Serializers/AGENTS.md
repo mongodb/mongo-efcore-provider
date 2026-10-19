@@ -15,8 +15,13 @@ themselves live in Storage/ValueConversion.
 ## Invariants
 
 - **Query and others get serializers only from `BsonSerializerFactory`** (never instantiate). It composes driver
-  serializers: never call `BsonSerializer.RegisterSerializer(...)` (no mutating global driver state);
-  `BsonClassMap.LookupClassMap` (read-only) is fine. Don't invent serializers the driver already covers.
+  serializers: never call `BsonSerializer.RegisterSerializer(...)` (no mutating global driver state).
+  Don't invent serializers the driver already covers.
+- **Class-map fallthrough** (`CreateTypeSerializer` for concrete classes/non-primitive structs: DTOs, anonymous
+  types): builds an independent, cached `BsonClassMap` unless the application already registered one. Never use
+  `BsonClassMap.LookupClassMap` for an unregistered type: it freezes a map in the driver's global registry and a
+  later application `RegisterClassMap<T>` would throw. The factory has no model, so it can't reject EF entity types:
+  callers must use `GetEntitySerializer` for those. Tuples (`ITuple`) throw `NotSupportedException`.
 - **Converter vs comparer vs serializer**: a `ValueConverter` is a pure model↔provider transform, a `ValueComparer`
   is equality/snapshot semantics, `ValueConverterSerializer` runs the converter at BSON time. Don't mix them.
 - **`ValueConverterSerializer` rejects `TActual = Nullable<>`** — wrap the storage type in `NullableSerializer<>`
