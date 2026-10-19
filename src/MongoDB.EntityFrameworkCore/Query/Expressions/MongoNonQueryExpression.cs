@@ -21,9 +21,8 @@ using Microsoft.EntityFrameworkCore.Metadata;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Marker node produced by ExecuteDelete / ExecuteUpdate translation. Carries the source
-/// query (collection + captured predicate chain) and, for updates, the ordered setters.
-/// Recognized by <see cref="Visitors.MongoShapedQueryCompilingExpressionVisitor"/>.
+/// Marker node produced by ExecuteDelete / ExecuteUpdate translation: the source query and, for updates, the ordered
+/// setters. Recognized by <see cref="Visitors.MongoShapedQueryCompilingExpressionVisitor"/>.
 /// </summary>
 internal sealed class MongoNonQueryExpression : Expression
 {
@@ -58,10 +57,8 @@ internal sealed class MongoNonQueryExpression : Expression
     public BulkStrategy Strategy { get; }
 
     /// <summary>
-    /// Unwraps the leading ExecuteDelete / ExecuteUpdate marker call (declared on
-    /// <see cref="EntityFrameworkQueryableExtensions"/>) from a captured method chain, returning the underlying
-    /// source query (e.g. <c>root.Where(...)</c>). EF captures the full chain including the bulk operator as the
-    /// <see cref="MongoQueryExpression.CapturedExpression"/>; walkers that scope the operation need only the source.
+    /// Unwraps the leading ExecuteDelete / ExecuteUpdate marker call from a captured chain, returning the source query.
+    /// EF captures the full chain including the bulk operator as <see cref="MongoQueryExpression.CapturedExpression"/>.
     /// </summary>
     public static Expression? UnwrapBulkOperator(Expression? capturedExpression)
         => capturedExpression is MethodCallExpression { Method.DeclaringType: var declaringType } call

@@ -144,7 +144,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var logs = new List<string>();
         using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
 
-        // The set op must stay terminal (a queryable .OrderBy after it would fall back / throw under NativeOnly).
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3)).ToList();
 
         Assert.Equal([3], result.Select(i => i.Value).OrderBy(v => v)); // present in both {1,2,3} and {3,4,5}
@@ -229,7 +228,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Bare_scalar_operand_intersect_goes_native) + mode);
         using var db = Make(collection, mode);
-        // {1,2,3} intersect {3,4,5} = {3}.
         var result = db.Entities.Where(i => i.Value <= 3).Select(i => i.Value)
             .Intersect(db.Entities.Where(i => i.Value >= 3).Select(i => i.Value)).ToList();
         Assert.Equal([3], result.OrderBy(v => v));
@@ -245,7 +243,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 .Intersect(db.Entities.Where(i => i.Value >= 3).Select(i => i.Value)).ToList());
     }
 
-    // A trailing Where after Except goes native; checked against in-memory data plus NativeOnly.
     [Fact]
     public void Except_then_Where_goes_native()
     {
@@ -258,11 +255,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal([2], result.Select(i => i.Value).OrderBy(v => v));
     }
 
-    // Composition-seam hard-fail: the IsSetOp terminal gate rejects operators composed after Intersect/Except.
-
     public static IEnumerable<object[]> IntersectComposedOps() => new[]
     {
-        // Only deferred operators remain here; OrderBy/Skip/Take are covered by Intersect_then_paging_goes_native.
         new object[] { "GroupBy", (Func<IQueryable<Item>, object>)(q => q.GroupBy(i => i.Value).Select(g => g.Key).ToList()) },
     };
 
@@ -434,7 +428,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Different_collection_projected_operand_union_goes_native()
     {
         using var db = MakeTwoEntity(MongoQueryMode.NativeOnly);
-        // Two different entity types / collections projecting to the same anonymous shape {string Label}.
         var result = db.Lefts.Select(l => new { Label = l.Name })
             .Union(db.Rights.Select(r => new { Label = r.Title }))
             .ToList()
@@ -479,7 +472,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal("Dup", result[0].Name);
     }
 
-    // Each operand's Where lowers ahead of its $project, and a captured local in an operand substitutes.
     [Fact]
     public void Projected_operand_union_with_per_operand_filter_and_parameter_goes_native()
     {
@@ -568,7 +560,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         public string Text { get; set; } = "";
         public ObjectId LinkedItemId { get; set; }
 
-        // Inverse reference navigation, used only by Reference_include_after_union_still_falls_back.
         public LinkedItem? Item { get; set; }
     }
 
@@ -658,7 +649,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
 
         Assert.Equal([1, 2, 3], native.Select(i => i.Value));
         Assert.Equal(["a1", "a2"], native.Single(i => i.Value == 1).Details.Select(d => d.Text).Order());
-        // The operand-contributed row.
         Assert.Equal(["b1"], native.Single(i => i.Value == 2).Details.Select(d => d.Text));
         Assert.Empty(native.Single(i => i.Value == 3).Details);
 
@@ -671,7 +661,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     [Fact]
     public void Concat_with_collection_include_goes_native_and_keeps_duplicates()
     {
-        // Concat has no dedup, so the overlapping Value == 2 row appears twice and both copies must carry the joined details.
         var (itemsName, detailsName) = SeedLinked(nameof(Concat_with_collection_include_goes_native_and_keeps_duplicates));
 
         using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly);
@@ -689,7 +678,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     [Fact]
     public void Union_with_collection_include_dedups_by_entity_not_by_joined_children()
     {
-        // Both operands select the same two rows, so Union returns 2; dedup must run over pre-join documents.
         var (itemsName, detailsName) = SeedLinked(nameof(Union_with_collection_include_dedups_by_entity_not_by_joined_children));
 
         using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly);
@@ -798,9 +786,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     [Fact]
     public void Operand_carrying_its_own_include_is_unaffected_by_the_relaxation()
     {
-        // IsPlainWholeEntitySelect's `Lookups.Count == 0` decline is untouched; for a collection Include the
-        // hoist means it isn't the deciding site, so this goes native via the hoisted path. Baseline for any
-        // future change to that check.
         var (itemsName, detailsName) = SeedLinked(nameof(Operand_carrying_its_own_include_is_unaffected_by_the_relaxation));
 
         using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly);
@@ -855,7 +840,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
 
         var native = Run(MongoQueryMode.NativeOnly);
 
-        // {1..5} -> right operand {2,3,4,5,6}; left operand is 8 for every row, deduped to one; Union of the two.
         Assert.Equal([2, 3, 4, 5, 6, 8], native);
         Assert.Equal(Run(MongoQueryMode.DriverLinq), native);
     }
@@ -917,7 +901,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal(Run(driverDb), native);
     }
 
-    // Count over the combined union (5) differs from source1's (3), so a pre-$unionWith $count would be wrong.
     [Fact]
     public void Count_after_union_goes_native()
     {
@@ -938,7 +921,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Count_after_intersect_goes_native));
         using var db = Make(collection, MongoQueryMode.NativeOnly);
-        // {1,2,3} Intersect {3,4,5} = {3}; Count = 1 (source1 count would be 3).
         var count = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3)).Count();
         Assert.Equal(1, count);
     }
@@ -974,7 +956,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal(Run(driverDb), native);
     }
 
-    // A left-nested whole-entity Union chain goes native as a chain of $unionWith links.
     [Fact]
     public void Chained_union_goes_native()
     {
@@ -989,7 +970,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal([1, 2, 3, 4, 5], result); // three disjoint sets {1,2} U {3} U {4,5}
     }
 
-    // Bool-keyed companion to GroupBy_after_Union_goes_native.
     [Fact]
     public void GroupBy_after_union_goes_native()
     {
@@ -1056,14 +1036,12 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var collection = database.CreateCollection<SetOpBase>();
         SeedSetOpTphData(MakeTph(collection, MongoQueryMode.Native));
 
-        // OfType after a Union must not go native (the discriminator can't reach the operand): NativeOnly throws.
         using (var nativeOnlyDb = MakeTph(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Entities.Union(nativeOnlyDb.Entities).OfType<SetOpDerived>().ToList());
         }
 
-        // Native == DriverLinq: only derived rows, never a leaked base row.
         using var nativeDb = MakeTph(collection, MongoQueryMode.Native);
         var result = nativeDb.Entities.Union(nativeDb.Entities).OfType<SetOpDerived>().ToList();
 
@@ -1071,7 +1049,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.All(result, e => Assert.IsType<SetOpDerived>(e));
     }
 
-    // A trailing projection after Union goes native.
     [Fact]
     public void Select_after_union_goes_native_parity()
     {
@@ -1164,8 +1141,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 .Select(g => new { Key = g.Key, Count = g.Count() }))
             .ToList().OrderBy(x => x.Key).ToList();
 
-        // {1,2,3} U {3,4,5} grouped by Value (Count == 1 each) -> 5 distinct {Key, Count} rows; the shared
-        // Value==3 group dedups away.
         Assert.Equal(
             new[] { (1, 1), (2, 1), (3, 1), (4, 1), (5, 1) },
             result.Select(x => (x.Key, x.Count)));
@@ -1279,7 +1254,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     [Fact]
     public void Distinct_operand_concat_goes_native()
     {
-        // Concat doesn't dedup, but operand1's own Distinct still applies in its pre-combine pipeline.
         var collection = SeedCollection(nameof(Distinct_operand_concat_goes_native));
         using var db = Make(collection, MongoQueryMode.NativeOnly);
 
@@ -1287,7 +1261,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
             .Concat(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
             .ToList().Select(x => x.Name).OrderBy(n => n).ToList();
 
-        // operand1 = 3 rows, operand2 = 3 rows; Concat keeps both, "Three" twice.
         Assert.Equal(new[] { "Five", "Four", "One", "Three", "Three", "Two" }, result);
     }
 
@@ -1311,13 +1284,11 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal(Run(driverDb), native);
     }
 
-    // A trailing projection after Intersect goes native.
     [Fact]
     public void Select_after_intersect_goes_native_result_set()
     {
         var collection = SeedCollection(nameof(Select_after_intersect_goes_native_result_set));
         using var db = Make(collection, MongoQueryMode.NativeOnly);
-        // {1,2,3} Intersect {3,4,5} = {3}; projected to Name.
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
             .Select(i => new { i.Name })
             .ToList();
@@ -1325,7 +1296,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal("Three", single.Name);
     }
 
-    // A trailing member-access Select after a whole-entity set op goes native ($project after the set-op stage).
     [Fact]
     public void Select_after_union_goes_native()
     {
@@ -1349,27 +1319,23 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Select_after_intersect_goes_native));
         using var db = Make(collection, MongoQueryMode.NativeOnly);
-        // {1,2,3} Intersect {3,4,5} = {3}; projected to Value.
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
             .Select(i => new { N = i.Value })
             .ToList();
         Assert.Equal([3], result.Select(x => x.N).OrderBy(v => v));
     }
 
-    // Intersect analog of Computed_leaf_projection_after_union_goes_native.
     [Fact]
     public void Computed_leaf_projection_after_intersect_goes_native_result_set()
     {
         var collection = SeedCollection(nameof(Computed_leaf_projection_after_intersect_goes_native_result_set));
         using var db = Make(collection, MongoQueryMode.NativeOnly);
-        // {1,2,3} Intersect {3,4,5} = {3}; doubled = {6}.
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
             .Select(i => new { Doubled = i.Value * 2 })
             .ToList();
         Assert.Equal([6], result.Select(x => x.Doubled).OrderBy(v => v));
     }
 
-    // A trailing Where composes with a trailing projection: $match lands before $project, both after the set op.
     [Fact]
     public void Where_then_Select_after_union_goes_native()
     {
@@ -1434,7 +1400,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Where_after_trailing_projection_on_intersect_goes_native_via_ef_predicate_pushdown) + mode);
         using var db = Make(collection, mode);
-        // {1,2,3} Intersect {3,4,5} = {3}; the pushed-down predicate (Value >= 2) keeps it.
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
             .Select(i => new { N = i.Value }).Where(x => x.N >= 2).ToList();
         var single = Assert.Single(result);
@@ -1476,7 +1441,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal([1, 2, 3, 4, 5], result);
     }
 
-    // An arithmetic computed leaf (i.Value * 2) after a whole-entity set op goes native.
     [Fact]
     public void Computed_leaf_projection_after_union_goes_native()
     {
@@ -1850,12 +1814,10 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 .Distinct().ToList().Select(x => x.Name).OrderBy(n => n).ToList();
 
         var native = Run(nativeDb);
-        // Concat's 6 rows (One,Two,Three,Three,Four,Five) deduped by the trailing Distinct -> 5 distinct names.
         Assert.Equal(new[] { "Five", "Four", "One", "Three", "Two" }, native);
         Assert.Equal(Run(driverDb), native);
     }
 
-    // No driver-LINQ oracle for Intersect: the same Distinct guard's decline hard-fails in every mode.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -1898,7 +1860,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 .Select(x => new { x.Value }).ToList());
     }
 
-    // Post-composition after a projected-operand Intersect hard-fails in every mode (see Bare_scalar_operand_intersect_goes_native).
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -1930,7 +1891,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
             .Concat(db.Entities.Where(i => i.Value == 2))
             .ToList();
 
-        // {1,2} + {2,3,4,5} + {2} — no dedup anywhere, so Value==2 appears three times.
         Assert.Equal([1, 2, 2, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
 
         var mql = Mql(logs);
@@ -1954,7 +1914,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
 
         var mql = Mql(logs);
         Assert.Equal(2, CountOccurrences(mql, "$unionWith"));
-        // One dedup per Union link, right after its own $unionWith. Redundant here (dedup is idempotent), but it is what makes the mixed chain correct.
         Assert.Equal(2, CountOccurrences(mql, "$replaceRoot"));
     }
 
@@ -1998,8 +1957,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
             .Union(db.Entities.Where(i => i.Value == 2))
             .ToList();
 
-        // The trailing Union's dedup runs over the already-concatenated stream, collapsing the duplicate
-        // Value==2 the Concat introduced.
         Assert.Equal([1, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
 
         var mql = Mql(logs);
@@ -2035,7 +1992,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var logs = new List<string>();
         using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
 
-        // A = {1,2}; inner Union(B={2,3,4,5}, C={2}) = {2,3,4,5}; outer Concat keeps A's own Value==2.
         var result = db.Entities.Where(i => i.Value <= 2)
             .Concat(db.Entities.Where(i => i.Value >= 2).Union(db.Entities.Where(i => i.Value == 2)))
             .ToList();
@@ -2048,7 +2004,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal([1, 2, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
         Assert.Equal(oracle, result.Select(i => i.Value).OrderBy(v => v));
 
-        // The inner $unionWith and its dedup sit inside the outer pipeline; a dedup at its end would wrongly dedup A's rows.
         var mql = Mql(logs);
         var outerUnion = mql.IndexOf("$unionWith", StringComparison.Ordinal);
         var innerUnion = mql.IndexOf("$unionWith", outerUnion + 1, StringComparison.Ordinal);
@@ -2171,7 +2126,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal([1, 2, 3], result.Select(i => i.Value).OrderBy(v => v));
         Assert.Equal(oracle, result.Select(i => i.Value).OrderBy(v => v));
 
-        // The $limit sits BETWEEN the two $unionWith stages, not after both.
         var mql = Mql(logs);
         var firstUnion = mql.IndexOf("$unionWith", StringComparison.Ordinal);
         var secondUnion = mql.IndexOf("$unionWith", firstUnion + 1, StringComparison.Ordinal);
@@ -2186,7 +2140,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var logs = new List<string>();
         using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
 
-        // With no op recorded between the links, TrailingOps still means "after the LAST link".
         var result = db.Entities.Where(i => i.Value <= 2)
             .Union(db.Entities.Where(i => i.Value >= 4))
             .Union(db.Entities.Where(i => i.Value == 3))
@@ -2262,7 +2215,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var collection = SeedCollection(nameof(Intersect_after_a_set_op_is_not_chained));
         using var db = Make(collection, MongoQueryMode.Native);
 
-        // Intersect/Except lower to MongoSetDifferenceStage with no driver-LINQ oracle, so they're excluded from chains and hard-fail.
         Assert.ThrowsAny<Exception>(() =>
             db.Entities.Where(i => i.Value <= 2)
                 .Union(db.Entities.Where(i => i.Value >= 2))
@@ -2275,12 +2227,9 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     [InlineData(MongoQueryMode.NativeOnly)]
     public void GroupBy_after_Union_goes_native(MongoQueryMode mode)
     {
-        // Union_simple_groupby's shape. The Union dedups Value==3, giving 5 items with unique Names, so
-        // GroupBy(Name) yields 5 groups of 1.
         var collection = SeedCollection(nameof(GroupBy_after_Union_goes_native) + mode);
         using var db = Make(collection, mode);
 
-        // Sort client-side: an OrderBy after GroupBy(key).Select(aggregate) hits NativeSlotPopulator's post-group guard (orthogonal limitation).
         var result = db.Entities
             .Where(i => i.Value <= 3)
             .Union(db.Entities.Where(i => i.Value >= 3))
@@ -2468,7 +2417,6 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         }
         catch (NativeTranslationNotSupportedException)
         {
-            // Declined to the fallback; the Native assertion above covers correctness.
         }
 
         if (nativeOnly != null)

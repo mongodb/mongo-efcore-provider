@@ -21,27 +21,13 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// Existential quantifier over an embedded (owned) array field, optionally negated. Renders to <c>$elemMatch</c>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <see cref="ArrayPath"/> is relative to the enclosing document scope; <see cref="ElementPredicate"/>'s field
-/// paths are relative to the array element, as <c>$elemMatch</c> requires (and which makes nesting work). So
-/// <see cref="NativeTranslation.MongoFieldPrefixRewriter"/> must prefix <see cref="ArrayPath"/> only.
-/// </para>
-/// <para>
-/// A bare <c>Any()</c> is not represented here: it is translated as <c>Count &gt;= 1</c> over
-/// <see cref="MongoSizeExpression"/>, keeping one representation for array cardinality. Hence the predicate is
-/// non-nullable.
-/// </para>
+/// <see cref="ArrayPath"/> is relative to the enclosing scope; <see cref="ElementPredicate"/>'s paths are
+/// element-relative, as <c>$elemMatch</c> requires, so <see cref="NativeTranslation.MongoFieldPrefixRewriter"/> must
+/// prefix <see cref="ArrayPath"/> only. A bare <c>Any()</c> is <c>Count &gt;= 1</c> over
+/// <see cref="MongoSizeExpression"/> instead, hence the predicate is non-nullable.
 /// </remarks>
 internal sealed class MongoElemMatchExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoElemMatchExpression"/>.
-    /// </summary>
-    /// <param name="arrayPath">
-    /// Dotted path of the embedded array, relative to the enclosing scope (e.g. <c>"Home.Notes"</c>).
-    /// </param>
-    /// <param name="elementPredicate">The element predicate, with element-relative field paths.</param>
-    /// <param name="negated"><see langword="true"/> for <c>!source.Any(...)</c>.</param>
     public MongoElemMatchExpression(string arrayPath, MongoExpression elementPredicate, bool negated)
     {
         ArrayPath = arrayPath;

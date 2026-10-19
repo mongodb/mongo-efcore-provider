@@ -29,8 +29,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 /// </summary>
 public class MongoPipelineFactoryTests
 {
-    // --- Entity model used across tests ---
-
     private class Customer
     {
         public MongoDB.Bson.ObjectId Id { get; set; }
@@ -44,9 +42,7 @@ public class MongoPipelineFactoryTests
         return db.Model.FindEntityType(typeof(T))!.FindProperty(propertyName)!;
     }
 
-    // ------------------------------------------------------------------
     // Same factory, different parameter values, template not mutated
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Same_template_binds_different_parameter_values_across_executions()
@@ -73,10 +69,8 @@ public class MongoPipelineFactoryTests
         Assert.Equal(first[0], third[0]);
     }
 
-    // ------------------------------------------------------------------
     // `args[i]` array-parameter element: Build extracts the element from the raw array value per execution
     // before serializing it.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Build_extracts_array_element_from_the_raw_parameter_value()
@@ -116,9 +110,7 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("{ $match: { Name: \"ANATR\" } }"), result[0]);
     }
 
-    // ------------------------------------------------------------------
     // Constant value baked into template — Build with empty dict works
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Constant_value_is_baked_into_template()
@@ -137,9 +129,7 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("{ $limit: 10 }"), result[0]);
     }
 
-    // ------------------------------------------------------------------
     // $sort stage — ascending + descending orderings
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Sort_stage_renders_ascending_and_descending_orderings()
@@ -162,9 +152,7 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("{ $sort: { Age: 1, Name: -1 } }"), result[0]);
     }
 
-    // ------------------------------------------------------------------
     // Multi-stage canonical pipeline: match + sort + skip + limit
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Multi_stage_canonical_pipeline_produces_stages_in_order()
@@ -201,9 +189,7 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("{ $limit: 10 }"), result[3]);
     }
 
-    // ------------------------------------------------------------------
     // $skip with a parameterized count (forSerialization: null) — BsonValue.Create path
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Null_serializer_placeholder_substitutes_BsonValue_Create()
@@ -218,9 +204,7 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("{ $skip: 5 }"), result[0]);
     }
 
-    // ------------------------------------------------------------------
     // Paging bounds validation tests
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Build_rewrites_limit_zero_constant_to_an_always_false_match()
@@ -314,10 +298,8 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("{ $skip: 0 }"), result[0]);
     }
 
-    // ------------------------------------------------------------------
     // Array-binding test: one template, two executions with different collections,
     // each producing a distinct $in array that matches its own source collection.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Array_placeholder_binds_different_collections_across_executions()
@@ -344,9 +326,7 @@ public class MongoPipelineFactoryTests
         Assert.Equal(first[0], third[0]);
     }
 
-    // ------------------------------------------------------------------
     // Inline vs. parameterized $in must serialize elements byte-identically.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Inline_and_parameterized_in_produce_byte_identical_element_bson()
@@ -376,9 +356,7 @@ public class MongoPipelineFactoryTests
         Assert.Equal(inlineResult[0], paramResult[0]);
     }
 
-    // ------------------------------------------------------------------
     // $project stage rendering
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Project_stage_renders_alias_to_field_ref_with_id_suppressed()
@@ -398,9 +376,7 @@ public class MongoPipelineFactoryTests
         Assert.Equal(0, project["_id"].AsInt32);
     }
 
-    // ------------------------------------------------------------------
     // $unionWith stage rendering (Concat/Union set-ops)
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Concat_renders_unionWith_without_dedup()
@@ -545,9 +521,7 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("{ $match: { Age: { $gt: 25 } } }"), innerPipeline[0].AsBsonDocument);
     }
 
-    // ------------------------------------------------------------------
     // MongoUnwindFieldStage — owned-collection SelectMany unwind
-    // ------------------------------------------------------------------
 
     [Fact]
     public void UnwindFieldStage_renders_dollar_unwind_of_the_element_path()
@@ -561,10 +535,8 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("{ $unwind: \"$Items\" }"), result[0]);
     }
 
-    // ------------------------------------------------------------------
     // MongoUnwindFieldStage.IncludeArrayIndex + MongoReplaceRootStage — bare whole-element owned SelectMany:
     // $unwind carries the ordinal, and $replaceRoot merges owner key + ordinal into the re-rooted element.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void UnwindFieldStage_with_includeArrayIndex_renders_dollar_unwind_with_path_and_index()
@@ -617,10 +589,8 @@ public class MongoPipelineFactoryTests
             result[0]);
     }
 
-    // ------------------------------------------------------------------
     // MongoUnwindStage — preserveNullAndEmptyArrays: reference-Include $unwind (left join) keeps
     // preserve:true; ForceUnwind collection SelectMany (inner join) renders preserve:false.
-    // ------------------------------------------------------------------
 
     private class LookupChild
     {
@@ -700,9 +670,7 @@ public class MongoPipelineFactoryTests
             result[0]);
     }
 
-    // ------------------------------------------------------------------
     // MongoAddFieldsStage / MongoUnsetStage / RenderSort computed keys
-    // ------------------------------------------------------------------
 
     [Fact]
     public void AddFields_stage_renders_a_set_with_one_aggregation_expression_per_field()
@@ -772,10 +740,8 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("""{ "$sort" : { "__sort0" : 1 } }"""), pipeline[0]);
     }
 
-    // ------------------------------------------------------------------
     // MongoRegexExpression with a parameterized term — escape+anchor must run at Build time, since the
     // value isn't known at render time.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Parameterized_starts_with_binds_and_escapes_across_executions()
@@ -871,9 +837,7 @@ public class MongoPipelineFactoryTests
             () => MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()));
     }
 
-    // ------------------------------------------------------------------
     // MongoLookupStage rendering with pipeline stages
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Lookup_stage_includes_pipeline_field_when_HasPipeline()
@@ -942,10 +906,8 @@ public class MongoPipelineFactoryTests
         Assert.False(lookupDoc.Contains("pipeline"));
     }
 
-    // ------------------------------------------------------------------
     // A $-prefixed string constant/parameter group key must be $literal-wrapped; otherwise the server reads
     // it as a field path and silently groups wrong.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Scalar_constant_group_key_that_looks_like_a_field_path_is_literal_wrapped()

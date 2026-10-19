@@ -126,8 +126,8 @@ public class NativeContainsTerminalTests(TemporaryDatabaseFixture database) : IC
         Assert.Equal([true], result);
     }
 
-    // Pre-existing latent bug surfaced by Contains(null): an entity-equality comparand that is a query PARAMETER
-    // whose runtime value is null used to hand null to the key serializer (NullReferenceException at Build).
+    // Latent bug surfaced by Contains(null): a query-PARAMETER comparand whose runtime value is null reached the key
+    // serializer and threw NullReferenceException at Build.
     [Fact]
     public void Where_entity_equals_null_local_returns_no_rows_natively()
     {

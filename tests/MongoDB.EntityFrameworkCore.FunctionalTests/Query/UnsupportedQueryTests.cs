@@ -20,6 +20,8 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
+using MongoDB.EntityFrameworkCore.Infrastructure;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -87,9 +89,21 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     [Fact]
     public void Cast_to_child_not_supported_in_driver()
     {
-        var ex = Assert.Throws<ExpressionNotSupportedException>(() => _db.Planets.Cast<SuperPlanet>().ToList());
+        // The exception type is the driver's, so this pins the mode it is about.
+        using var db = GuidesDbContext.Create(database.MongoDatabase, queryMode: MongoQueryMode.DriverLinq);
+
+        var ex = Assert.Throws<ExpressionNotSupportedException>(() => db.Planets.Cast<SuperPlanet>().ToList());
 
         Assert.Contains(".As", ex.Message);
+    }
+
+    [Fact]
+    public void Cast_to_child_is_declined_cleanly_by_native()
+    {
+        // SuperPlanet is not a mapped entity: no valid native form, so NativeOnly refuses before the driver is reached.
+        using var db = GuidesDbContext.Create(database.MongoDatabase, queryMode: MongoQueryMode.NativeOnly);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => db.Planets.Cast<SuperPlanet>().ToList());
     }
 
     class SuperPlanet : Planet;
@@ -106,11 +120,11 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     // materialize a bare IGrouping; the exception type is the contract here, not the message.
     [Fact]
     public void GroupBy_cannot_be_translated()
-        => Assert.Throws<InvalidOperationException>(() => _db.Planets.GroupBy(p => p.hasRings).ToList());
+        => TestQueryMode.AssertRefusal<InvalidOperationException>(() => _db.Planets.GroupBy(p => p.hasRings).ToList());
 
     [Fact]
     public void GroupBy_with_element_selector_cannot_be_translated()
-        => Assert.Throws<InvalidOperationException>(() => _db.Planets.GroupBy(p => p.hasRings, p => p.name).ToList());
+        => TestQueryMode.AssertRefusal<InvalidOperationException>(() => _db.Planets.GroupBy(p => p.hasRings, p => p.name).ToList());
 
     public void Dispose()
         => _db.Dispose();

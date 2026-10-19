@@ -154,8 +154,6 @@ public class NativeGroupByBinderTests
         return new MongoQueryExpression(entityType);
     }
 
-    // ── TryBindGroupKey ──────────────────────────────────────────────────────────
-
     [Fact]
     public void Scalar_key_binds_single_part_with_null_name()
     {
@@ -562,8 +560,6 @@ public class NativeGroupByBinderTests
         var keyRef = Assert.IsType<MongoElementRefExpression>(keyProjection.Expression);
         Assert.Equal("_id", keyRef.Path);
     }
-
-    // ── TryBindGroupProjection ─────────────────────────────────────────────────────
 
     private static MongoQueryExpression BoundScalarKeyQuery()
     {
@@ -1412,8 +1408,6 @@ public class NativeGroupByBinderTests
         Assert.Null(mongoQ.Select.Grouping);
     }
 
-    // ── TryBindGroupProjection: pending OrderBy/ThenBy (composed before the Select) ─────────────
-
     [Fact]
     public void Pending_order_by_key_resolves_to_id_reference()
     {
@@ -1548,8 +1542,6 @@ public class NativeGroupByBinderTests
         Assert.Equal("_id", orderRef.Path);
     }
 
-    // ── TryBindGroupProjection: pending Skip/Take (composed before the Select) ──────────────────
-
     [Fact]
     public void Pending_paging_resolves_to_GroupPagingOps_in_arrival_order()
     {
@@ -1581,7 +1573,6 @@ public class NativeGroupByBinderTests
         Assert.Empty(mongoQ.Select.GroupPagingOps);
     }
 
-    // ── TryBindGroupTerminalAggregate ──────────────────────────────────────────────
     // GroupBy(key).{Count()|LongCount()|Any()|Any(pred)|All(pred)|Count(pred)|LongCount(pred)} with no
     // intervening Select — the "GroupBy_without_aggregate" family.
 
@@ -1846,7 +1837,6 @@ public class NativeGroupByBinderTests
         Assert.NotNull(rendered);
     }
 
-    // ── NativeCardinalityBinder.TryBindAggregate composed after GroupBy(key).Select(aggregate) ─────────────
     // All_after_GroupBy_aggregate2: Orders.GroupBy(o => o.CustomerID).Select(g => g.Sum(...)).All(v => v >= 0).
     // The predicate's parameter is the Select's flattened accumulator, not the key — even though the key is a
     // single field-backed part (the shape MongoExpressionTranslator's bare-scalar Distinct carve-out matches).
@@ -1875,8 +1865,6 @@ public class NativeGroupByBinderTests
         var left = Assert.IsType<MongoElementRefExpression>(comparison.Left);
         Assert.Equal(bareLeafAlias, left.Path);
     }
-
-    // ── TryBindNestedGroupProjectionConstruction ──────────────────────────────────────────────
 
     [Fact]
     public void Nested_construction_projection_member_binds_group()

@@ -339,10 +339,8 @@ internal static class BsonBinding
         {
             if (!current.TryGetValue(path[i], out var segmentValue) || segmentValue is not BsonDocument segmentDocument)
             {
-                // An absent intermediate segment is an unmatched left-outer join row (no "_lookup_<Nav>"). Dispatch
-                // on whether T can hold absence, as GetElementValue{T} does, not on property.IsNullable — otherwise
-                // the DriverLinq/late-fallback leg throws where Native yields null. Pinned by NativeJoinTests
-                // .LeftJoin_unmatched_row_reads_a_dotted_scalar_leaf_through_the_whole_document_path.
+                // Absent intermediate segment = unmatched left-outer join row. Dispatch on whether T can hold absence
+                // (as GetElementValue{T} does), not property.IsNullable, or the DriverLinq leg throws where Native yields null.
                 if (typeof(T).IsNullableType())
                 {
                     return default;
@@ -389,10 +387,8 @@ internal static class BsonBinding
 
     internal static T? GetPropertyValue<T>(BsonDocument? document, IReadOnlyProperty property)
     {
-        // A null parent document means the owning entity is absent entirely (e.g. an optional
-        // cross-collection reference nested inside a collection Include whose $lookup matched no
-        // document). Treat every property as absent so the entity materializer's null-key check
-        // produces a null entity rather than dereferencing the missing document.
+        // A null parent document means the owning entity is absent (e.g. a nested optional reference whose $lookup
+        // matched nothing). Treat every property as absent so the materializer's null-key check yields a null entity.
         if (document == null)
         {
             return default;

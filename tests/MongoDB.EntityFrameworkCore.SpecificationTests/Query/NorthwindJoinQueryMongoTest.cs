@@ -27,7 +27,6 @@ public class NorthwindJoinQueryMongoTest : NorthwindJoinQueryTestBase<NorthwindQ
         : base(fixture)
     {
         ClearLog();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -422,28 +421,13 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     public override async Task GroupJoin_DefaultIfEmpty2(bool async)
     {
-        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022.
-        await AssertTranslationFailed(() => base.GroupJoin_DefaultIfEmpty2(async));
+        // The filtered inner side is carried in the $lookup sub-pipeline; the base test checks the rows.
+        await base.GroupJoin_DefaultIfEmpty2(async);
 
-#if EF8 || EF9
-        // Reaches the driver, which rejects the filtered subquery inner after logging the outer collection.
         AssertMql(
-    """
-Employees.
+            """
+Employees.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "EmployeeID", "pipeline" : [{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }], "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "e" : "$$ROOT", "_lookup_Order" : "$_lookup_Order", "_id" : 0 } }
 """);
-#else
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-Employees.
-""");
-        }
-#endif
     }
 
     public override async Task GroupJoin_DefaultIfEmpty3(bool async)
@@ -512,21 +496,13 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task GroupJoin_SelectMany_subquery_with_filter(bool async)
     {
-        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        await AssertTranslationFailed(() =>
-            base.GroupJoin_SelectMany_subquery_with_filter(async));
+        // The filtered inner side is carried in the $lookup sub-pipeline; the base test checks the rows.
+        await base.GroupJoin_SelectMany_subquery_with_filter(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-Customers.
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$gt" : 5 } } }], "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$project" : { "ContactName" : "$ContactName", "OrderID" : "$_lookup_Orders._id", "_id" : 0 } }
 """);
-        }
     }
 
     public override async Task GroupJoin_SelectMany_subquery_with_filter_orderby(bool async)
@@ -540,28 +516,13 @@ Customers.
 
     public override async Task GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty(bool async)
     {
-        // Fails: Subquery selection EF-X001; on EF10 the join inner is a filtered sub-query EF-X022
-        await Assert.ThrowsAnyAsync<Exception>(() => base.GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty(async));
+        // The filtered inner side is carried in the $lookup sub-pipeline; the base test checks the rows.
+        await base.GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty(async);
 
-#if EF8 || EF9
-        // Reaches the driver, which rejects the filtered subquery inner after logging the outer collection.
         AssertMql(
-    """
-Customers.
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$gt" : 5 } } }], "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "ContactName" : "$ContactName", "_lookup_Orders" : "$_lookup_Orders", "_id" : 0 } }
 """);
-#else
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-Customers.
-""");
-        }
-#endif
     }
 
     public override async Task GroupJoin_SelectMany_subquery_with_filter_orderby_and_DefaultIfEmpty(bool async)
@@ -622,7 +583,7 @@ Customers.
             () => base.Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(async));
 
 #if EF8 || EF9
-        AssertMql(
+        AssertMqlLoggedByFallback(
     """
             Customers.
             """);
@@ -868,6 +829,10 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
     }
 
 #endif
+
+    // A translation refusal logs MQL only when the driver-LINQ fallback attempts the query first; NativeOnly refuses before that.
+    private void AssertMqlLoggedByFallback(params string[] expected)
+        => AssertMql(MongoSpecTestHelpers.IsNativeOnly ? [] : expected);
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

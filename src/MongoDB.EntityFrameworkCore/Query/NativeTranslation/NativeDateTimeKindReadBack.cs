@@ -22,29 +22,20 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Honours a property's configured <c>DateTimeKind</c> (<c>HasDateTimeKind</c>) when the native pipeline reads a
-/// <c>DateTime</c> back through a generic CLR-type serializer rather than the property's own serializer: a
-/// <c>$group</c> key, a <c>$min</c>/<c>$max</c>/<c>$first</c>/<c>$last</c> accumulator, a terminal
-/// <c>Min</c>/<c>Max</c>, a nullable cast, a join-scope or dotted owned-reference leaf.
+/// Honours a property's configured <c>DateTimeKind</c> (<c>HasDateTimeKind</c>) when the native pipeline reads a <c>DateTime</c> back
+/// through a generic CLR-type serializer rather than the property's own (<c>$group</c> key, <c>$min</c>/<c>$max</c>/<c>$first</c>/<c>$last</c>
+/// accumulator, terminal <c>Min</c>/<c>Max</c>, nullable cast, join-scope or dotted owned-reference leaf).
 /// </summary>
 /// <remarks>
+/// The generic serializer returns <c>Kind=Utc</c>; a <c>Local</c>-kind property's converts to local time. <c>Utc</c> and the default
+/// (<c>Unspecified</c>, read back as <c>Utc</c>) agree with the generic read, so only <c>Local</c> is kind-sensitive.
 /// <para>
-/// The generic <c>DateTime</c> serializer returns <c>Kind=Utc</c>; a <c>Local</c>-kind property's serializer
-/// converts to local time. <c>Utc</c> and the default (<c>Unspecified</c>, which reads back as <c>Utc</c>) agree with
-/// the generic read, so only <c>Local</c> is kind-sensitive.
-/// </para>
-/// <para>
-/// Two halves that must agree: <see cref="FindForProjectionAlias"/>/<see cref="FindForProjectionValue"/> name the
-/// property whose stored value a read-back surfaces unchanged (the shaper then reads through that property's
-/// kind); <see cref="HasUnreproducibleReadBack"/> finds a <c>DateTime</c> read-back that is computed from a
-/// kind-sensitive property (<c>AddDays</c>, <c>.Date</c>, a ternary mixing kinds). There is no property to read
-/// such a value back through, and the server computes it in UTC, so the query declines.
-/// </para>
-/// <para>
-/// Element references are resolved through the stage that produces them: a <c>$group</c> output field
-/// (<c>_id</c>, <c>_id.&lt;Name&gt;</c>, an accumulator) to its key part or accumulator operand, and a nested
-/// GroupBy's input to the prior stage's flattened <c>$project</c> (<see cref="MongoSelectDefinition.PriorGroupingProjection"/>).
-/// Filters are unaffected: they compare server-side, where the stored value is the same instant whatever the kind.
+/// Two halves that must agree: <see cref="FindForProjectionAlias"/>/<see cref="FindForProjectionValue"/> name the property whose stored
+/// value a read-back surfaces unchanged; <see cref="HasUnreproducibleReadBack"/> finds a read-back computed from a kind-sensitive property
+/// (<c>AddDays</c>, <c>.Date</c>, a ternary mixing kinds), which has no property to read through and is computed by the server in UTC, so
+/// the query declines. Element references are resolved through the stage that produces them (a <c>$group</c> output field to its key part
+/// or accumulator operand; a nested GroupBy's input to <see cref="MongoSelectDefinition.PriorGroupingProjection"/>). Filters are
+/// unaffected: the stored instant is the same whatever the kind.
 /// </para>
 /// </remarks>
 internal static class NativeDateTimeKindReadBack
@@ -68,23 +59,17 @@ internal static class NativeDateTimeKindReadBack
         PriorGroupOutput
     }
 
-    /// <summary>
-    /// Whether <paramref name="property"/>'s configured kind makes its values read back differently from the generic
-    /// <c>DateTime</c> serializer.
-    /// </summary>
+    /// <summary>Whether <paramref name="property"/>'s configured kind makes its values read back differently from the generic serializer.</summary>
     internal static bool IsKindSensitive(IReadOnlyProperty property)
         => property.ClrType.UnwrapNullableType() == typeof(DateTime)
            && property.GetDateTimeKind() is not (DateTimeKind.Unspecified or DateTimeKind.Utc);
 
     /// <summary>
-    /// Whether <paramref name="value"/> is (or is computed from) a kind-sensitive <c>DateTime</c> property, so a server-side
-    /// date part or calendar-unit add over it would be evaluated in UTC while the C# value is in local time.
+    /// Whether <paramref name="value"/> is (or is computed from) a kind-sensitive <c>DateTime</c> property, so a server-side date part or
+    /// calendar-unit add over it would be evaluated in UTC while the C# value is local.
     /// </summary>
     /// <remarks>
-    /// Context-free: it walks only the nodes that carry a <c>DateTime</c> through (fields, date arithmetic, truncation,
-    /// branches, casts). Every property test goes through <see cref="IsKindSensitive"/>, the one predicate shared with
-    /// the read-back checks above and with the driver-LINQ bridge. The pass-through node set (casts, <c>.Date</c>,
-    /// <c>AddXxx</c>, <c>??</c>, <c>?:</c>) mirrors the bridge's LINQ-tree walker
+    /// Context-free: walks only nodes that carry a <c>DateTime</c> through. The pass-through node set mirrors the bridge's LINQ-tree walker
     /// <c>MongoEFToLinqTranslatingExpressionVisitor.FindLocalKindProperty</c>; change the two together.
     /// </remarks>
     internal static bool ReferencesKindSensitiveProperty(MongoExpression value)
@@ -103,44 +88,28 @@ internal static class NativeDateTimeKindReadBack
             _ => false
         };
 
-    /// <summary>
-    /// Whether adding <paramref name="unit"/>s is calendar arithmetic whose result depends on the time zone (a day is
-    /// 23 or 25 hours across a DST change, a month ends at a local midnight). Hour and smaller units are exact elapsed
-    /// time and agree between UTC and local.
-    /// </summary>
+    /// <summary>Whether adding <paramref name="unit"/>s is time-zone-dependent calendar arithmetic (a day is 23 or 25 hours across DST); hours and smaller are exact.</summary>
     internal static bool IsCalendarUnit(MongoDateAddUnit unit)
         => unit is MongoDateAddUnit.Year or MongoDateAddUnit.Month or MongoDateAddUnit.Day;
 
     /// <summary>
-    /// The kind-sensitive property whose stored value the <paramref name="select"/>'s projection output
-    /// <paramref name="alias"/> holds unchanged, or <see langword="null"/> when there is none (the generic read is then
-    /// already correct, or the query was declined by <see cref="HasUnreproducibleReadBack"/>).
+    /// The kind-sensitive property whose stored value the projection output <paramref name="alias"/> holds unchanged, or
+    /// <see langword="null"/> (generic read is correct, or <see cref="HasUnreproducibleReadBack"/> declined the query).
     /// </summary>
     internal static IReadOnlyProperty? FindForProjectionAlias(MongoSelectDefinition select, string alias)
         => TryFindProjection(select, alias, out var projection)
             ? FindForProjectionValue(select, projection.Expression)
             : null;
 
-    /// <summary>
-    /// As <see cref="FindForProjectionAlias"/>, for a value that is (or is a member of) one of
-    /// <paramref name="select"/>'s projection leaves.
-    /// </summary>
+    /// <summary>As <see cref="FindForProjectionAlias"/>, for a value that is (or is a member of) one of the projection leaves.</summary>
     internal static IReadOnlyProperty? FindForProjectionValue(MongoSelectDefinition select, MongoExpression value)
         => Find(value, select, ProjectionLevel(select));
 
-    /// <summary>
-    /// As <see cref="FindForProjectionAlias"/>, for a terminal scalar aggregate's operand
-    /// (<see cref="MongoCardinality.Selector"/>): a field of the source document or an output alias of the select's own
-    /// <c>$project</c>.
-    /// </summary>
+    /// <summary>As <see cref="FindForProjectionAlias"/>, for a terminal scalar aggregate's operand (a source field or an output alias of the select's own <c>$project</c>).</summary>
     internal static IReadOnlyProperty? FindForAggregateOperand(MongoSelectDefinition select, MongoExpression operand)
         => Find(operand, select, Level.ProjectionOutput);
 
-    /// <summary>
-    /// Whether any <c>DateTime</c> value <paramref name="select"/> reads back (a projection leaf, a terminal
-    /// <c>Min</c>/<c>Max</c>, a set-op operand's leaf) is computed from a kind-sensitive property, so no property's
-    /// serializer reproduces it.
-    /// </summary>
+    /// <summary>Whether any <c>DateTime</c> read back (projection leaf, terminal <c>Min</c>/<c>Max</c>, set-op operand leaf) is computed from a kind-sensitive property, so no serializer reproduces it.</summary>
     internal static bool HasUnreproducibleReadBack(MongoSelectDefinition select)
     {
         foreach (var projection in select.Projection)
@@ -163,9 +132,8 @@ internal static class NativeDateTimeKindReadBack
         return false;
     }
 
-    // The combined rows are all read back through the outer select's leaf, so an operand whose same-alias DateTime
-    // leaf (or same-named member of a nested construction leaf) reads back with a different kind (a Local-kind
-    // property on one side only) can't be reproduced.
+    // The combined rows are all read back through the outer select's leaf, so an operand whose same-alias DateTime leaf reads back with a
+    // different kind (a Local-kind property on one side only) can't be reproduced.
     private static bool HasKindMismatch(MongoSelectDefinition outer, MongoSelectDefinition operand)
     {
         foreach (var operandProjection in operand.Projection)
@@ -178,10 +146,9 @@ internal static class NativeDateTimeKindReadBack
         return false;
     }
 
-    // Compared by the leaves' kind shapes (KindShape), not node by node, so a pairing of different node kinds can't slip
-    // through: a composite key rebuilt as a construction (a kind-sensitive side) against the same key type read whole
-    // by class map (a default-kind side) differs in its DateTime member's kind and declines. Only a difference that
-    // involves a kind-sensitive position counts, so set ops with no Local-kind source are unaffected.
+    // Compared by the leaves' kind shapes (KindShape), not node by node, so differing node kinds can't slip through: a composite key rebuilt
+    // as a construction (kind-sensitive side) vs the same key read whole by class map (default-kind side) differs and declines. Only a
+    // difference involving a kind-sensitive position counts.
     private static bool HasKindMismatch(
         MongoSelectDefinition outer, MongoExpression outerValue, MongoSelectDefinition operand, MongoExpression operandValue)
     {
@@ -192,11 +159,9 @@ internal static class NativeDateTimeKindReadBack
 
     private const string SensitiveShape = "#L";
 
-    // How a leaf's DateTime positions read back: "#L" for a kind-sensitive source, "#U" for any other DateTime, "#-" for
-    // any other leaf (a non-DateTime scalar, or a whole value read by class map, e.g. a composite "_id"), and
-    // "{Name:shape,...}" (members in name order) for a document construction. A composite key with a kind-sensitive part
-    // is always a construction (NativeGroupByBinder rebuilds it, or HasUnreproducibleReadBack declines it), so pairing
-    // it with the same key read whole by class map differs structurally and, containing "#L", declines.
+    // How a leaf's DateTime positions read back: "#L" kind-sensitive source, "#U" any other DateTime, "#-" any other leaf (incl. a whole value
+    // read by class map), "{Name:shape,...}" (name order) for a construction. A composite key with a kind-sensitive part is always a
+    // construction (NativeGroupByBinder rebuilds it or HasUnreproducibleReadBack declines), so pairing it with a class-map read declines.
     private static string KindShape(MongoExpression value, MongoSelectDefinition select, Level level)
     {
         switch (value)
@@ -214,11 +179,7 @@ internal static class NativeDateTimeKindReadBack
         }
     }
 
-    /// <summary>
-    /// Whether a <c>$group</c> key part of <paramref name="select"/> (its <see cref="MongoGroupingKeyPart.FieldRef"/>,
-    /// evaluated over the group's input) carries or derives from a kind-sensitive DateTime. Used at bind time to read a
-    /// whole composite key member by member rather than through its type's class map.
-    /// </summary>
+    /// <summary>Whether a <c>$group</c> key part carries or derives from a kind-sensitive DateTime; used at bind time to read a composite key member by member rather than through its class map.</summary>
     internal static bool IsKindSensitiveKeyPart(MongoSelectDefinition select, MongoExpression fieldRef)
         => CarriesKindSensitiveDate(fieldRef, select, GroupInputLevel(select));
 
@@ -250,14 +211,12 @@ internal static class NativeDateTimeKindReadBack
         if (IsDateTimeTyped(value))
             return Find(value, select, level) == null && ReferencesKindSensitiveDate(value, select, level);
 
-        // A non-DateTime leaf read back whole through a class map (a composite g.Key's "_id") reads its DateTime
-        // members with the default serializer, so it must not carry a kind-sensitive date. NativeGroupByBinder rebuilds
-        // such a key as a document construction; anything it couldn't rebuild declines here.
+        // A non-DateTime leaf read whole through a class map (a composite g.Key's "_id") reads its DateTime members with the default serializer;
+        // NativeGroupByBinder rebuilds such a key as a construction, and anything it couldn't rebuild declines here.
         return HoldsKindSensitiveDateInClassMapRead(value, select, level);
     }
 
-    // Whether `value`, read back whole by class map, contains a DateTime from a kind-sensitive source: an element ref
-    // to a composite $group "_id" with such a part, possibly through branches or an upstream alias.
+    // Whether `value`, read back whole by class map, contains a DateTime from a kind-sensitive source (a composite $group "_id" part, possibly via branches or an upstream alias).
     private static bool HoldsKindSensitiveDateInClassMapRead(MongoExpression value, MongoSelectDefinition select, Level level)
     {
         switch (value)
@@ -292,8 +251,7 @@ internal static class NativeDateTimeKindReadBack
 
     private const string GroupIdPath = "_id";
 
-    // The grouping whose output `level` is, and the level that grouping's input (key parts, accumulator operands) is
-    // evaluated at; no grouping for a non-group-output level.
+    // The grouping whose output `level` is, and the level its input is evaluated at; none for a non-group-output level.
     private static (MongoGrouping? Grouping, Level InputLevel) GroupingAt(MongoSelectDefinition select, Level level)
         => level switch
         {
@@ -302,8 +260,7 @@ internal static class NativeDateTimeKindReadBack
             _ => (null, Level.Document)
         };
 
-    // The kind-sensitive property whose stored value `value` passes through unchanged. A ternary or coalesce is admitted
-    // when every branch is such a value (any Local-kind properties read back alike) or a null constant.
+    // The kind-sensitive property whose value `value` passes through unchanged; a ternary or coalesce when every branch is such a value or a null constant.
     private static IReadOnlyProperty? Find(MongoExpression value, MongoSelectDefinition select, Level level)
     {
         switch (value)
@@ -353,12 +310,9 @@ internal static class NativeDateTimeKindReadBack
         return leftProperty ?? rightProperty;
     }
 
-    // Whether a DateTime-valued position of `value` derives from a kind-sensitive property. Walks only the nodes that
-    // carry a DateTime through (date arithmetic, date truncation, branches, casts, element references, array reduces);
-    // an operand of another type (a date part compared in a ternary's test) doesn't make the result's kind depend on it.
-    //
-    // Fails closed: a DateTime-typed node this walk doesn't know (a new node kind, or an element reference it can't
-    // trace) counts as kind-sensitive, so an unrecognized read-back declines rather than silently reading Kind=Utc.
+    // Whether a DateTime-valued position of `value` derives from a kind-sensitive property. Walks only nodes that carry a DateTime through;
+    // an operand of another type (a date part in a ternary's test) doesn't matter. Fails closed: an unknown DateTime-typed node counts as
+    // kind-sensitive, so an unrecognized read-back declines rather than silently reading Kind=Utc.
     private static bool ReferencesKindSensitiveDate(MongoExpression value, MongoSelectDefinition select, Level level)
         => value switch
         {
@@ -422,9 +376,8 @@ internal static class NativeDateTimeKindReadBack
         return false;
     }
 
-    // Resolves an element reference to the expression that produced it and the level that expression is evaluated at.
-    // With valuePreservingOnly, only accumulators that return one of their input values ($min/$max/$first/$last)
-    // resolve; a computing accumulator ($sum/$avg) has no single source value.
+    // Resolves an element reference to the expression that produced it and its level. With valuePreservingOnly, only accumulators returning
+    // one of their inputs ($min/$max/$first/$last) resolve; $sum/$avg have no single source value.
     private static bool TryResolve(
         MongoElementRefExpression elementRef,
         MongoSelectDefinition select,
@@ -531,8 +484,7 @@ internal static class NativeDateTimeKindReadBack
         return false;
     }
 
-    // A branch that contributes no value of its own: a null constant, or the $$REMOVE sentinel a filtered accumulator
-    // uses to skip an element.
+    // A branch contributing no value: a null constant, or the $$REMOVE a filtered accumulator uses to skip an element.
     private static bool IsNeutral(MongoExpression value)
         => value is MongoConstantExpression { Value: null }
             or MongoElementRefExpression { Path: MongoElementRefExpression.RemoveSentinelPath };

@@ -7,34 +7,17 @@ model: sonnet
 
 You are the public-API / DI / options reviewer for the MongoDB EF Core Provider.
 
-## Authoritative context
+Read `src/MongoDB.EntityFrameworkCore/Extensions/AGENTS.md` first (contract and invariants live there, not here); the break definition is in root `AGENTS.md`. Report shape and verification: `.claude/agents/CONVENTIONS.md`.
 
-Read `src/MongoDB.EntityFrameworkCore/Extensions/AGENTS.md` first; then root `AGENTS.md` for build/test commands and `BREAKING-CHANGES.md` for the project's stance on minor-version breaks (the provider doesn't follow strict SemVer — minor versions can carry breaks but they need to be documented).
+## Also check
 
-## Review focus
+- `AddMongoDB<TContext>(IMongoClient, ...)` XML doc must stay explicit that the caller owns the client's lifecycle.
+- `MongoDbContextOptionsBuilder` is intentionally thin; don't route unrelated configuration through it.
+- A new annotation needs both this reviewer (builder method) and `metadata-reviewer` (annotation).
 
-- **Public API is the contract.** Method signatures, default values, attribute lists, visibility, exception types, and observable behavior on `UseMongoDB`, `AddMongoDB`, `MongoDbContextOptionsBuilder`, the `Mongo*BuilderExtensions`, `MongoQueryableExtensions`, `MongoDatabaseFacadeExtensions`, and `QueryableEncryptionBuilderExtensions` are all part of the surface external code binds to. Treat every change as a candidate breaking-change-doc entry.
-- **Connection-source mutual exclusion in `MongoOptionsExtension`.** `ConnectionString`, `MongoClient`, and `ClientSettings` are mutually exclusive. `EnsureConnectionNotAlreadyConfigured` enforces it. New connection sources must extend the check.
-- **`MongoOptionsExtension` is immutable.** Every `With*` returns a clone. Don't reach inside.
-- **Service-provider hashing.** `Info.GetServiceProviderHashCode()` decides which contexts reuse the same internal service provider. Hash changes are an internal-perf concern but shouldn't be casual.
-- **Connection strings are never logged.** `LogFragment` omits `ConnectionString` altogether. This is a security guardrail; `security-reviewer` will flag any attempt to log it — redacted or otherwise — independently.
-- **`AddEntityFrameworkMongoDB()`** is the single registration entry point. New services go here; new public configuration goes via `MongoOptionsExtension`.
-- **`MongoDesignTimeServices` must call `AddEntityFrameworkMongoDB()`.** Splitting design-time services is fine; dropping that call breaks `dotnet ef`.
-- **VectorSearch + DatabaseFacade vector helpers.** Atlas-only; only valid at the root of a queryable. Adding query-time overloads here without matching Query-area visitor support produces "not translated" runtime failures.
-- **`Mongo*BuilderExtensions` set annotations.** They are the surface for annotations registered under `MongoAnnotationNames`. A new annotation needs both this reviewer (the builder method) and `metadata-reviewer` (the annotation).
-- **`AddMongoDB<TContext>(IMongoClient, ...)` lifecycle.** The XML doc must remain explicit that the caller owns the client's lifecycle.
-- **`MongoDbContextOptionsBuilder` is intentionally thin.** It's a namespace for future MongoDB-specific options on the builder — don't push unrelated configuration through it.
+## Escalate to user when
 
-## Pass discipline
-
-See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and verification requirement — no area-specific overrides here.
-
-## Escalate to user (do not auto-approve) when
-
-- Any signature, default, visibility, or attribute change to a public type or member (regardless of how small).
-- Behavior change of a public method whose signature is unchanged (silent break).
-- New required parameter on an existing overload.
-- Removal of an `UseMongoDB` / `AddMongoDB` overload.
-- Default-value change in `MongoOptionsExtension` (e.g. `QueryableEncryptionSchemaMode` default).
-- Change to `LogFragment` shape, especially anything that puts the connection string back into it (security-adjacent; needs security-reviewer too).
-- Change to `IMongoClientWrapper` shape (`BREAKING-CHANGES.md` flags this as a recurring break point).
+- Any signature, default, visibility or attribute change to a public member, or a silent behavior change on an unchanged signature.
+- A new required parameter on an existing overload, or removal of a `UseMongoDB`/`AddMongoDB` overload.
+- A `MongoOptionsExtension` default changes, or `LogFragment` changes (especially re-adding the connection string; needs `security-reviewer` too).
+- `IMongoClientWrapper` shape changes.

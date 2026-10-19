@@ -27,10 +27,3 @@ themselves live in Storage/ValueConversion.
   stale (a trap for tests that build models on the fly).
 - **Comparer signatures differ between EF8/EF9 and EF10** (`StringDictionaryComparer` has `#if` variants); new
   comparer work must compile on all three.
-- Serializers read annotations, never write them.
-
-## Testing
-
-`tests/…UnitTests/Serializers/`, `…UnitTests/ChangeTracking/`, `…FunctionalTests/Mapping/`, `…/Serialization/`,
-`…SpecificationTests/Query/` (e.g. `NorthwindChangeTrackingQueryMongoTest`); filter
-`FullyQualifiedName~Serializ|FullyQualifiedName~ChangeTracking|FullyQualifiedName~Mapping`.

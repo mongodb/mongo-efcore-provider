@@ -22,16 +22,14 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// and every other BSON type.
 /// </summary>
 /// <remarks>
-/// Emitted by <see cref="MongoDB.EntityFrameworkCore.Query.NativeTranslation.MongoExpressionTranslator"/> as the left
-/// <see cref="MongoBinaryOperator.AndAlso"/> conjunct beside a numeric-cast relational comparison that renders via
-/// <c>$expr</c>. The query dialect type-brackets relational operators, but <c>$expr</c> treats missing as null and
-/// sorts null below every number, so without this bracket <c>&lt;</c>/<c>&lt;=</c> would admit missing/null rows.
-/// <c>{ $ne: null }</c> wouldn't exclude foreign types. Renders as <c>$isNumber</c> in the aggregation dialect.
-/// The negator declines it; a negated bracketed comparison is <c>$not</c>-wrapped whole, its exact complement.
+/// Emitted as the left <see cref="MongoBinaryOperator.AndAlso"/> conjunct beside a numeric-cast relational comparison
+/// that renders via <c>$expr</c>. The query dialect type-brackets relational operators, but <c>$expr</c> sorts null
+/// below every number, so without this bracket <c>&lt;</c>/<c>&lt;=</c> would admit missing/null rows (and
+/// <c>{ $ne: null }</c> wouldn't exclude foreign types). Renders as <c>$isNumber</c> in the aggregation dialect. The
+/// negator declines it; a negated bracketed comparison is <c>$not</c>-wrapped whole, its exact complement.
 /// </remarks>
 internal sealed class MongoNumericTypeBracketExpression(MongoFieldExpression field) : MongoExpression
 {
-    /// <summary>The field whose stored BSON type is tested.</summary>
     public new MongoFieldExpression Field { get; } = field;
 
     /// <inheritdoc />

@@ -29,59 +29,69 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// Whether the server orders (and reduces) a property's stored BSON the way C# orders its CLR value (EF-337).
 /// </summary>
 /// <remarks>
+/// Relational comparisons, sort keys and <c>Sum</c>/<c>Min</c>/<c>Max</c>/<c>Average</c> run on the stored value, which for a value
+/// converter or non-default <c>BsonRepresentation</c> can silently differ from the CLR answer (an <c>int</c> stored as a string sorts
+/// "10" &lt; "100" &lt; "9"; <c>$sum</c> ignores it). Equality is never gated: the constant is serialized through the property's
+/// serializer, which is injective.
 /// <para>
-/// A relational comparison (<c>&lt;</c>, <c>&gt;</c>, <c>&lt;=</c>, <c>&gt;=</c>), a sort key and a
-/// <c>Sum</c>/<c>Min</c>/<c>Max</c>/<c>Average</c> all run on the stored value. For a value converter or a
-/// non-default <c>BsonRepresentation</c> that can silently differ from the CLR answer: an <c>int</c> stored as a
-/// string sorts "10" &lt; "100" &lt; "9" and <c>$sum</c> ignores it. Equality is unaffected (the constant is
-/// serialized through the property's serializer, and serialization is injective), so it is never gated by this.
+/// <see cref="PreservesClrOrdering"/> is shared by the native translator's declines and the driver-LINQ bridge's refusal
+/// (<c>MongoEFToLinqTranslatingExpressionVisitor.ThrowIfStoredOrderingDiffers</c>); declining alone would only move the query to the
+/// driver, which is wrong the same way. Native aggregates stay stricter (<see cref="NativeGroupByBinder.HasDefaultKeySerialization"/>):
+/// their result is read back through a generic serializer, not the property's.
 /// </para>
 /// <para>
-/// <see cref="PreservesClrOrdering"/> is the single predicate shared by the native translator's declines (relational
-/// comparison, sort key) and the driver-LINQ bridge's refusal
-/// (<c>MongoEFToLinqTranslatingExpressionVisitor.ThrowIfStoredOrderingDiffers</c>); declining alone would only move
-/// the query to the driver, which is wrong the same way. Native aggregates stay stricter
-/// (<see cref="NativeGroupByBinder.HasDefaultKeySerialization"/>): their result is read back through a generic
-/// serializer, not the property's.
-/// </para>
-/// <para>
-/// A custom value converter is opaque (even an order-preserving one such as <c>v =&gt; v * 2</c> can't be proven so,
-/// and <c>$sum</c> over it is still wrong), so it is refused. The admitted non-default storage is where the stored
-/// value is exactly the CLR value in an equally ordered BSON type: a <c>BsonRepresentation</c>
-/// (<see cref="IsExactlyOrderedRepresentation"/>, or one equal to the type's default BSON type) or EF's built-in
+/// A custom value converter is opaque (even <c>v =&gt; v * 2</c> can't be proven order-preserving) and refused. Admitted: a
+/// <c>BsonRepresentation</c> (<see cref="IsExactlyOrderedRepresentation"/>, or equal to the type's default BSON type) or EF's built-in
 /// numeric casting / enum-to-number converter (<see cref="ClassifyNumericConversion"/>).
 /// </para>
 /// <para>
-/// Two strengths. <see cref="PreservesClrOrdering"/> (relational comparison against a value) also needs the
-/// constant to survive serialization, so a narrowing converter (<c>long</c> stored as <c>int</c>) is excluded there:
-/// <c>Big &gt; 3_000_000_000L</c> would wrap the constant. <see cref="PreservesClrOrderingForAggregateAndSort"/>
-/// admits integral narrowing too, because sorting and reducing only read stored values, which EF wrote from
-/// in-range model values.
+/// Two strengths: <see cref="PreservesClrOrdering"/> (comparison against a value) also needs the constant to survive serialization, so
+/// a narrowing converter (<c>long</c> stored as <c>int</c>) is excluded (<c>Big &gt; 3_000_000_000L</c> would wrap the constant).
+/// <see cref="PreservesClrOrderingForAggregateAndSort"/> admits integral narrowing too: sorting and reducing only read stored values,
+/// which EF wrote from in-range model values.
 /// </para>
 /// </remarks>
 internal static class StoredOrdering
 {
-    /// <summary>
-    /// Whether a relational comparison of <paramref name="property"/>'s stored value against a (serialized) value gives
-    /// the CLR answer.
-    /// </summary>
+    /// <summary>Whether a relational comparison of <paramref name="property"/> against a (serialized) value gives the CLR answer.</summary>
     internal static bool PreservesClrOrdering(IProperty property)
         => NativeGroupByBinder.HasDefaultKeySerialization(property)
            || IsIdentityRepresentation(property)
            || IsExactlyOrderedRepresentation(property)
            || ClassifyNumericConversion(property) == NumericConversion.Widening;
 
-    /// <summary>
-    /// Whether sorting or aggregating <paramref name="property"/>'s stored values gives the CLR answer: everything
-    /// <see cref="PreservesClrOrdering"/> admits, plus an integral narrowing converter (see the class remarks).
-    /// </summary>
+    /// <summary>Whether sorting or aggregating gives the CLR answer: <see cref="PreservesClrOrdering"/> plus integral narrowing.</summary>
     internal static bool PreservesClrOrderingForAggregateAndSort(IProperty property)
         => PreservesClrOrdering(property) || ClassifyNumericConversion(property) == NumericConversion.IntegralNarrowing;
 
     /// <summary>
-    /// Whether every property a sort key reads preserves CLR ordering. A bare field is tested with
-    /// <see cref="PreservesClrOrderingForAggregateAndSort"/>; a computed key must be default-serialized throughout, as computed values
-    /// already are (<see cref="MongoExpressionTranslator.AllFieldsDefaultSerialized"/>).
+    /// Native query-dialect comparison: <see cref="PreservesClrOrdering"/> plus integral narrowing, provided the constant is serialized by
+    /// its CLR type (<see cref="ConstantsSerializeByClrType"/>) so it cannot wrap. The driver-LINQ bridge keeps <see cref="PreservesClrOrdering"/>
+    /// since it serializes the constant through the converter.
+    /// </summary>
+    internal static bool PreservesClrOrderingForNativeComparison(IProperty property)
+        => PreservesClrOrdering(property) || ClassifyNumericConversion(property) == NumericConversion.IntegralNarrowing;
+
+    /// <summary>
+    /// Whether a comparison constant must be serialized by its CLR type, not the converter: an unchecked narrowing converter wraps an
+    /// out-of-range constant (<c>Big == 3_000_000_000L</c> would match a stored <c>-1294967296</c>), while the server compares an
+    /// Int64 constant with a stored Int32 numerically.
+    /// </summary>
+    internal static bool ConstantsSerializeByClrType(IProperty property)
+        => ClassifyNumericConversion(property) == NumericConversion.IntegralNarrowing;
+
+    /// <summary>
+    /// Whether <c>$sum</c>/<c>$avg</c> over the stored value gives the CLR answer: stored as itself, or via EF's numeric casting converter
+    /// (including integral narrowing). A <c>BsonRepresentation</c> is excluded: the server-side sum comes back as the represented BSON
+    /// type (<c>Decimal128</c>, string, ...) and is not read back as the CLR type.
+    /// </summary>
+    internal static bool PreservesClrValueForNumericReduction(IProperty property)
+        => NativeGroupByBinder.HasDefaultKeySerialization(property)
+           || ClassifyNumericConversion(property) != NumericConversion.None;
+
+    /// <summary>
+    /// Whether every property a sort key reads preserves CLR ordering: a bare field via <see cref="PreservesClrOrderingForAggregateAndSort"/>;
+    /// a computed key must be default-serialized throughout (<see cref="MongoExpressionTranslator.AllFieldsDefaultSerialized"/>).
     /// </summary>
     internal static bool SortKeyPreservesClrOrdering(MongoExpression key)
         => key switch
@@ -92,16 +102,13 @@ internal static class StoredOrdering
         };
 
     /// <summary>
-    /// A <c>BsonRepresentation</c> (with no value converter) whose stored value is exactly the CLR value in a BSON type
-    /// the server orders the same way: a numeric CLR type (or an enum, by its underlying value, which is how C#
-    /// compares enums) stored as a numeric BSON type that represents every value of that type exactly; or a
-    /// <c>string</c> ↔ <c>ObjectId</c> hex representation, whose lowercase fixed-width hex string sorts exactly as
-    /// the 12 ObjectId bytes do.
+    /// A <c>BsonRepresentation</c> (no value converter) whose stored value is exactly the CLR value in a BSON type ordered the same way:
+    /// a numeric CLR type (or enum, by underlying value) stored as a numeric BSON type representing every value exactly; or a
+    /// <c>string</c> ↔ <c>ObjectId</c> hex representation (fixed-width lowercase hex sorts as the 12 bytes do).
     /// </summary>
     /// <remarks>
-    /// Deliberately a closed list, each entry covered by <c>RepresentedPropertyPushdownTests</c>. Lossy pairs
-    /// (<c>long</c> as <c>Double</c>, <c>double</c> as <c>Decimal128</c>) and overflow-permitting narrowing pairs are
-    /// excluded: they can tie or reorder distinct CLR values.
+    /// Deliberately a closed list, each entry covered by <c>RepresentedPropertyPushdownTests</c>. Lossy pairs (<c>long</c> as <c>Double</c>,
+    /// <c>double</c> as <c>Decimal128</c>) and overflow-permitting narrowing pairs are excluded: they can tie or reorder distinct values.
     /// </remarks>
     private static bool IsExactlyOrderedRepresentation(IProperty property)
     {
@@ -132,18 +139,14 @@ internal static class StoredOrdering
     }
 
     /// <summary>
-    /// EF's built-in <c>CastingConverter&lt;TModel, TProvider&gt;</c> (e.g. <c>HasConversion&lt;int&gt;()</c> on a
-    /// <c>long</c>) or <c>EnumToNumberConverter&lt;TEnum, TNumber&gt;</c> between numeric types where one type represents
-    /// every value of the other exactly: the stored number is the CLR number (for an enum, its underlying value), so
-    /// the server compares, sorts and sums it the same way. Signed/unsigned pairs of the same width and lossy pairs
-    /// (<c>long</c> ↔ <c>double</c>) are excluded.
+    /// EF's built-in <c>CastingConverter</c> (<c>HasConversion&lt;int&gt;()</c> on a <c>long</c>) or <c>EnumToNumberConverter</c> between
+    /// numeric types where one represents every value of the other exactly, so the stored number is the CLR number. Signed/unsigned pairs
+    /// of the same width and lossy pairs (<c>long</c> ↔ <c>double</c>) are excluded.
     /// </summary>
     /// <remarks>
-    /// <see cref="NumericConversion.Widening"/>: the provider type holds every model value, so values and constants
-    /// both convert exactly. <see cref="NumericConversion.IntegralNarrowing"/>: both integral, the model type holds
-    /// every provider value (<c>long</c> stored as <c>int</c>); stored values read back exactly, but a constant outside
-    /// the provider range wraps, so only sort/aggregate admit it. A fractional model stored as an integral type
-    /// (<c>decimal</c> as <c>int</c>) truncates constants and values and is never admitted.
+    /// <see cref="NumericConversion.Widening"/>: values and constants both convert exactly. <see cref="NumericConversion.IntegralNarrowing"/>:
+    /// both integral, the model type holds every provider value; stored values read back exactly but a constant outside the provider range
+    /// wraps, so only sort/aggregate admit it. A fractional model stored as an integral type truncates and is never admitted.
     /// </remarks>
     private static NumericConversion ClassifyNumericConversion(IProperty property)
     {
@@ -195,10 +198,7 @@ internal static class StoredOrdering
     private static bool IsIntegral(Type t)
         => FitsInt64(t) || t == typeof(ulong);
 
-    /// <summary>
-    /// A <c>BsonRepresentation</c> equal to the type's default BSON type (e.g. <c>[BsonRepresentation(String)]</c> on a
-    /// <c>string</c>): the stored form is the default one.
-    /// </summary>
+    /// <summary>A <c>BsonRepresentation</c> equal to the type's default BSON type (<c>[BsonRepresentation(String)]</c> on a <c>string</c>): the stored form is the default one.</summary>
     private static bool IsIdentityRepresentation(IProperty property)
         => property.GetValueConverter() == null
            && property.GetTypeMapping().Converter == null

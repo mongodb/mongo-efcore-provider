@@ -48,12 +48,10 @@ public sealed class ExplicitEncryptionTests : EncryptionTestsBase, IDisposable
     {
         var collectionName = TemporaryDatabaseFixture.CreateCollectionName();
 
-        // Generate unencrypted cards and some data keys
         var unencryptedCards = CreateUnencryptedCards();
         var cardNumberKey = CreateDataKey();
         var securityCodeKey = CreateDataKey();
 
-        // Write encrypted cards to the database
         using (var db = CreateContext())
         {
             db.Database.EnsureCreated();
@@ -61,7 +59,6 @@ public sealed class ExplicitEncryptionTests : EncryptionTestsBase, IDisposable
             db.SaveChanges();
         }
 
-        // Read and compare encrypted cards with original unencrypted cards
         using (var db = CreateContext())
         {
             var actualCards = db.Cards.ToList();

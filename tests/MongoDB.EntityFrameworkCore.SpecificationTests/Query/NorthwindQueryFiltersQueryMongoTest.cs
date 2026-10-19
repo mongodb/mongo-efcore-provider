@@ -29,7 +29,6 @@ public class NorthwindQueryFiltersQueryMongoTest
         : base(fixture)
     {
         fixture.TestMqlLoggerFactory.Clear();
-        //fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -181,21 +180,14 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
     public override async Task Entity_Equality(bool async)
     {
-        // Fails: Entity equality issue EF-202; on EF10 the query filter on the $lookup target
-        // makes the join inner a filtered sub-query, which is not supported EF-X022
-        await Assert.ThrowsAnyAsync<Exception>(() => base.Entity_Equality(async));
+        // On EF10 the query filter on the $lookup target makes the join inner a filtered scan, which the native
+        // pipeline carries in the $lookup sub-pipeline; the base test checks the rows.
+        await base.Entity_Equality(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-Orders.
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }], "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer" : { "$ne" : null }, "_lookup_Customer.CompanyName" : { "$ne" : null } } }
 """);
-        }
     }
 
     public override async Task Client_eval(bool async)

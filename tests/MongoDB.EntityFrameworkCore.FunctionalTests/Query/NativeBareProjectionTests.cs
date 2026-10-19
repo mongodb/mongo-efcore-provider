@@ -90,8 +90,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
 
     private static readonly Action<ModelBuilder> FlatModel = _ => { };
 
-    // ── 1. Bare scalar ────────────────────────────────────────────────────────────
-
     [Fact]
     public void Bare_scalar_projection_goes_native()
     {
@@ -126,7 +124,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         // removes the pushed-down Select, leaving whole documents.
         var prefix = "p";
 
-        // Default Native mode: NativeOnly throws on the decline and DriverLinq never builds a native factory.
         using var db = CreateContext(collection, MongoQueryMode.Native);
 
         // Nullable leaves run first: without the strip they silently return all nulls, while Title throws;
@@ -141,14 +138,11 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             .Select(b => b.Score).ToList();
         Assert.Equal([10, null, 30, null, 50], scores);
 
-        // The non-nullable leaf, which fails loudly.
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
             .Select(b => b.Title).ToList();
         Assert.Equal(["p1_two", "p2_empty", "p3_missing", "p4_null", "p5_one"], titles);
     }
-
-    // ── 2. Bare primary key ───────────────────────────────────────────────────────
 
     [Fact]
     public void Bare_primary_key_projection_goes_native()
@@ -198,8 +192,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         Assert.Equal(expected, actual);
     }
 
-    // ── 3. Bare primitive collection ──────────────────────────────────────────────
-
     [Fact]
     public void Bare_primitive_collection_projection_goes_native()
     {
@@ -239,8 +231,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
                 .Select(b => b.Tags).ToList().Select(Print));
     }
-
-    // ── 4-6. Bare owned entity collection ─────────────────────────────────────────
 
     [Fact]
     public void Bare_owned_collection_projection_goes_native()
@@ -302,8 +292,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 .Select(b => b.Posts).ToList().Select(PrintPosts));
     }
 
-    // ── 7. Composition with filter / sort / paging ─────────────────────────────────
-
     [Fact]
     public void Bare_projection_composed_with_filter_sort_and_paging_goes_native()
     {
@@ -329,8 +317,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title).Skip(1).Take(2)
                 .Select(b => b.Title).ToList());
     }
-
-    // ── 8. Trailing bare projection after a set operation ─────────────────────────
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -361,7 +347,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     [InlineData(MongoQueryMode.NativeOnly)]
     public void Bare_projection_after_an_intersect_or_except_goes_native(MongoQueryMode mode)
     {
-        // No DriverLinq leg: the driver doesn't translate cross-view Intersect/Except, so assert against the seed.
         var collection = SeedSetOps(nameof(Bare_projection_after_an_intersect_or_except_goes_native) + mode);
         using var db = CreateContext(collection, mode);
 
@@ -377,8 +362,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 .Except(db.Entities.AsNoTracking().Where(b => b.Rank >= 3))
                 .Select(b => b.Title)));
     }
-
-    // ── 13. Owned-hop scalar declines (EF-362) ────────────────────────────────────
 
     [Fact]
     public void Bare_owned_hop_scalar_projection_declines()
@@ -400,8 +383,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             () => nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Home.City).ToList());
     }
 
-    // ── 14. Bare entity: the positive control ─────────────────────────────────────
-
     [Fact]
     public void Bare_entity_projection_is_unchanged_and_still_native()
     {
@@ -419,8 +400,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             db.Entities.AsNoTracking().Where(b => b.Rank >= 2).OrderBy(b => b.Title).Select(x => x).ToList()
                 .Select(b => b.Title));
     }
-
-    // ── 15. Bare projected set-op operand goes native ─────────────────────────────
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -451,7 +430,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     [InlineData(MongoQueryMode.NativeOnly)]
     public void Bare_projected_intersect_and_except_operands_go_native_and_return_correct_values(MongoQueryMode mode)
     {
-        // No DriverLinq leg: the driver doesn't translate cross-view Intersect/Except (see test 8).
         var collection = SeedSetOps(
             nameof(Bare_projected_intersect_and_except_operands_go_native_and_return_correct_values) + mode);
         using var db = CreateContext(collection, mode);
@@ -493,8 +471,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 .Except(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Posts)).ToList());
     }
 
-    // ── 16. Bare projection then Distinct goes native ─────────────────────────────
-
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -511,8 +487,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             ["p2", "q0", "r_mid", "s_hi"],
             Sorted(db.Entities.AsNoTracking().Select(b => b.Title).Distinct()));
     }
-
-    // ── Minimal set-op / Distinct probes ──────────────────────────────────────────
 
     [Fact]
     public void Bare_projection_as_set_operation_operand_goes_native()
@@ -535,8 +509,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         var titles = db.Entities.AsNoTracking().Select(b => b.Title).Distinct().ToList();
         Assert.NotEmpty(titles);
     }
-
-    // ── 17. Cardinality operator after a bare projection ──────────────────────────
 
     [Fact]
     public void Bare_projection_then_cardinality_operator_goes_native()
@@ -566,8 +538,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 .Select(b => b.Title).First());
     }
 
-    // ── The write-once guard's own shape ──────────────────────────────────────────
-
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -583,8 +553,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             [6, 8, 10, 7, 6],
             db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Title).Select(t => t.Length).ToList());
     }
-
-    // ── Seeds and helpers ─────────────────────────────────────────────────────────
 
     // The array states: populated, empty, missing, explicit BSON null, plus a fifth populated row. Every Title
     // starts with "p", so parameterized-Where legs select all rows and share expectations.
@@ -712,11 +680,9 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         return database.MongoDatabase.GetCollection<FlatBlog>(raw.CollectionNamespace.CollectionName);
     }
 
-    // Set operations don't preserve order, so set-op assertions sort client-side.
     private static List<string> Sorted(IQueryable<string> query)
         => query.ToList().OrderBy(t => t, StringComparer.Ordinal).ToList();
 
-    // Printed rather than compared structurally, so null vs "" and absent vs empty stay distinguishable.
     private static string Print(List<string>? tags)
         => tags is null ? "<null>" : tags.Count == 0 ? "<empty>" : string.Join("|", tags);
 
@@ -759,7 +725,6 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // FunctionalTests has no AssertMql, so MQL is captured via SpyLoggerProvider (as in NativeArrayProjectionTests).
     private static SingleEntityDbContext<Blog> CreateContextWithLogging(
         IMongoCollection<Blog> collection, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
     {

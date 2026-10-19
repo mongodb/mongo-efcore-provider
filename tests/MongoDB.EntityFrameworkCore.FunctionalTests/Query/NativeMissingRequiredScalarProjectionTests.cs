@@ -342,7 +342,6 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
                 {
                     perRow.Add(string.Join(",", run(db.Entities.AsNoTracking().Where(x => x.Title == row))));
                 }
-                // A NativeOnly decline (NativeTranslationNotSupportedException) is not a row outcome: it fails the test.
                 catch (Exception ex) when (ex is FormatException or InvalidOperationException)
                 {
                     perRow.Add("throws");
@@ -360,9 +359,9 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
     /// drops the widening the driver renders as `$toLong`, so both branches are bare and the read can't tell which one
     /// the server took; it reads strictly, where main read the long field's MISSING as 0. A conditional mixing a nullable
     /// <c>.Value</c> branch with a non-nullable field branch (<c>c ? x.Score!.Value : x.Rank</c>, Rank MISSING, the
-    /// non-nullable branch taken): the <c>.Value</c> operand flags the whole leaf <c>ThrowsOnNull</c> (Task 1.3's C#
+    /// non-nullable branch taken): the <c>.Value</c> operand flags the whole leaf <c>ThrowsOnNull</c> (C#
     /// semantics ruling: <c>x.Score.Value</c> over null/missing throws), and the read can't tell which branch the server
-    /// took, so the MISSING throws where main read 0. Ruled acceptable (Phase 1 final review): loud, not silent.
+    /// took, so the MISSING throws where main read 0. Accepted: loud, not silent.
     /// </summary>
     [Fact]
     public void Missing_required_element_divergences_from_main_are_loud()

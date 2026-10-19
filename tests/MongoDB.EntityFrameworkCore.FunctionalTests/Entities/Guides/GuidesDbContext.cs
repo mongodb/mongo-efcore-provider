@@ -19,6 +19,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
@@ -32,9 +33,10 @@ internal class GuidesDbContext(DbContextOptions options)
         IMongoDatabase database,
         Action<string>? logAction = null,
         ILoggerFactory? loggerFactory = null,
-        bool sensitiveDataLogging = true) =>
+        bool sensitiveDataLogging = true,
+        MongoQueryMode? queryMode = null) =>
         new(new DbContextOptionsBuilder<GuidesDbContext>()
-            .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName)
+            .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName, o => { if (queryMode is { } mode) o.UseQueryMode(mode); })
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .LogTo(l => logAction?.Invoke(l))
             .UseLoggerFactory(loggerFactory)

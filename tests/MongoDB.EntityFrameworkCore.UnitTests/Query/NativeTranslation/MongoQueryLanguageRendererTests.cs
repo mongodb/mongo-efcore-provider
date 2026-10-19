@@ -27,8 +27,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 /// </summary>
 public class MongoQueryLanguageRendererTests
 {
-    // --- Entity model used across tests ---
-
     private class Customer
     {
         public MongoDB.Bson.ObjectId Id { get; set; }
@@ -78,9 +76,7 @@ public class MongoQueryLanguageRendererTests
             .FindNavigation(nameof(Blog.Posts))!.TargetEntityType.FindProperty(propertyName)!;
     }
 
-    // ------------------------------------------------------------------
     // simple GreaterThan comparison → { Age: { $gt: 21 } }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_greater_than_in_query_dialect()
@@ -97,10 +93,8 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Age: { $gt: 21 } }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // AndAlso of two ranges on the same field merges operator docs
     //         Age > 21 && Age < 65 → { Age: { $gt: 21, $lt: 65 } }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Merges_two_ranges_on_one_field()
@@ -123,9 +117,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Age: { $gt: 21, $lt: 65 } }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // Equal comparison → bare { Age: value } (no $eq wrapper)
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_equal_as_bare_value()
@@ -142,9 +134,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Age: 30 }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // NotEqual → { Age: { $ne: value } }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_not_equal_with_ne_operator()
@@ -161,9 +151,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Age: { $ne: 0 } }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // LessThanOrEqual → { Age: { $lte: value } }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_less_than_or_equal()
@@ -180,9 +168,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Age: { $lte: 100 } }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // GreaterThanOrEqual → { Age: { $gte: value } }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_greater_than_or_equal()
@@ -199,9 +185,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Age: { $gte: 18 } }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // OrElse → { $or: [ { Age: { $lt: 18 } }, { Age: { $gt: 65 } } ] }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_or_else_as_or_array()
@@ -226,9 +210,7 @@ public class MongoQueryLanguageRendererTests
             rendered);
     }
 
-    // ------------------------------------------------------------------
     // bare bool field → { Active: true }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_bare_bool_field_as_true()
@@ -241,9 +223,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Active: true }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // Not(bool field) → { Active: { $ne: true } }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_not_bool_field_as_ne_true()
@@ -257,9 +237,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Active: { $ne: true } }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // Parameter placeholder — renders sentinel, records in PlaceholderTable
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_parameter_as_sentinel_and_records_in_placeholder_table()
@@ -287,9 +265,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(0, index);
     }
 
-    // ------------------------------------------------------------------
     // AndAlso with two different fields — no merge, remain flat { f1: ..., f2: ... }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void And_with_two_different_fields_stays_flat()
@@ -310,10 +286,8 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Age: { $gt: 21 }, Active: true }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // MongoConstantExpression with null ForSerialization (Skip/Take count)
     //          → BsonValue.Create(value), no throw
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_constant_with_null_ForSerialization_as_BsonValue()
@@ -326,10 +300,8 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(new BsonInt32(5), result);
     }
 
-    // ------------------------------------------------------------------
     // MongoParameterExpression with null ForSerialization (Skip/Take count)
     //          → placeholder with null serializer, no throw
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_parameter_with_null_ForSerialization_as_null_serializer_placeholder()
@@ -347,9 +319,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(0, index);
     }
 
-    // ------------------------------------------------------------------
     // field-to-field comparison → { $expr: { $eq: ['$Age', '$Score'] } }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Field_to_field_comparison_renders_as_expr()
@@ -364,9 +334,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ $expr: { $eq: ['$Age', '$Score'] } }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // mixed AND keeps the indexable branch in query dialect
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Mixed_and_keeps_indexable_branch_in_query_dialect()
@@ -387,9 +355,7 @@ public class MongoQueryLanguageRendererTests
             rendered);
     }
 
-    // ------------------------------------------------------------------
     // `== null` renders as a bare null value → { Name: null } (matches null or missing)
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_is_null_as_bare_null()
@@ -403,9 +369,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Name: null }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // MongoInExpression over an inline constant collection → { field: { $in: [...] } }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_in_for_inline_collection()
@@ -419,9 +383,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Age: { $in: [1, 2, 3] } }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // negated MongoInExpression over an inline constant collection → { field: { $nin: [...] } }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_nin_for_negated_inline_collection()
@@ -435,11 +397,9 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Age: { $nin: [1, 2, 3] } }"), rendered);
     }
 
-    // ------------------------------------------------------------------
     // MongoInExpression over a MongoValueListExpression of separate parameters
     // (`new[] { prm1, prm2 }.Contains(c.Age)`) → { Age: { $in: [<sentinel0>, <sentinel1>] } }, one placeholder
     // per element (not a single array placeholder).
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_in_for_value_list_of_parameters_as_independent_sentinels()
@@ -471,10 +431,8 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(1, index1);
     }
 
-    // ------------------------------------------------------------------
     // MongoRegexExpression → { field: { $regularExpression: { pattern, options: "s" } } }, the same
     // shape the driver-LINQ path emits.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_starts_with_as_anchored_regex()
@@ -678,9 +636,7 @@ public class MongoQueryLanguageRendererTests
             result.ToJson());
     }
 
-    // ------------------------------------------------------------------
     // $elemMatch over an owned (embedded) array
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_elem_match_with_element_relative_child()
@@ -793,9 +749,7 @@ public class MongoQueryLanguageRendererTests
             rendered);
     }
 
-    // ------------------------------------------------------------------
     // IsQueryDialectRenderable — the classifier the translator gates $elemMatch children on
-    // ------------------------------------------------------------------
 
     [Fact]
     public void IsQueryDialectRenderable_accepts_a_field_to_constant_comparison()
@@ -977,9 +931,7 @@ public class MongoQueryLanguageRendererTests
                 new MongoConstantExpression(1, null))));
     }
 
-    // ------------------------------------------------------------------
     // MongoSizeExpression.NullSafe
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_a_null_safe_size_in_the_expr_dialect_with_ifNull()
@@ -1011,8 +963,6 @@ public class MongoQueryLanguageRendererTests
 
         Assert.Equal(BsonDocument.Parse("{ $size: '$_lookup_Orders' }"), rendered);
     }
-
-    // --- Array cardinality: the query-dialect array-index existence form ---
 
     private static MongoBinaryExpression Count(MongoBinaryOperator op, object threshold)
         => new(op,

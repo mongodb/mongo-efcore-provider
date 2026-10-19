@@ -23,8 +23,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 public class MongoFieldPrefixRewriterTests
 {
-    // --- Entity model used across tests ---
-
     private class Owner
     {
         public MongoDB.Bson.ObjectId Id { get; set; }

@@ -78,8 +78,6 @@ public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) :
 
     private static readonly (string Label, int N)[] Rows = [("a", 1), ("b", 2), ("c", 3), ("a", 4)];
 
-    // ── Row-independent leaves go native ────────────────────────────────────────────────────────────
-
     [Fact]
     public void Closed_new_DateTime_leaf_beside_a_field_goes_native()
     {
@@ -285,15 +283,12 @@ public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) :
         Assert.Equal(expected, Run(MongoQueryMode.Native));
     }
 
-    // ── Distinct over a client-evaluated leaf ───────────────────────────────────────────────────────
-
     [Fact]
     public void Distinct_over_an_all_client_projection_returns_one_row()
     {
         var collection = Seed(nameof(Distinct_over_an_all_client_projection_returns_one_row));
         var closure = new { B = true };
 
-        // One row is correct: the value is the same for every row of one execution.
         var results = NativeModeAssert.NativeAndParity(mode =>
         {
             using var context = CreateContext(collection, mode);
@@ -328,8 +323,6 @@ public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) :
 
         Assert.Equal(["a|True", "b|True", "c|True"], results);
     }
-
-    // ── Operators that would read a client-evaluated leaf decline ──────────────────────────────────
 
     [Fact]
     public void Union_over_client_evaluated_leaves_declines()
@@ -505,7 +498,6 @@ public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) :
         var ts = TimeSpan.FromHours(3);
         var low = TimeSpan.FromHours(1);
 
-        // After the Distinct the Where runs over the $group output, whose only key is the sentinel.
         var results = NativeModeAssert.DeclinesCleanly(mode =>
         {
             using var context = CreateContext(collection, mode);
@@ -568,8 +560,6 @@ public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) :
         });
         Assert.Equal([true], first);
     }
-
-    // ── Seed and helpers ────────────────────────────────────────────────────────────────────────────
 
     private IMongoCollection<Row> Seed(string name)
     {

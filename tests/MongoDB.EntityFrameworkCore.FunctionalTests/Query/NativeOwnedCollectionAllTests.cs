@@ -49,8 +49,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // MQL is captured via SpyLoggerProvider (TestMqlLoggerFactory/AssertMql exist only in SpecificationTests),
-    // as in NativeSelectManyTests.
+    // MQL is captured via SpyLoggerProvider (TestMqlLoggerFactory/AssertMql exist only in SpecificationTests).
     private SingleEntityDbContext<T> CreateContextWithLogging<T>(
         IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
@@ -71,7 +70,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             });
     }
 
-    // Assert.Contains on the pipeline fragment avoids coupling to the "Executed MQL query" message wrapper.
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
@@ -86,8 +84,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
 
     public class Post
     {
-        // Nullable so a missing or explicitly-null stored field materializes as null rather than throwing; otherwise
-        // the missing-field state can't be exercised.
         public int? Rank { get; set; }
         public string? Heading { get; set; }
         public int? Other { get; set; }
@@ -120,11 +116,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         mb.Entity<Blog>().OwnsOne(b => b.Home, h => h.OwnsMany(x => x.Notes));
     };
 
-    // ------------------------------------------------------------------
-    // Shared row builders; each returns a fresh document (new ObjectId) so the seeds can't desynchronize.
-    // ------------------------------------------------------------------
-
-    // Every element satisfies Rank > 5.
     private static BsonDocument AllPassRow()
         => Row("allpass", new BsonArray
         {
@@ -132,7 +123,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             PostDoc(rank: 7, heading: "b"),
         });
 
-    // One element fails Rank > 5 — the discriminating row for All.
     private static BsonDocument OneFailsRow()
         => Row("onefails", new BsonArray
         {
@@ -197,7 +187,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         return doc;
     }
 
-    // Row variant carrying explicit Home.Notes content, for the owned-single-ref-hop nesting test.
     private static BsonDocument RowWithNotes(string title, BsonArray notes)
         => new()
         {
@@ -207,8 +196,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             { "Tags", new BsonArray() }
         };
 
-    // Carries real Tags; every other builder leaves Tags empty, which would make Tags.All(t => t != "x")
-    // vacuously true and non-discriminating.
     private static BsonDocument RowWithTags(string title, BsonArray tags)
         => new()
         {
@@ -236,7 +223,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     private IMongoCollection<Blog> SeedWellFormed(string name)
         => Seed(name, AllPassRow(), OneFailsRow(), MissingFieldRow(), NullFieldRow(), EmptyPostsRow());
 
-    // Runs `query` in one mode, reduced to the sorted Title list; mode orchestration lives in NativeModeAssert.
     private List<string> RunTitles(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryMode mode)
     {
@@ -267,9 +253,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
 
         var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.All(p => p.Rank > 5)));
 
-        // allpass: both elements pass. empty/missing/null: All over an empty sequence is true.
-        // missingfield/nullfield: null > 5 is false, so All is false (the rows a naive inversion gets wrong).
-        // onefails: one element fails.
         Assert.Equal(new[] { "allpass", "empty", "missing", "null" }, titles);
     }
 
@@ -306,7 +289,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void Owned_collection_All_over_an_empty_or_absent_array_is_true()
     {
-        // Separate from the matrix test because $not/$elemMatch is easily misread as "the array must be non-empty".
         var collection = Seed(
             nameof(Owned_collection_All_over_an_empty_or_absent_array_is_true),
             EmptyPostsRow(), MissingPostsRow(), NullPostsRow());
@@ -439,8 +421,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             nameof(All_with_an_arithmetic_element_predicate_declines_and_falls_back_to_correct_rows));
 
         var titles = AssertDeclinesCleanly(collection, q => q.Where(b => b.Posts.All(p => p.Rank + 1 > 5)));
-        // allpass: 9+1>5 and 7+1>5, both true -> All true. onefails: 1+1>5 is false -> All false.
-        // empty: All over an empty sequence is true.
         Assert.Equal(new[] { "allpass", "empty" }, titles);
     }
 
@@ -491,7 +471,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         Assert.Equal(driver, native);
         Assert.Equal(new[] { "emptyTags", "noX" }, native);
 
-        // NativeOnly succeeds, so this went native.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
             var nativeOnly = db.Entities.AsNoTracking().Where(b => b.Tags.All(t => t != "x"))
@@ -512,9 +491,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         AssertDeclinesCleanly(collection, q => q.Where(b => b.Tags.All(t => t == "x")));
     }
 
-    // ------------------------------------------------------------------
     // Differential matrix — the primary correctness bar for the negator
-    // ------------------------------------------------------------------
     //
     // A mis-negated element predicate returns wrong rows rather than declining, and the driver oracle aborts on
     // missing/null arrays. So the oracle is in-memory LINQ: the same expression is sent to the server and
@@ -552,7 +529,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     {
         var collection = Seed($"diff_{name}", DifferentialRows());
 
-        // Oracle: materialize every row, then evaluate the SAME predicate in memory.
         List<string> expected;
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         {
@@ -560,8 +536,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
                 .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t).ToList();
         }
 
-        // Server: must go native (NativeOnly) and agree exactly. The projection is client-side because a bare-scalar
-        // Select wouldn't itself be native.
         List<string> actual;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
@@ -610,7 +584,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         Assert.Equal(new[] { "allpass", "empty", "missing", "null" }, titles);
     }
 
-    // Every element state crossed with every array state that changes quantifier semantics.
     private static BsonDocument[] DifferentialRows() =>
     [
         AllPassRow(), OneFailsRow(), MissingFieldRow(), NullFieldRow(),
@@ -627,10 +600,8 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         Row("orRelationalGap", new BsonArray { PostWithoutRank(heading: "z"), PostDoc(rank: 9, heading: "a") }),
     ];
 
-    // ------------------------------------------------------------------
     // Dotted-path resolution through a nested owned single-reference hop, from inside a quantifier's
     // element-scoped predicate. A separate fixture (NestedRef*) so the shared Post type stays unchanged.
-    // ------------------------------------------------------------------
 
     public class NestedRefBlog
     {
@@ -691,7 +662,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
 
         using var db = CreateNestedRefContext(collection, MongoQueryMode.NativeOnly);
 
-        // NativeOnly succeeds and the returned title proves the correct row matched.
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => p.Author!.City == "Springfield"))
             .ToList().Select(b => b.Title).ToList();

@@ -49,7 +49,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// <see langword="true" /> to index dynamically, <see langword="false" /> to index statically. If this is not set
     /// explicitly, then the index will be static by default.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IsDynamic(bool dynamic = true)
     {
         IndexDefinition.IsDynamic = dynamic;
@@ -69,7 +68,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// <param name="typeSetName">
     /// The name of the type set to use, which must be added to the index using <see cref="SearchIndexBuilder.AddTypeSet(string)"/>.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IsDynamicWithTypeSet(string typeSetName)
     {
         IndexDefinition.IsDynamic = true;
@@ -90,7 +88,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// <param name="store">
     /// <see langword="true" /> to store all source. <see langword="false" /> to explicitly not store all source.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder StoreAllSource(bool store = true)
     {
         IndexDefinition.IncludeAll = store;
@@ -108,7 +105,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// </remarks>
     /// <param name="memberName">The name of the member to store or exclude source for.</param>
     /// <param name="store"><see langword="true" /> to store source, or <see langword="false" /> to exclude storing source.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder StoreSourceFor(string memberName, bool store = true)
     {
         var property = SearchIndexBuilder.GetSearchIndexProperty(IndexDefinition.EntityType, memberName);
@@ -147,7 +143,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// </remarks>
     /// <param name="memberName">The name of the field or property to index.</param>
     /// <param name="nestedBuilder">A <see cref="AutoCompleteSearchIndexBuilder"/> delegate to configure this indexing.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsAutoComplete(string memberName, Action<AutoCompleteSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsAutoComplete(memberName));
@@ -176,7 +171,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// </remarks>
     /// <param name="memberName">The name of the field or property to index.</param>
     /// <param name="nestedBuilder">A <see cref="BooleanSearchIndexBuilder"/> delegate to configure this indexing.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsBoolean(string memberName, Action<BooleanSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsBoolean(memberName));
@@ -205,7 +199,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// </remarks>
     /// <param name="memberName">The name of the field or property to index.</param>
     /// <param name="nestedBuilder">A <see cref="DateSearchIndexBuilder"/> delegate to configure this indexing.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsDate(string memberName, Action<DateSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsDate(memberName));
@@ -234,7 +227,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// </remarks>
     /// <param name="memberName">The name of the field or property to index.</param>
     /// <param name="nestedBuilder">A <see cref="GeoSearchIndexBuilder"/> delegate to configure this indexing.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsGeo(string memberName, Action<GeoSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsGeo(memberName));
@@ -263,7 +255,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// </remarks>
     /// <param name="memberName">The name of the field or property to index.</param>
     /// <param name="nestedBuilder">A <see cref="NumberSearchIndexBuilder"/> delegate to configure this indexing.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsNumber(string memberName, Action<NumberSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsNumber(memberName));
@@ -292,7 +283,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// </remarks>
     /// <param name="memberName">The name of the field or property to index.</param>
     /// <param name="nestedBuilder">A <see cref="ObjectIdSearchIndexBuilder"/> delegate to configure this indexing.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsObjectId(string memberName, Action<ObjectIdSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsObjectId(memberName));
@@ -321,7 +311,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// </remarks>
     /// <param name="memberName">The name of the field or property to index.</param>
     /// <param name="nestedBuilder">A <see cref="StringSearchIndexBuilder"/> delegate to configure this indexing.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsString(string memberName, Action<StringSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsString(memberName));
@@ -352,7 +341,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// </remarks>
     /// <param name="memberName">The name of the field or property to index.</param>
     /// <param name="nestedBuilder">A <see cref="TokenSearchIndexBuilder"/> delegate to configure this indexing.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsToken(string memberName, Action<TokenSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsToken(memberName));
@@ -381,7 +369,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// </remarks>
     /// <param name="memberName">The name of the field or property to index.</param>
     /// <param name="nestedBuilder">A <see cref="UuidSearchIndexBuilder"/> delegate to configure this indexing.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsUuid(string memberName, Action<UuidSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsUuid(memberName));
@@ -396,7 +383,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/define-field-mappings/#exclude-fields-example"/>.
     /// </remarks>
     /// <param name="memberName">The name of the field or property to be excluded from the index.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder ExcludeFromIndex(string memberName)
     {
         IndexDefinition.GetOrAddFieldDefinition<SearchIndexExcludeDefinition>(
@@ -429,7 +415,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// <param name="nestedBuilder">
     /// A <see cref="NestedSearchIndexBuilder"/> delegate to configure members of the embedded document.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsEmbedded(string memberName, Action<NestedSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsEmbedded(memberName));
@@ -462,7 +447,6 @@ public class NestedSearchIndexBuilder(SearchIndexDefinitionWithFields indexDefin
     /// <param name="nestedBuilder">
     /// A <see cref="NestedSearchIndexBuilder"/> delegate to configure members of the embedded documents.
     /// </param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public NestedSearchIndexBuilder IndexAsEmbeddedArray(string memberName, Action<NestedSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsEmbeddedArray(memberName));

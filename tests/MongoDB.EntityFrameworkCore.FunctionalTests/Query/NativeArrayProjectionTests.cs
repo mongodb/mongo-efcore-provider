@@ -43,13 +43,10 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         public string Title { get; set; } = "";
         public List<Post> Posts { get; set; } = null!;
 
-        // Rank and Tags back the arithmetic-leaf and primitive-collection-leaf tests. No other test here selects a
-        // whole Blog or projects them, so their absence from other seeds is never observed. No `= []` on Tags.
         public int Rank { get; set; }
         public List<string> Tags { get; set; } = null!;
     }
 
-    // No navigations and an explicit key: the simplest admissible element shape.
     public class Post
     {
         public int PostId { get; set; }
@@ -65,8 +62,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     private static readonly Action<ModelBuilder> ShadowKeyModel = mb =>
         mb.Entity<Blog>().OwnsMany(b => b.Posts);
 
-    // Same element shape as Post, but the collection is reached through an owned single reference (declared on
-    // Home, not the query root).
     public class NestedOwnerBlog
     {
         public ObjectId Id { get; set; }
@@ -136,16 +131,12 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             p.HasKey(x => x.PostId);
         });
 
-    // Named DTO (MemberInit) spelling; exercises TryPopulateNativeProjection's MemberInitExpression branch. The
-    // assigned member "Posts" matches the element name, so it is admissible.
     public class TitlePosts
     {
         public string Title { get; set; } = "";
         public List<Post> Posts { get; set; } = null!;
     }
 
-    // Two owned-collection array leaves in one projection. Post is reused as the CLR element type for both
-    // navigations, with distinct explicit keys so the two owned types don't collide.
     public class TwoArrayBlog
     {
         public ObjectId Id { get; set; }
@@ -161,8 +152,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             b.OwnsMany(x => x.Drafts, p => p.HasKey(y => y.PostId));
         });
 
-    // HashSet-backed navigation: proves the array leaf is read back through the navigation's own
-    // IClrCollectionAccessor rather than a hand-built List<T>.
     public class HashSetBlog
     {
         public ObjectId Id { get; set; }
@@ -232,7 +221,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         _ = db.Entities.AsNoTracking().Select(b => new {b.Title, b.Posts}).ToList();
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
-        // Expected: aggregate([{ "$project" : { "Title" : "$Title", "Posts" : "$Posts", "_id" : "$_id" } }])
         // `"Posts" : "$Posts"` is the load-bearing fragment; a bare Contains("Posts") would also match a $match,
         // a $lookup, or a whole-document fetch.
         Assert.Contains("$project", mql);
@@ -260,13 +248,12 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver), Run(native));
     }
 
-    // A renamed alias (`P = b.Posts`, alias "P" vs. element "Posts") is declined — see
-    // NativeProjectionBinder.IsNativeArrayProjectionLeaf. The shaper is alias-addressed, but the fallback hands it
-    // an un-projected whole document, so admitting this shape made DriverLinq silently return zero elements.
+    // A renamed alias (`P = b.Posts`, alias "P" vs. element "Posts") stages the array under its document path with an
+    // alias override (member -> path), so the alias-addressed shaper and a whole-document fallback read the same path. It
     [Fact]
-    public void Renamed_array_alias_is_declined_and_returns_correct_data_in_every_mode()
+    public void Renamed_array_alias_goes_native_and_returns_correct_data_in_every_mode()
     {
-        var collection = SeedKeyed(nameof(Renamed_array_alias_is_declined_and_returns_correct_data_in_every_mode));
+        var collection = SeedKeyed(nameof(Renamed_array_alias_goes_native_and_returns_correct_data_in_every_mode));
 
         static List<(string Title, int Count)> Run(SingleEntityDbContext<Blog> db)
             => db.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -275,16 +262,12 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.P.Count))
                 .ToList();
 
-        // Both fallback-capable modes must agree with the seeded truth; DriverLinq is the leg that silently
-        // returned zeros.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal(new[] {0, 1, 2}, Run(db).Select(r => r.Count));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
     // An array leaf under a nested owner (reached through an owned reference) goes native. The full surface
@@ -313,7 +296,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal(Run(driver), actual);
         }
 
-        // The routing proof, and the only reliable one: MQL shape cannot distinguish the two paths.
         using var nativeOnly = CreateNestedOwnerContext(collection, MongoQueryMode.NativeOnly);
         Assert.Equal(new[] {"", "n1", "n2|n3"}, Run(nativeOnly).Select(r => r.Texts));
     }
@@ -349,45 +331,72 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         // RenderProject emits an explicit `_id : 0` suppression UNLESS the projection itself emits _id.
         Assert.DoesNotContain("\"_id\" : 0", mql);
     }
-
-    // An element with an eager-loaded navigation of its own (nested owned collection or reference) is declined by
-    // the native array-leaf branch; Native and DriverLinq return correct rows via the fallback, NativeOnly throws.
-    // (The fallback used to throw ArgumentException in every mode — EF-360 — because the element's auto-include
-    // subquery was rebuilt as IEnumerable<T> rather than the navigation's declared List<T>.)
-    // Only eager-loaded navigations decline; a lazy inverse owner navigation is admitted — see
-    // Array_leaf_whose_element_has_only_a_lazy_inverse_owner_navigation_goes_native.
     [Fact]
-    public void Element_with_its_own_navigation_is_declined_but_the_fallback_returns_correct_rows()
+    public void Element_with_its_own_owned_collection_goes_native_and_returns_correct_rows()
     {
-        var collection = SeedNested(nameof(Element_with_its_own_navigation_is_declined_but_the_fallback_returns_correct_rows));
+        var collection = SeedNested(nameof(Element_with_its_own_owned_collection_goes_native_and_returns_correct_rows));
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly})
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, NestedModel, mode);
 
-            // Premise: a nested owned navigation is eager-loaded, which is what keeps this shape declined.
             var elementNavigations = db.Model.FindEntityType(typeof(NestedBlog))!
                 .FindNavigation(nameof(NestedBlog.Posts))!.TargetEntityType.GetNavigations().ToList();
             Assert.Equal([nameof(NestedPost.Comments)], elementNavigations.Select(n => n.Name));
             Assert.All(elementNavigations, n => Assert.True(n.IsEagerLoaded));
 
-            var query = () => db.Set<NestedBlog>().AsNoTracking()
+            var rows = db.Set<NestedBlog>().AsNoTracking()
                 .OrderBy(b => b.Title)
                 .Select(b => new {b.Title, b.Posts})
                 .ToList();
 
-            if (mode == MongoQueryMode.NativeOnly)
-            {
-                // The array leaf is not admitted, so the whole projection declines; NativeOnly has no fallback.
-                Assert.Throws<NativeTranslationNotSupportedException>(() => query());
-                continue;
-            }
-
-            var rows = query();
-
             Assert.Equal(["a_empty", "b_two"], rows.Select(r => r.Title).ToArray());
             Assert.Empty(rows[0].Posts);
             Assert.Equal(new[] { "h1", "h2" }, rows[1].Posts.Select(p => p.Heading).ToArray());
+        }
+    }
+
+    // Every state of the nested array at both levels: missing / null / empty / populated. The oracle is the whole-entity
+    // read (the doc-path route), so a nested collection the alias read forgot to populate shows up as empty.
+    [Fact]
+    public void Nested_owned_collection_in_an_array_leaf_element_equals_the_whole_entity_oracle()
+    {
+        var name = UniqueCollectionName(nameof(Nested_owned_collection_in_an_array_leaf_element_equals_the_whole_entity_oracle));
+        var raw = database.MongoDatabase.GetCollection<BsonDocument>(name);
+        BsonDocument Comment(string text) => new() {{"Text", text}};
+        raw.InsertMany(
+        [
+            NestedBlogRow("a_posts_missing"),
+            new BsonDocument {{"_id", ObjectId.GenerateNewId()}, {"Title", "b_posts_null"}, {"Posts", BsonNull.Value}},
+            NestedBlogRow(
+                "c_mixed",
+                new BsonDocument {{"Heading", "comments_missing"}},
+                new BsonDocument {{"Heading", "comments_null"}, {"Comments", BsonNull.Value}},
+                new BsonDocument {{"Heading", "comments_empty"}, {"Comments", new BsonArray()}},
+                new BsonDocument {{"Heading", "comments_two"}, {"Comments", new BsonArray {Comment("x"), Comment("y")}}})
+        ]);
+        var collection = database.MongoDatabase.GetCollection<NestedBlog>(name);
+
+        static List<string> Summarize(string title, IEnumerable<NestedPost> posts)
+            => [title, .. posts.Select(p => $"{p.Heading}=[{string.Join("|", p.Comments.Select(c => c.Text))}]")];
+
+        using var oracleDb = CreateContext(collection, NestedModel, MongoQueryMode.Native);
+        var expected = oracleDb.Set<NestedBlog>().AsNoTracking().OrderBy(b => b.Title).ToList()
+            .Select(b => Summarize(b.Title, b.Posts)).ToList();
+
+        Assert.Equal(
+            ["c_mixed", "comments_missing=[]", "comments_null=[]", "comments_empty=[]", "comments_two=[x|y]"],
+            expected[2]);
+
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = CreateContext(collection, NestedModel, mode);
+            var actual = db.Set<NestedBlog>().AsNoTracking().OrderBy(b => b.Title)
+                .Select(b => new {b.Title, b.Posts})
+                .ToList()
+                .Select(r => Summarize(r.Title, r.Posts)).ToList();
+
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -401,13 +410,11 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
         using var db = CreateOwnerRefContext(collection, MongoQueryMode.NativeOnly);
 
-        // Premise: exactly one navigation, not eager-loaded, so EF emits no auto-include subquery.
         var elementNavigations = db.Model.FindEntityType(typeof(OwnerRefBlog))!
             .FindNavigation(nameof(OwnerRefBlog.Posts))!.TargetEntityType.GetNavigations().ToList();
         Assert.Equal([nameof(OwnerRefPost.Owner)], elementNavigations.Select(n => n.Name));
         Assert.All(elementNavigations, n => Assert.False(n.IsEagerLoaded));
 
-        // NativeOnly succeeding is the routing proof; MQL cannot distinguish the two paths.
         var results = db.Entities.AsNoTracking()
             .OrderBy(b => b.Title)
             .Select(b => new {b.Title, b.Posts})
@@ -419,7 +426,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(new[] {"h2", "h3"}, results[2].Posts.Select(p => p.Heading));
     }
 
-    // Values for the same shape: the native route must agree with driver-LINQ, not merely route differently.
     [Fact]
     public void Array_leaf_with_a_lazy_inverse_owner_navigation_matches_driver_linq()
     {
@@ -438,8 +444,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver), Run(native));
     }
 
-    // The bare spelling on the same nested model takes the mixed path and never reaches the native projection
-    // binder; it must keep working.
     [Fact]
     public void Bare_array_projection_of_an_element_with_its_own_navigation_still_works()
     {
@@ -454,9 +458,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(new[] {0, 2}, results.Select(r => r.Count));
     }
 
-    // ---- Breadth: in-scope spellings and shapes ----
-
-    // Named DTO / MemberInit spelling; exercises TryPopulateNativeProjection's MemberInitExpression branch.
     [Fact]
     public void Named_dto_projection_via_MemberInit_goes_native()
     {
@@ -480,8 +481,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver.Entities.AsNoTracking()), actual);
     }
 
-    // EF.Property with an alias equal to the element name: admissible, and normalizes to the same tree as the
-    // plain member-access spelling.
     [Fact]
     public void EF_Property_spelling_with_a_matching_alias_goes_native()
     {
@@ -507,9 +506,9 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     // EF.Property with a renamed alias is declined like `Mine = b.Posts`: the admissibility rule checks the alias
     // regardless of how the member access is spelled.
     [Fact]
-    public void EF_Property_spelling_with_a_renamed_alias_declines_and_returns_correct_data_in_every_mode()
+    public void EF_Property_spelling_with_a_renamed_alias_goes_native_and_returns_correct_data_in_every_mode()
     {
-        var collection = SeedKeyed(nameof(EF_Property_spelling_with_a_renamed_alias_declines_and_returns_correct_data_in_every_mode));
+        var collection = SeedKeyed(nameof(EF_Property_spelling_with_a_renamed_alias_goes_native_and_returns_correct_data_in_every_mode));
 
         // Contents, not just counts, on both legs: a decline could return the right count with the wrong elements.
         static List<(string Title, int Count, string Headings)> Run(SingleEntityDbContext<Blog> db)
@@ -519,7 +518,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.P.Count, string.Join("|", r.P.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             var actual = Run(db);
@@ -527,11 +526,8 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal(new[] {"", "h1", "h2|h3"}, actual.Select(r => r.Headings));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
-    // Two array leaves in one projection, with distinct values per array so a swapped-alias bug is caught.
     [Fact]
     public void Two_array_leaves_in_one_projection_go_native()
     {
@@ -557,11 +553,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver.Entities.AsNoTracking()), actual);
     }
 
-    // An array leaf alongside a count leaf over the same collection declines. Any entity/collection-typed leaf
-    // forces EF's client-side mixed shaper on fallback, which reads every alias against a whole un-projected
-    // document; the count alias "N" names no element there, so Native would crash like DriverLinq if admitted
-    // (see NativeProjectionBinder.IsWholeDocumentReadableLeaf). Declining makes all modes agree: NativeOnly
-    // throws at translation, Native and DriverLinq fall back and return correct values.
+    // Array leaf beside a count leaf declines: the mixed fallback shaper reads every alias off a whole document, and "N" names no element (IsWholeDocumentReadableLeaf).
     //
     // Known coverage gap: this test is the only defender of the shaper-side `Route == Projection` guard on the
     // array-leaf registration. `new { b, b.Posts }` does not exercise it — the whole-entity leaf fails
@@ -593,8 +585,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly.Entities.AsNoTracking()));
     }
 
-    // An array leaf alongside an arithmetic leaf (Rank * 2) declines for the same reason as the count leaf above:
-    // the alias "X" names no document element.
     [Fact]
     public void Array_leaf_alongside_an_arithmetic_leaf_declines_and_returns_correct_data_in_every_mode()
     {
@@ -640,7 +630,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             using var db = CreateContext(collection, KeyedModel, mode);
             var actual = Run(db.Entities.AsNoTracking());
 
-            // Seeded Rank is 1, 2, 3 (SeedKeyedWithRank); doubled here. A collision bug would read back 1, 2, 3.
             Assert.Equal(new[] {2, 4, 6}, actual.Select(r => r.Rank));
             Assert.Equal(new[] {0, 1, 2}, actual.Select(r => r.PostsCount));
         }
@@ -649,8 +638,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly.Entities.AsNoTracking()));
     }
 
-    // HashSet<Post>-backed navigation: asserts the runtime type is HashSet<Post>, proving materialization goes
-    // through the navigation's IClrCollectionAccessor rather than a List<T>.
     [Fact]
     public void HashSet_navigation_goes_native()
     {
@@ -666,8 +653,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.IsType<HashSet<Post>>(results[1].Posts);
         Assert.Equal(new[] {"h1", "h2"}, results[1].Posts.Select(p => p.Heading).OrderBy(h => h));
 
-        // Contents and runtime type on the DriverLinq leg too, so a fallback that keeps counts but loses contents
-        // or collection type is caught.
         using var driver = CreateHashSetContext(collection, MongoQueryMode.DriverLinq);
         var driverResults = driver.Entities.AsNoTracking().OrderBy(b => b.Title)
             .Select(b => new {b.Title, b.Posts})
@@ -695,8 +680,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         }
     }
 
-    // A primitive-collection property leaf (Tags, already native via the plain-field branch) alongside an
-    // owned-collection array leaf: the two leaf kinds compose.
     [Fact]
     public void Primitive_collection_leaf_alongside_an_owned_array_leaf_goes_native()
     {
@@ -719,8 +702,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver.Entities.AsNoTracking()), actual);
     }
 
-    // DriverLinq fallback leg for the shadow-key model (the other legs are covered by
-    // Owned_array_leaf_projection_emits_the_owner_key and Owned_array_leaf_with_a_shadow_key_element_goes_native).
     [Fact]
     public void Owned_array_leaf_with_a_shadow_key_element_matches_driver_linq()
     {
@@ -746,8 +727,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver), nativeResult);
     }
 
-    // ---- Correctness: ragged arrays, differential oracle, converters ----
-
     // A missing or explicit-BSON-null stored array materializes as an empty collection, never null (EF-358). The
     // alias read yields null for both, so the coalesce in MongoProjectionBindingRemovingExpressionVisitor's
     // CollectionShaperExpression case is load-bearing on this route. Blog.Posts has no initializer, and
@@ -767,7 +746,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.All(results, r => Assert.NotNull(r.Posts));
         Assert.Equal(new[] {0, 0, 0, 1, 2}, results.Select(r => r.Posts.Count));
 
-        // Contents too: a normalization producing empty for every state would pass the count checks.
         Assert.Equal(new[] {"h1"}, results[3].Posts.Select(p => p.Heading));
         Assert.Equal(new[] {"h2", "h3"}, results[4].Posts.Select(p => p.Heading));
     }
@@ -781,8 +759,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedFiveStates(nameof(Native_array_projection_equals_the_whole_entity_oracle_for_every_array_state));
 
-        // One summariser for both legs, so the only difference is where the collection came from. The "<null>"
-        // sentinel is defensive only: no seed here writes a null Heading.
         static (string Title, int Count, string Headings) Summarize(string title, IEnumerable<Post> posts)
             => (title, posts.Count(), string.Join("|", posts.Select(p => p.Heading ?? "<null>")));
 
@@ -834,7 +810,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Grade.Low, posts[1].Code);
     }
 
-    // ---- Set-op positions (TryTranslateLeaf is shared by every site that populates Select.Projection) ----
     //
     // Operand position (A.Select(p).Union(B.Select(p))) declines — see IsPlainProjectedSelect's
     // HasArrayProjectionLeaf conjunct. Each operand's $project runs before the combine, so dedup/source-tagging
@@ -842,10 +817,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     // dedup-by-identity. Trailing position (Union(A,B).Select(p)) stays native: the combine runs over whole
     // documents and the $project is last.
     //
-    // Coverage gap: the operand decline is tested only for the keyed and shadow-key element models, not the
-    // DTO/MemberInit spelling or the HashSet/converter models. The gate reads one flag, so the risk is low.
 
-    // Operand-position decline: Native/DriverLinq return correct rows via fallback; NativeOnly proves the decline.
     [Fact]
     public void Array_leaf_in_a_projected_union_operand_is_declined_and_falls_back_with_correct_data()
     {
@@ -902,7 +874,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
-            // One row: the projected values are equal, so projected-value dedup collapses them.
             Assert.Equal([("same", "h1")], Run(db));
         }
 
@@ -911,8 +882,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     }
 
     // Concat has no dedup stage, so this pins that the decline doesn't turn it into Union or drop a row. Concat
-    // would be safe natively; it declines only because it shares the IsPlainProjectedSelect predicate with Union
-    // (one predicate, one rule).
     [Fact]
     public void Array_leaf_in_a_projected_concat_operand_is_declined_and_falls_back_with_correct_data()
     {
@@ -1001,8 +970,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
-    // Trailing position stays native (NativeOnly succeeds), for both element-key kinds; the shadow-key model
-    // round-trips here, unlike in operand position.
     [Fact]
     public void Array_leaf_in_a_trailing_projection_after_a_union_goes_native()
     {
@@ -1019,7 +986,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
         foreach (var model in new[] {KeyedModel, ShadowKeyModel})
         {
-            // NativeOnly succeeding is the routing proof; MQL cannot distinguish the two paths.
             using var nativeOnly = CreateContext(collection, model, MongoQueryMode.NativeOnly);
             var actual = Run(nativeOnly);
             Assert.Equal([("b_one", "h1"), ("c_two", "h2|h3")], actual);
@@ -1059,8 +1025,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
         using (var db = CreateContext(twins, KeyedModel, MongoQueryMode.NativeOnly))
         {
-            // Each twin matches both operands and dedups against itself: two rows, not four (dedup happened) and not
-            // one (missing-array and empty-array twins are distinct documents).
             var rows = db.Set<Blog>().AsNoTracking().Where(b => b.Rank == 1)
                 .Union(db.Set<Blog>().AsNoTracking().Where(b => b.Rank == 1))
                 .Select(b => new {b.Title, b.Posts})
@@ -1082,7 +1046,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
         using var db = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
 
-        // Rank <= 2 => {a_empty, b_one}; Rank == 2 => {b_one}. Intersection: b_one, whose array survives intact.
         var rows = db.Set<Blog>().AsNoTracking().Where(b => b.Rank <= 2)
             .Intersect(db.Set<Blog>().AsNoTracking().Where(b => b.Rank == 2))
             .Select(b => new {b.Title, b.Posts})
@@ -1093,9 +1056,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal([("b_one", "h1")], rows);
     }
 
-    // ---- Shapes one keystroke from covered ones, pinned so a future admissibility narrowing can't drop them ----
-
-    // Array-only projection: no sibling leaf, so only the alias-agreement conjunct gates it.
     [Fact]
     public void Array_only_anonymous_projection_goes_native()
     {
@@ -1108,7 +1068,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>")))
                 .ToList();
 
-        // NativeOnly succeeding is the routing proof; MQL cannot distinguish the two paths.
         using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
         var actual = Run(nativeOnly);
         Assert.Equal(["", "h1", "h2|h3"], actual);
@@ -1117,7 +1076,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver), actual);
     }
 
-    // A reducer after an array projection: the array $project and the reducer's $limit both survive.
     [Fact]
     public void First_after_an_array_projection_goes_native()
     {
@@ -1139,7 +1097,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver), actual);
     }
 
-    // Paging after an array projection: Skip/Take append to the op list and the array $project is emitted last.
     [Fact]
     public void Paging_after_an_array_projection_goes_native()
     {
@@ -1161,13 +1118,11 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver), actual);
     }
 
-    // ---- A primary-key sibling goes native ----
     //
     // A root's key has element name "_id" but alias "Id". IsWholeDocumentReadableLeaf admits any property-backed
     // leaf regardless of alias, because the mixed/fallback path resolves it through its IProperty
     // (MongoMixedProjectionBindingRemovingExpressionVisitor), not by alias. Only a computed leaf (no backing
     // IProperty) still needs alias == element name — see Computed_sibling_still_declines_alongside_an_array_leaf.
-    // Earlier widenings of this rule caused silent wrong data; keep it this narrow.
     [Fact]
     public void Primary_key_sibling_now_goes_native_and_returns_correct_data_in_every_mode()
     {
@@ -1180,7 +1135,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.Posts.Count))
                 .ToList();
 
-        // Premise: the root key's stored element name is "_id", not "Id".
         using (var probe = CreateContext(collection, KeyedModel, MongoQueryMode.Native))
         {
             var key = probe.Model.FindEntityType(typeof(Blog))!.FindPrimaryKey()!.Properties[0];
@@ -1197,7 +1151,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal(expected, Run(driver));
         }
 
-        // Succeeds under NativeOnly.
         using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
         Assert.Equal(expected, Run(nativeOnly));
     }
@@ -1262,7 +1215,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    // Seeded as raw BSON so the stored array state is exactly as intended: arrays of length 0, 1 and 2.
     private IMongoCollection<Blog> SeedKeyed(string name)
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -1288,8 +1240,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     private static BsonDocument PostDoc(int postId, string heading)
         => new() {{"PostId", postId}, {"Heading", heading}};
 
-    // Same documents as SeedKeyed; a shadow key only changes how the element's key is materialized (from the
-    // owner's _id). The stored "PostId" is just an ordinary scalar here.
     private IMongoCollection<Blog> SeedShadow(string name)
         => SeedKeyed(name);
 
@@ -1304,7 +1254,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // Home is required, so it is seeded on every row to avoid unrelated materialization failures.
     private IMongoCollection<NestedOwnerBlog> SeedNestedOwner(string name)
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -1339,8 +1288,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // Two rows (empty and populated) suffice: the decline test never materializes, and the bare-spelling test
-    // only checks ordering and counts. Comments are seeded present-but-empty.
     private IMongoCollection<NestedBlog> SeedNested(string name)
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -1363,8 +1310,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     private static BsonDocument NestedPostDoc(string heading)
         => new() {{"Heading", heading}, {"Comments", new BsonArray()}};
 
-    // ---- Lazy inverse owner navigation helpers ----
-
     private static SingleEntityDbContext<OwnerRefBlog> CreateOwnerRefContext(
         IMongoCollection<OwnerRefBlog> collection, MongoQueryMode mode)
         => SingleEntityDbContext.Create(
@@ -1376,7 +1321,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // Same shape as SeedKeyed. The Owner back-reference is a navigation, not a stored field.
     private IMongoCollection<OwnerRefBlog> SeedOwnerRef(string name)
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -1389,9 +1333,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         return database.MongoDatabase.GetCollection<OwnerRefBlog>(coll.CollectionNamespace.CollectionName);
     }
 
-    // ---- Breadth helpers ----
-
-    // Same as SeedKeyed plus a "Rank" field.
     private static BsonDocument RowWithRank(string title, int rank, params BsonDocument[] posts)
         => new()
         {
@@ -1413,8 +1354,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         return database.MongoDatabase.GetCollection<Blog>(coll.CollectionNamespace.CollectionName);
     }
 
-    // Same as SeedKeyed plus a "Tags" array whose lengths (1, 2, 0) vary independently of Posts, so a
-    // swapped-alias bug between Tags and Posts shows up.
     private static BsonDocument RowWithTags(string title, string[] tags, params BsonDocument[] posts)
         => new()
         {
@@ -1478,7 +1417,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // Seeds HashSetBlog with the same empty/populated pair as SeedNested.
     private IMongoCollection<HashSetBlog> SeedHashSet(string name)
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -1489,8 +1427,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         ]);
         return database.MongoDatabase.GetCollection<HashSetBlog>(coll.CollectionNamespace.CollectionName);
     }
-
-    // ---- Correctness helpers ----
 
     // The five-state matrix, seeded as raw BSON (the change tracker can never write a missing array):
     //   a_missing — no "Posts" element in the document at all
@@ -1522,7 +1458,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         return database.MongoDatabase.GetCollection<Blog>(raw.CollectionNamespace.CollectionName);
     }
 
-    // A null `posts` omits the element; BsonNull.Value writes an explicit BSON null.
     private static BsonDocument FiveStateRow(string title, BsonValue? posts)
     {
         var doc = new BsonDocument
@@ -1544,8 +1479,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     private static BsonArray PostsArray(params BsonDocument[] posts)
         => new(posts);
 
-    // ---- Set-op helpers ----
-
     // Two distinct documents with identical projected { Title, Posts } values, differing only in Rank (which the
     // operands filter on), so a set op's row count reveals what it compared. No Tags element is written.
     private IMongoCollection<Blog> SeedProjectionValueTwins(string name)
@@ -1559,8 +1492,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         return database.MongoDatabase.GetCollection<Blog>(coll.CollectionNamespace.CollectionName);
     }
 
-    // Two documents identical except for stored array state (missing vs []); both materialize empty, so they
-    // probe whether a set op compares stored or materialized values. Self-checked like SeedFiveStates.
     private IMongoCollection<Blog> SeedArrayStateTwins(string name)
     {
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -1600,10 +1531,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     // and representation removed. Hence:
     //   * Code's converter is transforming ("g:" prefix): only the configured converter can yield Grade.High.
     //     This is the discriminating half.
-    //   * Ref's assertion is a round-trip pin only. A Binary seed would distinguish configured from unconfigured
-    //     (GuidSerializer(BsonType.String) throws on Binary), but as an exception, not a differing value.
-    // Both Guids are non-empty and distinct, so neither assertion passes on a never-read default or a
-    // read-element-0-for-all bug.
     private (IMongoCollection<ConvBlog> Collection, Guid ExpectedRefA, Guid ExpectedRefB) SeedConverters(string name)
     {
         var expectedRefA = Guid.Parse("27701bfc-78d0-4e2b-92ca-193cea53fa30");
@@ -1630,8 +1557,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         var stored = raw.Find(FilterDefinition<BsonDocument>.Empty).Single()["Posts"].AsBsonArray;
         Assert.All(stored, e => Assert.Equal(BsonType.String, e.AsBsonDocument["Ref"].BsonType));
         Assert.All(stored, e => Assert.Equal(BsonType.String, e.AsBsonDocument["Code"].BsonType));
-        // Check the stored documents, not just the constants: no element may store Guid.Empty, or a never-read
-        // Ref would pass.
         Assert.All(stored, e => Assert.NotEqual(Guid.Empty.ToString(), e.AsBsonDocument["Ref"].AsString));
         Assert.Equal(2, stored.Select(e => e.AsBsonDocument["Ref"].AsString).Distinct().Count());
 
@@ -1639,12 +1564,10 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             expectedRefA, expectedRefB);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
     //  Positional containers of scalar elements — `new[] { x.I, x.NullableI }`, `new object[] { ... }` — each
     //  element projected under its own `_ctorArg<N>` alias and read with its operand's own type (so a boxed element
     //  keeps its runtime type). A scalar `new List<object> { ... }` is not a native container and stays declined (see
     //  below). Whole-entity elements/arguments are never admitted on this scalar path.
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     public class ScalarRow
     {
@@ -1659,8 +1582,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         public decimal D { get; set; }
     }
 
-    // Three rows with non-default, pairwise-distinct values, so a swapped/shared alias or a default read shows up:
-    //   a: NullableI null, S "abc"; b: NullableI 5, S null; c: NullableI 7, S missing.
     private IMongoCollection<ScalarRow> SeedScalarRows(string name)
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -1693,7 +1614,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // Renders one element with its runtime type, so equal values of different CLR types (int vs long) differ.
     private static string DescribeElement(object? element)
         => element is null ? "<null>" : $"{element.GetType().Name}:{element}";
 
@@ -1713,8 +1633,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(["1,<null>", "2,5", "3,7"], results);
     }
 
-    // AssertArrays in the spec suite checks each element's GetType(): a boxed element must be read with its operand's
-    // own type (int stays Int32, long stays Int64), not as whatever an object-typed read of the BSON value yields.
     [Fact]
     public void Boxed_object_array_container_keeps_each_elements_runtime_type()
     {
@@ -1862,8 +1780,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         return database.MongoDatabase.GetCollection<CodedRow>(coll.CollectionNamespace.CollectionName);
     }
 
-    // Before this change the multi-argument positional-ctor arm admitted the whole entity as a `$$ROOT` leaf and the
-    // read side threw FormatException ("Element '_id' does not match any field or property of class CodedRow"). A
     // whole-entity argument is now excluded from the scalar positional path, so the construction is the whole-entity
     // client construction instead (NativeClientWholeEntityShape): whole documents fetched, the pair built client-side
     // over the materialized entity. Oracle is hand-computed: driver-LINQ throws NotImplementedException for this shape.

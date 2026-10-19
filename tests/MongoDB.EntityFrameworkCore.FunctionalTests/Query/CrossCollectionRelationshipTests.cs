@@ -24,22 +24,14 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Characterization / lock-in tests for the EF-117 cross-collection relationship feature:
-/// an entity that has its own <see cref="DbSet{TEntity}"/> and is reached by a navigation into a
-/// SEPARATE collection via a foreign key (not embedded). These tests cover the write/lifecycle path
-/// (Group A — version-agnostic where it does not execute an Include query) and serialization /
-/// change-tracking behavior through the <c>$lookup</c>-based Include (Groups B and C).
-/// C# property names intentionally differ from BSON element names to verify element-name mapping.
+/// Cross-collection relationships (EF-117): navigations into a separate collection via a foreign key. Covers
+/// write/lifecycle (read back via the raw driver, so version-agnostic), and serialization and change tracking
+/// through the <c>$lookup</c>-based Include. C# names intentionally differ from BSON element names.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // ---------------------------------------------------------------------------------------------
-    // Group A — Write / lifecycle. Read back via the RAW driver (no Include query) so these are
-    // version-agnostic and run on EF8/EF9/EF10.
-    // ---------------------------------------------------------------------------------------------
-
     [Fact]
     public void Write_insert_principal_and_dependent_stores_fk_with_element_name()
     {
@@ -157,7 +149,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             db.SaveChanges();
         }
 
-        // ClientSetNull (optional, nullable FK): the dependent survives with a null FK.
         var rawOrder = database.MongoDatabase.GetCollection<BsonDocument>(ordersName)
             .Find(Builders<BsonDocument>.Filter.Eq("_id", orderId)).Single();
         Assert.True(!rawOrder.Contains("cust_id") || rawOrder["cust_id"].IsBsonNull);
@@ -190,10 +181,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.Equal(1, database.MongoDatabase.GetCollection<BsonDocument>(ordersName).CountDocuments(FilterDefinition<BsonDocument>.Empty));
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Group B — Serialization through Include.
-    // ---------------------------------------------------------------------------------------------
-
     [Fact]
     public void Include_bson_representation_on_included_entity_round_trips()
     {
@@ -202,7 +189,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
 
         var customerId = ObjectId.GenerateNewId();
         var publicGuid = Guid.NewGuid();
-        // Customer.PublicId is a Guid stored as a string (HasBsonRepresentation(String)).
         database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
             new BsonDocument { { "_id", customerId }, { "name", "Alice" }, { "pub", publicGuid.ToString() } });
         database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertOne(
@@ -222,7 +208,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("ConvCustomers") + Guid.NewGuid().ToString("N")[..8];
 
         var customerId = ObjectId.GenerateNewId();
-        // Customer.Tier is an enum persisted via a value converter as its string name.
         database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
             new BsonDocument { { "_id", customerId }, { "name", "Alice" }, { "tier", "Gold" } });
         database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertOne(
@@ -359,10 +344,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         var customer = db.Customers.Include(c => c.Orders).First();
         Assert.Equal(2, customer.Orders.Count);
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // Group C — Change tracking through Include.
-    // ---------------------------------------------------------------------------------------------
 
     [Fact]
     public void Include_identity_resolution_tracking_shares_principal_and_fixes_up_inverse()
@@ -619,11 +600,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.Equal("SecondaryLeaf", root.SecondaryMid.Leaf.Value);
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Helpers / seeding (raw-BSON, mirroring CrossCollectionIncludeTests conventions).
-    // BSON uses: desc, cust_id for Orders; name for Customers.
-    // ---------------------------------------------------------------------------------------------
-
     private static (string ordersName, string customersName) NewCollectionNames()
     {
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("RelCustomers") + Guid.NewGuid().ToString("N")[..8];
@@ -718,10 +694,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         return (ordersName, customersName);
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Models + contexts.
-    // ---------------------------------------------------------------------------------------------
-
     class Order
     {
         public ObjectId _id { get; set; }
@@ -783,7 +755,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // Required (non-nullable FK) relationship -> DeleteBehavior.Cascade by default.
     class RequiredOrder
     {
         public ObjectId _id { get; set; }
@@ -1294,8 +1265,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // Two navigations from the same root that join to the SAME target entity type (self-join shape) -
-    // as opposed to TwoJoinLine's two navigations to two DIFFERENT target types.
     class SameTypeJoinLine
     {
         public ObjectId _id { get; set; }

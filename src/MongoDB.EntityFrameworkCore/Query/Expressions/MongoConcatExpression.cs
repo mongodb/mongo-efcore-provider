@@ -29,7 +29,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </remarks>
 internal sealed class MongoConcatExpression(IReadOnlyList<MongoExpression> operands) : MongoExpression
 {
-    /// <summary>The pieces being concatenated, in order.</summary>
     public IReadOnlyList<MongoExpression> Operands { get; } = operands;
 
     /// <inheritdoc />

@@ -44,13 +44,10 @@ internal enum MongoDateAddUnit
 internal sealed class MongoDateAddExpression(MongoExpression startDate, MongoDateAddUnit unit, MongoExpression amount)
     : MongoExpression
 {
-    /// <summary>The datetime-valued expression to add to.</summary>
     public MongoExpression StartDate { get; } = startDate;
 
-    /// <summary>Which unit <see cref="Amount"/> is expressed in.</summary>
     public MongoDateAddUnit Unit { get; } = unit;
 
-    /// <summary>The (possibly negative) signed amount of <see cref="Unit"/>s to add.</summary>
     public MongoExpression Amount { get; } = amount;
 
     /// <inheritdoc />

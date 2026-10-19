@@ -84,7 +84,6 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
 
     [Fact]
     public void Concat_method_treats_null_or_missing_operand_as_empty()
-        // A filter: a projected string.Concat(...) call isn't a native projection leaf.
         => AssertFilter(x => string.Concat("<", x.S, ">") == "<>", ["missing", "null"]);
 
     [Fact]
@@ -101,7 +100,6 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
 
     [Fact]
     public void Substring_inequality_filter_is_unchanged()
-        // EF's C# null semantics: null != "A" is true.
         => AssertFilter(x => x.S!.Substring(0, 1) != "A", ["missing", "null"]);
 
     [Fact]
@@ -110,7 +108,6 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
 
     [Fact]
     public void Length_relational_filter_excludes_null_and_missing()
-        // $strLenCP was a server error; lifted null < 5 is false.
         => AssertFilter(x => x.S!.Length < 5, ["value"]);
 
     [Fact]
@@ -368,7 +365,6 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
             ["missing:<null>", "null:<null>", "sNull:<null>", "tNull:3", "value:3"],
             db.Entities.OrderBy(x => x.Label).Select(x => new { x.Label, U = x.S!.ToUpper(), L = x.S!.Length.ToString() })
                 .AsEnumerable().Select(x => x.Label + ":" + (x.L ?? "<null>")).ToList());
-        // Concatenation treats a null operand as "", so its reads force no null.
         Assert.Equal(
             ["missing:0", "null:0", "sNull:1", "tNull:3", "value:4"],
             db.Entities.OrderBy(x => x.Label).Select(x => new { x.Label, U = x.S!.ToUpper(), L = (int?)(x.S + x.T).Length })
@@ -436,7 +432,6 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Length_sum_accumulator_stays_native()
     {
-        // $sum skips the null, as EF's SUM does.
         using var db = CreateContext(Seed(nameof(Length_sum_accumulator_stays_native)), MongoQueryMode.NativeOnly);
         Assert.Equal(
             ["missing:0", "null:0", "value:3"],

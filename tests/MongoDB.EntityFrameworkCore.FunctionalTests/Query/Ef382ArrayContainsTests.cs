@@ -50,10 +50,6 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     private static readonly Guid CodeB = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid CodeC = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
-    // ---------------------------------------------------------------------------------------------------
-    // 1: the capability — a stored List<string> field, a constant item.
-    // ---------------------------------------------------------------------------------------------------
-
     [Fact]
     public void Array_field_contains_constant_goes_native_and_returns_correct_rows()
     {
@@ -67,7 +63,6 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             .ToList();
         Assert.Equal(["A", "C"], nativeLabels);
 
-        // Went native is proven by NativeOnly succeeding, not by MQL shape (identical either way).
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities
             .Where(e => e.Tags.Contains("keep"))
@@ -77,9 +72,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(["A", "C"], nativeOnlyLabels);
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // 2: negation — !arrayField.Contains(constant) → { field: { $ne: value } }, the exact complement.
-    // ---------------------------------------------------------------------------------------------------
+    // negation — !arrayField.Contains(constant) → { field: { $ne: value } }, the exact complement.
 
     [Fact]
     public void Negated_array_field_contains_constant_goes_native_and_returns_correct_rows()
@@ -96,10 +89,8 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(["B"], labels);
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // 3: Guid element: BsonValue.Create would throw; the array's element serializer (GuidSerializer) must be
+    // Guid element: BsonValue.Create would throw; the array's element serializer (GuidSerializer) must be
     // used and must match real stored documents.
-    // ---------------------------------------------------------------------------------------------------
 
     [Fact]
     public void Array_field_of_guids_contains_constant_goes_native_and_returns_correct_rows()
@@ -115,10 +106,6 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
 
         Assert.Equal(["A", "C"], labels);
     }
-
-    // ---------------------------------------------------------------------------------------------------
-    // 4: the mirror shape values.Contains(e.Field) still goes native via $in.
-    // ---------------------------------------------------------------------------------------------------
 
     [Fact]
     public void Values_contains_field_is_unaffected_and_still_goes_native_as_in()
@@ -136,10 +123,8 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(["A", "B"], labels);
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // 4b: inside an owned SelectMany's inner filter, the predicate's paths are rewritten by
+    // inside an owned SelectMany's inner filter, the predicate's paths are rewritten by
     // MongoFieldPrefixRewriter, which must have an arm for MongoArrayContainsExpression (otherwise it throws).
-    // ---------------------------------------------------------------------------------------------------
 
     public class SelectManyOwner
     {
@@ -192,10 +177,8 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(["Thing", "Widget"], names);
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // 5: a whole-collection value converter has no per-element serializer, so the translator declines (falls
+    // a whole-collection value converter has no per-element serializer, so the translator declines (falls
     // back under Native, throws under NativeOnly) rather than comparing against the wrong shape.
-    // ---------------------------------------------------------------------------------------------------
 
     public class ConvertedRow
     {
@@ -233,11 +216,9 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             () => nativeOnly.Entities.Where(e => e.Ratings.Contains(Tier.Gold)).ToList());
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // 6: arrayField.Contains(constant) inside an owned-collection Any/All. For All the element predicate is
+    // arrayField.Contains(constant) inside an owned-collection Any/All. For All the element predicate is
     // negated via MongoExpressionNegator, exercising MongoArrayContainsExpression's negator arm in the real
     // pipeline. Differential test: same expression evaluated on the server and in memory.
-    // ---------------------------------------------------------------------------------------------------
 
     public class QuantifierOwner
     {
@@ -272,19 +253,16 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             $"Quantifier_over_array_contains_{name}") + Guid.NewGuid().ToString("N")[..8];
         var mongoCollection = database.MongoDatabase.GetCollection<QuantifierOwner>(collectionName);
         mongoCollection.InsertMany([
-            // Discriminates Any (true) from All (false): the FIRST post has "keep", the second doesn't.
             new QuantifierOwner
             {
                 Title = "mixed",
                 Posts = [new QuantifierPost { Tags = ["keep", "x"] }, new QuantifierPost { Tags = ["y"] }]
             },
-            // Discriminates All (true): EVERY post has "keep".
             new QuantifierOwner
             {
                 Title = "allKeep",
                 Posts = [new QuantifierPost { Tags = ["keep"] }, new QuantifierPost { Tags = ["keep", "z"] }]
             },
-            // Neither Any nor All is satisfied by any post.
             new QuantifierOwner
             {
                 Title = "noneKeep",
@@ -301,7 +279,6 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             }
         ]);
 
-        // Oracle: materialize every row, then evaluate the SAME predicate in memory.
         List<string> expected;
         using (var db = SingleEntityDbContext.Create(
                    mongoCollection, QuantifierModel,
@@ -315,7 +292,6 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
                 .Where(predicate.Compile()).Select(o => o.Title).OrderBy(t => t).ToList();
         }
 
-        // Server: must go native (NativeOnly) and agree with the in-memory oracle.
         List<string> actual;
         using (var db = SingleEntityDbContext.Create(
                    mongoCollection, QuantifierModel,
@@ -332,11 +308,9 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(expected, actual);
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // 7: MongoArrayContainsExpression has only a query-dialect rendering; the aggregation renderer refuses it
+    // MongoArrayContainsExpression has only a query-dialect rendering; the aggregation renderer refuses it
     // (on purpose: $eq over an array is whole-array equality, not membership). These pin how the two
     // aggregation-dialect positions reached via TranslateOperand's Contains routing handle it — differently.
-    // ---------------------------------------------------------------------------------------------------
 
     [Fact]
     public void Array_contains_as_a_computed_sort_key_declines_cleanly()
@@ -353,7 +327,6 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             .Select(e => e.Label)
             .ToList();
 
-        // false sorts before true: B (no "keep") first, then A and C.
         Assert.Equal(["B", "A", "C"], labels);
 
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
@@ -426,8 +399,6 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
-
-    // ── Seed and helpers ────────────────────────────────────────────────────────────────────────────
 
     private IMongoCollection<Row> Seed(string name)
     {

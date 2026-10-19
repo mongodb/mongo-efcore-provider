@@ -136,7 +136,6 @@ public class NativeJoinScopeTranslatorTests
         Assert.Null(result);
     }
 
-    // ── Guard: real (field-based) TransparentIdentifier shape actually reaches the translator ──────────
     // Builds the parameter type via EF's own TransparentIdentifierFactory.Create, so it fails if the type-shape
     // guard regresses to a property-only lookup (the real type uses fields).
 
@@ -162,8 +161,6 @@ public class NativeJoinScopeTranslatorTests
         Assert.True(NativeJoinScopeTranslator.TryTranslateValue(scope, x, body, out _));
     }
 
-    // ── Guard 1: unscoped root access alongside a genuine Outer/Inner rewrite declines ──────────────────
-
     [Fact]
     public void Declines_when_body_also_accesses_root_param_outside_Outer_or_Inner()
     {
@@ -183,8 +180,6 @@ public class NativeJoinScopeTranslatorTests
         Assert.False(translated);
         Assert.Null(result);
     }
-
-    // ── Guard 2: nested/chained TransparentIdentifier<TransparentIdentifier<O,I>,I> declines ────────────
 
     [Fact]
     public void Declines_a_nested_chained_TransparentIdentifier_shape()
@@ -222,8 +217,6 @@ public class NativeJoinScopeTranslatorTests
         Assert.Null(result);
     }
 
-    // ── Guard 3: ReferencesInnerScope ─────────────────────────────────────────────────────────────────────
-
     [Fact]
     public void ReferencesInnerScope_is_false_for_an_outer_only_predicate()
     {
@@ -255,7 +248,6 @@ public class NativeJoinScopeTranslatorTests
         Assert.True(NativeJoinScopeTranslator.ReferencesInnerScope(x, body));
     }
 
-    // ── TryTranslateRootScopeOnly: chained (2-level) join scope ──────────────────────────────────────────
     // TransparentIdentifier<TransparentIdentifier<OuterEntity, InnerEntity>, OtherEntity>: Levels[0] is the first
     // join (InnerEntity), Levels[1] the second (OtherEntity).
 
@@ -367,8 +359,6 @@ public class NativeJoinScopeTranslatorTests
         Assert.Equal("Name", field.ElementName);
     }
 
-    // ── TryTranslateSingleScope: any single scope in a chain, not just the root ─────────────────────────────
-
     [Fact]
     public void TryTranslateSingleScope_translates_a_root_scoped_value_over_a_two_level_chain()
     {
@@ -473,8 +463,6 @@ public class NativeJoinScopeTranslatorTests
         Assert.False(translated);
         Assert.Null(result);
     }
-
-    // ── TryMatchScopeNullCheck: depth-agnostic null-check matcher ──────────────────────────────────────
 
     [Fact]
     public void Matches_bare_Inner_not_equal_null_at_depth_one()

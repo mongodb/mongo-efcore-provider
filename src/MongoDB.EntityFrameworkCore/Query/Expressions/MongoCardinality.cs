@@ -73,19 +73,16 @@ internal sealed class MongoCardinality
     /// <summary>The CLR result type of the terminal operator.</summary>
     public Type ResultType { get; }
 
-    /// <summary>
-    /// <see langword="true"/> for Any/All: the result is determined solely by whether a row survived the
-    /// terminal stage (<see cref="PresentValue"/>), not by deserializing a field from it.
-    /// </summary>
+    /// <summary><see langword="true"/> for Any/All: the result depends only on whether a row survived (<see cref="PresentValue"/>).</summary>
     public bool PresenceOnly { get; }
 
     /// <summary>The result value to yield when a row survives, for a <see cref="PresenceOnly"/> aggregate.</summary>
     public object? PresentValue { get; }
 
     /// <summary>
-    /// <see langword="true"/> for Last/LastOrDefault with no prior sort to flip. <c>MongoSelectLowerer</c> then
-    /// emits <c>$group{_id:null,_last:{$last:"$$ROOT"}}</c> + <c>$replaceRoot</c> after any <c>$lookup</c> (so an
-    /// included collection is in "$$ROOT"), instead of sort-flip + <c>$limit</c>.
+    /// <see langword="true"/> for Last/LastOrDefault with no prior sort to flip: the lowerer emits a <c>$last</c>
+    /// <c>$group</c> + <c>$replaceRoot</c> after any <c>$lookup</c> (so an included collection is in "$$ROOT")
+    /// instead of sort-flip + <c>$limit</c>.
     /// </summary>
     public bool UnorderedLastRow { get; }
 

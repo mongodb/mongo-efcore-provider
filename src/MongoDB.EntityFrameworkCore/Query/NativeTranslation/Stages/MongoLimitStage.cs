@@ -18,21 +18,14 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// Represents a <c>$limit</c> aggregation stage that limits the number of documents passed to the next stage.
+/// A <c>$limit</c> stage.
 /// </summary>
 internal sealed class MongoLimitStage : MongoPipelineStage
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MongoLimitStage"/> class.
-    /// </summary>
-    /// <param name="limit">The expression that evaluates to the maximum number of documents to pass through.</param>
     public MongoLimitStage(MongoExpression limit)
     {
         Limit = limit;
     }
 
-    /// <summary>
-    /// Gets the expression that evaluates to the maximum number of documents to pass through.
-    /// </summary>
     public MongoExpression Limit { get; }
 }

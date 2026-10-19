@@ -248,7 +248,6 @@ public class ExecuteDeleteTests(TemporaryDatabaseFixture database)
         + "CI/local use a replica set (atlas-local). The error mapping is covered by IsTransactionsUnsupported. EF-107")]
     public void ExecuteDelete_two_phase_on_standalone_throws_actionable_error()
     {
-        // Intentionally skipped — see Skip reason.
     }
 
     [Theory]
@@ -297,7 +296,6 @@ public class ExecuteDeleteTests(TemporaryDatabaseFixture database)
             tx.Commit();
         }
 
-        // Committed by the user: the two-phase delete persisted.
         Assert.Equal(1, db.Entities.Count());
         Assert.Equal(30, db.Entities.Single().Quantity);
     }

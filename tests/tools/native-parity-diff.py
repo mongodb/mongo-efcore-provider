@@ -65,13 +65,13 @@ def main():
               f"native pass/fail/skip {cnt(n, 'Passed')}/{cnt(n, 'Failed')}/{cnt(n, 'NotExecuted')}  "
               f"regress={len(reg)}  improve={len(imp)}  missing-in-native={len(miss_n)}  "
               f"missing-in-driver={len(miss_d)}  other-outcomes driver={len(odd['driver'])} native={len(odd['native'])}")
-        with open(f"{out}/{v}-{p}-regress.txt", 'w') as fh:
+        with open(f"{out}/{v}-{p}-regress.txt", 'w', encoding='utf-8') as fh:
             for k in sorted(reg):
                 fh.write(f"{k}\n   N: {n[k][1].strip()[:400]!r}\n")
-        with open(f"{out}/{v}-{p}-improve.txt", 'w') as fh:
+        with open(f"{out}/{v}-{p}-improve.txt", 'w', encoding='utf-8') as fh:
             for k in sorted(imp):
                 fh.write(f"{k}\n   D: {d[k][1].strip()[:400]!r}\n")
-        with open(f"{out}/{v}-{p}-missing.txt", 'w') as fh:
+        with open(f"{out}/{v}-{p}-missing.txt", 'w', encoding='utf-8') as fh:
             for k in miss_n:
                 fh.write(f"missing in native: {k}\n")
             for k in miss_d:

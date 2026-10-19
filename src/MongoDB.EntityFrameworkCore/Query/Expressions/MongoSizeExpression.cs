@@ -29,15 +29,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </remarks>
 internal sealed class MongoSizeExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoSizeExpression"/> over the named array field.
-    /// </summary>
-    /// <param name="fieldName">The array's dotted document path (e.g. <c>_lookup_Orders</c>, <c>Posts</c>).</param>
-    /// <param name="type">The CLR type of the resulting count (typically <see cref="int"/> or <see cref="long"/>).</param>
-    /// <param name="nullSafe">
-    /// <see langword="true"/> to render <c>{ $size: { $ifNull: [ "$path", [] ] } }</c> (required for an embedded
-    /// array); <see langword="false"/> for the plain <c>{ $size: "$path" }</c>.
-    /// </param>
     public MongoSizeExpression(string fieldName, Type type, bool nullSafe = false)
     {
         FieldName = fieldName;
@@ -45,7 +36,6 @@ internal sealed class MongoSizeExpression : MongoExpression
         NullSafe = nullSafe;
     }
 
-    /// <summary>The array's dotted document path this <c>$size</c> is computed over.</summary>
     public string FieldName { get; }
 
     /// <summary>

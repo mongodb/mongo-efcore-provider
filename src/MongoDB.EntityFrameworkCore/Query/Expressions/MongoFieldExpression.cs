@@ -24,12 +24,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoFieldExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoFieldExpression"/> for the given property.
-    /// </summary>
-    /// <param name="property">The EF Core <see cref="IProperty"/> this field corresponds to.</param>
-    /// <param name="elementName">The document element name used in the document.</param>
-    /// <param name="nullSafe">See <see cref="NullSafe"/>.</param>
     public MongoFieldExpression(IProperty property, string elementName, bool nullSafe = false)
     {
         Property = property;
@@ -37,19 +31,16 @@ internal sealed class MongoFieldExpression : MongoExpression
         NullSafe = nullSafe;
     }
 
-    /// <summary>The EF Core property metadata for this field.</summary>
-    // 'new' hides the inherited static Expression.Property(...) factory; the member name is spec-mandated.
+    // 'new' hides the inherited static Expression.Property(...) factory.
     public new IProperty Property { get; }
 
-    /// <summary>The document element name for this field in the document.</summary>
     public string ElementName { get; }
 
     /// <summary>
-    /// When <see langword="true"/>, the aggregation renderer wraps this field in <c>$ifNull</c> against
-    /// <c>null</c> (as <see cref="MongoElementRefExpression.NullSafe"/> does). Needed for a field reached through
-    /// a left-outer <c>$lookup</c> + <c>$unwind(preserveNullAndEmptyArrays)</c>: an unmatched row's lookup
-    /// sub-document is missing, and <c>$expr</c>'s <c>$eq</c>/<c>$ne</c> don't treat missing as <c>null</c>.
-    /// Set only by <c>MongoExpressionTranslator.TranslateComparisonCore</c> for <c>==</c>/<c>!=</c> null.
+    /// When <see langword="true"/>, the aggregation renderer wraps this field in <c>$ifNull</c> against <c>null</c>
+    /// (as <see cref="MongoElementRefExpression.NullSafe"/> does). Needed for a field behind a left-outer
+    /// <c>$lookup</c> + <c>$unwind</c>: an unmatched row's sub-document is missing, and <c>$expr</c>'s <c>$eq</c>/<c>$ne</c>
+    /// don't treat missing as <c>null</c>. Set only for <c>==</c>/<c>!=</c> null comparisons.
     /// </summary>
     public bool NullSafe { get; }
 

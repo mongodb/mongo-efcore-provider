@@ -24,16 +24,14 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
 /// Translates a GroupBy key part, accumulator operand, or element predicate for <see cref="NativeGroupByBinder"/>.
-/// Over a plain collection this is the root-entity <see cref="MongoExpressionTranslator"/>. Over a native join
-/// scope (<see cref="MongoSelectDefinition.GroupByJoinScope"/>) a body over the join's
-/// <c>TransparentIdentifier(Outer, Inner)</c> element resolves each hop chain to one scope via
+/// Over a plain collection this is the root-entity <see cref="MongoExpressionTranslator"/>; over a native join
+/// scope (<see cref="MongoSelectDefinition.GroupByJoinScope"/>) each <c>TransparentIdentifier</c> hop chain resolves to one scope via
 /// <see cref="NativeJoinScopeTranslator.TryTranslateSingleScope"/>.
 /// </summary>
 /// <remarks>
-/// In join mode a body may reference only the single transparent-identifier element parameter. Any other
-/// parameter declines: the root translator resolves members by name against the root entity, so an
-/// entity-typed parameter from a join whose result selector already projected one side would silently read the
-/// wrong field. Parameter-free bodies (constants, captured parameters) use the root translator.
+/// In join mode a body may reference only the transparent-identifier element parameter; any other parameter declines
+/// (the root translator resolves members by name, so an entity-typed parameter from a join that already projected
+/// one side would silently read the wrong field). Parameter-free bodies use the root translator.
 /// </remarks>
 internal sealed class MongoGroupElementTranslator
 {
@@ -44,8 +42,8 @@ internal sealed class MongoGroupElementTranslator
     {
         _rootTranslator = new MongoExpressionTranslator(rootEntityType);
 
-        // A GroupBy over a prior finalized grouping resolves against that stage's flattened alias, never the
-        // entity (see MongoExpressionTranslator.DistinctAliasScope). TranslateGroupBy never enables join mode then.
+        // A GroupBy over a prior finalized grouping resolves against that stage's flattened alias, not the entity
+        // (see MongoExpressionTranslator.DistinctAliasScope); TranslateGroupBy never enables join mode then.
         if (priorGrouping != null)
             _rootTranslator.DistinctAliasScope = priorGrouping;
 
@@ -73,15 +71,12 @@ internal sealed class MongoGroupElementTranslator
     }
 
     /// <summary>
-    /// In join mode, whether <paramref name="body"/> reads a join level whose row may be absent for a group element:
-    /// a left-outer level, or any level chained after one (conservatively). An unmatched outer row leaves such a
-    /// value missing, so a group whose elements are all unmatched reduces to <see langword="null"/>.
+    /// In join mode, whether <paramref name="body"/> reads a join level whose row may be absent: a left-outer level, or
+    /// (conservatively) any level chained after one. An unmatched row leaves the value missing, so an all-unmatched group reduces to <see langword="null"/>.
     /// </summary>
     /// <remarks>
-    /// Not a standalone pre-check: returns <see langword="false"/> for a body that has more than one free parameter
-    /// or doesn't re-root to a single scope, which is safe only because every such body also fails
-    /// <see cref="TryTranslateValue"/>/<see cref="TryTranslate"/>. Call it only after a successful translation of
-    /// the same body.
+    /// Not a standalone pre-check: it returns <see langword="false"/> for bodies with several free parameters or no single scope,
+    /// which is safe only because those also fail <see cref="TryTranslateValue"/>/<see cref="TryTranslate"/>. Call after a successful translation.
     /// </remarks>
     internal bool MayReadAnUnmatchedJoinSide(Expression body)
     {
@@ -103,28 +98,22 @@ internal sealed class MongoGroupElementTranslator
     }
 
     /// <summary>
-    /// In join mode, whether <paramref name="translated"/> (the translation of <paramref name="body"/>) may read an
-    /// unmatched join side (see <see cref="MayReadAnUnmatchedJoinSide"/>) through an operator that doesn't turn the
-    /// missing value into EF's null. EF null-propagates over the DefaultIfEmpty null
-    /// (<c>(decimal?)Math.Max(o.Total, 7)</c> is null), but on the server the side is missing and, e.g., <c>$max</c>
-    /// ignores it and <c>Math.Sign</c>'s <c>$switch</c> orders it below 0. Such a value must decline.
+    /// In join mode, whether <paramref name="translated"/> may read an unmatched join side (see <see cref="MayReadAnUnmatchedJoinSide"/>)
+    /// through an operator that doesn't yield EF's null. EF null-propagates over the DefaultIfEmpty null, but on the server the
+    /// side is missing: <c>$max</c> ignores it and <c>Math.Sign</c>'s <c>$switch</c> orders it below 0. Such a value must decline.
     /// </summary>
     /// <remarks>
-    /// Same calling contract as <see cref="MayReadAnUnmatchedJoinSide"/>: only after a successful translation of
-    /// <paramref name="body"/>. The operator check is an allow-list (<see cref="PropagatesMissingAsNull"/>), so a
-    /// node kind added later fails closed.
+    /// Same calling contract as <see cref="MayReadAnUnmatchedJoinSide"/>. The operator check is an allow-list
+    /// (<see cref="PropagatesMissingAsNull"/>), so a node kind added later fails closed.
     /// </remarks>
     internal bool MayMiscomputeAnUnmatchedJoinSide(Expression body, MongoExpression translated)
         => !PropagatesMissingAsNull(translated) && MayReadAnUnmatchedJoinSide(body);
 
     /// <summary>
-    /// Whether every operator in <paramref name="node"/> answers what EF answers when a field it reads is missing:
-    /// null for a propagating operator (arithmetic, <c>$toX</c>, math, date parts, <c>$trim</c>,
-    /// <c>$replaceAll</c>, <c>$indexOfCP</c> over a missing input, and the render-time null-guarded
-    /// <c>$substrCP</c>/<c>$strLenCP</c>), the right operand for <c>$ifNull</c>, which is C#'s <c>??</c>, or
-    /// <c>""</c> for C#'s concatenation of null (the operand-coalescing <c>$concat</c>). Anything not listed,
-    /// including every condition (declined separately, see <c>NativeGroupByBinder</c>'s <c>ConditionFinder</c>),
-    /// answers <see langword="false"/>.
+    /// Whether every operator in <paramref name="node"/> answers what EF answers when a read field is missing: null for propagating
+    /// operators (arithmetic, <c>$toX</c>, math, date parts, <c>$trim</c>, <c>$replaceAll</c>, <c>$indexOfCP</c>, render-time null-guarded
+    /// <c>$substrCP</c>/<c>$strLenCP</c>), the right operand for <c>$ifNull</c>, or <c>""</c> for the coalescing <c>$concat</c>.
+    /// Anything not listed, including every condition (declined separately by <c>NativeGroupByBinder</c>'s <c>ConditionFinder</c>), is <see langword="false"/>.
     /// </summary>
     internal static bool PropagatesMissingAsNull(MongoExpression node)
         => node switch
@@ -160,9 +149,8 @@ internal sealed class MongoGroupElementTranslator
 
     private static bool IsValue(MongoExpression node) => node is MongoConstantExpression or MongoParameterExpression;
 
-    // Not Max/Min ($max/$min skip a missing operand, answering the other one) or Sign (its $switch orders a missing
-    // operand below 0, answering -1). Also MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead's test for
-    // an operator that absorbs a null behind a non-nullable type.
+    // Not Max/Min ($max/$min skip a missing operand) or Sign (its $switch orders a missing operand below 0). Also
+    // MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead's test for an operator that absorbs a null behind a non-nullable type.
     internal static bool IsNullPropagatingMathFunction(MongoMathFunction function)
         => function is MongoMathFunction.Abs or MongoMathFunction.Ceiling or MongoMathFunction.Floor
             or MongoMathFunction.Exp or MongoMathFunction.Sqrt or MongoMathFunction.Truncate or MongoMathFunction.Round

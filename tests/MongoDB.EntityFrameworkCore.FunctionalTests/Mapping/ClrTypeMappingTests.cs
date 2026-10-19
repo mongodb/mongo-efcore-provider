@@ -1183,7 +1183,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
         }
 
-        // Validate storage as correct BSON
         var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
 
         Assert.Contains(
@@ -1229,7 +1228,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(new ReadOnlyMemory<float>([4.1f, 3.2f, 2.3f, 1.4f]), actual.ReadOnlyMemoryFloats);
         }
 
-        // Verify that the driver can still read these back after they have been updated by EF Core
         var fromDriver = collection.AsQueryable().FirstOrDefault();
 
         Assert.NotNull(fromDriver);
@@ -1289,7 +1287,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
         }
 
-        // Validate storage as correct BSON
         var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
 
         Assert.Contains(
@@ -1335,7 +1332,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(new Memory<float>([4.1f, 3.2f, 2.3f, 1.4f]), actual.MemoryFloats);
         }
 
-        // Verify that the driver can still read these back after they have been updated by EF Core
         var fromDriver = collection.AsQueryable().FirstOrDefault();
 
         Assert.NotNull(fromDriver);
@@ -1390,7 +1386,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
         }
 
-        // Validate storage as correct BSON
         var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
 
         Assert.Contains(
@@ -1425,7 +1420,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(0, actual.BinaryVector.Padding);
         }
 
-        // Verify that the driver can still read these back after they have been updated by EF Core
         var fromDriver = collection.AsQueryable().FirstOrDefault();
 
         Assert.NotNull(fromDriver);
@@ -1483,7 +1477,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
         }
 
-        // Validate storage as correct BSON
         var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
 
         Assert.Contains(
@@ -1517,7 +1510,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(new([4.1f, 3.2f, 2.3f, 1.4f]), actual.BinaryVector.Data);
         }
 
-        // Verify that the driver can still read these back after they have been updated by EF Core
         var fromDriver = collection.AsQueryable().FirstOrDefault();
 
         Assert.NotNull(fromDriver);
@@ -1574,7 +1566,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
         }
 
-        // Validate storage as correct BSON
         var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
 
         Assert.Contains(
@@ -1608,7 +1599,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(new([-4, 3, -2, 1]), actual.BinaryVector.Data);
         }
 
-        // Verify that the driver can still read these back after they have been updated by EF Core
         var fromDriver = collection.AsQueryable().FirstOrDefault();
 
         Assert.Equal([-4, 3, -2, 1], fromDriver.SBytes);
@@ -1666,7 +1656,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
         }
 
-        // Validate storage as correct BSON
         var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
 
         Assert.Contains(
@@ -1748,7 +1737,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
         }
 
-        // Validate storage as correct BSON
         var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
 
         Assert.Contains(
@@ -1830,7 +1818,6 @@ public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(1, async ? await db.SaveChangesAsync() : db.SaveChanges());
         }
 
-        // Validate storage as correct BSON
         var document = database.GetCollection<BsonDocument>(collection.CollectionNamespace).AsQueryable().First().ToJson();
 
         Assert.Contains(

@@ -13,13 +13,7 @@ The MongoDB database provider for [Entity Framework Core](https://github.com/dot
   (`xunit.v3`); `SpecificationTests` stays on xUnit v2. `SpecificationTests` disables test parallelization
   (`Usings.cs`); `FunctionalTests` does not and relies on a unique database per fixture. CI runs the projects,
   and on MongoDB 5.0/6.0 the test collections, one at a time — see Testing.
-
-| Project | Purpose |
-|---|---|
-| `src/MongoDB.EntityFrameworkCore/` | The provider. |
-| `tests/…UnitTests/` | Fast, no database. |
-| `tests/…FunctionalTests/` | Integration against a real MongoDB (encryption, transactions, vector search, design-time, compatibility). |
-| `tests/…SpecificationTests/` | EF Core's provider-conformance suite. |
+- `tests/…UnitTests` (no database), `…FunctionalTests` (real MongoDB), `…SpecificationTests` (EF Core's conformance suite).
 
 ## Editing
 
@@ -121,21 +115,10 @@ New async methods must take a `CancellationToken` and pass it to driver calls un
 - The first commit message and the PR title start with a JIRA number: `EF-1234: Description`.
 - The branch name usually matches: `EF-1234`.
 
-## Functional areas
+## Reviewers
 
-Each area has its own `AGENTS.md` (auto-loaded in that subtree) and a read-only reviewer sub-agent; see
-`docs/agents-architecture.md`.
-
-| Area | Location | Reviewer |
-|---|---|---|
-| Query / LINQ translation | `src/…/Query/AGENTS.md` | `query-reviewer` |
-| Storage, update pipeline & transactions | `src/…/Storage/AGENTS.md` | `storage-reviewer` |
-| Metadata, attributes & conventions | `src/…/Metadata/AGENTS.md` | `metadata-reviewer` |
-| Serialization & change tracking | `src/…/Serializers/AGENTS.md` | `serialization-reviewer` |
-| Public API, DI & options | `src/…/Extensions/AGENTS.md` | `public-api-reviewer` |
-| Diagnostics: events & logging | `src/…/Diagnostics/AGENTS.md` | `diagnostics-reviewer` |
-| Value generation | `src/…/ValueGeneration/AGENTS.md` | `value-generation-reviewer` |
-| Spec conformance & test infra | `tests/…SpecificationTests/AGENTS.md` | `spec-conformance-reviewer` |
+Each area folder has an `AGENTS.md` (auto-loaded in that subtree) and a read-only reviewer sub-agent in
+`.claude/agents`; see `docs/agents-architecture.md`.
 
 **Feature reviewers** span several directories and are keyed by file globs rather than an `AGENTS.md`:
 `vector-search-reviewer` (`VectorIndex*`, `BinaryVector*`, `VectorSearch*`) and `encryption-reviewer`
@@ -147,11 +130,7 @@ Each area has its own `AGENTS.md` (auto-loaded in that subtree) and a read-only 
 `security-reviewer` (credential redaction, sensitive-data logging, KMS, TLS). With a PR number,
 `pr-summary-reviewer` also runs ("what does this PR do, and is it a good change?").
 
-## External references
+## References
 
-- [EF Core source](https://github.com/dotnet/efcore) — authoritative for EF Core APIs, conventions, and the
-  specification suite. [EF Core docs](https://learn.microsoft.com/en-us/ef/core/) for concepts.
-- [MongoDB C# driver](https://github.com/mongodb/mongo-csharp-driver) — every BSON serializer, `IMongoClient`
-  call and LINQ-v3 hook lives here. The boundary is `BsonSerializerFactory` + `IMongoClientWrapper`.
-- [MongoDB EF provider docs](https://www.mongodb.com/docs/entity-framework/) · JIRA:
-  <https://jira.mongodb.org/projects/EF/>
+JIRA: <https://jira.mongodb.org/projects/EF/>. The driver boundary is `BsonSerializerFactory` +
+`IMongoClientWrapper`.

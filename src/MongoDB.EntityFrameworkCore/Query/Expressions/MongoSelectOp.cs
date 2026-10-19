@@ -18,9 +18,8 @@ using System.Collections.Generic;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// One filter/sort/page operation in a <see cref="MongoSelectDefinition"/>'s ordered pipeline. Emitted verbatim,
-/// so list order is stage order; this is how non-canonical Skip/Take (Take-before-Skip, repeated paging) is
-/// represented.
+/// One filter/sort/page operation in a <see cref="MongoSelectDefinition"/>'s ordered pipeline. Emitted verbatim, so
+/// list order is stage order (how non-canonical Skip/Take is represented).
 /// </summary>
 internal abstract record MongoSelectOp;
 
@@ -37,9 +36,9 @@ internal sealed record MongoSkipOp(MongoExpression Count) : MongoSelectOp;
 internal sealed record MongoLimitOp(MongoExpression Count) : MongoSelectOp;
 
 /// <summary>
-/// A whole-document <c>Distinct()</c> over a non-projected source. The row shape is unchanged, so unlike a
-/// projected Distinct (<see cref="MongoSelectDefinition.Grouping"/>) it is just another ordered op, lowering to the
-/// <c>$group{_id:"$$ROOT"}</c> + <c>$replaceRoot</c> dedup also used by <c>Union</c>.
+/// A whole-document <c>Distinct()</c> over a non-projected source. Unlike a projected Distinct
+/// (<see cref="MongoSelectDefinition.Grouping"/>) it is just another ordered op, lowering to the same
+/// <c>$group</c> + <c>$replaceRoot</c> dedup as <c>Union</c>.
 /// </summary>
 /// <param name="KeepOnlyField">
 /// For a Distinct over a bare join Inner leaf: the join's <c>_lookup_&lt;Nav&gt;</c> field, the only part of the

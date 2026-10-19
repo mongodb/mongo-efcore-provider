@@ -280,7 +280,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     {
         var collection = SeedBlogs(nameof(Owned_collection_bare_Any_goes_native));
 
-        // Present-and-non-empty only: an empty array, a missing field, and an explicit null all yield false.
         var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.Any()));
 
         Assert.Equal(["match", "nomatch"], titles);
@@ -406,7 +405,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         var blogs = db.Entities.Where(b => b.Posts.Any(p => p.Heading == "x")).ToList();
 
         Assert.Equal(["match"], blogs.Select(b => b.Title));
-        // Element contents in stored order, not just the count.
         Assert.Equal(["x", "z"], blogs[0].Posts.Select(p => p.Heading));
     }
 
@@ -417,7 +415,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
         AssertDeclinesCleanlyNoFallbackOracle(collection, q => q.Where(b => b.Posts.Any(p => p.Rank > p.Other)));
 
-        // On the well-formed seed the fallback can run, distinguishing a graceful decline from a crash.
         var wellFormed = SeedWellFormedBlogs(
             nameof(Field_to_field_element_predicate_declines_cleanly) + "_WellFormed");
         var wfTitles = AssertDeclinesCleanly(wellFormed, q => q.Where(b => b.Posts.Any(p => p.Rank > p.Other)));

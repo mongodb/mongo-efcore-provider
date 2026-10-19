@@ -30,8 +30,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 /// </summary>
 public class StreamingReferenceLookupsTests
 {
-    // ── Entity model ─────────────────────────────────────────────────────────────
-
     private class Customer
     {
         public ObjectId Id { get; set; }
@@ -44,8 +42,6 @@ public class StreamingReferenceLookupsTests
         public ObjectId CustomerId { get; set; }
         public Customer? Customer { get; set; }
     }
-
-    // ── Two-entity DbContext ──────────────────────────────────────────────────────
 
     private class TwoEntityDbContext : DbContext
     {
@@ -74,15 +70,11 @@ public class StreamingReferenceLookupsTests
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────────
-
     private static (IEntityType orderEntityType, IEntityType customerEntityType) GetEntityTypes()
     {
         using var db = new TwoEntityDbContext();
         return (db.Model.FindEntityType(typeof(Order))!, db.Model.FindEntityType(typeof(Customer))!);
     }
-
-    // ── Flat query — no inner collections → GetStreamingReferenceLookups is empty ──
 
     [Fact]
     public void No_inner_collections_returns_empty_lookups()
@@ -95,8 +87,6 @@ public class StreamingReferenceLookupsTests
 
         Assert.Empty(result);
     }
-
-    // ── Single reference Include in driver-join state → synthesizes one LookupExpression ──
 
     [Fact]
     public void Single_reference_include_in_driver_join_state_returns_one_lookup()
@@ -127,8 +117,6 @@ public class StreamingReferenceLookupsTests
         Assert.False(string.IsNullOrEmpty(lookup.ForeignField));
     }
 
-    // ── Query with pending lookups (forced-unwind) → returns pending lookups directly ──
-
     [Fact]
     public void Pending_lookups_registered_returns_them_directly()
     {
@@ -149,8 +137,6 @@ public class StreamingReferenceLookupsTests
         Assert.Single(result);
         Assert.Same(explicitLookup, result[0]);
     }
-
-    // ── Lookups slot on MongoQueryExpression delegates to GetStreamingReferenceLookups ──
 
     [Fact]
     public void Lookups_property_delegates_to_GetStreamingReferenceLookups()

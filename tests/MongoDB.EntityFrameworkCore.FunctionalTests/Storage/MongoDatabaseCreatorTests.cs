@@ -824,7 +824,6 @@ public class MongoDatabaseCreatorTests
         Assert.Contains("Orders", allNames);
         Assert.Contains("Addresses", allNames);
 
-        // Verify that the collections were created with the specified options
         var customerCollection = collections.Single(c => c["name"].AsString == "Customers");
         Assert.True(customerCollection["options"]["capped"].AsBoolean);
         Assert.Equal(expectedMaxDocs, customerCollection["options"]["max"].AsInt32);
@@ -863,7 +862,6 @@ public class MongoDatabaseCreatorTests
         var allNames = collections.Select(c => c["name"].AsString).ToArray();
         Assert.Equal(3, allNames.Length);
 
-        // Verify that the collections were created without capped options
         foreach (var collection in collections)
         {
             var options = collection["options"];

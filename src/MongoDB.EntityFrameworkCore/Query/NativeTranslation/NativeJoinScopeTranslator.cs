@@ -23,10 +23,7 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
-/// <summary>
-/// Resolves member access over a native join's <c>TransparentIdentifier(Outer, Inner)</c> shape against a
-/// <see cref="MongoJoinScope"/>, using the two-scope <see cref="MongoExpressionTranslator"/> constructor.
-/// </summary>
+/// <summary>Resolves member access over a native join's <c>TransparentIdentifier(Outer, Inner)</c> shape against a <see cref="MongoJoinScope"/>.</summary>
 internal static class NativeJoinScopeTranslator
 {
     public static bool TryTranslatePredicate(
@@ -40,11 +37,9 @@ internal static class NativeJoinScopeTranslator
         => TryTranslateCore(scope, rootParam, body, valueMode: true, out result);
 
     /// <summary>
-    /// Whether <paramref name="body"/> references the join's Inner side. <c>NativeSlotPopulator</c>'s Outer-only
-    /// <c>Where</c>/<c>OrderBy</c> arms reject such bodies: they record into <c>PipelineOps</c>, which lower before the
-    /// <c>$lookup</c> that materializes Inner, so they would filter on a field that doesn't exist yet and silently
-    /// match nothing. Inner-reaching bodies go to the separate Inner arms, which use the same general-purpose
-    /// <see cref="TryTranslatePredicate"/>/<see cref="TryTranslateValue"/> but defer into <c>PostJoinOps</c>.
+    /// Whether <paramref name="body"/> references the join's Inner side. <c>NativeSlotPopulator</c>'s Outer-only <c>Where</c>/<c>OrderBy</c> arms
+    /// reject such bodies: they record into <c>PipelineOps</c>, which lower before the <c>$lookup</c> materializing Inner, so they would silently
+    /// match nothing. Inner-reaching bodies go to separate arms that defer into <c>PostJoinOps</c>.
     /// </summary>
     public static bool ReferencesInnerScope(ParameterExpression rootParam, Expression body)
     {
@@ -54,11 +49,9 @@ internal static class NativeJoinScopeTranslator
     }
 
     /// <summary>
-    /// Resolves member access over a chained join's nested <c>TransparentIdentifier</c> shape, restricted to the root
-    /// scope (index 0); used when <paramref name="scope"/>.Levels.Count > 1. Delegates to
-    /// <see cref="MongoTransparentScopeResolver"/> with <see cref="MongoTransparentScopeResolver.TransparentIdentifierHops"/>
-    /// and <c>sourceCount = scope.Levels.Count</c>: index 0 is the root, index <c>k</c> is <c>scope.Levels[k-1]</c>'s
-    /// Inner.
+    /// Resolves member access over a chained join's nested <c>TransparentIdentifier</c> shape, restricted to the root scope (index 0), when
+    /// <c>scope.Levels.Count > 1</c>. Delegates to <see cref="MongoTransparentScopeResolver"/> with <c>sourceCount = scope.Levels.Count</c>:
+    /// index 0 is the root, index <c>k</c> is <c>scope.Levels[k-1]</c>'s Inner.
     /// </summary>
     public static bool TryTranslateRootScopeOnly(
         MongoJoinScope scope, ParameterExpression rootParam, Expression body, bool valueMode,
@@ -75,20 +68,15 @@ internal static class NativeJoinScopeTranslator
     }
 
     /// <summary>
-    /// Resolves a scalar/computed leaf rooted at any single scope of a chained join (never one spanning scopes).
-    /// Used by <see cref="NativeJoinScopeProjectionBinder"/> when <c>scope.Levels.Count &gt; 1</c>. Resolves by the
-    /// member-name hop chain rather than by comparing CLR types, so it avoids the residual gap described in
-    /// <c>TryTranslateCore</c>.
+    /// Resolves a scalar/computed leaf rooted at any single scope of a chained join (never one spanning scopes), by member-name hop chain
+    /// rather than CLR type, avoiding the residual gap described in <c>TryTranslateCore</c>. Used by <see cref="NativeJoinScopeProjectionBinder"/>.
     /// </summary>
     public static bool TryTranslateSingleScope(
         MongoJoinScope scope, ParameterExpression rootParam, Expression body, bool valueMode,
         [NotNullWhen(true)] out MongoExpression? result)
         => TryTranslateSingleScopeCore(scope, rootParam, body, valueMode, out _, out result);
 
-    /// <summary>
-    /// Predicate form of <see cref="TryTranslateSingleScope"/> that also reports which scope the body resolved to
-    /// (0 = root, <c>k</c> = <c>scope.Levels[k-1]</c>'s Inner), so the caller can apply per-level gates.
-    /// </summary>
+    /// <summary>Predicate form of <see cref="TryTranslateSingleScope"/> that also reports the scope index it resolved to (0 = root, <c>k</c> = <c>scope.Levels[k-1]</c>'s Inner) for per-level gates.</summary>
     public static bool TryTranslateSingleScopePredicate(
         MongoJoinScope scope, ParameterExpression rootParam, Expression body,
         out int scopeIndex, [NotNullWhen(true)] out MongoExpression? result)
@@ -113,8 +101,7 @@ internal static class NativeJoinScopeTranslator
         {
             var level = scope.Levels[scopeIndex - 1];
 
-            // The throwaway outer parameter never appears in `rewritten` (the body resolves to scopeIndex, not 0), so
-            // every member resolves via the inner branch: scope.Levels[k-1].InnerEntityType with its InnerPrefix.
+            // The throwaway outer parameter never appears in `rewritten` (the body resolves to scopeIndex, not 0), so every member resolves via the inner branch.
             var unusedOuterParam = Expression.Parameter(scope.OuterEntityType.ClrType, "unusedOuterScope");
             translator = new MongoExpressionTranslator(
                 level.InnerEntityType, unusedOuterParam, scope.OuterEntityType, level.InnerPrefix);
@@ -123,19 +110,15 @@ internal static class NativeJoinScopeTranslator
         return TryTranslate(translator, rewritten, valueMode, out result);
     }
 
-    /// <summary>
-    /// The single scope index <paramref name="body"/> resolves to (0 = root, <c>k</c> = <c>scope.Levels[k-1]</c>'s
-    /// Inner), as <see cref="TryTranslateSingleScope"/> would resolve it, without translating.
-    /// </summary>
+    /// <summary>The single scope index <paramref name="body"/> resolves to, as <see cref="TryTranslateSingleScope"/> would, without translating.</summary>
     public static bool TryResolveSingleScopeIndex(
         MongoJoinScope scope, ParameterExpression rootParam, Expression body, out int scopeIndex)
         => TryRerootToSingleScope(scope, rootParam, body, out scopeIndex, out _);
 
     /// <summary>
-    /// Rewrites <paramref name="body"/>'s <c>Outer</c>/<c>Inner</c> hop chain onto one synthetic parameter per scope
-    /// level, via <see cref="MongoTransparentScopeResolver.ScopeRerootingVisitor"/>. Succeeds only when the whole
-    /// body resolves to a single scope index and no other reference to <paramref name="rootParam"/> survives. The
-    /// caller decides whether <paramref name="scopeIndex"/> is acceptable.
+    /// Rewrites <paramref name="body"/>'s <c>Outer</c>/<c>Inner</c> hop chain onto one synthetic parameter per scope level
+    /// (<see cref="MongoTransparentScopeResolver.ScopeRerootingVisitor"/>). Succeeds only when the whole body resolves to a single scope
+    /// index and no other reference to <paramref name="rootParam"/> survives; the caller decides whether the index is acceptable.
     /// </summary>
     private static bool TryRerootToSingleScope(
         MongoJoinScope scope, ParameterExpression rootParam, Expression body,
@@ -164,8 +147,7 @@ internal static class NativeJoinScopeTranslator
             rootParam, MongoTransparentScopeResolver.TransparentIdentifierHops, sourceCount, scopeParams);
         var candidate = visitor.Visit(body);
 
-        // ScopeRerootingVisitor only rewrites pure Outer*/Inner? hop chains; any other reference to rootParam survives
-        // untouched and could resolve against the wrong entity downstream. Reject it.
+        // ScopeRerootingVisitor only rewrites pure Outer*/Inner? hop chains; any other reference to rootParam survives and could resolve against the wrong entity.
         if (visitor.CrossScope
             || visitor.ResolvedScope is not { } resolved
             || candidate.ReferencesParameter(rootParam))
@@ -179,14 +161,10 @@ internal static class NativeJoinScopeTranslator
     }
 
     /// <summary>
-    /// Recognizes a top-level <c>rootParam.Inner == null</c> / <c>!= null</c> (either operand order): a
-    /// reference-<c>Include</c>'s null check on its navigation (e.g. <c>Include(e =&gt; e.Manager).First(e =&gt;
-    /// e.Manager == null)</c>) after nav-expansion.
+    /// Recognizes a top-level <c>rootParam.Inner == null</c> / <c>!= null</c> (either order): a reference-<c>Include</c>'s null check on its
+    /// navigation after nav-expansion. Structural only; whether the join may be confirmed is <c>NativeSlotPopulator</c>'s call. Never matches
+    /// under <c>Not</c> or a quantifier (see <see cref="MongoLookupNullCheckExpression"/> for why that's safe).
     /// </summary>
-    /// <remarks>
-    /// Structural only; whether the join may be confirmed is <c>NativeSlotPopulator</c>'s call. Never matches under
-    /// <c>Not</c> or a quantifier (see <see cref="MongoLookupNullCheckExpression"/> for why that's safe).
-    /// </remarks>
     public static bool TryMatchInnerNullCheck(ParameterExpression rootParam, Expression body, out bool isNotNull)
     {
         isNotNull = false;
@@ -197,7 +175,6 @@ internal static class NativeJoinScopeTranslator
         var leftIsInner = IsBareInnerAccess(rootParam, binary.Left);
         var rightIsInner = IsBareInnerAccess(rootParam, binary.Right);
 
-        // Exactly one side must be the bare Inner access; neither or both (self-compare) decline.
         if (leftIsInner == rightIsInner)
             return false;
 
@@ -210,10 +187,9 @@ internal static class NativeJoinScopeTranslator
     }
 
     /// <summary>
-    /// Depth-agnostic <see cref="TryMatchInnerNullCheck"/>: <c>rootParam.«hop chain» == null</c> / <c>!= null</c> for
-    /// any non-root scope level, resolved by member-name chain via <see cref="TryRerootToBareScope"/> rather than by
-    /// CLR type. Structural only: callers must check the level is left-outer and that its join has a ForceUnwind
-    /// lookup (or a non-collection navigation), otherwise the null test is degenerate.
+    /// Depth-agnostic <see cref="TryMatchInnerNullCheck"/> for any non-root scope level, resolved by member-name chain
+    /// (<see cref="TryRerootToBareScope"/>). Structural only: callers must check the level is left-outer and its join has a ForceUnwind lookup
+    /// (or a non-collection navigation), otherwise the null test is degenerate.
     /// </summary>
     public static bool TryMatchScopeNullCheck(
         MongoJoinScope scope, ParameterExpression rootParam, Expression test,
@@ -230,7 +206,6 @@ internal static class NativeJoinScopeTranslator
         var leftIsBareScope = TryRerootToBareScope(scope, rootParam, binary.Left, out var leftIndex);
         var rightIsBareScope = TryRerootToBareScope(scope, rootParam, binary.Right, out var rightIndex);
 
-        // Exactly one side must be a bare scope leaf; neither or both (self-compare) decline.
         if (leftIsBareScope == rightIsBareScope)
         {
             return false;
@@ -249,11 +224,7 @@ internal static class NativeJoinScopeTranslator
         return true;
     }
 
-    /// <summary>
-    /// Resolves a bare scope leaf — a pure <c>Outer</c>/<c>Inner</c> hop chain with no trailing member, e.g.
-    /// <c>ti.Outer.Outer</c> — to its scope index (0 = root). Structural only; the caller decides which index is
-    /// acceptable.
-    /// </summary>
+    /// <summary>Resolves a bare scope leaf (a pure <c>Outer</c>/<c>Inner</c> hop chain, e.g. <c>ti.Outer.Outer</c>) to its scope index (0 = root); structural only.</summary>
     public static bool TryResolveBareScopeLeaf(
         MongoJoinScope scope, ParameterExpression rootParam, Expression node, out int scopeIndex)
         => TryRerootToBareScope(scope, rootParam, node, out scopeIndex);
@@ -261,7 +232,6 @@ internal static class NativeJoinScopeTranslator
     private static bool TryRerootToBareScope(
         MongoJoinScope scope, ParameterExpression rootParam, Expression node, out int scopeIndex)
     {
-        // Same TransparentIdentifier guard as TryRerootToSingleScope.
         if (!rootParam.Type.IsTransparentIdentifierType())
         {
             scopeIndex = -1;
@@ -287,16 +257,11 @@ internal static class NativeJoinScopeTranslator
            && member.IsTransparentIdentifierOuterOrInnerAccess();
 
     /// <summary>
-    /// <c>customers.Contains(od.Order)</c>, arriving as <c>customers.Contains(ti.Inner)</c> after nav-expansion.
-    /// Needs no <c>$lookup</c>: the navigation's FK on the outer document already holds the principal key, so this
-    /// rewrites to an FK <c>$in</c> over the list's principal keys (the navigation analog of
-    /// <see cref="MongoExpressionTranslator.TryTranslateEntityListContains"/>). A dangling FK still compares correctly.
+    /// <c>customers.Contains(od.Order)</c>, arriving as <c>customers.Contains(ti.Inner)</c> after nav-expansion. Needs no <c>$lookup</c>: the
+    /// outer document's FK already holds the principal key, so it rewrites to an FK <c>$in</c> over the list's principal keys (the navigation analog
+    /// of <see cref="MongoExpressionTranslator.TryTranslateEntityListContains"/>); a dangling FK still compares correctly. Single-property,
+    /// non-shadow keys only (<see cref="MongoInExpression"/> can't express a composite <c>$in</c>).
     /// </summary>
-    /// <remarks>
-    /// Single-property, non-shadow FK and principal key only (<see cref="MongoInExpression"/> can't express a
-    /// composite <c>$in</c>). <paramref name="navigation"/> is always on the dependent side, since it comes from
-    /// <see cref="JoinInfo.Navigation"/>.
-    /// </remarks>
     public static bool TryMatchInnerListContains(
         ParameterExpression rootParam, Expression body, INavigation navigation,
         [NotNullWhen(true)] out MongoExpression? result)
@@ -343,20 +308,16 @@ internal static class NativeJoinScopeTranslator
     {
         result = null;
 
-        // rootParam.Type must be a flat TransparentIdentifier<TOuter,TInner> whose Outer/Inner types exactly match the
-        // recorded scope. A chained second join reuses the first join's JoinScope, and its nested top-level Inner can
-        // share the recorded InnerEntityType; rewriting it against the first join's scope would throw or resolve a
-        // bogus field. See SameTargetTypeJoinTests.Filter_after_a_flattened_multi_join_chain_is_applied_not_dropped.
+        // rootParam.Type must be a flat TransparentIdentifier<TOuter,TInner> whose Outer/Inner types exactly match the recorded scope. A chained second
+        // join reuses the first join's JoinScope and its nested top-level Inner can share the recorded InnerEntityType; rewriting it against the first
+        // scope would throw or resolve a bogus field (SameTargetTypeJoinTests.Filter_after_a_flattened_multi_join_chain_is_applied_not_dropped).
         //
-        // Residual gap: after `.Join(a, b, ...).Select(x => x.Outer).Join(c, d, ...)` the second join's flat
-        // TransparentIdentifier can match the first join's recorded types exactly, and this type check can't tell
-        // them apart — scope.InnerPrefix would name the wrong $lookup alias, silently producing wrong data. Every
-        // Inner-reaching caller closes it by requiring a single join: the Where/OrderBy Inner arms check
-        // `mongoQ.Joins.Count == 1`, the Select arms `scope.Levels.Count == Joins.Count` with a depth-1 scope (see
-        // MongoQueryableMethodTranslatingExpressionVisitor). Any new caller needing Inner access must do likewise.
+        // Residual gap: after `.Join(a, b, ...).Select(x => x.Outer).Join(c, d, ...)` the second join's flat TransparentIdentifier can match the first
+        // join's recorded types exactly, and scope.InnerPrefix would name the wrong $lookup alias, silently producing wrong data. Every Inner-reaching
+        // caller closes it by requiring a single join (Where/OrderBy Inner arms: `mongoQ.Joins.Count == 1`; Select arms: `scope.Levels.Count == Joins.Count`
+        // with a depth-1 scope). Any new caller needing Inner access must do likewise.
         //
-        // EF's TransparentIdentifier exposes Outer/Inner as fields, not properties; see
-        // ExpressionExtensionMethods.IsTransparentIdentifierType.
+        // EF's TransparentIdentifier exposes Outer/Inner as fields, not properties (ExpressionExtensionMethods.IsTransparentIdentifierType).
         if (!rootParam.Type.IsTransparentIdentifierType()
             || !TryGetOuterOrInnerMemberType(rootParam.Type, "Outer", out var outerMemberType)
             || outerMemberType != scope.OuterEntityType.ClrType
@@ -371,10 +332,9 @@ internal static class NativeJoinScopeTranslator
         var splitter = new ScopeSplittingVisitor(rootParam, outerParam, innerParam);
         var rewritten = splitter.Visit(body);
 
-        // Require at least one Outer/Inner access and no other access to rootParam. Otherwise a Where after an
-        // Include-generated join (same JoinScope recording as a user Join) with an ordinary root-scoped body is
-        // resolved against scope.InnerEntityType, producing a bogus path that silently returns zero rows instead of
-        // falling back. Pinned by NativeJoinTests / RequiredNavigationUnwindTests / Ef369MultiJoinComposedTests.
+        // Require at least one Outer/Inner access and no other access to rootParam: otherwise a Where after an Include-generated join with an ordinary
+        // root-scoped body resolves against scope.InnerEntityType, silently returning zero rows instead of falling back (NativeJoinTests /
+        // RequiredNavigationUnwindTests / Ef369MultiJoinComposedTests).
         if (!splitter.SawScopedAccess || splitter.SawUnscopedRootAccess)
             return false;
 
@@ -384,10 +344,7 @@ internal static class NativeJoinScopeTranslator
         return TryTranslate(translator, rewritten, valueMode, out result);
     }
 
-    /// <summary>
-    /// Flat, single-hop rewrite of <c>rootParam.Outer</c>/<c>rootParam.Inner</c> subtrees onto
-    /// <paramref name="outerParam"/>/<paramref name="innerParam"/>; a bare <c>x.Outer</c> becomes the parameter itself.
-    /// </summary>
+    /// <summary>Flat, single-hop rewrite of <c>rootParam.Outer</c>/<c>rootParam.Inner</c> subtrees onto the outer/inner parameters; a bare <c>x.Outer</c> becomes the parameter itself.</summary>
     private sealed class ScopeSplittingVisitor(
         ParameterExpression rootParam, ParameterExpression outerParam, ParameterExpression innerParam)
         : ExpressionVisitor
@@ -395,18 +352,14 @@ internal static class NativeJoinScopeTranslator
         /// <summary>Whether at least one <c>rootParam.Outer</c>/<c>rootParam.Inner</c> access was rewritten.</summary>
         public bool SawScopedAccess { get; private set; }
 
-        /// <summary>
-        /// Whether <c>rootParam</c> was referenced other than via <c>.Outer</c>/<c>.Inner</c>, meaning the body isn't
-        /// shaped like the join's TransparentIdentifier.
-        /// </summary>
+        /// <summary>Whether <c>rootParam</c> was referenced other than via <c>.Outer</c>/<c>.Inner</c>, so the body isn't shaped like the join's TransparentIdentifier.</summary>
         public bool SawUnscopedRootAccess { get; private set; }
 
         protected override Expression VisitMember(MemberExpression node)
         {
             if (ReferenceEquals(node.Expression, rootParam))
             {
-                // Checked by declaring type, not just name, so a joined entity with its own Outer/Inner member isn't
-                // mistaken for join plumbing (must agree with MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs).
+                // Checked by declaring type, not just name, so a joined entity with its own Outer/Inner member isn't mistaken for join plumbing (agree with MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs).
                 if (node.IsTransparentIdentifierOuterOrInnerAccess())
                 {
                     SawScopedAccess = true;
@@ -443,10 +396,7 @@ internal static class NativeJoinScopeTranslator
         }
     }
 
-    /// <summary>
-    /// Returns the type of a <c>TransparentIdentifier&lt;TOuter,TInner&gt;</c>'s "Outer"/"Inner" member, accepting a
-    /// field (EF Core's actual shape) or a property (defensively).
-    /// </summary>
+    /// <summary>The type of a <c>TransparentIdentifier</c>'s "Outer"/"Inner" member, accepting a field (EF Core's shape) or a property (defensively).</summary>
     private static bool TryGetOuterOrInnerMemberType(Type transparentIdentifierType, string memberName, out Type? memberType)
     {
         memberType = transparentIdentifierType

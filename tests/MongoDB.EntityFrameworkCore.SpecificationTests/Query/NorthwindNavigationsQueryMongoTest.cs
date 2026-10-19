@@ -30,7 +30,6 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
         : base(fixture)
     {
         fixture.TestMqlLoggerFactory.Clear();
-        //fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -303,11 +302,13 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
     public override async Task Collection_select_nav_prop_any(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Collection_select_nav_prop_any(async));
+        // The aggregate over the navigation collection is a `$lookup` array reduction; the base test checks the rows.
+        await base.Collection_select_nav_prop_any(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "Any" : { "$gte" : [{ "$size" : { "$ifNull" : ["$_lookup_Orders", []] } }, 1] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Collection_select_nav_prop_predicate(bool async)
@@ -319,33 +320,57 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "_v" : { "$gt" : [{ "$size" : "$_lookup_Orders" }, 0] }, "_id" : 0 } }
 """);
 #else
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Collection_select_nav_prop_predicate(async));
+        await base.Collection_select_nav_prop_predicate(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "_v" : { "$gte" : [{ "$size" : { "$ifNull" : ["$_lookup_Orders", []] } }, 1] }, "_id" : 0 } }
+""");
 #endif
     }
 
     public override async Task Collection_where_nav_prop_any(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_where_nav_prop_any(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Collection_where_nav_prop_any(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_lookup_Orders.0" : { "$exists" : true } } }
+""");
     }
 
     public override async Task Collection_where_nav_prop_any_predicate(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_where_nav_prop_any_predicate(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Collection_where_nav_prop_any_predicate(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_lookup_Orders" : { "$elemMatch" : { "_id" : { "$gt" : 0 } } } } }
+""");
     }
 
     public override async Task Collection_select_nav_prop_all(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Collection_select_nav_prop_all(async));
+        // The aggregate over the navigation collection is a `$lookup` array reduction; the base test checks the rows.
+        await base.Collection_select_nav_prop_all(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "All" : { "$eq" : [{ "$size" : { "$filter" : { "input" : { "$ifNull" : ["$_lookup_Orders", []] }, "as" : "e", "cond" : { "$not" : [{ "$eq" : ["$$e.CustomerID", { "$literal" : "ALFKI" }] }] } } } }, 0] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Collection_where_nav_prop_all(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_where_nav_prop_all(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Collection_where_nav_prop_all(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_lookup_Orders" : { "$not" : { "$elemMatch" : { "CustomerID" : { "$ne" : "ALFKI" } } } } } }
+""");
     }
 
     public override async Task Collection_select_nav_prop_count(bool async)
@@ -380,7 +405,13 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task Collection_orderby_nav_prop_count(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_orderby_nav_prop_count(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Collection_orderby_nav_prop_count(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$set" : { "__sort0" : { "$size" : { "$ifNull" : ["$_lookup_Orders", []] } } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }
+""");
     }
 
     public override async Task Collection_select_nav_prop_long_count(bool async)
@@ -395,43 +426,56 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task Select_multiple_complex_projections(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Select_multiple_complex_projections(async));
+        // The aggregate over the navigation collection is a `$lookup` array reduction; the base test checks the rows.
+        await base.Select_multiple_complex_projections(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "collection1" : { "$size" : "$_lookup_OrderDetails" }, "scalar1" : "$OrderDate", "any" : { "$gte" : [{ "$size" : { "$filter" : { "input" : { "$ifNull" : ["$_lookup_OrderDetails", []] }, "as" : "e", "cond" : { "$gt" : ["$$e.UnitPrice", { "$numberDecimal" : "10" }] } } } }, 1] }, "conditional" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", { "$literal" : "ALFKI" }] }, "then" : { "$literal" : "50" }, "else" : { "$literal" : "10" } } }, "scalar2" : "$_id", "all" : { "$eq" : [{ "$size" : { "$filter" : { "input" : { "$ifNull" : ["$_lookup_OrderDetails", []] }, "as" : "e", "cond" : { "$not" : [{ "$eq" : ["$$e._id.OrderID", 42] }] } } } }, 0] }, "collection2" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Collection_select_nav_prop_sum(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Collection_select_nav_prop_sum(async));
+        // The aggregate over the navigation collection is a `$lookup` array reduction; the base test checks the rows.
+        await base.Collection_select_nav_prop_sum(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "Sum" : { "$sum" : "$_lookup_Orders._id" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Collection_select_nav_prop_sum_plus_one(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Collection_select_nav_prop_sum_plus_one(async));
+        // The aggregate over the navigation collection is a `$lookup` array reduction; the base test checks the rows.
+        await base.Collection_select_nav_prop_sum_plus_one(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "Sum" : { "$add" : [{ "$sum" : "$_lookup_Orders._id" }, 1] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Collection_where_nav_prop_sum(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_where_nav_prop_sum(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Collection_where_nav_prop_sum(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "$expr" : { "$gt" : [{ "$sum" : "$_lookup_Orders._id" }, 1000] } } }
+""");
     }
 
     public override async Task Collection_select_nav_prop_first_or_default(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Collection_select_nav_prop_first_or_default(async));
+        await base.Collection_select_nav_prop_first_or_default(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }], "as" : "_lookup_Order_CustomerID__id_f1" } }, { "$project" : { "First" : "$_lookup_Order_CustomerID__id_f1", "_id" : 0 } }
+""");
     }
 
     public override async Task Collection_select_nav_prop_first_or_default_then_nav_prop(bool async)
@@ -561,11 +605,12 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
 
     public override async Task Project_single_entity_value_subquery_works(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Project_single_entity_value_subquery_works(async));
+        await base.Project_single_entity_value_subquery_works(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }], "as" : "_lookup_Order_CustomerID__id_f1" } }, { "$project" : { "CustomerID" : "$_id", "Order" : "$_lookup_Order_CustomerID__id_f1", "_id" : 0 } }
+""");
     }
 
     public override async Task Project_single_scalar_value_subquery_in_query_with_optional_navigation_works(bool async)
@@ -712,7 +757,8 @@ Orders.
 
     public override async Task Collection_where_nav_prop_all_client(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
+        // ShipCity is not a mapped property, so the correlated All cannot be translated: a loud failure, whichever translator reports it.
+        await AssertTranslationFailed(() => AssertQuery(
             async,
             ss => from c in ss.Set<Customer>()
                   orderby c.CustomerID

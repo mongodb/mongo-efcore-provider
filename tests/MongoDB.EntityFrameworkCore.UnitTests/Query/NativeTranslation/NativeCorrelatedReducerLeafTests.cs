@@ -40,8 +40,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 /// </remarks>
 public class NativeCorrelatedReducerLeafTests
 {
-    // ── Model: a cross-collection (non-owned) one-to-many, plus the decline fixtures ────────────────────────
-
     private class Animal
     {
         public ObjectId Id { get; set; }
@@ -130,8 +128,6 @@ public class NativeCorrelatedReducerLeafTests
         mb.Entity<Detail>();
     };
 
-    // ── TPH model: the target of the reduced navigation is a derived type ───────────────────────────────────
-
     private class TphOwner
     {
         public ObjectId Id { get; set; }
@@ -158,8 +154,6 @@ public class NativeCorrelatedReducerLeafTests
             .HasValue<TphDerivedChild>(nameof(TphDerivedChild));
         mb.Entity<TphOwner>().HasMany(o => o.Children).WithOne(c => c.Owner).HasForeignKey(c => c.OwnerId);
     };
-
-    // ── Harness ─────────────────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Runs <paramref name="buildQuery"/> through the real preprocessor and hands the terminal <c>Select</c>'s
@@ -221,8 +215,6 @@ public class NativeCorrelatedReducerLeafTests
     /// <summary>The <c>$lookup</c> sub-pipeline this leaf staged.</summary>
     private static List<BsonDocument> SubPipelineOf(MongoCorrelatedReducerLeaf leaf)
         => leaf.Lookup.PipelineStages;
-
-    // ── ACCEPT cases ────────────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
     public void Bare_FirstOrDefault_member_is_recognized()
@@ -360,8 +352,6 @@ public class NativeCorrelatedReducerLeafTests
         Assert.Equal(["M", "P"], mongoQ.CorrelatedReducerLeaves.Select(l => l.Alias).Order().ToArray());
     }
 
-    // ── DECLINE cases ───────────────────────────────────────────────────────────────────────────────────────
-    //
     // Every decline also asserts nothing was staged (no leaf, lookup or projection), catching a recognizer that
     // half-registers before declining.
 
@@ -458,11 +448,19 @@ public class NativeCorrelatedReducerLeafTests
         => AssertDeclined(q => q.Select(a => new { a.Id, M = a.IdentificationMethods.FirstOrDefault()!.Detail }));
 
     /// <summary>
-    /// <c>nav.FirstOrDefault()</c> with no member read reduces to a whole entity, which this leaf doesn't shape.
+    /// <c>nav.FirstOrDefault()</c> with no member read reduces to a whole entity, which this leaf doesn't shape: it is an element leaf,
+    /// a keyed array lookup limited to one element and read back as an entity.
     /// </summary>
     [Fact]
-    public void Whole_element_reduction_with_no_member_read_declines()
-        => AssertDeclined(q => q.Select(a => new { a.Id, M = a.IdentificationMethods.FirstOrDefault() }));
+    public void Whole_element_reduction_with_no_member_read_is_an_element_leaf()
+    {
+        var mongoQ = BindAccepted(q => q.Select(a => new { a.Id, M = a.IdentificationMethods.FirstOrDefault() }));
+
+        Assert.Empty(mongoQ.CorrelatedReducerLeaves);
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.True(lookup.IsCorrelatedArraySource);
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(lookup.ElementLimit).Value);
+    }
 
     /// <summary>
     /// Owned collections are handled elsewhere: nav-expansion leaves an <c>EF.Property(...).AsQueryable()</c>
@@ -529,21 +527,28 @@ public class NativeCorrelatedReducerLeafTests
         }));
 
     /// <summary>
-    /// Reducer then <c>Count</c> over the same navigation: both want the same alias with incompatible shapes
-    /// (unwound single document vs. array for <c>$size</c>), and <c>AddLookup</c> keeps the first — a server
-    /// error or a silent empty read. Declines the projection.
+    /// Reducer then <c>Count</c> over the same navigation: the reducer's unwound single-document lookup and the count's array
+    /// lookup want incompatible shapes under one alias, so the count is staged as its own keyed array lookup
+    /// (<c>IsCorrelatedArraySource</c>) under a distinct alias, and neither leaf reads the other's shape.
     /// </summary>
     [Fact]
-    public void Reducer_leaf_then_count_leaf_over_the_same_navigation_decline()
-        => AssertDeclined(q => q.Select(a => new
+    public void Reducer_leaf_then_count_leaf_over_the_same_navigation_use_distinct_lookups()
+    {
+        var mongoQ = BindAccepted(q => q.Select(a => new
         {
             a.Id,
             M = a.IdentificationMethods.FirstOrDefault()!.Method,
             N = a.IdentificationMethods.Count
         }));
 
+        var leaf = Assert.Single(mongoQ.CorrelatedReducerLeaves);
+        Assert.Equal("_lookup_IdentificationMethods", leaf.Lookup.As);
+        var array = Assert.Single(mongoQ.GetPendingLookups(), l => l.IsCorrelatedArraySource);
+        Assert.NotEqual(leaf.Lookup.As, array.As);
+    }
+
     /// <summary>
-    /// Mirror of <see cref="Reducer_leaf_then_count_leaf_over_the_same_navigation_decline"/>: a different
+    /// Mirror of <see cref="Reducer_leaf_then_count_leaf_over_the_same_navigation_use_distinct_lookups"/>: a different
     /// registration site sees the collision.
     /// </summary>
     [Fact]
@@ -574,8 +579,6 @@ public class NativeCorrelatedReducerLeafTests
         Assert.Contains(mongoQ.GetPendingLookups(), l => l.As == "_lookup_Sightings");
     }
 
-    // ── Serialization gates: the reduced member and the sort key must both be default-serialized ────────────
-    //
     // Both use NativeGroupByBinder.HasDefaultKeySerialization. The member is read off the alias with no
     // IProperty, so it would materialize the raw stored value; the sort key orders by stored representation
     // (enum-as-string sorts 1 < 0 < 2), so the wrong element would be "first".
@@ -632,8 +635,6 @@ public class NativeCorrelatedReducerLeafTests
         ], SubPipelineOf(Assert.Single(asSortKey.CorrelatedReducerLeaves)));
     }
 
-    // ── Scope boundary: one sort key only, no paging inside the nav chain ───────────────────────────────────
-    //
     // Scope is a single OrderBy/OrderByDescending key; ThenBy/Skip/Take decline. Pinned as a scope decision.
 
     [Fact]
@@ -660,8 +661,6 @@ public class NativeCorrelatedReducerLeafTests
             M = a.IdentificationMethods.OrderBy(m => m.Rank).Take(2).FirstOrDefault()!.Method
         }));
 
-    // ── The nullable-widened FirstOrDefault() shape ─────────────────────────────────────────────────────────
-    //
     // For FirstOrDefault() over a non-nullable value-type member, nav-expansion widens the member to Nullable<T>
     // inside the Select and converts back at the end:
     //
@@ -883,8 +882,6 @@ public class NativeCorrelatedReducerLeafTests
         Assert.False(userCast.Accepted);
         Assert.True(efWidened.Accepted);
     }
-
-    // ── Test infrastructure ─────────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Stands in for EF Core's funcletization: rewrites each closure capture into an EF query parameter node (a

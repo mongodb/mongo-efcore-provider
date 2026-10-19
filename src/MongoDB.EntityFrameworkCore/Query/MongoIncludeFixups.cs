@@ -155,17 +155,6 @@ internal static class MongoIncludeFixups
     /// <c>if (navigation.DeclaringEntityType.IsAssignableFrom(concreteEntityType)) IncludeReference|IncludeCollection(...)</c>,
     /// choosing <c>IncludeCollection</c> for a collection navigation.
     /// </summary>
-    /// <param name="navigation">The included navigation.</param>
-    /// <param name="entityEntry">
-    /// The including entity's <see cref="InternalEntityEntry"/>, or a <see langword="null"/> constant of that type
-    /// when not tracking.
-    /// </param>
-    /// <param name="instance">The materialized including entity.</param>
-    /// <param name="concreteEntityType">The including entity's concrete <see cref="IEntityType"/>.</param>
-    /// <param name="relatedEntity">
-    /// The materialized related entity (reference) or <c>IEnumerable&lt;TIncluded&gt;</c> of them (collection).
-    /// </param>
-    /// <param name="setLoaded">The <c>IncludeExpression.SetLoaded</c> flag.</param>
     public static Expression CreateIncludeCall(
         INavigation navigation,
         Expression entityEntry,

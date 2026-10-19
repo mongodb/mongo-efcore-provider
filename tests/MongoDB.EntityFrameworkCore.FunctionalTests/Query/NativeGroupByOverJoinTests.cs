@@ -29,11 +29,8 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Native GroupBy composed on a join scope (join-then-group): a reference navigation, an explicit/query-syntax
-/// join, a GroupJoin/DefaultIfEmpty left join, a self-join and a two-level chain. Each shape asserts
-/// NativeOnly == DriverLinq == a hand-computed expectation over a seed that includes a dangling required FK, a
-/// null and a dangling optional FK, and an all-null inner value. Group-then-join is a different ordering, still
-/// hard-declined (see NativeGroupByTests.GroupBy_combined_with_Join_*).
+/// Native GroupBy composed on a join scope (join-then-group). Each shape asserts NativeOnly == DriverLinq == a
+/// hand-computed expectation. Group-then-join is still hard-declined (see NativeGroupByTests).
 /// </summary>
 public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -148,7 +145,6 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
     [Fact]
     public void Query_syntax_left_join_group_counts_the_unmatched_outer_row()
     {
-        // GroupJoin + DefaultIfEmpty, grouped by the outer side (the GroupJoin_GroupBy_Aggregate shape).
         // Every owner has an order, so add an order-less owner for this test.
         var seed = CreateSeed();
         var dora = new Owner { Id = ObjectId.GenerateNewId(), Name = "Dora", Region = "West", Rank = 1 };
@@ -191,7 +187,6 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         }
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
-        // Native falls back to driver-LINQ, which throws rather than answering 0 for Dora.
         Assert.ThrowsAny<Exception>(() => Run(MongoQueryMode.Native));
     }
 
@@ -239,7 +234,6 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         }
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
-        // Native falls back to driver-LINQ, which throws rather than inventing a 0 group.
         Assert.ThrowsAny<Exception>(() => Run(MongoQueryMode.Native));
     }
 
@@ -1164,7 +1158,6 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
 
     [Fact]
     public void Concat_of_an_optional_navigation_join_scope_operand_filtered_on_a_matching_inner_value()
-        // Reviewer is optional, so this is a left join like the spec's Order.Customer. Alice reviews only o3 (30).
         => Assert.Equal(
             [1m, 20m, 30m, 30m],
             RunJoinScopeSetOperation(
@@ -1275,7 +1268,6 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
 
     [Fact]
     public void Union_with_a_two_level_join_scope_first_operand_declines_cleanly()
-        // Two reference-navigation filters make a two-level join chain; only a single-level join is admitted.
         => Assert.Equal(
             [1m, 10m, 20m, 30m],
             NativeModeAssert.DeclinesCleanly(mode =>

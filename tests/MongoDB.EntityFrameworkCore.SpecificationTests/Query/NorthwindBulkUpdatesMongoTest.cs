@@ -49,7 +49,6 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
-    // ---- Supported: single-collection, Where-scoped scalar setters ----
     public override Task Delete_Where(bool async)
         => base.Delete_Where(async);
 
@@ -99,8 +98,6 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
 
     public override Task Update_Where_set_property_plus_property(bool async)
         => base.Update_Where_set_property_plus_property(async);
-
-    // ---- Out-of-subset shapes: run and assert the current failure mode (see // Fails: tags) ----
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; set operations unsupported EF-X016
     public override Task Delete_Concat(bool async)

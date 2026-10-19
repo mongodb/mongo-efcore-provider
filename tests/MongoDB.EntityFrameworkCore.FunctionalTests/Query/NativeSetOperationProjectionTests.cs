@@ -303,7 +303,6 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
             RunSorted(SeedWithAnEight(nameof(Concat_of_constant_and_column_keeps_every_copy_of_a_matching_value)),
                 db => db.Entities.Select(x => 8).Concat(db.Entities.Select(x => x.N))));
 
-    // One constant row (filtered first operand) and one matching column row: Concat holds two 8s, Union one.
     [Fact]
     public void Filtered_constant_operand_against_a_matching_column_dedups_only_under_Union()
     {

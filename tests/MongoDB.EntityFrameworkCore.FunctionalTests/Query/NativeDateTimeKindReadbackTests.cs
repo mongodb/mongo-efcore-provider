@@ -152,7 +152,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         return (owners, orders);
     }
 
-    // The reference: the same query over the tracked entities in memory, sorted for an order-independent compare.
     private List<string> Reference((string Owners, string Orders) seed, Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query)
     {
         using var db = new KindContext(database, seed.Owners, seed.Orders, MongoQueryMode.Native);
@@ -170,7 +169,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
 
     private static List<string> Sorted(List<string> values) => values.OrderBy(s => s, StringComparer.Ordinal).ToList();
 
-    // Goes native, agrees with driver-LINQ, and equals the tracked-entity reference, which must carry `expectedKind`.
     private void AssertNativeMatchesEntities(
         DateTimeKind expectedKind, Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query)
     {
@@ -192,14 +190,11 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         Assert.Contains("Local", Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryMode.DriverLinq, query)).Message);
     }
 
-    // Declines under NativeOnly; Native falls back to the same answer as explicit DriverLinq.
     private void AssertDeclines(Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query)
     {
         var seed = Seed();
         NativeModeAssert.DeclinesCleanly(mode => Execute(seed, mode, query));
     }
-
-    // ---- GroupBy keys ----
 
     [Fact]
     public void GroupBy_scalar_key_reads_back_with_the_property_kind()
@@ -286,7 +281,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
 
     [Fact]
     public void Whole_composite_key_beside_its_part_and_an_accumulator_reads_back_with_the_property_kind()
-        // Key.LocalDate and LocalDate must agree in the same row.
         => AssertNativeMatchesEntities(DateTimeKind.Local, (q, _) =>
             q.GroupBy(o => new { o.Country, o.LocalDate })
                 .Select(g => new { g.Key, g.Key.LocalDate, M = g.Max(x => x.NLocalDate) })
@@ -298,8 +292,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
             q.GroupBy(o => new { o.Country, o.LocalDate }).Select(g => new { I = new { g.Key }, C = g.Count() })
                 .Where(x => x.C > 0)
                 .AsEnumerable().Select(x => x.I.Key.Country + F(x.I.Key.LocalDate)).ToList());
-
-    // ---- $min / $max accumulators ----
 
     [Fact]
     public void Group_min_and_max_read_back_with_the_property_kind()
@@ -344,8 +336,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
             q.GroupBy(o => o.Country).Select(g => new { g.Key, M = g.Where(x => x.PlainDate > Threshold).Max(x => x.NLocalDate) })
                 .AsEnumerable().Select(x => x.Key + F(x.M)).ToList());
 
-    // ---- terminal scalar aggregates ----
-
     [Fact]
     public void Terminal_max_and_min_read_back_with_the_property_kind()
         => AssertNativeMatchesEntities(DateTimeKind.Local, (q, _) =>
@@ -367,8 +357,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
     [Fact]
     public void Terminal_max_over_an_owned_reference_reads_back_with_the_property_kind()
         => AssertNativeMatchesEntities(DateTimeKind.Local, (q, _) => [F(q.Max(o => o.Detail.LocalDate))]);
-
-    // ---- projection leaves ----
 
     [Fact]
     public void Nullable_cast_leaf_reads_back_with_the_property_kind()
@@ -519,8 +507,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
                 .Concat(q.GroupBy(o => new { o.Country, D = o.Detail.LocalDate }).Select(g => new { g.Key }))
                 .AsEnumerable().Select(x => x.Key.Country + F(x.Key.D)).ToList());
 
-    // ---- computed dates over a Local-kind property decline ----
-
     [Fact]
     public void Computed_date_projection_over_a_local_kind_property_declines()
         => AssertDeclinesLoudly((q, _) => q.Select(o => new { D = o.LocalDate.AddDays(1) }).AsEnumerable().Select(x => F(x.D)).ToList());
@@ -573,8 +559,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryMode.NativeOnly, (q, _) =>
             q.Select(o => new { D = o.Country == "UK" ? o.LocalDate : o.PlainDate }).AsEnumerable().Select(x => F(x.D)).ToList()));
     }
-
-    // ---- unchanged: filters, and Utc / unconfigured properties stay native ----
 
     [Fact]
     public void Filters_comparing_a_local_kind_property_are_unchanged()
@@ -634,7 +618,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
             "t" + F(q.Max(o => o.PlainDate)),
         ]);
 
-    // ---- server-side date parts over a Local-kind property (EF-459) ----
     // The server extracts parts from the stored UTC instant, but the entity materializes as local time, so Hour/Date/
     // Year... would disagree with the C# value. Every path must decline loudly rather than answer wrongly.
 
@@ -700,7 +683,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
             }
             catch (InvalidOperationException)
             {
-                // declining loudly is acceptable
             }
         }
     }
@@ -720,7 +702,6 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryMode.NativeOnly, (o, _) => query(o)));
     }
 
-    // No over-declining: the same shapes over a Utc-kind property still go native and agree with driver-LINQ and entities.
     [Theory]
     [MemberData(nameof(UtcShapeNames))]
     public void Date_part_over_a_utc_kind_property_still_works(string shape)

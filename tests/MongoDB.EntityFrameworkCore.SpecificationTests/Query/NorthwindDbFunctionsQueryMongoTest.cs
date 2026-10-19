@@ -30,7 +30,6 @@ public class NorthwindDbFunctionsQueryMongoTest
         : base(fixture)
     {
         Fixture.TestMqlLoggerFactory.Clear();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -118,28 +117,22 @@ Customers.
 
     public override async Task Random_return_less_than_1(bool async)
     {
-        // Fails: translation of Random issue EF-234
+        // EF-255: EF.Functions.Random() has no per-row server-side translation; refuse rather than evaluate it once.
         Assert.Contains(
-            "The 'Random' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Random_return_less_than_1(async))).InnerException.Message);
+            "Random",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_return_less_than_1(async))).Message);
 
-        AssertMql(
-            """
-Orders.
-""");
+        AssertMql();
     }
 
     public override async Task Random_return_greater_than_0(bool async)
     {
-        // Fails: translation of Random issue EF-234
+        // EF-255: EF.Functions.Random() has no per-row server-side translation; refuse rather than evaluate it once.
         Assert.Contains(
-            "The 'Random' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Random_return_greater_than_0(async))).InnerException.Message);
+            "Random",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_return_greater_than_0(async))).Message);
 
-        AssertMql(
-            """
-Orders.
-""");
+        AssertMql();
     }
 
 #endif

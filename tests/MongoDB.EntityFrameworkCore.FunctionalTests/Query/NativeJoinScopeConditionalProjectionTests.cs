@@ -33,14 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>o =&gt; o.Customer != null ? o.Customer.Name : "&lt;none&gt;"</c> — against an in-memory LINQ oracle,
 /// including a dangling FK where the null check must fire.
 /// </summary>
-/// <remarks>
-/// The else branch is a non-null sentinel on purpose. EF Core's <c>NullCheckRemovingExpressionVisitor</c>
-/// (run in preprocessing for every provider) collapses <c>caller != null ? caller.Member : null</c> to a bare
-/// <c>caller.Member</c>, so a typed-null else branch never reaches
-/// <c>NativeJoinScopeProjectionBinder.TryBindConditionalProjection</c>; that collapsed shape is handled by the
-/// bare-scalar-leaf arm in <c>MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect</c>. See
-/// <c>NativeJoinScopeProjectionBinderTests.Binds_a_bare_nav_null_check_ternary_over_a_left_join</c> for the unit pin.
-/// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>

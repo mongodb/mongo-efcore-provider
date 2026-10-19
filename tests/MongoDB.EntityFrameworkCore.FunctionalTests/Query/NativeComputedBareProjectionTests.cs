@@ -61,7 +61,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
 
     public class Post
     {
-        // Nullable so a missing stored element field materializes rather than throws.
         public string? Heading { get; set; }
     }
 
@@ -197,7 +196,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
     private IMongoCollection<BsonDocument> SeedRaw(string name)
     {
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
-        // Re-created per seed: InsertMany stamps _id onto the documents, so a shared array would collide.
         raw.InsertMany(RaggedRows.Select(d => (BsonDocument)d.DeepClone()));
         return raw;
     }
@@ -212,12 +210,10 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         => database.MongoDatabase.GetCollection<InterfaceBlog>(
             SeedRaw(name).CollectionNamespace.CollectionName);
 
-    // The same ragged documents, read through the ISet-typed model; only the declared navigation type differs.
     private IMongoCollection<SetBlog> SeedSet(string name)
         => database.MongoDatabase.GetCollection<SetBlog>(
             SeedRaw(name).CollectionNamespace.CollectionName);
 
-    // The same four array states under a `Tags` element.
     private IMongoCollection<TaggedBlog> SeedTagged(string name)
     {
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -232,7 +228,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         return database.MongoDatabase.GetCollection<TaggedBlog>(raw.CollectionNamespace.CollectionName);
     }
 
-    // No ragged rows: the control separating "aborts on a ragged array" from "aborts on a primitive collection".
     private IMongoCollection<TaggedBlog> SeedTaggedWellFormed(string name)
     {
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name + "_wf"));
@@ -266,7 +261,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── The owned-reference-hop fixture, ragged in the same four states ─────────────────────────────────
     //
     // The hop fixture in NativeOwnedCollectionCountTests writes `Home.Notes` as [] on every row, so it can't see
     // the missing/null hazard for a hop navigation.
@@ -418,8 +412,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         }
     }
 
-    // ── Arithmetic and cast bare leaves ─────────────────────────────────────────────────────────────────
-
     [Fact]
     public void Bare_arithmetic_projection_leaf_goes_native_for_every_array_state()
     {
@@ -447,7 +439,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var factor = 3;
         var prefix = "p";
 
-        // NativeOnly succeeding is the routing proof; the other modes pin values on the routes users get.
         foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
@@ -519,12 +510,9 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         {
             using var db = CreateContext(collection, mode);
 
-            // Direct route: populating Projection would flip CanPushDown and hand the Select to the driver, so this
-            // is the leg that aborts under explicit DriverLinq if admitted.
             Assert.Equal(ExpectedDoubledCounts,
                 db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts.Count * 2).ToList());
 
-            // Late-decline route: the leg that aborts under default Native if admitted.
             Assert.Equal(ExpectedDoubledCounts,
                 db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
                     .Select(b => b.Posts.Count * 2).ToList());
@@ -609,7 +597,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var collection = SeedSet(nameof(Set_typed_collection_navigation_bare_count_is_declined_and_answers_correctly));
         var prefix = "p";
 
-        // Collect-then-assert so an early regression can't hide the abort legs; see LegOutcome.
         var expected = "[" + string.Join(",", ExpectedCounts) + "]";
         var legs = new List<(string Leg, string Outcome)>();
 
@@ -702,8 +689,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         }
     }
 
-    // ── The two size kinds ──────────────────────────────────────────────────────────────────────────────
-
     [Fact]
     public void Bare_filtered_count_leaf_goes_native_for_every_array_state()
     {
@@ -746,7 +731,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
             var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
 
             Assert.Contains("\"_v\" : { \"$size\" : { \"$ifNull\" : [\"$Posts\", []] } }", mql);
-            // Negative too: the bare form is the one that aborts, and both could appear.
             Assert.DoesNotContain("\"$size\" : \"$Posts\"", mql);
         }
 
@@ -788,7 +772,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                 db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts.Count).Take(3).ToList());
         }
 
-        // Late-decline route, which would abort if the rewrite were not reached.
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContextWithLogging(collection, mode, out var spy);
@@ -923,7 +906,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var (collection, _) = SeedHop(nameof(Bare_count_leaf_through_an_owned_reference_HOP_is_declined_and_answers_correctly));
         var prefix = "h";
 
-        // Collect-then-assert so an early regression can't hide the abort legs; see LegOutcome.
         var expected = "[" + string.Join(",", ExpectedCounts) + "]";
         var legs = new List<(string Leg, string Outcome)>();
 
@@ -931,11 +913,9 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         {
             using var db = CreateHopContext(collection, mode);
 
-            // Direct route: the leg that aborts under explicit DriverLinq if admitted.
             legs.Add(($"{mode} direct", LegOutcome(
                 () => db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Home.Notes.Count).ToList())));
 
-            // Late-decline route: the leg that aborts under default Native if admitted.
             legs.Add(($"{mode} late-decline", LegOutcome(
                 () => db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
                     .Select(b => b.Home.Notes.Count).ToList())));
@@ -968,7 +948,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
             SeedHop(nameof(Bare_FILTERED_count_leaf_through_an_owned_reference_HOP_is_declined_and_answers_correctly));
         var prefix = "h";
 
-        // Collect-then-assert, as above.
         var expected = "[" + string.Join(",", ExpectedFilteredCounts) + "]";
         var legs = new List<(string Leg, string Outcome)>();
 
@@ -1012,7 +991,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var heading = "h0";
         var prefix = "p";
 
-        // Collect-then-assert: NativeOnly runs first, and must not stop the explicit-DriverLinq leg running.
         var expected = "[" + string.Join(",", ExpectedFilteredCounts) + "]";
         var legs = new List<(string Leg, string Outcome)>();
 
@@ -1081,7 +1059,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         Assert.Equal(ExpectedCounts, oracle);
     }
 
-    // ── Negate and widening-cast numeric leaves ──────────────────────────────────────────────────────────
     //
     // `-x` renders as {$subtract: [0, x]} and a widening cast is dropped by TryTranslateValue, so the server computes
     // the whole leaf. The read side must then read `_v` (or the member alias) once: re-applying Negate client-side
@@ -1221,7 +1198,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
             Seed(nameof(Negate_leaf_answers_correctly_beside_a_whole_entity_and_on_the_LATE_decline_route));
         var prefix = "p";
 
-        // Beside a whole entity: the mixed shaper evaluates the client form over whole documents.
         var mixed = NativeModeAssert.NativeAndParity(mode =>
         {
             using var db = CreateContext(collection, mode);

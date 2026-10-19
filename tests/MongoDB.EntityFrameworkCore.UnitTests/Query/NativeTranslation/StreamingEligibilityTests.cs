@@ -26,8 +26,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 /// </summary>
 public class StreamingEligibilityTests
 {
-    // --- Simple flat entity with int PK ---
-
     private class FlatEntityIntId
     {
         public int Id { get; set; }
@@ -42,8 +40,6 @@ public class StreamingEligibilityTests
         Assert.True(StreamingEligibility.IsEligible(entityType));
     }
 
-    // --- Simple flat entity with ObjectId PK ---
-
     private class FlatEntityObjectId
     {
         public ObjectId Id { get; set; }
@@ -57,8 +53,6 @@ public class StreamingEligibilityTests
         var entityType = GetEntityType<FlatEntityObjectId>();
         Assert.True(StreamingEligibility.IsEligible(entityType));
     }
-
-    // --- Composite primary key (non-owned) makes entity ineligible ---
 
     private class CompositeKeyEntity
     {
@@ -76,8 +70,6 @@ public class StreamingEligibilityTests
         });
         Assert.False(StreamingEligibility.IsEligible(entityType));
     }
-
-    // --- Owned collection navigation makes entity ineligible ---
 
     private class OwnedCollectionItem
     {
@@ -102,8 +94,6 @@ public class StreamingEligibilityTests
         Assert.True(StreamingEligibility.IsEligible(entityType));
     }
 
-    // --- Owned reference navigation to an eligible owned type: entity is eligible ---
-
     private class OwnedAddress
     {
         public string Street { get; set; } = "";
@@ -127,8 +117,6 @@ public class StreamingEligibilityTests
         Assert.True(StreamingEligibility.IsEligible(entityType));
     }
 
-    // --- TPH hierarchy (has base type) makes entity ineligible ---
-
     private abstract class AnimalBase
     {
         public int Id { get; set; }
@@ -151,8 +139,6 @@ public class StreamingEligibilityTests
         Assert.False(StreamingEligibility.IsEligible(entityType));
     }
 
-    // --- No primary key makes entity ineligible ---
-
     private class NoPrimaryKey
     {
         public string Name { get; set; } = "";
@@ -167,8 +153,6 @@ public class StreamingEligibilityTests
         });
         Assert.False(StreamingEligibility.IsEligible(entityType));
     }
-
-    // --- Owned collection whose element type also owns a collection: root is ineligible (collection-of-collection) ---
 
     private class InnerWithCollection
     {
@@ -195,8 +179,6 @@ public class StreamingEligibilityTests
         });
         Assert.False(StreamingEligibility.IsEligible(entityType));
     }
-
-    // --- Owned collection whose element type owns a single REFERENCE navigation: root is ineligible ---
 
     private class RefType
     {
@@ -226,8 +208,6 @@ public class StreamingEligibilityTests
         });
         Assert.False(StreamingEligibility.IsEligible(entityType));
     }
-
-    // --- Helper ---
 
     private static IEntityType GetEntityType<T>(Action<ModelBuilder>? configure = null) where T : class
     {

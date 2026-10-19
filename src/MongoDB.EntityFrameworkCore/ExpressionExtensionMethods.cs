@@ -126,32 +126,22 @@ internal static class ExpressionExtensionMethods
     /// <param name="body">The projection body.</param>
     /// <param name="members">The pairs read, or empty on <see langword="false"/>.</param>
     /// <param name="allowPositionalConstructorArguments">
-    /// Also admit <c>new SomeNamedClass(args)</c>, whose <see cref="NewExpression.Members"/> is always
-    /// <see langword="null"/>, naming arguments <see cref="PositionalConstructorArgumentAliasPrefix"/> + index.
-    /// Only for callers that address values by index (the <c>GroupBy</c>/<c>SelectMany</c> result selectors);
-    /// <c>NativeProjectionBinder</c>/<c>NativeJoinScopeProjectionBinder</c> must not, since they resolve aliases
-    /// by real <c>MemberInfo</c> and would never find a synthetic name.
+    /// Also admit <c>new SomeNamedClass(args)</c> (<see cref="NewExpression.Members"/> is null), naming arguments
+    /// <see cref="PositionalConstructorArgumentAliasPrefix"/> + index. Only for callers addressing values by index
+    /// (GroupBy/SelectMany result selectors); the projection binders resolve aliases by real <c>MemberInfo</c> and must not.
     /// </param>
     /// <param name="rowIndependentConstructorArgumentsOver">
-    /// When non-null, also admit a <see cref="MemberInitExpression"/> whose constructor arguments are all
-    /// row-independent over this selector parameter (<c>NativeProjectionBinder.IsRowIndependentLeaf</c>):
-    /// <c>new Dto(param) { A = x.A }</c>. Only the bindings are returned; the constructor arguments stay on the
-    /// shaper, which evaluates them client-side. Only for <c>NativeProjectionBinder</c>, whose read side evaluates
-    /// row-independent subtrees in place.
+    /// When non-null, also admit a <see cref="MemberInitExpression"/> whose constructor arguments are all row-independent
+    /// over this selector parameter (<c>new Dto(param) { A = x.A }</c>); only the bindings are returned and the shaper
+    /// evaluates the arguments client-side. Only for <c>NativeProjectionBinder</c>.
     /// </param>
     /// <param name="allowContainerElements">
-    /// Also admit a positional container, a non-empty <c>new[] { a, b }</c> (<see cref="ExpressionType.NewArrayInit"/>),
-    /// naming element <c>i</c> <see cref="PositionalConstructorArgumentAliasPrefix"/> + <c>i</c> like a positional
-    /// constructor argument. Only for the plain-<c>Select</c> container callers, which bind every element by index
-    /// (<c>NativeProjectionBinder</c>'s container arm and its <c>BuildPositionalCtorProjectionShaper</c> reader;
-    /// <c>NativeJoinScopeProjectionBinder</c> and its <c>BuildSelectManyResultShaper</c> reader). Deliberately separate
-    /// from <paramref name="allowPositionalConstructorArguments"/>, which the <c>GroupBy</c>/<c>SelectMany</c> result
-    /// selectors share: widening that flag would widen their gates.
+    /// Also admit a non-empty <c>new[] { a, b }</c>, naming element <c>i</c> like a positional constructor argument.
+    /// Only for the plain-<c>Select</c> callers that bind every element by index; kept separate from
+    /// <paramref name="allowPositionalConstructorArguments"/> because widening that flag would widen the GroupBy/SelectMany gates.
     /// <para>
-    /// A <see cref="ListInitExpression"/> (<c>new List&lt;object&gt; { a, b }</c>) is not admitted: the index-based
-    /// shaper can only be read off the native <c>$project</c>, and unlike an array the driver cannot push a list
-    /// initializer down (ExpressionNotSupportedException), so explicit <c>DriverLinq</c> or a late fallback would read the
-    /// synthetic aliases off whole documents and fail where the generic shaper works today.
+    /// A <see cref="ListInitExpression"/> is not admitted: the driver cannot push a list initializer down, so DriverLinq
+    /// or a late fallback would read the synthetic aliases off whole documents and fail.
     /// </para>
     /// </param>
     internal static bool TryGetProjectionMembers(

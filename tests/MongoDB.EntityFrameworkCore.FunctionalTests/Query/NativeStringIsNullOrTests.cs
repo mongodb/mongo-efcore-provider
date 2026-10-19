@@ -51,7 +51,6 @@ public class NativeStringIsNullOrTests(TemporaryDatabaseFixture database) : ICla
         public string? Text { get; set; }
     }
 
-    // (label, text) for every seeded row; a missing field reads as null in .NET, same as an explicit null.
     private static readonly (string Label, string? Text)[] Rows =
     [
         ("null", null),

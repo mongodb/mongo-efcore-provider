@@ -41,9 +41,7 @@ internal sealed class RuntimeParameterValues : IReadOnlyDictionary<string, objec
         _evaluators = evaluators;
     }
 
-    /// <summary>
-    /// Returns <paramref name="inner"/> unchanged when there are no evaluators, otherwise a fresh wrapper.
-    /// </summary>
+    /// <summary>Returns <paramref name="inner"/> unchanged when there are no evaluators, otherwise a fresh wrapper.</summary>
     public static IReadOnlyDictionary<string, object?> Wrap(
         IReadOnlyDictionary<string, object?> inner,
         IReadOnlyDictionary<string, Func<IReadOnlyDictionary<string, object?>, object?>>? evaluators)

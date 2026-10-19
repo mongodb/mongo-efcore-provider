@@ -18,15 +18,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal abstract class ObjectAccessExpression : Expression, IPrintableExpression, IAccessExpression
 {
-    /// <summary>
-    /// Create an <see cref="ObjectAccessExpression"/>.
-    /// </summary>
-    /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the object.</param>
-    /// <param name="required">
-    /// <see langword="true"/> if this object is required,
-    /// <see langword="false"/> if it is optional.
-    /// </param>
-    /// <param name="name">The field name to access in the document.</param>
     protected ObjectAccessExpression(
         Expression accessExpression,
         bool required,
@@ -37,17 +28,11 @@ internal abstract class ObjectAccessExpression : Expression, IPrintableExpressio
         Name = name;
     }
 
-    /// <summary>
-    /// The <see cref="INavigation"/> this object access relates to, or <see langword="null"/> when the
-    /// access is not described by a navigation.
-    /// </summary>
+    /// <summary>The navigation this access relates to, or <see langword="null"/> when none describes it.</summary>
     public virtual INavigation? Navigation
         => null;
 
-    /// <summary>
-    /// The <see cref="IEntityType"/> this object access relates to when there is no navigation, otherwise
-    /// <see langword="null"/>.
-    /// </summary>
+    /// <summary>The entity type this access relates to when there is no navigation, otherwise <see langword="null"/>.</summary>
     internal virtual IEntityType? EntityType
         => null;
 
@@ -68,11 +53,7 @@ internal abstract class ObjectAccessExpression : Expression, IPrintableExpressio
     protected override Expression VisitChildren(ExpressionVisitor visitor)
         => Update(visitor.Visit(AccessExpression));
 
-    /// <summary>
-    /// Create a copy of this expression with the given parent access expression, or return this
-    /// instance unchanged when the parent access expression is unchanged.
-    /// </summary>
-    /// <param name="outerExpression">The <see cref="Expression"/> of the parent containing the object.</param>
+    /// <summary>Copies this expression with a new parent access expression, or returns it unchanged if equal.</summary>
     public abstract ObjectAccessExpression Update(Expression outerExpression);
 
     void IPrintableExpression.Print(ExpressionPrinter expressionPrinter)
@@ -91,9 +72,8 @@ internal abstract class ObjectAccessExpression : Expression, IPrintableExpressio
                    && Equals(objectAccessExpression)));
 
     /// <summary>
-    /// Compare the members common to all <see cref="ObjectAccessExpression"/> subtypes. The caller has
-    /// already established that <paramref name="objectAccessExpression"/> is of the same runtime type, so
-    /// overrides can safely cast to add their distinguishing member.
+    /// Compares the members common to all subtypes; the caller has established the same runtime type, so overrides
+    /// can safely cast.
     /// </summary>
     protected virtual bool Equals(ObjectAccessExpression objectAccessExpression)
         => Name == objectAccessExpression.Name

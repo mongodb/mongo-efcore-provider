@@ -69,7 +69,6 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
     private static string Mql(List<string> logs)
         => Assert.Single(logs, l => l.Contains("Executed MQL query"));
 
-    // A field-to-field comparison has no query-dialect form, so Not over it renders via $expr.
     [Fact]
     public void NativeOnly_not_over_field_to_field_comparison_succeeds_with_expected_mql()
     {
@@ -101,7 +100,6 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal(driverIds, nativeIds);
     }
 
-    // Mixed dialect: an indexable clause alongside the $expr-wrapped Not.
     [Fact]
     public void NativeOnly_not_over_field_to_field_comparison_composed_with_and_succeeds()
     {

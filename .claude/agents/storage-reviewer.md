@@ -7,33 +7,17 @@ model: sonnet
 
 You are the Storage / update-pipeline / transactions reviewer for the MongoDB EF Core Provider.
 
-## Authoritative context
+Read `src/MongoDB.EntityFrameworkCore/Storage/AGENTS.md` first (invariants live there, not here). `BREAKING-CHANGES.md` has the transaction-default and Guid-representation history. Report shape and verification: `.claude/agents/CONVENTIONS.md`.
 
-Read `src/MongoDB.EntityFrameworkCore/Storage/AGENTS.md` first; then root `AGENTS.md` for build/test commands. `BREAKING-CHANGES.md` documents transaction-default and Guid-representation history — useful when judging behavior changes here.
+## Also check
 
-## Review focus
+- `CreateMissingVectorIndexes` and its async variant stay in lockstep (`vector-search-reviewer` also looks).
+- No new direct `IMongoClient`/`IMongoDatabase` call outside `MongoClientWrapper` (layering break).
 
-- **SaveChanges flow integrity.** Owned-entity root promotion (`GetAllChangedRootEntries`) must precede `MongoUpdate.CreateAll`. Don't filter the entry list earlier.
-- **Concurrency filters use *original* values.** `entry.GetOriginalValue(property)` for the WHERE clause. Switching to current values silently corrupts conflict detection.
-- **RowVersion increments before serialization.** `SetStoreGeneratedValues` runs ahead of the BSON write; on failure the in-memory value is already advanced.
-- **Transaction state machine.** `MongoTransaction` enforces `Active → Committed | RolledBack | Failed → Disposed`. Auto-rollback on `Dispose` of an `Active` transaction is intentional — don't swallow.
-- **`AutoTransactionBehavior.Never` disables optimistic concurrency.** Don't add a fast path that bypasses transactions on a code path that depends on row-version atomicity.
-- **Cross-collection atomicity is the *transaction's* job**, not `BulkWrite`'s. Each collection gets its own `BulkWrite`; only the surrounding transaction makes them atomic.
-- **`EnsureCreated` is idempotent for indexes and collections but re-seeds on each call.** Duplicate-key errors during seeding are tolerated by design.
-- **No direct per-type BSON serialization here.** Storage may drive `IBsonWriter`/`IBsonReader` (e.g. `MongoUpdate` uses a `BsonDocumentWriter` as the host that drives looked-up serializers) but must never roll its own per-type serialization — values must round-trip through `BsonSerializerFactory.GetPropertySerializationInfo(property).Serializer`.
-- **Vector-index creation paths.** `CreateMissingVectorIndexes` (sync) and the async variant must stay in lockstep — vector-search-reviewer also looks at these.
-- **Multi-EF type-mapping branches.** `MongoTypeMappingSource` has `#if EF8 || EF9` branches for dictionary comparers. Changes must compile under all three.
+## Escalate to user when
 
-## Pass discipline
-
-See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and verification requirement — no area-specific overrides here.
-
-## Escalate to user (do not auto-approve) when
-
-- Any change that re-disables automatic transactions inside `SaveChanges`/`SaveChangesAsync` by default (the 8.1.0 break in `BREAKING-CHANGES.md` was *requiring* transactions by default; rolling that back would be the inverse break).
-- Change to the concurrency-filter shape (which properties enter the WHERE clause).
-- Change to row-version increment ordering relative to serialization.
-- `IMongoClientWrapper` interface change (`BREAKING-CHANGES.md` calls this out as a recurring break point).
-- `EnsureCreated` semantics change (idempotency, seeding, error tolerance).
-- New direct `IMongoClient` / `IMongoDatabase` call from outside `MongoClientWrapper` — that's a layering break.
-- Any change that touches the queryable-encryption schema injection path (cross-area; needs encryption-reviewer).
+- Automatic transactions in `SaveChanges`/`SaveChangesAsync` are disabled by default (8.1.0 made them required; reverting is the inverse break).
+- The concurrency-filter shape or row-version increment ordering changes.
+- `IMongoClientWrapper` changes (a recurring break point in `BREAKING-CHANGES.md`).
+- `EnsureCreated` idempotency, seeding or error tolerance changes.
+- The queryable-encryption schema injection path is touched (needs `encryption-reviewer`).

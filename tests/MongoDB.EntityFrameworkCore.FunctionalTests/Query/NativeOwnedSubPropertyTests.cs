@@ -106,8 +106,6 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         var collection = SeedPeople(nameof(Owned_subproperty_equality_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PersonModel);
 
-        // Materialize whole entities rather than a bare-scalar Select, which isn't native and would mask whether
-        // the predicate went native under NativeOnly.
         var names = db.Entities.AsNoTracking().Where(p => p.Home.City == "NYC").ToList().Select(p => p.Name).ToList();
 
         Assert.Equal(["Ann"], names);
@@ -143,7 +141,6 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         var collection = SeedPeople(nameof(Owned_subproperty_orderby_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PersonModel);
 
-        // Absent-Home doc (Cid) sorts first (missing field), then LA, then NYC.
         var names = db.Entities.AsNoTracking()
             .Where(p => p.Name != "Cid").OrderBy(p => p.Home.City).ToList()
             .Select(p => p.Name).ToList();
@@ -159,7 +156,6 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         using var native = CreateContext(collection, MongoQueryMode.Native, PersonModel);
         using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, PersonModel);
 
-        // Includes the absent-Home doc in the candidate set; both paths must agree it does not match.
         var nativeNames = native.Entities.AsNoTracking()
             .Where(p => p.Home.City == "NYC").Select(p => p.Name).OrderBy(n => n).ToList();
         var driverNames = driver.Entities.AsNoTracking()
@@ -232,7 +228,6 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         var collection = SeedPeople(
             nameof(Owned_required_subproperty_projection_over_absent_owned_reads_default_but_whole_entity_throws));
 
-        // Premises: the navigation is required and the leaf is non-nullable.
         using (var probe = CreateContext(collection, MongoQueryMode.Native, PersonModel))
         {
             var homeNav = probe.Model.FindEntityType(typeof(Person))!.FindNavigation(nameof(Person.Home))!;

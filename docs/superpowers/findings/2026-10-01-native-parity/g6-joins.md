@@ -272,6 +272,7 @@ Test: UnsupportedQueriesTests.Select_can_select_foreign_navigation x 3 modes wit
 Check other Inner-leaf native tests still stream-free: expect no perf delta (they were already DOM when their root was ineligible).
 
 ### 3.7 D7: `Orders.Where(..).Include(o=>o.Customer)` as a Join inner (identity-resolution spec test)  - effort L, and WRONG ON MAIN [M]
+> **Resolved 2026-10-08 (EF-322):** option (b) was built, simpler than estimated: the inner `Include` is a pending selector on the join result, so only the inner `Where` needed support (carried on the `$lookup` as `InnerPredicate`). Design/spike/plan: `docs/superpowers/specs/2026-10-08-native-join-filtered-inner-reference-include-design.md`, `docs/superpowers/plans/2026-10-08-native-join-filtered-inner.md`.
 Evidence: the baseline MQL (NorthwindMiscellaneousQueryMongoTest.cs:4383, identical on main :4297 for EF10) has NO `OrderID < 10500` `$match`/pipeline anywhere. The spec
 test asserts only `Assert.Same` identity so a dropped inner filter is invisible. EF8/EF9 on main: `AssertTranslationFailed` (EF-X020), so only EF10 "worked" on main - and
 returned unfiltered inner rows. Per the brief this is wrong-on-main: RECORD IT FOR MAIN (probe: seed Orders 10248..11077 for ALFKI, run the query on main, `Assert.DoesNotContain(result, r => r.o.OrderID >= 10500)`).

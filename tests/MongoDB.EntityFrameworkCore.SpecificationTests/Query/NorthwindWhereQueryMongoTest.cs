@@ -31,7 +31,6 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
         : base(fixture)
     {
         ClearLog();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -84,7 +83,13 @@ Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["
 
     public override async Task Where_as_queryable_expression(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Where_as_queryable_expression(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Where_as_queryable_expression(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_lookup_Orders" : { "$elemMatch" : { "CustomerID" : "ALFKI" } } } }
+""");
     }
 
     public override async Task<string> Where_simple_closure(bool async)
@@ -2216,6 +2221,13 @@ Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : [{ "$ifNull"
         await AssertTranslationFailed(() =>
             base.Where_bitwise_xor(async));
 
+        // A refused query logs no MQL when driver-LINQ is not attempted.
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+            return;
+        }
+
         AssertMql(
             """
             Customers.
@@ -2444,7 +2456,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         await AssertTranslationFailed(() =>
             base.Where_datetimeoffset_now_component(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2456,7 +2468,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         await AssertTranslationFailed(() =>
             base.Where_datetimeoffset_utcnow_component(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2558,7 +2570,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$
         await AssertTranslationFailed(() =>
             base.Like_with_non_string_column_using_ToString(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2570,7 +2582,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$
         await AssertTranslationFailed(() =>
             base.Like_with_non_string_column_using_double_cast(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2597,6 +2609,10 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$
     }
 
 #endif
+
+    // A translation refusal logs MQL only when the driver-LINQ fallback attempts the query first; NativeOnly refuses before that.
+    private void AssertMqlLoggedByFallback(params string[] expected)
+        => AssertMql(MongoSpecTestHelpers.IsNativeOnly ? [] : expected);
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

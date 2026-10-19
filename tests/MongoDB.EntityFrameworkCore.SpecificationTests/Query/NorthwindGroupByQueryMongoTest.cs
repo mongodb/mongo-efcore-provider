@@ -33,7 +33,6 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         : base(fixture)
     {
         Fixture.TestMqlLoggerFactory.Clear();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -1248,23 +1247,13 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
     public override async Task GroupBy_aggregate_using_grouping_key_Pushdown(bool async)
     {
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            // Fails: GroupBy issue EF-149
-            await AssertTranslationFailed(() => base.GroupBy_aggregate_using_grouping_key_Pushdown(async));
+        // Max(e => g.Key) inside the accumulator reads the per-document key field (EF-457).
+        await base.GroupBy_aggregate_using_grouping_key_Pushdown(async);
 
-            AssertMql();
-        }
-        else
-        {
-            // Max(e => g.Key) inside the accumulator reads the per-document key field (EF-457).
-            await base.GroupBy_aggregate_using_grouping_key_Pushdown(async);
-
-            AssertMql(
-    """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 }, "__agg1" : { "$max" : "$CustomerID" } } }, { "$match" : { "$expr" : { "$gt" : ["$__agg0", 10] } } }, { "$project" : { "Key" : "$_id", "Max" : "$__agg1", "_id" : 0 } }, { "$sort" : { "Key" : 1 } }, { "$limit" : 20 }, { "$skip" : 4 }
-            """);
-        }
+        AssertMql(
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 }, "Max" : { "$max" : "$CustomerID" } } }, { "$match" : { "$expr" : { "$gt" : ["$__agg0", 10] } } }, { "$project" : { "Key" : "$_id", "Max" : "$Max", "_id" : 0 } }, { "$sort" : { "Key" : 1 } }, { "$limit" : 20 }, { "$skip" : 4 }
+""");
     }
 
     public override async Task GroupBy_aggregate_Pushdown_followed_by_projecting_Length(bool async)
@@ -2473,7 +2462,6 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_i
         }
     }
 
-    //AssertMql(" ");
     public override async Task Complex_query_with_group_by_in_subquery5(bool async)
     {
         // Fails: GroupBy issue EF-149. The accepted types stay widened here: the driver tries to BSON-serialize

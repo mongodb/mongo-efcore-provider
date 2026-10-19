@@ -79,7 +79,6 @@ public class AddEntityTests(TemporaryDatabaseFixture database)
 
         Assert.Same(expected, db.Entities.First());
 
-        // Check with C# Driver for second opinion
         var directFound = collection.Find(f => f._id == expected._id).Single();
         Assert.Equal(expected._id, directFound._id);
         Assert.Equal(expected.name, directFound.name);
@@ -97,7 +96,6 @@ public class AddEntityTests(TemporaryDatabaseFixture database)
 
         Assert.Same(expected, db.Entities.First());
 
-        // Check with C# Driver for second opinion
         var directFound = collection.Find(f => f._id == expected._id).Single();
         Assert.NotEqual(ObjectId.Empty, directFound._id);
         Assert.NotEqual(default, directFound._id);
@@ -117,7 +115,6 @@ public class AddEntityTests(TemporaryDatabaseFixture database)
 
         Assert.Same(expected, db.Entities.First());
 
-        // Check with C# Driver for second opinion
         var directFound = collection.Find(f => f._id == expected._id).Single();
         Assert.NotEqual(ObjectId.Empty, directFound._id);
         Assert.NotEqual(default, directFound._id);

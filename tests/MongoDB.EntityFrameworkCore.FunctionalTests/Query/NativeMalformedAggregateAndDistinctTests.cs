@@ -135,7 +135,6 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
         ["distinct_conv_union_distinct"] = (q => Sorted(q.Select(x => x.Conv).Distinct().Union(q.Where(x => x.Title == "a").Select(x => x.Conv).Distinct())),
             ["0", Throws, "0,1,2", Throws, Throws]),
         ["flag_distinct_anon2"] = (q => Sorted(q.Select(x => new { x.Title, x.Flag }).Distinct().AsEnumerable().Select(a => a.Flag)), ["False", "False", "False,False,True", "False,False,True", "False,False"]),
-        // Parity pins: already matched main before Task 1.15.
         ["sum_bare"] = (q => One(q.Sum(x => x.Rank)), ["0", "0", "3", "3", "0"]),
         ["sum_add1"] = (q => One(q.Sum(x => x.Rank + 1)), ["0", "0", "5", "5", "0"]),
         ["distinct_add1"] = (q => Sorted(q.Select(x => x.Rank + 1).Distinct()), [Throws, Throws, Throws, Throws, Throws]),

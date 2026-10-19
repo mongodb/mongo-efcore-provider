@@ -43,8 +43,7 @@ internal static class StreamingEligibility
             return false;
         }
 
-        // Owned collection elements have a composite key (owner FK + synthesized ordinal) that the rewriter
-        // resolves from the owner / loop counter, so only non-owned-type key properties count.
+        // Owned collection elements' composite key is resolved by the rewriter from the owner / loop counter; only non-owned keys count.
         var pk = entityType.FindPrimaryKey();
         if (pk == null)
         {
@@ -72,9 +71,8 @@ internal static class StreamingEligibility
                 return false;
             }
 
-            // The streaming rewriter can't handle includes inside a collection element (FindCollectionShaper
-            // doesn't descend into one); it would throw NativeTranslationNotSupportedException at shaper
-            // compile. Reject so the query uses the DOM shaper.
+            // FindCollectionShaper doesn't descend into a collection element, so the rewriter would throw
+            // NativeTranslationNotSupportedException at shaper compile; reject so the query uses the DOM shaper.
             if (navigation.IsCollection && navigation.TargetEntityType.GetNavigations().Any())
             {
                 return false;

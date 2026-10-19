@@ -113,8 +113,6 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Reference_include_goes_native_under_Native_mode()
     {
-        // Verifies (a) the materialized graph is correct and (b) the pipeline has the native $lookup+$unwind
-        // shape rather than the driver's $$ROOT/_outer/_inner LeftJoin shape.
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateCustomers") + Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateOrders") + Guid.NewGuid().ToString("N")[..8];
 
@@ -131,12 +129,10 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
 
         var orders = db.Orders.Include(o => o.Customer).OrderBy(o => o.OrderDescription).ToList();
 
-        // (a) Correct materialized graph: both orders have their Customer navigation populated.
         Assert.Equal(2, orders.Count);
         Assert.All(orders, o => Assert.NotNull(o.Customer));
         Assert.All(orders, o => Assert.Equal("Alice", o.Customer.FullName));
 
-        // (b) Native shape, not the driver-LINQ LeftJoin shape.
         var mql = Assert.Single(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains("_lookup_Customer", mql);   // native $lookup alias for the confirmed reference Include
         Assert.Contains(
@@ -167,7 +163,6 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         var logs = new List<string>();
         using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.NativeOnly);
 
-        // Should NOT throw NativeTranslationNotSupportedException under NativeOnly.
         var results = db.Customers.Include(c => c.Orders).ToList();
 
         Assert.NotEmpty(results);
@@ -359,7 +354,6 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
 
         using var db = new NestedOrderCustomerDbContext(database, ordersName, customersName, orderDetailsName);
 
-        // Should NOT throw NativeTranslationNotSupportedException under NativeOnly.
         var customers = db.Customers.Include(c => c.Orders).ThenInclude(o => o.OrderDetails).ToList();
 
         var customer = Assert.Single(customers);
@@ -441,7 +435,6 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         using var db = new NestedOrderCustomerDbContext(
             database, ordersName, customersName, orderDetailsName, MongoQueryMode.NativeOnly, loggerFactory);
 
-        // Should NOT throw NativeTranslationNotSupportedException under NativeOnly.
         var results = db.Customers
             .Include(c => c.Orders).ThenInclude(o => o.OrderDetails)
             .Select(c => new { c.FullName, Orders = c.Orders.ToList() })
@@ -494,7 +487,6 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         var logs = new List<string>();
         using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.NativeOnly);
 
-        // Should NOT throw NativeTranslationNotSupportedException under NativeOnly.
         var counts = db.Customers
             .Select(c => new { c._id, OrderCount = c.Orders.Count })
             .ToList();
@@ -530,21 +522,31 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Projected_collection_Count_with_predicate_still_falls_back()
+    public void Projected_collection_Count_with_predicate_goes_native()
     {
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateProjCountCustomers3") + Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateProjCountOrders3") + Guid.NewGuid().ToString("N")[..8];
 
+        var customerId = ObjectId.GenerateNewId();
+        database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
+            new BsonDocument { { "_id", customerId }, { "name", "Alice" } });
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Order 1" }, { "cust_id", customerId } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "" }, { "cust_id", customerId } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Order 3" }, { "cust_id", customerId } },
+        ]);
+
         var logs = new List<string>();
         using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.NativeOnly);
 
-        // c.Orders.Count(o => ...) is a correlated Count-with-predicate, which NativeProjectionBinder doesn't
-        // recognize and the fallback doesn't support either, so it throws InvalidOperationException in every
-        // mode rather than emitting a wrong native $size.
-        Assert.Throws<InvalidOperationException>(
-            () => db.Customers
-                .Select(c => new { c._id, OrderCount = c.Orders.Count(o => o.OrderDescription != "") })
-                .ToList());
+        // c.Orders.Count(o => ...) is a correlated Count-with-predicate: a `$size` of a `$filter` over the `$lookup` array (it
+        // used to throw InvalidOperationException in every mode). NativeOnly proves it is native; the empty description
+        // is the one order the predicate excludes.
+        var counts = db.Customers
+            .Select(c => new { c._id, OrderCount = c.Orders.Count(o => o.OrderDescription != "") })
+            .ToList();
+
+        Assert.Equal(2, Assert.Single(counts).OrderCount);
     }
 }
 #endif

@@ -153,16 +153,119 @@ public class NativeProjectedCollectionListLeafTests
         AssertDeclined(q => q.Select(c => new { A = c.Orders.ToList(), B = c.Orders.ToList() }));
     }
 
+    /// <summary>
+    /// Not this recognizer's shape (it declines a filtered Include), but an element leaf: a keyed array lookup whose sub-pipeline carries
+    /// the filter, read back through the member's own alias.
+    /// </summary>
     [Fact]
-    public void A_Where_directly_on_the_projected_nav_declines()
+    public void A_Where_directly_on_the_projected_nav_is_an_element_leaf()
     {
-        AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.Where(o => o.Id > 0).ToList() }));
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.Where(o => o.Id > 0).ToList() }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.True(lookup.IsCorrelatedArraySource);
+        Assert.NotNull(lookup.InnerPredicate);
+        Assert.Equal(["Orders"], lookup.ElementLeafAliases);
     }
 
     [Fact]
-    public void An_OrderBy_directly_on_the_projected_nav_declines()
+    public void An_OrderBy_directly_on_the_projected_nav_is_an_element_leaf()
     {
-        AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).ToList() }));
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).ToList() }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.True(lookup.IsCorrelatedArraySource);
+        Assert.Equal(1, Assert.Single(lookup.ElementSort).Direction);
+        Assert.Null(lookup.ElementLimit);
+        Assert.Equal(["Orders"], lookup.ElementLeafAliases);
+    }
+
+    // ---- element leaves: constant paging, filters and the declines around them
+
+    [Fact]
+    public void Take_after_the_ordering_is_a_limit_on_the_lookup()
+    {
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).Take(2).ToList() }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.Equal(2, Assert.IsType<MongoConstantExpression>(lookup.ElementLimit).Value);
+        Assert.Null(lookup.ElementSkip);
+        Assert.Equal(1, Assert.Single(lookup.ElementSort).Direction);
+    }
+
+    [Fact]
+    public void Skip_then_Take_are_a_skip_and_a_limit_on_the_lookup()
+    {
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderByDescending(o => o.Id).Skip(1).Take(2).ToList() }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(lookup.ElementSkip).Value);
+        Assert.Equal(2, Assert.IsType<MongoConstantExpression>(lookup.ElementLimit).Value);
+        Assert.Equal(-1, Assert.Single(lookup.ElementSort).Direction);
+    }
+
+    [Fact]
+    public void FirstOrDefault_after_Skip_is_a_skip_and_a_limit_of_one()
+    {
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, First = c.Orders.OrderBy(o => o.Id).Skip(1).FirstOrDefault() }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(lookup.ElementSkip).Value);
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(lookup.ElementLimit).Value);
+    }
+
+    [Fact]
+    public void A_Where_after_the_Take_declines_because_it_filters_the_page_not_the_group()
+        => AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).Take(2).Where(o => o.Id > 0).ToList() }));
+
+    [Fact]
+    public void A_Where_after_the_Skip_declines()
+        => AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).Skip(1).Where(o => o.Id > 0).ToList() }));
+
+    [Fact]
+    public void Take_zero_declines_because_a_zero_limit_is_a_server_error()
+        => AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).Take(0).ToList() }));
+
+    [Fact]
+    public void Take_before_FirstOrDefault_declines()
+        => AssertDeclined(q => q.Select(c => new { c.Name, First = c.Orders.OrderBy(o => o.Id).Take(2).FirstOrDefault() }));
+
+    [Fact]
+    public void A_second_OrderBy_declines_because_it_would_re_sort_from_scratch()
+        => AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).OrderBy(o => o.CustomerId).ToList() }));
+
+    [Fact]
+    public void The_same_filter_written_twice_shares_one_array()
+    {
+        // Two lambdas with different parameter instances (`o => o.Id > 0` twice): compared up to parameter renaming, they are one filter.
+        var mongoQ = BindAccepted(q => q.Select(c => new
+        {
+            First = c.Orders.Where(o => o.Id > 0).OrderBy(o => o.Id).ToList(),
+            Second = c.Orders.Where(o => o.Id > 0).OrderBy(o => o.Id).Select(o => o.Id).ToList()
+        }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.Equal(["First", "Second"], lookup.ElementLeafAliases.Order().ToArray());
+    }
+
+    [Fact]
+    public void Different_filters_over_the_same_correlation_get_their_own_arrays()
+    {
+        var mongoQ = BindAccepted(q => q.Select(c => new
+        {
+            Big = c.Orders.Where(o => o.Id > 100).OrderBy(o => o.Id).ToList(),
+            Small = c.Orders.Where(o => o.Id < 100).OrderBy(o => o.Id).ToList()
+        }));
+
+        Assert.Equal(2, mongoQ.GetPendingLookups().Select(l => l.As).Distinct().Count());
+    }
+
+    [Fact]
+    public void An_element_leaf_makes_the_projection_ineligible_as_a_set_operand()
+    {
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).ToList() }));
+
+        Assert.True(mongoQ.Select.HasArrayProjectionLeaf);
     }
 
     [Fact]
@@ -189,7 +292,9 @@ public class NativeProjectedCollectionListLeafTests
     /// </summary>
     [Theory]
     [InlineData(nameof(Customer.Id), true, true, true)]
-    [InlineData(nameof(Customer.Code), true, true, false)] // guard and compared key both non-key
+    // Guard and compared key both non-key: not the navigation's key, so the list-leaf recognizer declines, but it is a well-formed correlation
+    // on two stored-alike properties, which the element leaf reads through a lookup built from exactly those properties.
+    [InlineData(nameof(Customer.Code), true, true, true)]
     [InlineData(nameof(Customer.Code), false, true, false)] // compared key non-key, guard on the key
     [InlineData(nameof(Customer.Code), true, false, false)] // compared key is the key, guard on a different member
     public void Correlation_on_a_non_key_outer_member_declines(
