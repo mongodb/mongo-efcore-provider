@@ -24,8 +24,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <remarks>
 /// Native equivalent of the driver-LINQ bridge's reconstruction in <c>MongoEFToLinqTranslatingExpressionVisitor</c>
 /// (works around CSHARP-5296). <see cref="Operand"/> is a <see cref="MongoFieldExpression"/> because the renderer
-/// dots <c>.DateTime</c>/<c>.Offset</c> onto its path. Backs both <c>.DateTime</c> and <c>.LocalDateTime</c> (the
-/// stored offset is used; the client's time zone has no server-side meaning), millisecond-truncated, as the bridge does.
+/// dots <c>.DateTime</c>/<c>.Offset</c> onto its path. Backs <c>.DateTime</c> (the
+/// stored offset is used), millisecond-truncated, as the bridge does. <c>.LocalDateTime</c> is not translated: it depends on the client's time zone.
 /// </remarks>
 internal sealed class MongoDateTimeOffsetLocalExpression(MongoFieldExpression operand) : MongoExpression
 {
