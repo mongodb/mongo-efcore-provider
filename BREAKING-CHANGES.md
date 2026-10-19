@@ -320,12 +320,11 @@ Use a `Utc`-kind (or default) property for the date arithmetic, or bring the row
 A relational comparison (`<`, `<=`, `>`, `>=`, `string.Compare`/`CompareTo`), an `OrderBy`/`ThenBy` key, or `Sum`/`Min`/`Max`/`Average`/`MinBy`/`MaxBy` over a property configured with a value converter or a non-default `BsonRepresentation` was evaluated by the server on the **stored** value:
 
 ```c#
-modelBuilder.Entity<Product>().Property(p => p.Price).HasBsonRepresentation(BsonType.String); // or HasConversion<string>()
+modelBuilder.Entity<Order>().Property(o => o.Status).HasConversion<string>(); // an enum stored by name
 
-context.Products.OrderBy(p => p.Price);        // sorted "10" < "100" < "9"
-context.Products.Where(p => p.Price > 50);     // compared strings: matched 9, not 100
-context.Products.Sum(p => p.Price);            // $sum ignores strings: 0
-context.Products.Max(p => p.Price);            // 9
+context.Orders.OrderBy(o => o.Status);                    // sorted by name: Cancelled < Pending < Shipped
+context.Orders.Where(o => o.Status > OrderStatus.Pending); // compared names, not values
+context.Orders.Max(o => o.Status);                        // the greatest name
 ```
 
 The same applied wherever such a comparison, key or aggregate appeared: inside an element predicate (`o.Lines.Any(l => l.Price > 50)`, a filtered `Count`), in a projection, in an `ExecuteUpdate`/`ExecuteDelete` filter, and when the property is reached through a computed expression (`p.Price ?? 0`, `cond ? p.Price : 0`, `-p.Price`, a projected member, `g.Key` of a `GroupBy` on the property, an element of a `Concat`/`Union`). The result silently differed from the .NET answer whenever the stored form does not order like the .NET value. Some such queries happened to return the right answer: an enum stored as its name sorted alphabetically (right only if the names are in value order), an order-preserving custom converter such as `v => v * 2` compared correctly (but `Sum` did not), and single-digit numbers stored as strings sorted correctly.
@@ -337,12 +336,13 @@ These queries throw `NotSupportedException` naming the property (default and `Dr
 * strongly-typed ID value objects stored through a converter (`OrderBy(x => x.Id)` over `HasConversion(id => id.Value, v => new OrderId(v))`);
 * enums stored as their names (`HasConversion<string>()` or `HasBsonRepresentation(BsonType.String)`);
 * `DateTime` with `HasConversion<long>()` (EF's `DateTimeToBinaryConverter`, which is not order-exact);
-* `Guid`, `DateTime`, `decimal` or numbers stored as strings, and any other `BsonRepresentation` not listed below;
+* `Guid`, `DateTime` or `decimal` stored as strings, and any other `BsonRepresentation` not listed below;
 * a fractional property stored as an integral type (`decimal`/`double` with `HasConversion<int>()`), which truncates;
 * a relational comparison against a value on an integral **narrowing** converter (`HasConversion<int>()` on a `long`): `x.Big > 3_000_000_000L` would wrap the constant. Sorting and aggregates over such a property keep working.
 
 Unchanged:
 
+* An `int`, `long`, `double` or `decimal` property stored as a string (`HasBsonRepresentation(BsonType.String)`, `HasConversion<string>()`, or a numeric cast with a string representation). The server converts the stored string to the number, so comparisons, sorting and aggregates return numerically correct results (see the entry on numeric properties stored as strings). `MongoQueryMode.NativeOnly` still refuses these shapes, because the native translator does not convert.
 * Equality (`==`, `!=`, `Contains`) over any such property.
 * A property the model declares order-preserving (see Mitigations), and EF Core's stateless `DateTimeToTicksConverter`, `TimeSpanToTicksConverter` and `BoolToZeroOneConverter`, whose stored order is the .NET order.
 * Properties whose stored value is exactly the .NET value in a BSON type the server orders the same way:
@@ -394,6 +394,7 @@ Unchanged:
 * Properties stored as themselves, including a `BsonRepresentation` equal to the type's default, and numbers the server holds exactly: EF Core's numeric casting and enum-to-number converters, and a numeric `BsonRepresentation` that represents every value (for example `int` as `Int64`, `Double` or `Decimal128`).
 * A string stored as `ObjectId` and an `ObjectId` stored as `String` still compare, sort and test for equality, but a string function over them now throws.
 * `ToString()` of a property stored as that very string (EF Core's built-in enum, Guid or number to-string converters on a non-nullable property), and string functions of it (`x.Color.ToString().StartsWith("R")`). A nullable such property, or an enum with `BsonRepresentation(String)`, is not exempt and now throws.
+* An `int`, `long`, `double` or `decimal` property stored as a string: the server converts the stored string to the number, so arithmetic and member access over it return numerically correct results (see the entry on numeric properties stored as strings).
 * Arithmetic over EF Core's numeric casting converters, including integral narrowing (`long` stored as `int`).
 * A string function applied to a top-level projected value (`Select(x => x.Name.ToUpper())`), which is evaluated on the client after the value is read.
 

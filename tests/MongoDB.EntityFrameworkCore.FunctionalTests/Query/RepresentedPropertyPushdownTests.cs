@@ -231,13 +231,21 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
 
     public static IEnumerable<object[]> RefusedCases()
         => from query in OrderSensitiveQueries.Keys
-           from storage in new[] { Storage.StringRepresentation, Storage.StringConverter, Storage.ScalingConverter, Storage.NegatingConverter }
+           from storage in new[] { Storage.ScalingConverter, Storage.NegatingConverter }
            from mode in Modes
            select new object[] { query, storage, mode };
 
     public static IEnumerable<object[]> AllowListedCases()
         => from query in OrderSensitiveQueries.Keys
            from storage in Enum.GetValues<Storage>().Where(IsAllowListed)
+           from mode in Modes
+           select new object[] { query, storage, mode };
+
+    // An int stored as a string: native declines it, and the driver-LINQ bridge reads it through $convert (StoredValueConversion,
+    // EF-337), so every order-sensitive query answers correctly or fails in one of the pre-existing ways.
+    public static IEnumerable<object[]> StringStoredCases()
+        => from query in OrderSensitiveQueries.Keys
+           from storage in new[] { Storage.StringRepresentation, Storage.StringConverter }
            from mode in Modes
            select new object[] { query, storage, mode };
 
@@ -285,12 +293,13 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
 
     [Theory]
     [MemberData(nameof(AllowListedCases))]
-    public void Order_sensitive_query_over_order_preserving_representation_is_correct(string query, Storage storage, MongoQueryMode mode)
+    [MemberData(nameof(StringStoredCases))]
+    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryMode mode)
     {
         var (oracle, run) = Arrange(query, OrderSensitiveQueries[query], storage, mode);
 
         // Answers, and answers right; or fails loudly in one of the pre-existing ways listed in
-        // IsPreExistingLoudFailure. Never the EF-337 refusal: these storages are allow-listed.
+        // IsPreExistingLoudFailure. Never the EF-337 refusal: these storages are allow-listed or read through $convert.
         var ex = Record.Exception(run);
         if (ex is not null)
         {
@@ -318,7 +327,7 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         => query is "Where_Math_Abs_gt" or "Where_divided_gt" or "OrderBy_ToString" or "OrderBy_nullable_Value"
                or "Max_GetValueOrDefault"
            || (mode == MongoQueryMode.NativeOnly && ex is NativeTranslationNotSupportedException
-               && (IsAggregate(query) || IsComputed(query)))
+               && (IsAggregate(query) || IsComputed(query) || storage is Storage.StringRepresentation or Storage.StringConverter))
            || (query == "OrderBy_negated" && ex.GetType().Name == "ExpressionNotSupportedException"
                && storage is Storage.CastingConverterToLong or Storage.CastingConverterToDouble)
            // A native Distinct key is likewise default-serialized only (StoredSerialization.HasDefaultKeySerialization).
@@ -593,9 +602,9 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.NativeOnly)]
     [InlineData(MongoQueryMode.DriverLinq)]
-    public void Owned_element_comparison_over_string_represented_property_is_refused(MongoQueryMode mode)
+    public void Owned_element_comparison_over_string_represented_property_is_converted_or_declined(MongoQueryMode mode)
     {
-        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Owned_element_comparison_over_string_represented_property_is_refused), mode)
+        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Owned_element_comparison_over_string_represented_property_is_converted_or_declined), mode)
                    + Guid.NewGuid().ToString("N")[..8];
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
             Prices.Select((price, i) => new BsonDocument
@@ -626,19 +635,15 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         List<int>? actual = null;
         var ex = Record.Exception(() => actual = db.Entities.AsNoTracking()
             .Where(o => o.Lines.Any(l => l.Price > 50)).OrderBy(o => o.Seq).Select(o => o.Seq).ToList());
-        if (ex is null)
-        {
-            Assert.Equal([3], actual);
-        }
-
-        Assert.NotNull(ex);
         if (mode == MongoQueryMode.NativeOnly)
         {
             Assert.IsType<NativeTranslationNotSupportedException>(ex);
         }
         else
         {
-            Assert.Contains("Line.Price'", Assert.IsType<NotSupportedException>(ex).Message);
+            // Native falls back, and the driver-LINQ bridge reads the numeric property through $convert (EF-337).
+            Assert.Null(ex);
+            Assert.Equal([3], actual);
         }
 
         Assert.Equal([2], db.Entities.AsNoTracking().Where(o => o.Lines.Any(l => l.Price == 10)).Select(o => o.Seq).ToList());

@@ -608,14 +608,14 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
                 .Select(x => x.Label).ToList());
         }
 
-        // Legs 2 and 3 — default Native falls back, and DriverLinq goes straight to the bridge, which refuses.
+        // Legs 2 and 3 — default Native falls back, and DriverLinq goes straight to the bridge, which reads the numeric
+        // property stored as a string through $convert (EF-337), so the order is the CLR one.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
             using var db = CreateContext(collection, mode, CodeOwnerModel);
-            var ex = Assert.Throws<NotSupportedException>(() => db.Entities.AsNoTracking()
+            Assert.Equal(["cB", "cC", "cA"], db.Entities.AsNoTracking()
                 .OrderBy(x => x.Posts.Count(p => p.Code > 5))
                 .Select(x => x.Label).ToList());
-            Assert.Contains("CodeItem.Code'", ex.Message);
         }
 
         using (var oracleDb = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
