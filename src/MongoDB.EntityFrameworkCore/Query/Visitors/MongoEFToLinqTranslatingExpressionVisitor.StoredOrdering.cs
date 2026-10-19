@@ -204,8 +204,16 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     // allowDeclared (EF-472): the model's HasOrderPreservingStorage() counts, but only for a bare read of the property compared with a
     // value or used as a sort/Min/Max key; mixed with another value (a computed key, a conversion, another property) the server would
     // compare stored forms, so the walker passes false.
+    // A numeric property stored as a string is read through $convert (StoredValueConversion, EF-337), so the server orders, compares and
+    // computes the number, not the string; the refusal applies to every other stored form. Not while a bulk update writes values back.
     private bool PreservesStoredOrdering(IProperty property, StoredOrderingUse use, bool allowDeclared)
-        => use switch
+    {
+        if (!ReadStoredForm && StoredValueConversion.RequiresConversion(property))
+        {
+            return true;
+        }
+
+        return use switch
         {
             StoredOrderingUse.Comparison => allowDeclared
                 ? StoredOrdering.PreservesClrOrdering(property)
@@ -216,6 +224,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                 ? StoredOrdering.PreservesClrOrderingForAggregateAndSort(property)
                 : StoredOrdering.PreservesClrOrderingForAggregateAndSortByConstruction(property)
         };
+    }
 
     // EF-465: a member, method or operator the server computes from a property's stored value (x.Name.Length, x.Name.Contains("x"),
     // x.Num % 2, Math.Abs(x.Num)). Reading the property itself, equality, `in` lists and ??/?: pass-throughs are exact and left alone.

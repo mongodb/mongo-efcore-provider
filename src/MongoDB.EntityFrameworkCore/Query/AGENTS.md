@@ -212,6 +212,8 @@ Rendering (null/missing/dialect semantics):
   `StoredOrdering.PreservesClrOrdering` and `PreservesClrOrderingForAggregateAndSort`; equality is never gated. Native
   aggregates stay on `HasDefaultKeySerialization`. The bridge walks the whole key/operand; an unclassifiable construct is
   refused if the query reads such a property.
+  A numeric property stored as a string is the exception: the bridge reads it through `$convert` (`StoredValueConversion`) and
+  doesn't refuse it; native still declines it.
   - **Opt-in (EF-472)**: `HasOrderPreservingStorage()` / `HaveOrderPreservingStorage()` (annotation `Mongo:OrderPreservingStorage`) and EF's
     `DateTimeToTicks`/`TimeSpanToTicks`/`BoolToZeroOne` converters count as order-preserving (`StoredOrdering.IsDeclaredOrderPreserving`,
     folded into `PreservesClrOrdering`). It is an ordering claim only: `Sum`/`Average` (bridge use `SumOrAverage`), functions

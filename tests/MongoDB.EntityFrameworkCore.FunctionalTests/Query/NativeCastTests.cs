@@ -558,14 +558,14 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Contains("\"Coded\" : \"2\"", MqlPipeline(uncastLogs));
         Assert.Equal(nativeLabels, uncastLabels);
 
-        // A relational comparison would compare the stored strings ("10" < "2"), so it is refused on every path
-        // (EF-337, StoredOrdering) rather than answered in string order.
+        // A relational comparison would compare the stored strings ("10" < "2"), so native declines it (EF-337, StoredOrdering);
+        // the driver-LINQ fallback converts the stored string and answers numerically.
         using var refusedNativeOnly = CreateConvContext(collection, MongoQueryMode.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => refusedNativeOnly.Entities.AsNoTracking()
             .Where(x => x.Coded >= 2).Select(x => x.Label).ToList());
-        using var refusedNative = CreateConvContext(collection, MongoQueryMode.Native);
-        Assert.Throws<NotSupportedException>(() => refusedNative.Entities.AsNoTracking()
-            .Where(x => x.Coded >= 2).Select(x => x.Label).ToList());
+        using var fallbackNative = CreateConvContext(collection, MongoQueryMode.Native);
+        Assert.Equal(["q", "r"], fallbackNative.Entities.AsNoTracking()
+            .Where(x => x.Coded >= 2).OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
         // No driver-LINQ oracle: the driver fails building its numeric-conversion serializer over a
         // ValueConverterSerializer ("does not implement IHasRepresentationSerializer"), so DriverLinq throws where
@@ -2047,13 +2047,12 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             label => label);
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
+        // The driver-LINQ fallback reads the numeric property stored as a string through $convert (EF-337): 9 > 10 is false.
         using var native = CreateOneSideReencodeContext(collection, MongoQueryMode.Native);
-        Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
-            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+        Assert.Empty(native.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList());
 
         using var driverLinq = CreateOneSideReencodeContext(collection, MongoQueryMode.DriverLinq);
-        Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
-            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+        Assert.Empty(driverLinq.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList());
     }
 
     private static SingleEntityDbContext<OneSideReencodeRow> CreateOneSideReencodeContext(
@@ -2098,13 +2097,12 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             label => label);
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
+        // The driver-LINQ fallback reads the numeric property stored as a string through $convert (EF-337): 9 > 10 is false.
         using var native = CreateBothSideReencodeContext(collection, MongoQueryMode.Native);
-        Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
-            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+        Assert.Empty(native.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList());
 
         using var driverLinq = CreateBothSideReencodeContext(collection, MongoQueryMode.DriverLinq);
-        Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
-            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+        Assert.Empty(driverLinq.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList());
     }
 
     private static SingleEntityDbContext<BothSideReencodeRow> CreateBothSideReencodeContext(

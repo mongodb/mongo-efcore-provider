@@ -467,6 +467,16 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal(expected, ConvertedRunner(name + "_oracle", q => query(q.ToList().AsQueryable()))(MongoQueryMode.Native));
     }
 
+    // An int stored as a string is read by the driver-LINQ bridge through $convert (EF-337), so an order-sensitive operator over it
+    // declines natively and answers correctly on the fallback.
+    private void AssertConvertedNumericFallback<T>(string name, Func<IQueryable<ConvertedOrder>, List<T>> query, List<T> expected)
+    {
+        var run = ConvertedRunner(name, query);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryMode.NativeOnly));
+        Assert.Equal(expected, run(MongoQueryMode.Native).OrderBy(v => v).ToList());
+        Assert.Equal(expected, run(MongoQueryMode.DriverLinq).OrderBy(v => v).ToList());
+    }
+
     private static Type DeclinesToSameFailure<T>(Func<MongoQueryMode, List<T>> run)
     {
         Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryMode.NativeOnly));
@@ -605,16 +615,14 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal([2021], result[1]);
         Assert.Equal([999, 2020], result[2]);
 
-        // Stored-string order and comparison ("999" > "2021") are refused (EF-337).
-        AssertStoredOrderingRefusal(
+        // Stored-string order and comparison ("999" > "2021") decline natively; the fallback converts the stored string (EF-337).
+        AssertConvertedNumericFallback(
             nameof(Bare_scalar_int_to_string_converted_Distinct_materializes_and_compares_goes_native) + "_OrderBy",
             q => q.Select(o => o.Year).Distinct().OrderBy(v => v).ToList(),
-            "ConvertedOrder.Year",
             [999, 2020, 2021]);
-        AssertStoredOrderingRefusal(
+        AssertConvertedNumericFallback(
             nameof(Bare_scalar_int_to_string_converted_Distinct_materializes_and_compares_goes_native) + "_Where",
             q => q.Select(o => o.Year).Distinct().Where(v => v > 2020).ToList(),
-            "ConvertedOrder.Year",
             [2021]);
     }
 
@@ -707,14 +715,12 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_value_converted_Distinct_then_arithmetic_predicate_is_refused()
     {
-        // "$mod" over the stored strings used to match nothing on the fallback (EF-465); the arithmetic is now refused in every mode.
-        var run = ConvertedRunner(
+        // "$mod" over the stored strings used to match nothing on the fallback (EF-465); native declines, and the fallback now
+        // converts the stored string first (EF-337).
+        AssertConvertedNumericFallback(
             nameof(Bare_scalar_value_converted_Distinct_then_arithmetic_predicate_is_refused),
-            q => q.Select(o => o.Year).Distinct().Where(v => v % 2 == 1).ToList());
-
-        Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryMode.NativeOnly));
-        Assert.Throws<NotSupportedException>(() => run(MongoQueryMode.Native));
-        Assert.Throws<NotSupportedException>(() => run(MongoQueryMode.DriverLinq));
+            q => q.Select(o => o.Year).Distinct().Where(v => v % 2 == 1).ToList(),
+            [999, 2021]);
     }
 
     [Fact]
@@ -757,24 +763,22 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     public void Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Average_is_refused()
     {
         // Native once answered 0 here (a $avg over the stored strings, read back as a number). It declines
-        // (TryBindDistinctTerminalAggregate's non-default-serialized key guard), and the driver-LINQ fallback refuses it
-        // (EF-337) rather than running a $avg over strings.
-        AssertStoredOrderingRefusal(
+        // (TryBindDistinctTerminalAggregate's non-default-serialized key guard), and the driver-LINQ fallback converts the
+        // stored strings (EF-337) rather than running a $avg over them.
+        AssertConvertedNumericFallback(
             nameof(Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Average_is_refused),
             q => new List<double> { q.Select(o => o.Year).Distinct().Average() },
-            "ConvertedOrder.Year",
             [1680.0]);
     }
 
     [Fact]
     public void Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Sum_is_refused()
     {
-        // Declines like Average; the driver-LINQ fallback refuses it (EF-337) instead of a $sum that skips the stored
-        // strings and answers 0 (the true sum is 5040).
-        AssertStoredOrderingRefusal(
+        // Declines like Average; the driver-LINQ fallback converts the stored strings (EF-337) instead of a $sum that skips
+        // them and answers 0 (the true sum is 5040).
+        AssertConvertedNumericFallback(
             nameof(Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Sum_is_refused),
             q => new List<int> { q.Select(o => o.Year).Distinct().Sum() },
-            "ConvertedOrder.Year",
             [5040]);
     }
 
