@@ -1,0 +1,246 @@
+// Task 0.4 oracle shim: lets branch (EF-322c) test classes compile against upstream/main. Every mode leg runs the
+// driver-LINQ path (main has no other); results/exceptions are recorded to $ORACLE_OUT.
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using MongoDB.EntityFrameworkCore.Infrastructure;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+
+namespace MongoDB.EntityFrameworkCore.Infrastructure
+{
+    public enum MongoQueryMode
+    {
+        Native,
+        DriverLinq,
+        NativeOnly
+    }
+
+    public static class ParityShimOptionsExtensions
+    {
+        public static MongoDbContextOptionsBuilder UseQueryMode(this MongoDbContextOptionsBuilder builder, MongoQueryMode mode)
+            => builder;
+    }
+}
+
+namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation
+{
+    internal sealed class NativeTranslationNotSupportedException : Exception
+    {
+        public NativeTranslationNotSupportedException(string message) : base(message)
+        {
+        }
+    }
+}
+
+namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities
+{
+    internal static class ParityOracle
+    {
+        private static readonly string OutFile =
+            Environment.GetEnvironmentVariable("ORACLE_OUT") ?? "/tmp/parity-oracle.txt";
+
+        private static readonly object Lock = new();
+
+        internal static string CurrentTest()
+        {
+            var st = new StackTrace(false);
+            foreach (var frame in st.GetFrames())
+            {
+                var m = frame.GetMethod();
+                if (m == null) continue;
+                if (m.GetCustomAttributes(inherit: true).Any(a => a is FactAttribute))
+                    return $"{m.DeclaringType?.Name}.{m.Name}";
+            }
+
+            // async state machine / fallback: first Tests type frame
+            foreach (var frame in st.GetFrames())
+            {
+                var m = frame.GetMethod();
+                var t = m?.DeclaringType;
+                while (t?.DeclaringType != null) t = t.DeclaringType;
+                if (t != null && t.Name.EndsWith("Tests")) return $"{t.Name}.{m!.Name}";
+            }
+
+            return "?";
+        }
+
+        internal static void Write(string helper, string outcome)
+        {
+            var line = $"{CurrentTest()}\t{helper}\t{outcome}";
+            if (line.Length > 1500) line = line[..1500] + "...";
+            lock (Lock) File.AppendAllLines(OutFile, [line.Replace('\n', ' ').Replace('\r', ' ')]);
+        }
+
+        internal static string Describe(Exception ex)
+        {
+            var inner = ex;
+            while (inner is TargetInvocationException && inner.InnerException != null) inner = inner.InnerException;
+            var msg = inner.Message.Replace('\n', ' ');
+            if (msg.Length > 300) msg = msg[..300];
+            return $"THREW {inner.GetType().Name}: {msg}";
+        }
+
+        internal static string Format(object? value, int depth = 0)
+        {
+            if (value == null) return "<null>";
+            if (value is string s) return $"\"{s}\"";
+            if (value is MongoDB.Bson.BsonValue bv) return bv.ToString();
+            var type = value.GetType();
+            if (value is IEnumerable e)
+            {
+                if (depth > 3) return "[...]";
+                return "[" + string.Join(", ", e.Cast<object?>().Select(x => Format(x, depth + 1))) + "]";
+            }
+
+            if (type.IsPrimitive || type.IsEnum || value is decimal || value is DateTime || value is DateTimeOffset
+                || value is TimeSpan || value is Guid || value is DateOnly || value is TimeOnly)
+                return Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "";
+
+            var toString = type.GetMethod("ToString", Type.EmptyTypes);
+            if (toString != null && toString.DeclaringType != typeof(object) && toString.DeclaringType != typeof(ValueType))
+            {
+                // anonymous types / records / tuples
+                return value.ToString() ?? "";
+            }
+
+            if (depth > 2) return type.Name;
+            var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p => p.GetIndexParameters().Length == 0)
+                .Select(p =>
+                {
+                    object? v;
+                    try { v = p.GetValue(value); }
+                    catch { v = "?"; }
+                    return $"{p.Name}={Format(v, depth + 1)}";
+                });
+            return type.Name + "{" + string.Join(", ", props) + "}";
+        }
+
+        internal static T RunRecorded<T>(string helper, Func<T> run)
+        {
+            try
+            {
+                var r = run();
+                Write(helper, "OK " + Format(r));
+                return r;
+            }
+            catch (Exception ex)
+            {
+                Write(helper, Describe(ex));
+                throw;
+            }
+        }
+
+        // Replacement for Assert.Throws<NativeTranslationNotSupportedException>(...): runs the query on main's
+        // driver path and records the outcome. Returns a dummy exception so call sites compile.
+        internal static NativeTranslationNotSupportedException Throws(Func<object?> run)
+        {
+            try
+            {
+                var r = run();
+                if (r is System.Threading.Tasks.Task t)
+                {
+                    t.GetAwaiter().GetResult();
+                    var resultProp = t.GetType().GetProperty("Result");
+                    r = resultProp?.GetValue(t);
+                }
+
+                Write("Throws<NTNSE>", "OK " + Format(r));
+            }
+            catch (Exception ex)
+            {
+                Write("Throws<NTNSE>", Describe(ex));
+            }
+
+            return new NativeTranslationNotSupportedException("oracle-shim");
+        }
+
+        internal static NativeTranslationNotSupportedException Throws(Action run)
+        {
+            try
+            {
+                run();
+                Write("Throws<NTNSE>(Action)", "OK (no result)");
+            }
+            catch (Exception ex)
+            {
+                Write("Throws<NTNSE>(Action)", Describe(ex));
+            }
+
+            return new NativeTranslationNotSupportedException("oracle-shim");
+        }
+    }
+
+    internal static class NativeModeAssert
+    {
+        internal static List<T> NativeAndParity<T>(Func<MongoQueryMode, List<T>> run)
+            => ParityOracle.RunRecorded("NativeAndParity", () => run(MongoQueryMode.DriverLinq));
+
+        internal static List<T> DeclinesCleanly<T>(Func<MongoQueryMode, List<T>> run)
+            => ParityOracle.RunRecorded("DeclinesCleanly", () => run(MongoQueryMode.DriverLinq));
+
+        internal static List<T> NativeAndExpected<T>(
+            Func<MongoQueryMode, List<T>> run,
+            List<T> expected,
+            bool driverKnownWrong = false)
+        {
+            var driver = ParityOracle.RunRecorded("NativeAndExpected", () => run(MongoQueryMode.DriverLinq));
+            var match = expected.SequenceEqual(driver);
+            ParityOracle.Write("NativeAndExpected-check",
+                $"{(match ? "MATCHES-EXPECTED" : "DIFFERS-FROM-EXPECTED")} driverKnownWrong={driverKnownWrong} expected={ParityOracle.Format(expected)}");
+            return driver;
+        }
+
+        internal static void TwiceWithDifferentValues<T>(
+            Func<object?, List<T>> runWithParam,
+            object? first,
+            List<T> expectedFirst,
+            object? second,
+            List<T> expectedSecond)
+        {
+            var a = ParityOracle.RunRecorded("Twice-1", () => runWithParam(first));
+            Assert.Equal(expectedFirst, a);
+            var b = ParityOracle.RunRecorded("Twice-2", () => runWithParam(second));
+            Assert.Equal(expectedSecond, b);
+        }
+    }
+
+    internal static class TestQueryMode
+    {
+        internal static MongoQueryMode Current => MongoQueryMode.DriverLinq;
+        internal static bool IsDifferential => false;
+        internal static bool IsNativeOnly => false;
+        internal static bool IsDriverLinq => true;
+        internal static MongoQueryMode Resolve() => MongoQueryMode.DriverLinq;
+
+        internal static void AssertRefusal<TDefault>(Action query) where TDefault : Exception
+            => Assert.Throws<TDefault>(query);
+
+        internal static async System.Threading.Tasks.Task AssertRefusalAsync<TDefault>(Func<System.Threading.Tasks.Task> query)
+            where TDefault : Exception
+            => await Assert.ThrowsAsync<TDefault>(query);
+    }
+}
+
+namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities
+{
+    internal static class ParityShimSpyExtensions
+    {
+        public static void AssertExecutedMqlContains(this SpyLoggerProvider spy, string expected) { }
+
+        public static IReadOnlyList<string> GetLogMessagesByEventId(this SpyLoggerProvider spy, Microsoft.Extensions.Logging.EventId id)
+            => [];
+    }
+}
+
+namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query
+{
+    internal static class StreamingEligibility
+    {
+        public static bool IsEligible(Microsoft.EntityFrameworkCore.Metadata.IEntityType entityType) => true;
+    }
+}

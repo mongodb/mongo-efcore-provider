@@ -1,0 +1,124 @@
+### "S:" + Level (enum)
+  DriverLinq => ["S:2", "S:10", "S:1"]
+### Title + Initial (char)
+  DriverLinq => ["a65", "b66", "c67"]
+### Title + Ratio (float)
+  DriverLinq => ["a1.100000023841858", "b2.5", "c0.5"]
+### Title + Day (DateOnly)
+  DriverLinq => ["a2020-01-02T00:00:00.000Z", "b2021-01-02T00:00:00.000Z", "c2019-01-02T00:00:00.000Z"]
+### Title + Duration (TimeSpan)
+  DriverLinq => ["a00:00:05", "b00:01:00", "c00:00:01"]
+### Title + Name (null string)
+  DriverLinq => ["ax", <null>, <null>]
+### Where Title + Level == "aMid"
+  DriverLinq => []
+### UtcNow.AddSeconds(-3) staleness [DriverLinq]
+  first=["fresh"] after5s=[] (expected ["fresh"] then [])
+### Now.AddHours(-1) local-offset (TZ offset now 01:00:00) row Created=UtcNow-30min
+  DriverLinq => ["halfhour"]
+### Score!.Value + 1 (anon)
+  DriverLinq => THROW FormatException: An error occurred while deserializing the V property of class <>f__AnonymousType94`2[[System.String, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e],[System.Int32, System.Private.CoreLib, Versi
+### (int)Score! * 2 (bare)
+  DriverLinq => THROW FormatException: Cannot deserialize a 'Int32' from BsonType 'Null'.
+### Math.Abs(Score!.Value)
+  DriverLinq => THROW FormatException: An error occurred while deserializing the V property of class <>f__AnonymousType95`1[[System.Int32, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]: Cannot deserialize a 'Int32' from BsonType 
+### Rank + 1 with Rank missing
+  DriverLinq => THROW FormatException: An error occurred while deserializing the V property of class <>f__AnonymousType94`2[[System.String, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e],[System.Int32, System.Private.CoreLib, Versi
+### Rank (bare) with Rank missing
+  DriverLinq => [1, 2, 0]
+### Score!.Value / 2
+  DriverLinq => THROW FormatException: An error occurred while deserializing the V property of class <>f__AnonymousType95`1[[System.Int32, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]: Cannot deserialize a 'Int32' from BsonType 
+### Score > 5 ? Score!.Value : 0
+  DriverLinq => THROW FormatException: An error occurred while deserializing the V property of class <>f__AnonymousType95`1[[System.Int32, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]: Cannot deserialize a 'Int32' from BsonType 
+### Select(Name).Union(Select(Name)) expected [null, x]
+  DriverLinq => [<null>, <null>, "x"]
+### Select(Name).Distinct() expected [null, x]
+  DriverLinq => [<null>, <null>, "x"]
+### Select(new{Name}).Distinct().Count expected 2
+  DriverLinq => 3
+### Count(Name == null) expected 2
+  DriverLinq => 2
+### Where(Name != "x") expected [b,c]
+  DriverLinq => ["b", "c"]
+### Where(Score < 5) LINQ expects []
+  DriverLinq => []
+### Where(!(Score > 5)) LINQ expects [b,c]
+  DriverLinq => ["b", "c"]
+### Select(Score < 5) LINQ expects [F,F,F]
+  DriverLinq => [False, True, True]
+### Select(Score == null) expects [F,T,T]
+  DriverLinq => [False, True, False]
+### Select(Name ?? "d") expects [x,d,d]
+  DriverLinq => ["x", "d", "d"]
+### Select(Name == null ? 1 : 2) expects [2,1,1]
+  DriverLinq => [2, 1, 2]
+### Where(Name.Length > 0) expects [a]
+  DriverLinq => ["a"]
+### Where(Rank == 0) LINQ expects [c] (missing->default)
+  DriverLinq => []
+### Owners.Join(Dogs)
+  DriverLinq => ["o1-rex", "o1-tom"]
+### Owners.Join(Animals.OfType<Dog>)
+  DriverLinq => THROW ExpressionNotSupportedException: Expression not supported: EFTest-2026-10-01T10-27-07-1.P4c327855Animals.Aggregate([]).OfType().As(value(MongoDB.EntityFrameworkCore.Serializers.EntitySerializer`1[MongoDB.EntityFrameworkCore.FunctionalTests.Query.ZzReview
+### Shipments.Join(Rates on nullable Region) expected [1-11]
+  DriverLinq => ["1-11", "2-12", "2-13", "3-12", "3-13"]
+### Sum(Rank) overflow
+  DriverLinq => THROW OverflowException: Arithmetic operation resulted in an overflow.
+### Select(Rank).Sum() overflow
+  DriverLinq => THROW OverflowException: Arithmetic operation resulted in an overflow.
+### Rank + Rank projection overflow
+  DriverLinq => THROW OverflowException: Arithmetic operation resulted in an overflow.
+### Customers.Include(Address)
+  DriverLinq => ["with:Paris", "without:<none>"]
+### Customers.Select(c.Address.City)
+  DriverLinq => ["with:Paris", "without:<null>"]
+### Customers.Where(Address == null)
+  DriverLinq => ["without"]
+### Where(minRank == null || Rank >= minRank) minRank=null expects [a,b,c]
+  DriverLinq => ["a", "b", "c"]
+### Where(Rank == minRank) minRank=null expects []
+  DriverLinq => ["c"]
+### Where(Rank != minRank) minRank=null expects [a,b,c]
+  DriverLinq => ["a", "b"]
+### Where(Level == lvl) lvl=null expects []
+  DriverLinq => []
+### Where(ids.Contains(Rank)) ids=[1,null] expects [a] (or [a,c] if missing->0? no)
+  DriverLinq => ["a", "c"]
+### Docs.Where(Id.StartsWith(oidprefix)) expects [abc]
+  DriverLinq => THROW MongoCommandException: Command aggregate failed: Executor error during aggregate command on namespace: EFTest-2026-10-01T10-27-07-1.P3304fd2aDocs :: caused by :: $indexOfCP requires a string as the first argument, found: objectId.
+### Docs.Where(Code.StartsWith("ab")) converter expects [abc]
+  DriverLinq => []
+### Docs.Where(Code == "abc") converter expects [abc]
+  DriverLinq => ["abc"]
+### Docs.Where(Code.ToLower() == "abc") converter expects [abc]
+  DriverLinq => []
+### Docs.Where(Code.Contains("b")) converter expects [abc]
+  DriverLinq => ["abc"]
+### Docs.Where(Tuple(Gid,N) == Tuple(g,1)) expects [abc]
+  DriverLinq => ["abc"]
+### Docs.Where(Gid == g) expects [abc]
+  DriverLinq => ["abc"]
+### Docs.Where(Math.Sign(D.Value) < 0) expects [] (or throw)
+  DriverLinq => THROW ExpressionNotSupportedException: Expression not supported: Sign(d.D.Value).
+### Docs.Where(Math.Max(D.Value, 1) > 2) expects [zzz]
+  DriverLinq => THROW ExpressionNotSupportedException: Expression not supported: Max(d.D.Value, 1).
+### Max(Level)
+  DriverLinq => High
+### Min(Level)
+  DriverLinq => Low
+### Select(Level).Max()
+  DriverLinq => High
+### Max(Initial) char
+  DriverLinq => C
+### Max(Duration) TimeSpan
+  DriverLinq => 00:01:00
+### Max(Day) DateOnly
+  DriverLinq => 02/01/2021
+### Max(Ratio) float
+  DriverLinq => 2.5
+### Max(Name) string
+  DriverLinq => "x"
+### Max(Name) string over empty
+  DriverLinq => THROW InvalidOperationException: Sequence contains no elements
+### Min(Created)
+  DriverLinq => Utc
