@@ -147,7 +147,7 @@ internal sealed partial class MongoExpressionTranslator
     /// entity, never a collection, so it cannot resolve to an array path.
     /// </para>
     /// </remarks>
-    private static bool TryMatchCountExpression(
+    internal static bool TryMatchCountExpression(
         Expression node,
         [NotNullWhen(true)] out Expression? source,
         out LambdaExpression? predicate)
@@ -191,7 +191,7 @@ internal sealed partial class MongoExpressionTranslator
 
     // The Queryable spelling quotes its lambda and the Enumerable spelling does not; UnwrapLambdaFromQuote above
     // handles both, so both declaring types are admitted here.
-    private static bool IsCanonicalCountWithPredicate(MethodInfo method)
+    internal static bool IsCanonicalCountWithPredicate(MethodInfo method)
     {
         if (!method.IsGenericMethod)
             return false;
@@ -462,6 +462,22 @@ internal sealed partial class MongoExpressionTranslator
 
         receiver = call.Object;
         term = call.Arguments[0];
+        return true;
+    }
+
+    /// <summary>
+    /// Recognizes <c>string.Length</c> (<c>x.Name.Length</c>) — the only member the aggregation dialect has a
+    /// dedicated operator for (<c>$strLenCP</c>). A receiver that isn't <see cref="string"/> is left unmatched.
+    /// </summary>
+    private static bool TryMatchStringLength(Expression node, [NotNullWhen(true)] out Expression? receiver)
+    {
+        receiver = null;
+
+        if (node is not MemberExpression { Expression: { } inner } member
+            || inner.Type != typeof(string) || member.Member.Name != nameof(string.Length))
+            return false;
+
+        receiver = inner;
         return true;
     }
 

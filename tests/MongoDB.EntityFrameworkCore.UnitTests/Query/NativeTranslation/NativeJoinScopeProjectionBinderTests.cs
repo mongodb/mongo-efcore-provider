@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using MongoDB.EntityFrameworkCore.UnitTests.TestUtilities;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
@@ -80,6 +81,65 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.NotNull(result);
         var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
         return Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
+    }
+
+    [Fact]
+    public void Binds_a_bare_nav_null_check_ternary_over_a_left_join()
+    {
+        // `(r, o) => o != null ? o.Name : ""` after a LeftJoin — mirrors Manual_expression_tree_typed_null_equality's
+        // nav-expanded shape (`ti.Inner != null ? ti.Inner.City : null`), using a plain string default instead of
+        // a typed null so the test doesn't depend on Task 1-5's null-branch handling specifically —
+        // TranslateOperand's generic ConstantExpression fall-through already handles either.
+        //
+        // DELIBERATELY Order-outer/Owner-inner (not the other way around): RebindInnerShaperToOuterQuery resolves
+        // a join's Navigation by searching the OUTER entity's own navigation set first for one matching the outer
+        // key selector's FK property AND IsOnDependent — i.e. it only ever finds a REFERENCE nav when the OUTER
+        // side is the dependent (FK-holding) entity. Owner-outer/Order-inner (the "natural" reading order) resolves
+        // to Owner.Orders — a COLLECTION nav — which the degenerate-check guard below correctly declines (a
+        // collection has no single "is it null" answer); this is unrelated to IsLeftOuter and reproduces on a plain
+        // Join too. Order-outer/Owner-inner resolves to Order.Owner — a REFERENCE nav — the shape this feature
+        // targets, matching Manual_expression_tree_typed_null_equality's own Order-outer/Customer-inner shape.
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            orders.GroupJoin(owners, r => r.OwnerId, o => o.Id, (r, os) => new { r, os })
+                .SelectMany(x => x.os.DefaultIfEmpty(), (x, o) => new { x.r, o })
+                .Select(x => x.o != null ? x.o.Name : ""));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.True(mongoQ.Select.JoinScope!.Levels[0].IsLeftOuter);
+        Assert.Equal(
+            [NativeProjectionBinder.SyntheticBareProjectionAlias],
+            mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+
+        var leaf = Assert.IsType<MongoConditionalExpression>(mongoQ.Select.Projection[0].Expression);
+        var test = Assert.IsType<MongoLookupNullCheckExpression>(leaf.Test);
+        Assert.True(test.IsNotNull);
+        Assert.Equal(mongoQ.Select.JoinScope!.Levels[0].InnerPrefix, test.LookupAlias);
+
+        Assert.Single(mongoQ.Lookups);
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+    }
+
+    [Fact]
+    public void Declines_when_the_checked_level_is_an_inner_not_left_outer_join()
+    {
+        // A plain Join never produces a null Inner (an unmatched row is DROPPED, not unwound-as-null), so the
+        // null check is degenerate there — must decline, not silently admit an always-true/always-false test.
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Select(x => x.r != null ? x.r.Total : 0m));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Declines_a_conditional_whose_test_is_not_a_scope_null_check()
+    {
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            owners.GroupJoin(orders, o => o.Id, r => r.OwnerId, (o, rs) => new { o, rs })
+                .SelectMany(x => x.rs.DefaultIfEmpty(), (x, r) => new { x.o, r })
+                .Select(x => x.o.Name == "Alice" ? 1m : 0m));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
     }
 
     // Deliberately SEPARATE fixture types for the chained (Task 6) test below, rather than adding a "Lines"
@@ -203,6 +263,80 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.Equal(innerPrefix, innerLeaf.Path);
 
         Assert.Single(mongoQ.Lookups);
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Binds_a_whole_outer_entity_leaf_that_is_also_include_wrapped()
+    {
+        // `new { o, r.Total }` where `o` ALSO carries `.Include(o => o.Orders)` — EF-322 Phase 2 Group A
+        // (root cause A): nav-expansion hands this leaf to the binder as an IncludeExpression wrapping
+        // ti.Outer, not a bare MemberExpression, and the recognizer must unwrap it (down to the
+        // IncludeExpression's EntityExpression) to still recognize this as a scope-0 whole-entity leaf.
+        // Mirrors Include_reference_when_entity_in_projection's shape (an Include on the OUTER/root side of
+        // the join) and the design doc's spike 1.
+        //
+        // Ruling (plan Step 1 named a `.ThenInclude(x => x.Owner)` on top of this — dropped): `Order.Owner`
+        // is the auto-fixed-up inverse of `Owner.Orders`, and EF Core's own NavigationExpandingExpressionVisitor
+        // throws NavigationBaseIncludeIgnored for a ThenInclude targeting a nav it already fixed up walking
+        // back up the tree — unrelated to this fix, a plan defect in the test's OWN shape, not the production
+        // code. A single-level Include is sufficient: the unwrap loop is a `while`, so it already handles any
+        // ThenInclude depth structurally; Task 2's chain-depth test provides the multi-level-shape proof this
+        // plan's Review Focus asks for instead.
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            owners.Include(o => o.Orders)
+                .Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r.Total }));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(["o", "Total"], mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+
+        var outerLeaf = Assert.IsType<MongoElementRefExpression>(mongoQ.Select.Projection[0].Expression);
+        Assert.Equal(MongoElementRefExpression.WholeRootDocumentPath, outerLeaf.Path);
+
+        // The scalar Inner sibling leaf is unaffected by the Include on the Outer leaf.
+        var innerLeaf = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[1].Expression);
+        Assert.StartsWith(mongoQ.Select.JoinScope!.Levels[0].InnerPrefix + ".", innerLeaf.ElementName);
+
+        // EF-322 Phase 2 Group B: 2 lookups, not 1 — the join's own (_lookup_Orders, force-unwound) and the
+        // Include's own (renamed to _lookup_Orders_include to avoid colliding with it) now register
+        // separately. They used to silently collapse into one (the join's, which the Include's collection
+        // shaper cannot read as an array), which is the exact bug this fix corrects.
+        Assert.Equal(2, mongoQ.Lookups.Count);
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Binds_a_duplicated_whole_inner_entity_leaf_that_is_also_reference_include_wrapped()
+    {
+        // `new { a = r, b = r }` where `r` ALSO carries `.Include(r => r.Owner)` — an Include on the INNER side
+        // of the join, PLUS Binds_a_duplicated_inner_leaf_without_crashing's exact duplicated-leaf shape.
+        //
+        // History: Task 2 of the reference-include-materialization plan made this DECLINE (commit 91a8528a),
+        // because the staging side staged it while the materialization side (BindResultMember) could not
+        // populate a reference Include — silently null `Order.Owner`. Task 3 (root cause A3) makes both sides
+        // handle it: nav-expansion lowers the Include to a further join onto Owners whose own Inner side IS the
+        // Include's NavigationExpression, so NativeJoinScopeProjectionBinder.TryResolveReferenceIncludeLevel
+        // resolves it to that level and stages the level's Inner document alongside the (deduplicated) Inner
+        // leaf. End-to-end correctness is pinned by
+        // NativeJoinTests.Reference_included_Inner_leaf_of_a_join_scope_materializes_correctly.
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            owners.Join(orders.Include(r => r.Owner), o => o.Id, r => r.OwnerId, (o, r) => new { a = r, b = r }));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        var levels = mongoQ.Select.JoinScope!.Levels;
+        Assert.Equal(2, levels.Count);
+
+        // The duplicated Inner leaf stages its level's fixed alias ONCE; the reference Include's target level
+        // stages its own fixed alias once too — both as self-referential element refs.
+        Assert.Equal(
+            [levels[0].InnerPrefix, levels[1].InnerPrefix],
+            mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+        Assert.All(mongoQ.Select.Projection, p =>
+            Assert.Equal(p.Alias, Assert.IsType<MongoElementRefExpression>(p.Expression).Path));
+
+        Assert.Equal(2, mongoQ.Lookups.Count);
         Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
         Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
     }
@@ -525,6 +659,48 @@ public class NativeJoinScopeProjectionBinderTests
     }
 
     [Fact]
+    public void Binds_a_two_level_chain_root_whole_entity_leaf_that_is_also_include_wrapped()
+    {
+        // Same three-leaf, all-whole-entity chain shape as
+        // Binds_a_two_level_chain_projection_naming_every_scope_as_a_whole_entity, but the ROOT leaf (`cr`,
+        // scope index 0) is ALSO the target of `.Include(o => o.Orders)` — proving Task 1's unwrap still
+        // fires correctly once a real chain (Levels.Count > 1) is in play, not just at depth-1.
+        //
+        // Ruling: the plan named Including the LAST level's leaf (`od`) via `l.Order` instead. MEASURED: that
+        // shape makes `scope.Levels.Count` come back 3, not 2 — `ChainOrderLine.Order`'s target type
+        // (ChainOrder) coincidentally matches Levels[0]'s own InnerEntityType, and TranslateJoinCore's
+        // candidate-join detection folds the Include's own reference nav in as a THIRD chain level, exactly
+        // the pre-existing "RESIDUAL GAP" NativeJoinScopeTranslator's own remarks warn about for a
+        // coincidental CLR-type match — a real, separate, pre-existing hazard this plan does not own or need
+        // to characterize further. Rooting the Include at scope 0 instead avoids it: the first join (owners→
+        // orders) is IDENTICAL to Task 1's own already-proven Outer-Include case, and the Include has no
+        // opportunity to interact with the SECOND join at all. Cost if wrong: none — this still exercises
+        // the unwrap loop inside a genuine Levels.Count > 1 scope, which is this task's actual goal.
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Include(o => o.Orders)
+                .Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { cr = e.o, or = e.r, od = l }));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        var scope = mongoQ.Select.JoinScope!;
+        Assert.Equal(2, scope.Levels.Count);
+
+        Assert.Equal(["cr", scope.Levels[0].InnerPrefix, scope.Levels[1].InnerPrefix],
+            mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+
+        var level2Leaf = Assert.IsType<MongoElementRefExpression>(mongoQ.Select.Projection[2].Expression);
+        Assert.Equal(scope.Levels[1].InnerPrefix, level2Leaf.Path);
+
+        // EF-322 Phase 2 Group B: 3 lookups, not 2 — the root Include on `o.Orders` now registers its own
+        // lookup (renamed to avoid colliding with the first join's, which targets the same Owner.Orders
+        // navigation), separate from the two joins' own lookups. It used to silently collapse into the first
+        // join's lookup, which is the exact bug this fix corrects.
+        Assert.Equal(3, mongoQ.Lookups.Count);
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+
+    [Fact]
     public void Binds_a_two_level_chain_projection_with_scalar_leaves_at_every_scope()
     {
         // Native-chained-join-scalar-projection plan (2026-09-18). Every leaf is a plain scalar rooted at
@@ -631,5 +807,133 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
         Assert.Empty(mongoQ.Select.Projection);
         Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Declines_a_bare_nav_null_check_ternary_over_a_two_level_chain_whose_second_level_is_not_left_outer()
+    {
+        // `x.l != null ? x.l.Sku : ""` is a bare ConditionalExpression whose Test resolves (via
+        // TryMatchScopeNullCheck) to the SECOND join's own Inner side (scope index 2) — but that second join
+        // here is a plain (required) `Join`, not a `LeftJoin`/GroupJoin+SelectMany(DefaultIfEmpty). A plain Join
+        // drops an unmatched row entirely rather than unwinding it as an explicit null, so "Inner != null" is
+        // unconditionally true there — not a real check. TryBindConditionalProjection's `!level.IsLeftOuter`
+        // guard declines for exactly this reason (see that method's own comment); it is NOT about chain depth —
+        // TryBindConditionalProjection works at any depth (this is a genuine 2-level chain, scope.Levels.Count
+        // == 2) — see Binds_a_bare_nav_null_check_ternary_over_a_two_level_chain below for the positive case
+        // with a genuine LeftJoin at the second level.
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e, l })
+                .Select(x => x.l != null ? x.l.Sku : ""));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
+        Assert.Empty(mongoQ.Select.Projection);
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+    }
+
+    // Dedicated, fully self-contained fixture for the LeftJoin-at-level-2 test below — deliberately NOT
+    // reusing ChainOwner/ChainOrder/ChainOrderLine (or adding a field to them): a genuine FK from the second
+    // level's OUTER side (mirroring NativeJoinScopeConditionalProjectionTests' functional-test
+    // Customer.RegionId -> Region.Id relationship, the "outer holds the FK" shape RebindInnerShaperToOuterQuery
+    // needs to resolve a REFERENCE, not COLLECTION, navigation) needs its own target entity; grafting one onto
+    // ChainOrder was tried and MEASURED to break three already-passing whole-entity-leaf chain tests above
+    // (Binds_a_two_level_chain_projection_naming_every_scope_as_a_whole_entity et al.) — those go through
+    // TranslateThreeSourceJoinQuery's OWN model, which never registers the new target type, so conventions
+    // treat the added navigation as an owned/undiscovered reference and silently change unrelated shapes. Local
+    // types scoped to this one test side-step that entirely.
+    private class RegionChainOwner
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public List<RegionChainOrder> Orders { get; set; } = [];
+    }
+
+    private class RegionChainOrder
+    {
+        public int Id { get; set; }
+        public int OwnerId { get; set; }
+        public RegionChainOwner? Owner { get; set; }
+        public int? RegionId { get; set; }
+        public RegionChainRegion? Region { get; set; }
+    }
+
+    private class RegionChainRegion
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    [Fact]
+    public void Binds_a_bare_nav_null_check_ternary_over_a_two_level_chain()
+    {
+        // TryBindConditionalProjection is depth-agnostic (works for any scope.Levels.Count), exactly like
+        // TryBindProjection's own scalar/computed leaf arm for a chain — there is no Levels.Count restriction on
+        // this method. A genuine two-level chain (level 1: Owner->Order, a plain Join; level 2: Order->Region, a
+        // genuine LeftJoin via GroupJoin/SelectMany(DefaultIfEmpty), with OUTER (Order) holding the FK
+        // (RegionId) — see the fixture's own remarks for why that FK direction matters here) with a bare
+        // nav-null-check ternary targeting the SECOND level's Inner side — the same shape
+        // Binds_a_bare_nav_null_check_ternary_over_a_left_join pins at depth 1 — binds NATIVELY here too, each
+        // branch translated via NativeJoinScopeTranslator.TryTranslateSingleScope re-rooted onto the second
+        // level.
+        using var db = SingleEntityDbContext.Create<RegionChainOwner>(mb =>
+        {
+            mb.Entity<RegionChainOrder>();
+            mb.Entity<RegionChainRegion>();
+        });
+
+        var query = db.Set<RegionChainOwner>().Join(db.Set<RegionChainOrder>(), o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .GroupJoin(db.Set<RegionChainRegion>(), e => e.r.RegionId, g => g.Id, (e, gs) => new { e.o, e.r, gs })
+            .SelectMany(x => x.gs.DefaultIfEmpty(), (x, g) => new { x.o, x.r, g })
+            .Select(x => x.g != null ? x.g.Name : "none");
+
+        var ccFactory = db.GetService<IQueryCompilationContextFactory>();
+        var compilationContext = ccFactory.Create(async: false);
+
+        var preprocessor = db.GetService<IQueryTranslationPreprocessorFactory>().Create(compilationContext);
+        var preprocessed = preprocessor.Process(query.Expression);
+
+        var visitor = db.GetService<IQueryableMethodTranslatingExpressionVisitorFactory>().Create(compilationContext);
+        var result = visitor.Visit(preprocessed);
+
+        Assert.NotNull(result);
+        var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
+        var mongoQ = Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
+        Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Bare_scalar_leaf_over_a_left_join_goes_native()
+    {
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            owners.GroupJoin(orders, o => o.Id, r => r.OwnerId, (o, rs) => new { o, rs })
+                .SelectMany(x => x.rs.DefaultIfEmpty(), (x, r) => new { x.o, r })
+                .Select(x => x.r.Total));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(
+            [NativeProjectionBinder.SyntheticBareProjectionAlias],
+            mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+    }
+
+    [Fact]
+    public void Bare_scalar_leaf_matching_the_real_nav_expanded_shape_goes_native()
+    {
+        // The ACTUAL shape EF Core's null-check-removal preprocessing produces for
+        // `o.Owner != null ? o.Owner.Name : null` once nav-expansion runs — a plain LeftJoin + bare `x.Inner.Name`.
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            orders.GroupJoin(owners, r => r.OwnerId, o => o.Id, (r, os) => new { r, os })
+                .SelectMany(x => x.os.DefaultIfEmpty(), (x, o) => new { x.r, o })
+                .Select(x => x.o.Name));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(
+            [NativeProjectionBinder.SyntheticBareProjectionAlias],
+            mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
     }
 }

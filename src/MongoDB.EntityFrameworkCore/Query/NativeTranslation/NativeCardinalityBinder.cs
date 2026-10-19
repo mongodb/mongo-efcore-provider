@@ -198,7 +198,22 @@ internal static class NativeCardinalityBinder
                 || (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min
                     or MongoAggregateOperator.Max or MongoAggregateOperator.Average && selector != null));
 
-        var isPostGroupTerminalAggregate = isPostDistinctAggregate || isPostGroupBySelectAggregate;
+        // EF-322 SP5: a selector-less Min()/Max() (the ONLY shape reachable — C#'s IComparable constraint on
+        // the parameterless overloads forbids anything else) reducing the ALREADY-flattened single scalar a
+        // preceding GroupBy(key).Select(aggregate) projected — e.g. GroupBy(o => o.CustomerID)
+        // .Select(g => g.Sum(o => o.OrderID)).Min(). Requires exactly one flattened projection member (the
+        // bare-body case always has exactly one, aliased NativeProjectionBinder.SyntheticBareProjectionAlias —
+        // a `new{...}` multi-member projection could never reach a parameterless Min()/Max() call in the
+        // first place, since an anonymous type has no IComparable). Deliberately scoped to Min/Max only, and
+        // to IsGroupBy (never IsDistinct) — see this plan's own Review Focus for why Sum/Average and the
+        // Distinct variant stay out of scope.
+        var isPostGroupBySelectlessMinMax = select.IsGroupBy && !select.IsDistinct && select.Grouping != null
+            && select.Cardinality == null && selector == null
+            && op is MongoAggregateOperator.Min or MongoAggregateOperator.Max
+            && select.Projection.Count == 1;
+
+        var isPostGroupTerminalAggregate =
+            isPostDistinctAggregate || isPostGroupBySelectAggregate || isPostGroupBySelectlessMinMax;
 
         if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly && !isPostGroupTerminalAggregate)
             return false;
@@ -220,6 +235,13 @@ internal static class NativeCardinalityBinder
         if (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min
                or MongoAggregateOperator.Max or MongoAggregateOperator.Average)
         {
+            if (isPostGroupBySelectlessMinMax)
+            {
+                // Reduce the preceding Select's own single flattened output field directly — there is no
+                // selector lambda to translate at all (see isPostGroupBySelectlessMinMax's own remarks).
+                var flattened = select.Projection[0];
+                operand = new MongoElementRefExpression(flattened.Alias, flattened.Expression.Type);
+            }
             // Selector may be a plain member access, a widening/nullable-preserving Convert over one (e.g.
             // `(short?)detail.Quantity`, EF-322's "cast to same nullable type"), or a numeric arithmetic
             // expression (e.g. `detail.Quantity / 2.09m`) — anything TryTranslateValue accepts. That helper
@@ -227,8 +249,8 @@ internal static class NativeCardinalityBinder
             // operands), which Sum/Average need; Min/Max need only order preservation, which value preservation
             // trivially satisfies, so both share the same call rather than Min/Max keeping a separately
             // maintained, looser cast check.
-            if (selector is null || !translator.TryTranslateValue(selector.Body, out operand))
-                return false;
+            else if (selector is null || !translator.TryTranslateValue(selector.Body, out operand))
+                return false; // untranslatable selector shape (e.g. a correlated method call) — fall back
         }
 
         // An aggregate that injects a predicate as a $match (All always does; Count/Any defensively when an
