@@ -111,6 +111,12 @@ public static class MongoEntityTypeExtensions
            || entityType[MongoAnnotationNames.CollectionName] != null;
 
     /// <summary>
+    /// Whether the entity type takes part in an inheritance hierarchy (has a base type or any derived type).
+    /// </summary>
+    internal static bool IsInHierarchy(this IReadOnlyEntityType entityType)
+        => entityType.BaseType is not null || entityType.GetDirectlyDerivedTypes().Any();
+
+    /// <summary>
     /// Get the name of the parent element to which the entity type is mapped.
     /// </summary>
     /// <param name="entityType">The <see cref="IReadOnlyEntityType"/> to obtain the property name for.</param>

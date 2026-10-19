@@ -1714,8 +1714,9 @@ public class MongoExpressionTranslatorTests
     public void Widening_cast_over_a_value_converted_property_keeps_the_property_serializer()
     {
         // The rule is HasDefaultKeySerialization, not "not an enum": EncStatus is a value-converted int, so the
-        // constant keeps the property serializer and renders in the stored form.
-        var (translator, body) = BuildOrderPredicateBody(o => (long)o.EncStatus > 5L);
+        // constant keeps the property serializer and renders in the stored form. Equality: a relational operator
+        // over a custom converter declines (see the next test).
+        var (translator, body) = BuildOrderPredicateBody(o => (long)o.EncStatus == 5L);
 
         Assert.True(translator.TryTranslate(body, out var result));
 
@@ -1723,6 +1724,29 @@ public class MongoExpressionTranslatorTests
         var constant = Assert.IsType<MongoConstantExpression>(cmp.Right);
         Assert.NotNull(constant.ForSerialization);
         Assert.Equal("EncStatus", constant.ForSerialization!.Name);
+    }
+
+    [Theory]
+    [InlineData(ExpressionType.LessThan)]
+    [InlineData(ExpressionType.LessThanOrEqual)]
+    [InlineData(ExpressionType.GreaterThan)]
+    [InlineData(ExpressionType.GreaterThanOrEqual)]
+    public void Relational_comparison_over_a_value_converted_property_declines(ExpressionType nodeType)
+    {
+        // EF-337: the stored form of a custom converter needn't order like the CLR value (StoredOrdering).
+        var parameter = Expression.Parameter(typeof(Order), "o");
+        var member = Expression.Property(parameter, nameof(Order.EncStatus));
+        var predicate = Expression.Lambda<Func<Order, bool>>(
+            Expression.MakeBinary(nodeType, member, Expression.Constant(5)), parameter);
+        var (translator, body) = BuildOrderPredicateBody(predicate);
+
+        Assert.False(translator.TryTranslate(body, out _));
+
+        // Mirrored (constant on the left) declines too.
+        var mirrored = Expression.Lambda<Func<Order, bool>>(
+            Expression.MakeBinary(nodeType, Expression.Constant(5), member), parameter);
+        var (mirroredTranslator, mirroredBody) = BuildOrderPredicateBody(mirrored);
+        Assert.False(mirroredTranslator.TryTranslate(mirroredBody, out _));
     }
 
     /// <summary>

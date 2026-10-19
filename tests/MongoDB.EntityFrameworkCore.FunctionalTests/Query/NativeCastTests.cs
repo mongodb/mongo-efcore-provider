@@ -611,28 +611,32 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         var collection = database.MongoDatabase.GetCollection<ConvRow>(name);
 
+        // Equality: the constant renders as the string "2" (property serializer), not the number 2, which MongoDB would
+        // type-bracket against the string field and match nothing.
         var logs = new List<string>();
         using var nativeOnly = CreateConvContext(collection, MongoQueryMode.NativeOnly, logs);
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
-            .Where(x => (long)x.Coded >= 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
-
-        // Discriminator: the constant renders as the string "2" (property serializer), not the number 2.
-        var mql = MqlPipeline(logs);
-        Assert.Contains("\"$gte\" : \"2\"", mql);
-
-        // Rows follow: a comparison over the stored strings, not the empty set a number would give. Single-digit
-        // seed so string and numeric order coincide; this case is about which serializer renders the constant.
-        Assert.Equal(["q", "r"], nativeLabels);
-        Assert.NotEmpty(nativeLabels);
+            .Where(x => (long)x.Coded == 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
+        Assert.Contains("\"Coded\" : \"2\"", MqlPipeline(logs));
+        Assert.Equal(["q"], nativeLabels);
 
         // Control: the un-cast comparison emits the identical constant; absorbing a widening cast over a
         // non-default-serialized property must not change it.
         var uncastLogs = new List<string>();
         using var uncast = CreateConvContext(collection, MongoQueryMode.NativeOnly, uncastLogs);
         var uncastLabels = uncast.Entities.AsNoTracking()
-            .Where(x => x.Coded >= 2).OrderBy(x => x.Label).Select(x => x.Label).ToList();
-        Assert.Contains("\"$gte\" : \"2\"", MqlPipeline(uncastLogs));
+            .Where(x => x.Coded == 2).OrderBy(x => x.Label).Select(x => x.Label).ToList();
+        Assert.Contains("\"Coded\" : \"2\"", MqlPipeline(uncastLogs));
         Assert.Equal(nativeLabels, uncastLabels);
+
+        // A relational comparison would compare the stored strings ("10" < "2"), so it is refused on every path
+        // (EF-337, StoredOrdering) rather than answered in string order.
+        using var refusedNativeOnly = CreateConvContext(collection, MongoQueryMode.NativeOnly);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => refusedNativeOnly.Entities.AsNoTracking()
+            .Where(x => x.Coded >= 2).Select(x => x.Label).ToList());
+        using var refusedNative = CreateConvContext(collection, MongoQueryMode.Native);
+        Assert.Throws<NotSupportedException>(() => refusedNative.Entities.AsNoTracking()
+            .Where(x => x.Coded >= 2).Select(x => x.Label).ToList());
 
         // No driver-LINQ oracle: the driver fails building its numeric-conversion serializer over a
         // ValueConverterSerializer ("does not implement IHasRepresentationSerializer"), so DriverLinq throws where
@@ -640,7 +644,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // CI overrides DRIVER_VERSION.
         using var driverLinq = CreateConvContext(collection, MongoQueryMode.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
-            .Where(x => (long)x.Coded >= 2L).Select(x => x.Label).ToList()));
+            .Where(x => (long)x.Coded == 2L).Select(x => x.Label).ToList()));
     }
 
     private static SingleEntityDbContext<ConvRow> CreateConvContext(
@@ -687,28 +691,31 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         var collection = database.MongoDatabase.GetCollection<ScaledRow>(name);
 
+        // Equality: the constant goes through the converter (model 2 -> stored 4); the wrong rule would emit 2 and
+        // select p (stored 2).
         var logs = new List<string>();
         using var nativeOnly = CreateScaledContext(collection, MongoQueryMode.NativeOnly, logs);
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
-            .Where(x => (long)x.Scaled > 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
-
-        // The constant goes through the converter (model 2 -> stored 4); the wrong rule would emit 2.
-        Assert.Contains("\"$gt\" : 4", MqlPipeline(logs));
-
-        // Only r (model 3) exceeds 2; the wrong rule would also return q.
-        Assert.Equal(["r"], nativeLabels);
-        Assert.NotEqual(["q", "r"], nativeLabels);
+            .Where(x => (long)x.Scaled == 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
+        Assert.Contains("\"Scaled\" : 4", MqlPipeline(logs));
+        Assert.Equal(["q"], nativeLabels);
 
         // Oracle: materialize (applying the converter) and filter in memory.
         using var oracle = CreateScaledContext(collection, MongoQueryMode.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
-            .Where(x => (long)x.Scaled > 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
-        Assert.Equal(["r"], inMemoryLabels);
+            .Where(x => (long)x.Scaled == 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
+        Assert.Equal(inMemoryLabels, nativeLabels);
+
+        // A relational comparison over a custom converter is refused (EF-337): this one happens to be monotone, but
+        // a converter can't be proven so, and the old answer was only right by that accident.
+        using var refused = CreateScaledContext(collection, MongoQueryMode.NativeOnly);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => refused.Entities.AsNoTracking()
+            .Where(x => (long)x.Scaled > 2L).Select(x => x.Label).ToList());
 
         // No driver-LINQ oracle, as in case 12.
         using var driverLinq = CreateScaledContext(collection, MongoQueryMode.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
-            .Where(x => (long)x.Scaled > 2L).Select(x => x.Label).ToList()));
+            .Where(x => (long)x.Scaled == 2L).Select(x => x.Label).ToList()));
     }
 
     private static SingleEntityDbContext<ScaledRow> CreateScaledContext(

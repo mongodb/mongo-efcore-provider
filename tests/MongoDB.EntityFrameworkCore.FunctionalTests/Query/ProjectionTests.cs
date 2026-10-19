@@ -588,8 +588,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_uses_source_property_serializer));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = p.orderFromSun })
             .ToList();
 
@@ -603,8 +604,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_ef_property_uses_source_property_serializer));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = EF.Property<int>(p, nameof(PlanetWithStringOrder.orderFromSun)) })
             .ToList();
 
@@ -618,8 +620,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_widening_cast));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = (long)p.orderFromSun })
             .ToList();
 
@@ -633,8 +636,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_nullable_lift));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = (int?)p.orderFromSun })
             .ToList();
 
@@ -689,11 +693,14 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public void Count_with_value_converter_in_predicate()
+    public void Count_with_value_converter_in_predicate_is_refused()
     {
+        // long stored as int (narrowing): a relational comparison against a constant is refused (EF-337), because a
+        // constant outside the int range would wrap. Sort and aggregates above stay supported; equality below works.
         using var db = CreateLongOrderContext();
-        var result = db.Entities.Count(p => p.orderFromSun > 4L);
-        Assert.Equal(4, result);
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.Count(p => p.orderFromSun > 4L));
+        Assert.Contains("PlanetWithLongOrder.orderFromSun'", ex.Message);
+        Assert.Equal(1, db.Entities.Count(p => p.orderFromSun == 4L));
     }
 
     [Fact]

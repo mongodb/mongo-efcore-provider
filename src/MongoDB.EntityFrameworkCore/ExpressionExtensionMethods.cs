@@ -20,6 +20,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore;
 
@@ -101,6 +102,20 @@ internal static class ExpressionExtensionMethods
         => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unaryExpression
             ? RemoveConvert(unaryExpression.Operand)
             : expression;
+
+    /// <summary>
+    /// Peels every <see cref="IncludeExpression"/> wrapper off <paramref name="expression"/>, down to the outermost
+    /// non-Include <see cref="IncludeExpression.EntityExpression"/>. Strips nothing else (no <c>Convert</c>).
+    /// </summary>
+    internal static Expression UnwrapIncludes(this Expression expression)
+    {
+        while (expression is IncludeExpression include)
+        {
+            expression = include.EntityExpression;
+        }
+
+        return expression;
+    }
 
     /// <summary>
     /// Reads a wrapped projection body (anonymous type / DTO construction) into (member name, value) pairs:
@@ -299,6 +314,11 @@ internal static class ExpressionExtensionMethods
     {
         public bool Found { get; private set; }
 
+        // Stop descending once found.
+        [return: NotNullIfNotNull(nameof(node))]
+        public override Expression? Visit(Expression? node)
+            => Found ? node : base.Visit(node);
+
         protected override Expression VisitParameter(ParameterExpression node)
         {
             if (ReferenceEquals(node, parameter))
@@ -307,6 +327,30 @@ internal static class ExpressionExtensionMethods
             }
 
             return node;
+        }
+    }
+
+    /// <summary>
+    /// The operands of a top-level (possibly nested) <c>&amp;&amp;</c> chain, in source order; just
+    /// <paramref name="expression"/> when it isn't one. Converts aren't unwrapped.
+    /// </summary>
+    internal static List<Expression> FlattenAndAlso(this Expression expression)
+    {
+        var conjuncts = new List<Expression>();
+        Flatten(expression);
+        return conjuncts;
+
+        void Flatten(Expression node)
+        {
+            if (node is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
+            {
+                Flatten(andAlso.Left);
+                Flatten(andAlso.Right);
+            }
+            else
+            {
+                conjuncts.Add(node);
+            }
         }
     }
 

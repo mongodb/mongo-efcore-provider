@@ -616,7 +616,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     // The projection-side filtered-count branch is deliberately gate-free: the element predicate is not checked
     // at translate time, because a translate-time check hard-fails the whole leaf with InvalidOperationException
     // in every mode (including DriverLinq) instead of declining (see MongoExpressionTranslator's count-branch
-    // remarks and NativeComputedSortTests.Filtered_owned_collection_count_sort_key_goes_native). The renderer
+    // remarks and NativeComputedSortTests.Filtered_owned_collection_count_sort_key_over_a_string_represented_operand_is_refused). The renderer
     // decides; a render-time throw is caught in TryBuildPipeline and becomes a fallback.
     private void AssertElementPredicateGoesNative(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, List<string>> run, string[] expected)
