@@ -104,7 +104,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
             "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }, " +
-            "{ \"$unwind\" : { \"path\" : \"$_lookup_Buyer\", \"preserveNullAndEmptyArrays\" : false } }");
+            "{ \"$match\" : { \"_lookup_Buyer.0\" : { \"$exists\" : true } } }, { \"$set\" : { \"_lookup_Buyer\" : { \"$arrayElemAt\" : [\"$_lookup_Buyer\", 0] } } }");
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
             "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }, " +
-            "{ \"$unwind\" : { \"path\" : \"$_lookup_Buyer\", \"preserveNullAndEmptyArrays\" : false } }");
+            "{ \"$match\" : { \"_lookup_Buyer.0\" : { \"$exists\" : true } } }, { \"$set\" : { \"_lookup_Buyer\" : { \"$arrayElemAt\" : [\"$_lookup_Buyer\", 0] } } }");
     }
 
     [Fact]
@@ -666,7 +666,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         spyLogger.AssertExecutedMqlContains("{ \"$match\" : { \"Total\" : { \"$gt\" : { \"$numberDecimal\" : \"10\" } } } }, " +
             "{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
             "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }, " +
-            "{ \"$unwind\" : { \"path\" : \"$_lookup_Buyer\", \"preserveNullAndEmptyArrays\" : false } }");
+            "{ \"$match\" : { \"_lookup_Buyer.0\" : { \"$exists\" : true } } }, { \"$set\" : { \"_lookup_Buyer\" : { \"$arrayElemAt\" : [\"$_lookup_Buyer\", 0] } } }");
     }
 
     /// <summary>
@@ -709,7 +709,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // Gate 2, IsStreamableReference fact (IsReference && !HasPipeline && local field not _lookup_-prefixed).
         spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.CustomersCollectionName +
             "\", \"localField\" : \"UniCustomerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_UniCustomer\" } }, " +
-            "{ \"$unwind\" : { \"path\" : \"$_lookup_UniCustomer\", \"preserveNullAndEmptyArrays\" : false } }");
+            "{ \"$match\" : { \"_lookup_UniCustomer.0\" : { \"$exists\" : true } } }, { \"$set\" : { \"_lookup_UniCustomer\" : { \"$arrayElemAt\" : [\"$_lookup_UniCustomer\", 0] } } }");
     }
 
     /// <summary>
@@ -756,7 +756,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.CarriersCollectionName +
             "\", \"localField\" : \"CarrierId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Carrier\" } }, " +
-            "{ \"$unwind\" : { \"path\" : \"$_lookup_Carrier\", \"preserveNullAndEmptyArrays\" : true } }");
+            "{ \"$set\" : { \"_lookup_Carrier\" : { \"$arrayElemAt\" : [\"$_lookup_Carrier\", 0] } } }");
     }
 
     [Fact]
@@ -828,7 +828,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Null(result.Carrier);
         spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.CarriersCollectionName +
             "\", \"localField\" : \"CarrierId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Carrier\" } }, " +
-            "{ \"$unwind\" : { \"path\" : \"$_lookup_Carrier\", \"preserveNullAndEmptyArrays\" : true } }, " +
+            "{ \"$set\" : { \"_lookup_Carrier\" : { \"$arrayElemAt\" : [\"$_lookup_Carrier\", 0] } } }, " +
             "{ \"$match\" : { \"_lookup_Carrier\" : null } }, " +
             "{ \"$limit\" : 1 }");
     }

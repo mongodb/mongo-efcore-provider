@@ -670,6 +670,44 @@ public class MongoPipelineFactoryTests
             result[0]);
     }
 
+    // A reference lookup keyed on the target's _id matches at most one document, so the $unwind is replaced: $unwind makes the
+    // server abandon its slot-based $lookup (2-6x slower on 8.x), while $match + $set keeps it.
+
+    [Fact]
+    public void Reference_unwind_stage_matching_at_most_one_document_renders_match_then_set_for_an_inner_join()
+    {
+        var lookup = new LookupExpression(ReferenceNavigation());
+
+        var stages = new List<MongoPipelineStage>
+        {
+            new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: false, atMostOneMatch: true)
+        };
+        var result = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()).Build(new Dictionary<string, object?>());
+
+        Assert.Equal(2, result.Length);
+        Assert.Equal(BsonDocument.Parse("{ $match: { \"_lookup_Child.0\": { $exists: true } } }"), result[0]);
+        Assert.Equal(
+            BsonDocument.Parse("{ $set: { _lookup_Child: { $arrayElemAt: [\"$_lookup_Child\", 0] } } }"),
+            result[1]);
+    }
+
+    [Fact]
+    public void Reference_unwind_stage_matching_at_most_one_document_renders_only_set_for_a_left_join()
+    {
+        var lookup = new LookupExpression(ReferenceNavigation());
+
+        var stages = new List<MongoPipelineStage>
+        {
+            new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: true, atMostOneMatch: true)
+        };
+        var result = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()).Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        Assert.Equal(
+            BsonDocument.Parse("{ $set: { _lookup_Child: { $arrayElemAt: [\"$_lookup_Child\", 0] } } }"),
+            result[0]);
+    }
+
     // MongoAddFieldsStage / MongoUnsetStage / RenderSort computed keys
 
     [Fact]
