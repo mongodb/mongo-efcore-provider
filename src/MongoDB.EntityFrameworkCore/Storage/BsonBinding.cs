@@ -158,7 +158,13 @@ internal static class BsonBinding
 
     private static BsonArray? GetBsonArray(BsonDocument document, string name)
     {
-        if (!TryGetValueAtPath(document, name, out var bsonValue)) return null;
+        // A dotted name is normally a root-relative path (see TryGetValueAtPath), but before path walking it was read as
+        // one literal key, so fall back to the literal key when the walk misses.
+        if (!TryGetValueAtPath(document, name, out var bsonValue)
+            && !document.TryGetValue(name, out bsonValue))
+        {
+            return null;
+        }
 
         return bsonValue switch
         {
@@ -512,7 +518,8 @@ internal static class BsonBinding
 
         // Check the RAW element: for a value-typed T the deserialized value is never null, so a post-read null check
         // can't see an explicit BSON null (driver-LINQ throws FormatException for it). Except through the driver's
-        // BooleanSerializer, which reads null as false, as driver-LINQ did (see
+        // BooleanSerializer, which reads null as false, as driver-LINQ did (this mirrors the driver; a value-converted
+        // bool has a ValueConverterSerializer, not a BooleanSerializer, so it takes the throwing branch; see
         // MongoAggregationExpressionRenderer.DriverReadsNullAsDefault).
         if (!property.IsNullable && document.TryGetValue(elementName, out var raw) && raw.IsBsonNull
             && serializationInfo.Serializer is not BooleanSerializer)

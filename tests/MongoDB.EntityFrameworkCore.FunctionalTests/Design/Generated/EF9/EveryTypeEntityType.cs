@@ -164,6 +164,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Design
                 fieldInfo: typeof(CompiledModelTests.EveryType).GetField("<anIntRepresentedAsAString>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly),
                 sentinel: 0);
             anIntRepresentedAsAString.AddAnnotation("Mongo:BsonRepresentation", new Dictionary<string, object> { ["BsonType"] = BsonType.String, ["AllowOverflow"] = false, ["AllowTruncation"] = false });
+            anIntRepresentedAsAString.AddAnnotation("Mongo:OrderPreservingStorage", true);
 
             var key = runtimeEntityType.AddKey(
                 new[] { id });

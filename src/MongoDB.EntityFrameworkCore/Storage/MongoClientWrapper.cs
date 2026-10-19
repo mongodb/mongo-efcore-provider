@@ -130,6 +130,7 @@ public class MongoClientWrapper : IMongoClientWrapper
             var cursor = executableQuery.Session is { } session
                 ? collection.Aggregate(session, pipeline)
                 : collection.Aggregate(pipeline);
+            Debug.Assert(typeof(T) == typeof(BsonDocument), "Non-streaming native path yields BsonDocument.");
             return (IEnumerable<T>)cursor.ToEnumerable();
         }
 

@@ -89,7 +89,11 @@ public static class MongoPropertiesConfigurationBuilderExtensions
         this PropertiesConfigurationBuilder propertiesConfigurationBuilder,
         bool orderPreserving = true)
     {
-        propertiesConfigurationBuilder.HaveAnnotation(MongoAnnotationNames.OrderPreservingStorage, orderPreserving);
+        // False means "undeclared": like the property-level setters, don't store the annotation at all.
+        if (orderPreserving)
+        {
+            propertiesConfigurationBuilder.HaveAnnotation(MongoAnnotationNames.OrderPreservingStorage, true);
+        }
 
         return propertiesConfigurationBuilder;
     }

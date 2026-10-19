@@ -391,6 +391,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture database)
             db.SaveChanges();
         }
 
+        // Cause two updates to happen interleaved
         {
             using var db1 = SingleEntityDbContext.Create(collection);
             var entity1 = db1.Entities.First();
@@ -411,6 +412,7 @@ public class UpdateEntityTests(TemporaryDatabaseFixture database)
             using var db = SingleEntityDbContext.Create(collection);
             var entity = db.Entities.First();
 
+            // Ensure we have data from two interleaved updates
             Assert.Equal(entity.session, session2);
             Assert.Equal(2, entity.lastCount);
         }

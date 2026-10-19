@@ -75,6 +75,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests(TemporaryDatabaseFixture da
         }
 
         {
+            // Find with CSharpDriver
             var actual = collection.Database.GetCollection<UnderscoreIdNamedProperty>(collection.CollectionNamespace
                 .CollectionName);
             var directFound = actual.Find(f => f._id == id).Single();
@@ -82,6 +83,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests(TemporaryDatabaseFixture da
         }
 
         {
+            // Find with EF
             using var db = SingleEntityDbContext.Create(collection);
             var found = db.Entities.Single(f => f._id == id);
             Assert.Equal(name, found.name);
@@ -103,12 +105,14 @@ public class MongoPrimaryKeyDiscoveryConventionTests(TemporaryDatabaseFixture da
         }
 
         {
+            // Find with CSharpDriver
             var actual = collection.Database.GetCollection<IdNamedProperty>(collection.CollectionNamespace.CollectionName);
             var directFound = actual.Find(f => f.Id == id).Single();
             Assert.Equal(name, directFound.name);
         }
 
         {
+            // Find with EF
             using var db = SingleEntityDbContext.Create(collection);
             var found = db.Entities.Single(f => f.Id == id);
             Assert.Equal(name, found.name);
@@ -131,6 +135,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests(TemporaryDatabaseFixture da
         }
 
         {
+            // Find with CSharpDriver
             var actual = collection.Database.GetCollection<UnderscoreIdNamedProperty>(collection.CollectionNamespace
                 .CollectionName);
             var found = actual.Find(f => f._id == id).Single();
@@ -138,6 +143,7 @@ public class MongoPrimaryKeyDiscoveryConventionTests(TemporaryDatabaseFixture da
         }
 
         {
+            // Find with EF
             using var db = SingleEntityDbContext.Create(collection);
             var found = db.Entities.Single(f => f.MyPrimaryKey == id);
             Assert.Equal(name, found.name);
@@ -160,12 +166,14 @@ public class MongoPrimaryKeyDiscoveryConventionTests(TemporaryDatabaseFixture da
         }
 
         {
+            // Find with CSharpDriver
             var actual = collection.Database.GetCollection<StoredProduct>(collection.CollectionNamespace.CollectionName);
             var found = actual.Find(f => f._id == id).Single();
             Assert.Equal(name, found.name);
         }
 
         {
+            // Find with EF
             using var db = SingleEntityDbContext.Create(collection);
             var found = db.Entities.Single(f => f.ProductId == id);
             Assert.Equal(name, found.name);
