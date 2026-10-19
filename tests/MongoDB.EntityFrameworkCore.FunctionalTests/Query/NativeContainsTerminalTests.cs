@@ -137,7 +137,7 @@ public class NativeContainsTerminalTests(TemporaryDatabaseFixture database) : IC
         {
             using var db = CreateContext(collection, mode);
             return db.Entities.Where(r => r == none).Select(r => r.Name).ToList();
-        });
+        }, allowEmpty: true);
         Assert.Empty(result);
     }
 

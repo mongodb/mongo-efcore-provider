@@ -2531,7 +2531,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
                 .Skip(0)
                 .Take(0)
                 .AsEnumerable()
-                .Select(x => x.Key).ToList()));
+                .Select(x => x.Key).ToList()), allowEmpty: true);
 
         Assert.Empty(result);
     }

@@ -202,8 +202,8 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     }
 
     private List<string> AssertNativeAndParity(
-        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
-        => NativeModeAssert.NativeAndParity(mode => RunTitles(collection, query, mode));
+        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, bool allowEmpty = false)
+        => NativeModeAssert.NativeAndParity(mode => RunTitles(collection, query, mode), allowEmpty);
 
     private List<string> AssertDeclinesCleanly(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
@@ -271,7 +271,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         Assert.Equal(["match"], wfBoth);
 
         var wfSplit = AssertNativeAndParity(
-            wellFormed, q => q.Where(b => b.Posts.Any(p => p.Heading == "z" && p.Rank == 5)));
+            wellFormed, q => q.Where(b => b.Posts.Any(p => p.Heading == "z" && p.Rank == 5)), allowEmpty: true);
         Assert.Empty(wfSplit);
     }
 
