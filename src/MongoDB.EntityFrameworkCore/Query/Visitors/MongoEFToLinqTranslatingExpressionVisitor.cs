@@ -782,6 +782,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return base.VisitUnary(node);
     }
 
+    protected override Expression VisitConditional(ConditionalExpression node)
+    {
+        ThrowIfComputedFromStoredValue(node);
+        return base.VisitConditional(node);
+    }
+
     // A DateTime member (Hour, Date, Year, ...) the server computes from the stored instant; Kind is not stored.
     private static bool IsServerDatePart(MemberExpression node, [NotNullWhen(true)] out Expression? receiver)
     {

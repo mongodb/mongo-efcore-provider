@@ -50,6 +50,9 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         public int Num { get; set; }
         public Color Color { get; set; }
         public int Wide { get; set; }
+        public bool Flag { get; set; }
+        public bool? NFlag { get; set; }
+        public List<int> Scores { get; set; } = [];
     }
 
     public enum Color
@@ -75,6 +78,14 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         ["Where_modulo"] = q => q.Where(x => x.Num % 2 == 1).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         ["Where_plus_equal"] = q => q.Where(x => x.Num + 1 == 3).Select(x => x.Seq).ToList(),
         ["Where_Math_Abs_equal"] = q => q.Where(x => Math.Abs(x.Num) == 2).Select(x => x.Seq).ToList(),
+        // A converted bool tested by truthiness: the stored "True"/"False" are both truthy (EF-466).
+        ["Where_conditional_truth"] = q => q.Where(x => x.Flag ? x.Seq > 1 : x.Seq > 2).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
+        ["Where_conditional_value"] = q => q.Where(x => (x.Flag ? 1 : 0) == 0).Select(x => x.Seq).ToList(),
+        ["Count_conditional_value"] = q => q.Count(x => (x.Flag ? 1 : 0) == 1),
+        ["Where_conditional_coalesce_truth"] = q => q.Where(x => (x.NFlag ?? false) ? x.Seq > 1 : x.Seq > 2).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
+        // Two operands stored differently: a default-stored list against a converted property compares the stored forms (EF-467).
+        ["Where_stored_list_Contains_converted"] = q => q.Where(x => x.Scores.Contains(x.Num)).Select(x => x.Seq).ToList(),
+        ["Where_stored_list_Any_equal_converted"] = q => q.Where(x => x.Scores.Any(s => s == x.Num)).Select(x => x.Seq).ToList(),
         ["Select_Length"] = q => q.OrderBy(x => x.Seq).Select(x => x.Name.Length).ToList(),
         ["Select_plus"] = q => q.OrderBy(x => x.Seq).Select(x => x.Num + 1).ToList(),
         ["Select_concat"] = q => q.OrderBy(x => x.Seq).Select(x => x.Name + "!").ToList(),
@@ -87,6 +98,9 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
     private static readonly Dictionary<string, Func<IQueryable<Item>, object>> AllowedQueries = new()
     {
         ["Where_equal"] = q => q.Where(x => x.Name == "ab").Select(x => x.Seq).ToList(),
+        ["Where_Flag"] = q => q.Where(x => x.Flag).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
+        ["Where_not_Flag"] = q => q.Where(x => !x.Flag).Select(x => x.Seq).ToList(),
+        ["Where_Flag_equal_false"] = q => q.Where(x => x.Flag == false).Select(x => x.Seq).ToList(),
         ["Where_not_equal"] = q => q.Where(x => x.Num != 2).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         ["Where_in_list"] = q =>
         {
@@ -112,6 +126,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
     {
         ["Where_ToString_StartsWith"] = q => q.Where(x => x.Color.ToString().StartsWith("R")).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         ["Where_ToString_Length"] = q => q.Where(x => x.Color.ToString().Length == 3).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
+        ["Where_stored_list_Contains_alike"] = q => q.Where(x => x.Scores.Contains(x.Seq)).Select(x => x.Seq).ToList(),
         ["Where_numeric_cast_modulo"] = q => q.Where(x => x.Wide % 2 == 1).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         ["Select_numeric_cast_plus"] = q => q.OrderBy(x => x.Seq).Select(x => x.Wide + 1).ToList()
     };
@@ -151,7 +166,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         }
         else
         {
-            Assert.Matches(@"Item.(Name|Num)'", Assert.IsType<NotSupportedException>(ex).Message);
+            Assert.Matches(@"Item.(Name|Num|Flag|NFlag|Scores)'", Assert.IsType<NotSupportedException>(ex).Message);
         }
     }
 
@@ -194,6 +209,9 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
                 { "Name", "pfx-" + r.Name },
                 { "Num", r.Num * 2 },
                 { "Color", ColorOf(r.Seq).ToString() },
+                { "Flag", r.Seq != 2 ? "1" : "0" },
+                { "NFlag", r.Seq == 3 ? BsonNull.Value : (BsonValue)(r.Seq == 1 ? "1" : "0") },
+                { "Scores", new BsonArray { r.Seq == 1 ? 9 : r.Seq == 2 ? 4 : 3 } },
                 { "Wide", (long)r.Seq }
             }));
 
@@ -221,6 +239,8 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
                 mb.Entity<Item>().Property(e => e.Num).HasConversion(v => v * 2, v => v / 2);
                 mb.Entity<Item>().Property(e => e.Color).HasConversion<string>();
                 mb.Entity<Item>().Property(e => e.Wide).HasConversion<long>();
+                mb.Entity<Item>().Property(e => e.Flag).HasConversion<string>();
+                mb.Entity<Item>().Property(e => e.NFlag).HasConversion<string>();
             },
             optionsBuilderAction: b =>
             {
