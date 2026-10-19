@@ -31,13 +31,12 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
-// TODO(EF-317): Cross-collection $lookup Include machinery. EF Core lowers cross-collection collection
-// navigations (Include / projected collections / nested ThenInclude / filtered Include) onto manual
-// $lookup + $unwind pipeline stages because the C# driver's LINQ provider has no native LeftJoin and
-// cannot express collection or multi-hop joins. When the driver ships native LeftJoin support, the
-// members in this file are expected to be removed; the only entry points from the rest of the visitor
-// are the TryBindProjectedCollectionNavigation / TryBindProjectedCollectionNavigationCount dispatch
-// calls in VisitMethodCall.
+// Cross-collection $lookup Include machinery. EF Core lowers cross-collection collection navigations
+// (Include / projected collections / nested ThenInclude / filtered Include) onto manual $lookup +
+// $unwind pipeline stages because the C# driver's LINQ provider has no native LeftJoin and cannot
+// express collection or multi-hop joins. The only entry points from the rest of the visitor are the
+// TryBindProjectedCollectionNavigation / TryBindProjectedCollectionNavigationCount dispatch calls in
+// VisitMethodCall.
 internal sealed partial class MongoProjectionBindingExpressionVisitor : ExpressionVisitor
 {
     /// <summary>
@@ -614,10 +613,12 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         var refLookup = new LookupExpression(referenceNavigation);
 
         parentLookup.PipelineStages.Add(BuildLookupDocument(refLookup));
-        // Deliberately always true, unlike the flat-lookup path (EmitLookupStages / PreserveNullAndEmptyArrays):
-        // this $unwind runs INSIDE the parent collection lookup's sub-pipeline, so a non-preserving one would
-        // drop collection ELEMENTS, not principals - and an Include must never change the query's result set.
-        // See docs/superpowers/specs/2026-08-03-required-nav-unwind-semantics-design.md section 7.1.
+        // preserveNullAndEmptyArrays stays unconditionally true here, DELIBERATELY inconsistent with the
+        // flat-lookup path (EmitLookupStages), which follows the LINQ operator via
+        // LookupExpression.PreserveNullAndEmptyArrays and so emits an inner $unwind for a required
+        // reference navigation. This $unwind runs INSIDE the parent collection lookup's sub-pipeline, so a
+        // non-preserving one would drop collection ELEMENTS, not principals - and an Include must never
+        // change the result set of the query it decorates (EF-370); making the two sites agree is not the fix.
         parentLookup.PipelineStages.Add(new BsonDocument("$unwind", new BsonDocument
         {
             { "path", $"${refLookup.As}" },

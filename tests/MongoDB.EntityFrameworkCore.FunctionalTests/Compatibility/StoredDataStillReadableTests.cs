@@ -339,11 +339,17 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         ]
     };
 
-    // "OwnedMany = []" below is the read expectation for nullDefaultDoc ("OwnedMany":null, written by provider
-    // 8.1). Pre-EF-358 the provider never materialized a collection for a missing/null stored array, so this
-    // used to read back as null purely because Nullables.OwnedMany has no "= []" initializer — not because of
-    // any provider contract (same mechanism as the "RENAMED (EF-358)" block in OwnedEntityTests.cs). The stored
-    // bytes are unchanged; only this expectation moves to match the now-uniform empty-collection read.
+    // OwnedMany is deliberately left unset (rather than "= null") above the initializer, not to be confused
+    // with a provider guarantee: this class declares "public List<Owned>? OwnedMany { get; set; }" with no
+    // "= []" initializer, so leaving it unset means its CLR default, null. The seeded doc for this row
+    // ("nullDefaultDoc" above) stores "OwnedMany":null, written by provider 8.1. Pre-EF-358 the provider never
+    // created a collection for a missing or explicitly-null stored array on ANY path — not just here — so the
+    // observed "null" was this class's own lack of a "= []" initializer surfacing through, not a provider
+    // contract (identical mechanism to the "RENAMED (EF-358)" comment block in OwnedEntityTests.cs, above the
+    // four "..._is_empty_when_null"/"..._is_empty_when_missing" tests). EF-358 made materialization uniform and
+    // initializer-independent, so this now reads back as an empty collection like every other path. The stored
+    // bytes ("OwnedMany":null) and the suite's actual guarantee — that data written by an older provider is
+    // still readable — are both unchanged; only the expectation below moves to match the corrected read.
     private readonly Nullables _nullableDefault = new()
     {
         id = ObjectId.Parse("670d7d952112a60d7fa17d99"),

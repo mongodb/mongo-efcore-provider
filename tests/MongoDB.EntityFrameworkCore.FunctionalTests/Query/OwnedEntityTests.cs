@@ -689,11 +689,22 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     // RENAMED (EF-358) from "..._is_null_when_null" / "..._is_null_when_missing". The old names asserted a
-    // provider contract that never existed: the old "null" was produced by EF Core's IncludeExpression fixup
-    // (in MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection) being skipped because the
-    // provider's computed value was null, leaving `children` at the POCO's own default — not by any provider
-    // guarantee. EF-358 always materializes a real (possibly empty) collection, so the fixup always runs and
-    // every class reads back the same regardless of its field initializer.
+    // provider CONTRACT that never existed. Verified by measurement (EF-358 task-2-report.md addendum) and
+    // in source: pre-EF-358, the provider computed `null` for a missing or explicitly-null stored array on
+    // EVERY code path and never created a collection for that row at all — not just here. What actually
+    // produced the OLD "null" observed by these four tests was a SEPARATE mechanism, one layer up, in
+    // `MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection` — the fixup EF Core's own
+    // auto-included `IncludeExpression` runs for every owned collection navigation (with or without an
+    // explicit `.Include()`). That method only calls `navigation.GetCollectionAccessor()!.GetOrCreate(entity,
+    // forMaterialization: true)` inside "if (relatedEntities != null)". Pre-fix, `relatedEntities` (the
+    // provider's computed value) was that same `null`, so the fixup was skipped ENTIRELY and the property was
+    // left exactly as the CLASS'S OWN field initializer set it — `null` for `SimpleNonNullableCollection` and
+    // `SimpleNullableCollection`, since neither declares `children { get; set; } = [];`. Had either class
+    // been written with that initializer, these tests would have observed "empty" even on the OLD code, for
+    // the IDENTICAL underlying null computation — i.e. the old assertions were pinning their own POCO's
+    // authoring style, not provider semantics. EF-358 removes that dependency: the provider now always
+    // materializes a real (possibly empty) collection, so the `IncludeCollection` fixup always runs and every
+    // class gets the same, uniform answer regardless of whether it wrote a defensive initializer.
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
@@ -1592,8 +1603,8 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         }
 
         {
-            // Assert the count is evaluated server-side (a $map/$sum over the array, equivalent to
-            // filter+size) rather than by materializing the owned CountPost entities and counting client-side.
+            // Assert the count is evaluated server-side (a $filter/$size over the array) rather than by
+            // materializing the owned CountPost entities and counting client-side.
             var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
             using var db = SingleEntityDbContext.Create(collection, loggerFactory,
                 optionsBuilderAction: o => o.EnableSensitiveDataLogging());
@@ -1603,8 +1614,8 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             Assert.Equal(2, result.N);
 
             var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
-            Assert.Contains("$map", message);
-            Assert.Contains("$sum", message);
+            Assert.Contains("$filter", message);
+            Assert.Contains("$size", message);
         }
     }
 

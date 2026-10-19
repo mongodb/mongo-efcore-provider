@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
@@ -38,8 +39,19 @@ public class MongoTestStore : TestStore
     protected override DbContext CreateDefaultContext()
         => throw new NotSupportedException();
 
+    // MONGODB_EF_NATIVE_ONLY=1 flips every spec context to MongoQueryMode.NativeOnly, which is how the
+    // "what actually goes native" report is produced.
+    //
+    // TODO(EF-417): this switch, and the ~24 functional Native* test classes that assert
+    // `Native == DriverLinq` parity, both depend on driver-LINQ remaining available as the oracle. Once the
+    // fallback is retired there is no second execution path to compare against, so the parity oracle needs a
+    // replacement (an in-memory-LINQ oracle, or pinned expected result sets) before that happens. Nothing here
+    // blocks merging; the ticket exists so the replacement is a decision on record rather than a surprise.
     public override DbContextOptionsBuilder AddProviderOptions(DbContextOptionsBuilder builder)
-        => builder.UseMongoDB(TestServer.Client, Name);
+        => builder.UseMongoDB(TestServer.Client, Name,
+            Environment.GetEnvironmentVariable("MONGODB_EF_NATIVE_ONLY") == "1"
+                ? o => o.UseQueryMode(MongoQueryMode.NativeOnly)
+                : null);
 
 #if !EF8
     protected override async Task InitializeAsync(Func<DbContext> createContext, Func<DbContext, Task>? seed,

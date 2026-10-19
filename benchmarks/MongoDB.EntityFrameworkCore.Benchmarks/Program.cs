@@ -1,5 +1,87 @@
 using Microsoft.EntityFrameworkCore;
+using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Benchmarks;
+using MongoDB.EntityFrameworkCore.Infrastructure;
+
+if (args.Contains("--verify-native"))
+{
+    var conn = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
+    var dbName = "ef_bench_nativeverify_" + Guid.NewGuid().ToString("N");
+    var client = new MongoClient(conn);
+
+    var seedOptions = new DbContextOptionsBuilder<BenchmarkDbContext>()
+        .UseMongoDB(client, dbName, o => o.UseQueryMode(MongoQueryMode.DriverLinq)).Options;
+    var nativeOnlyOptions = new DbContextOptionsBuilder<BenchmarkDbContext>()
+        .UseMongoDB(client, dbName, o => o.UseQueryMode(MongoQueryMode.NativeOnly)).Options;
+
+    try
+    {
+        using (var ctx = new BenchmarkDbContext(seedOptions))
+            BenchmarkSeeder.Seed(ctx, flatCount: 100, productCount: 20, reviewCount: 100);
+
+        Console.WriteLine("=== NativeOnly verification ===");
+
+        static void RunShape(string label, Action test, bool expectFallback = false)
+        {
+            try
+            {
+                test();
+                if (expectFallback)
+                    Console.WriteLine($"{label}: NATIVE OK <-- UNEXPECTED, should fall back!");
+            }
+            catch (Exception ex) when (ex.GetType().Name == "NativeTranslationNotSupportedException")
+            {
+                if (expectFallback)
+                    Console.WriteLine($"{label}: FALLBACK CONFIRMED (NativeTranslationNotSupportedException)");
+                else
+                    Console.WriteLine($"{label}: FALLBACK (unexpected) — {ex.Message[..Math.Min(80, ex.Message.Length)]}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{label}: ERROR — {ex.GetType().Name}: {ex.Message[..Math.Min(80, ex.Message.Length)]}");
+            }
+        }
+
+        // WhereToList — should be NATIVE OK
+        RunShape("WhereToList:      ", () =>
+        {
+            using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
+            var count = ctx.FlatItems.AsNoTracking().Where(f => f.Active).ToList().Count;
+            Console.WriteLine($"WhereToList:       NATIVE OK (count={count})");
+        });
+
+        // WholeEntityToList — should be NATIVE OK
+        RunShape("WholeEntityToList:", () =>
+        {
+            using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
+            var count = ctx.FlatItems.AsNoTracking().ToList().Count;
+            Console.WriteLine($"WholeEntityToList: NATIVE OK (count={count})");
+        });
+
+        // OrderByTake — should be NATIVE OK
+        RunShape("OrderByTake:      ", () =>
+        {
+            using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
+            var count = ctx.FlatItems.AsNoTracking().OrderBy(f => f.Count).Take(10).ToList().Count;
+            Console.WriteLine($"OrderByTake:       NATIVE OK (count={count})");
+        });
+
+        // ReferenceInclude — expected to throw NativeTranslationNotSupportedException (Include deferred)
+        RunShape("ReferenceInclude: ", () =>
+        {
+            using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
+            var count = ctx.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count;
+        }, expectFallback: true);
+
+        Console.WriteLine("=== verification done ===");
+    }
+    finally
+    {
+        using var ctx = new BenchmarkDbContext(seedOptions);
+        ctx.Database.EnsureDeleted();
+    }
+    return;
+}
 
 if (args.Contains("--extended-smoke"))
 {
