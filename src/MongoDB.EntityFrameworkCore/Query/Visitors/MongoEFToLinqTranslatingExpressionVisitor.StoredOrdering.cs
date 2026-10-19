@@ -178,6 +178,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     // Called for every node of the query as it is visited; the walker resolves each value operand through projections and g.Key.
     private void ThrowIfComputedFromStoredValue(Expression node)
     {
+        ThrowIfStoredDifferently(node);
+
         switch (node)
         {
             case BinaryExpression
@@ -198,6 +200,19 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                 ThrowIfReadsStoredOrdering(unary.Operand, StoredOrderingUse.Computation, unary.NodeType.ToString());
                 break;
 
+            // A bool tested by truthiness: a converted one (stored "1"/"0", both truthy) takes the wrong branch (EF-466).
+            case ConditionalExpression conditional:
+                ThrowIfReadsStoredOrdering(conditional.Test, StoredOrderingUse.Computation, "conditional test");
+
+                // `(x.NFlag ?? false) ? a : b`: the coalesce yields the stored value of a converted bool? when it is present.
+                if (StripConverts(conditional.Test) is BinaryExpression { NodeType: ExpressionType.Coalesce } coalesceTest)
+                {
+                    ThrowIfReadsStoredOrdering(coalesceTest.Left, StoredOrderingUse.Computation, "conditional test");
+                    ThrowIfReadsStoredOrdering(coalesceTest.Right, StoredOrderingUse.Computation, "conditional test");
+                }
+
+                break;
+
             case MemberExpression { Expression: { } memberOwner, Member: var member }
                 when IsComputedMember(memberOwner, member):
                 ThrowIfReadsStoredOrdering(memberOwner, StoredOrderingUse.Computation, member.Name);
@@ -216,6 +231,76 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
                 break;
         }
+    }
+
+    // EF-467: equality or `list.Contains(x)` between two operands stored differently compares the stored forms. A constant or parameter
+    // goes through the property's own serializer and stays exact; only two stored operands (a property and a stored collection or its
+    // element) can disagree. Refused unless they are stored alike or both store the CLR value itself.
+    private void ThrowIfStoredDifferently(Expression node)
+    {
+        Expression? left;
+        Expression? right;
+        string operation;
+        switch (node)
+        {
+            case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } equality:
+                (left, right, operation) = (equality.Left, equality.Right, "equality");
+                break;
+
+            case MethodCallExpression { Method.Name: nameof(Enumerable.Contains) } call
+                when call is { Object: { } instanceSource, Arguments: [{ } instanceItem] }:
+                (left, right, operation) = (instanceSource, instanceItem, "Contains");
+                break;
+
+            case MethodCallExpression { Method.Name: nameof(Enumerable.Contains) } call
+                when call is { Object: null, Arguments: [{ } staticSource, { } staticItem] }:
+                (left, right, operation) = (staticSource, staticItem, "Contains");
+                break;
+
+            default:
+                return;
+        }
+
+        if (ResolveStoredProperties(left) is not { } leftProperties || ResolveStoredProperties(right) is not { } rightProperties)
+        {
+            return;
+        }
+
+        foreach (var a in leftProperties)
+        {
+            foreach (var b in rightProperties)
+            {
+                if (!StoredSerialization.StoredAlike(a, b)
+                    && !(StoredOrdering.PreservesClrValueForComputation(a) && StoredOrdering.PreservesClrValueForComputation(b)))
+                {
+                    throw new NotSupportedException(
+                        $"'{operation}' compares the properties '{a.DeclaringType.DisplayName()}.{a.Name}' and "
+                        + $"'{b.DeclaringType.DisplayName()}.{b.Name}', which are stored differently (a value converter or a "
+                        + "BsonRepresentation on one but not the other), so the server would compare their stored forms and return wrong "
+                        + "results. Compare the property with a value instead, or evaluate this on the client, for example after AsEnumerable().");
+                }
+            }
+        }
+    }
+
+    // The mapped properties an operand reads directly: `x.P`, `EF.Property(x, "P")`, or the element of a stored primitive collection.
+    private List<IProperty>? ResolveStoredProperties(Expression operand)
+    {
+        operand = StripConverts(operand);
+        if (TryFindDirectProperties(operand) is { Count: > 0 } direct)
+        {
+            return direct;
+        }
+
+        if (operand is ParameterExpression parameter
+            && !IsMappedEntityType(parameter.Type)
+            && FindParameterElements(parameter) is { Count: > 0 } elements
+            && elements.All(e => e is StoredCollectionElementExpression))
+        {
+            return elements.Cast<StoredCollectionElementExpression>().SelectMany(e => e.Collections).ToList();
+        }
+
+        return null;
     }
 
     // A member of a scalar value type (string.Length, DateTime.Year, TimeSpan.TotalMinutes): the server computes it. The members of an
