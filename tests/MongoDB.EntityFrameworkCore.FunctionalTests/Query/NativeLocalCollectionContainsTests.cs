@@ -66,14 +66,15 @@ public class NativeLocalCollectionContainsTests(TemporaryDatabaseFixture databas
         });
 
     /// <summary>Runs <paramref name="query"/> natively and against DriverLinq; returns the sorted Names.</summary>
-    private List<string> Names(string name, Func<IQueryable<Row>, IQueryable<Row>> query)
+    private List<string> Names(
+        string name, Func<IQueryable<Row>, IQueryable<Row>> query, bool allowEmpty = false)
     {
         var collection = Seed(name);
         return NativeModeAssert.NativeAndParity(mode =>
         {
             using var db = CreateContext(collection, mode);
             return query(db.Entities).Select(r => r.Name).AsEnumerable().Order().ToList();
-        });
+        }, allowEmpty);
     }
 
     [Fact]
@@ -105,7 +106,7 @@ public class NativeLocalCollectionContainsTests(TemporaryDatabaseFixture databas
     [Fact]
     public void Contains_over_empty_inline_list_returns_no_rows_natively()
         => Assert.Empty(Names(nameof(Contains_over_empty_inline_list_returns_no_rows_natively),
-            q => q.Where(r => new List<string>().Contains(r.Name))));
+            q => q.Where(r => new List<string>().Contains(r.Name)), allowEmpty: true));
 
     [Fact]
     public void Tuple_parameter_array_contains_constructed_tuple_goes_native()
@@ -121,7 +122,7 @@ public class NativeLocalCollectionContainsTests(TemporaryDatabaseFixture databas
         // (4, 1) must NOT match row c = (A: 1, B: 4): tuple equality is positional.
         var pairs = new[] { Tuple.Create(4, 1) };
         Assert.Empty(Names(nameof(Tuple_contains_is_positional_not_set_membership),
-            q => q.Where(r => pairs.Contains(Tuple.Create(r.A, r.B)))));
+            q => q.Where(r => pairs.Contains(Tuple.Create(r.A, r.B))), allowEmpty: true));
     }
 
     [Fact]
