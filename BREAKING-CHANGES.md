@@ -355,6 +355,40 @@ Unchanged:
 
 Store the property in a form that orders like the .NET value (for example remove `HasConversion<string>()` from an enum or number, or use a numeric `BsonRepresentation`), or sort, compare or aggregate on the client: `context.Products.AsEnumerable().OrderBy(p => p.Price)`.
 
+### String, member and arithmetic functions over a value-converted or represented property now throw
+
+#### Old behavior
+
+A server-side function computed from a property configured with a value converter or a non-default `BsonRepresentation` ran on the **stored** value, not the .NET value, in a filter, a projection or a group key:
+
+```c#
+// Name has HasConversion(v => "pfx-" + v, v => v.Substring(4)): "abcdef", "ab", "abc" are stored as "pfx-abcdef", "pfx-ab", "pfx-abc"
+// Num has HasConversion(v => v * 2, v => v / 2)
+context.Items.Where(x => x.Name.Contains("x"));       // matched every row ("pfx-" contains an x)
+context.Items.Where(x => x.Name.StartsWith("ab"));    // matched no row
+context.Items.Where(x => x.Name.Length == 2);         // matched no row
+context.Items.Select(x => x.Name.Length);             // 10, 6, 7 instead of 6, 2, 3
+context.Items.GroupBy(x => x.Name.Length);            // keys 6, 7, 10 instead of 2, 3, 6
+context.Items.Where(x => x.Num % 2 == 1);             // matched no row
+```
+
+#### New behavior
+
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`). It covers a string method (`Contains`, `StartsWith`, `EndsWith`, `ToUpper`, `Substring`, `IndexOf`, ...), a member of a value (`Length`, a date part, `TotalMinutes`), arithmetic (`+`, `%`, unary `-`, ...) and `Math` functions computed from the property, including through a projected member or `g.Key`.
+
+Unchanged:
+
+* Reading the property (`Select(x => x.Name)`, an anonymous projection of it), equality (`==`, `!=`, `Contains` on a list of values) and `??`/`?:` over it.
+* Properties stored as themselves, including a `BsonRepresentation` equal to the type's default, and numbers the server holds exactly: EF Core's numeric casting and enum-to-number converters, and a numeric `BsonRepresentation` that represents every value (for example `int` as `Int64`, `Double` or `Decimal128`).
+* A string stored as `ObjectId` and an `ObjectId` stored as `String` still compare, sort and test for equality, but a string function over them now throws.
+* `ToString()` of a property stored as that very string (EF Core's built-in enum, Guid or number to-string converters on a non-nullable property), and string functions of it (`x.Color.ToString().StartsWith("R")`). A nullable such property, or an enum with `BsonRepresentation(String)`, is not exempt and now throws.
+* Arithmetic over EF Core's numeric casting converters, including integral narrowing (`long` stored as `int`).
+* A string function applied to a top-level projected value (`Select(x => x.Name.ToUpper())`), which is evaluated on the client after the value is read.
+
+#### Mitigations
+
+Store the property in a form the function can run over, or bring the rows to the client first: `context.Items.AsEnumerable().Where(x => x.Name.Contains("x"))`. A property whose converter is order-preserving cannot opt in yet (see EF-472).
+
 ### `Random` and `Guid.NewGuid`/`Guid.CreateVersion7` calls inside a query now throw
 
 #### Old behavior

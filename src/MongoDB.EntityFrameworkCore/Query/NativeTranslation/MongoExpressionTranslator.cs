@@ -1459,23 +1459,10 @@ internal sealed partial class MongoExpressionTranslator
             || !IsSimpleValue(value)
             || !TryResolveMember(Unwrap(receiver), out var property, out var path, out var isOuter)
             || isOuter
-            || property.ClrType.IsNullableValueType()
-            || property.GetBsonRepresentation() != null)
+            || !StoredOrdering.IsStoredAsToString(property))
         {
             return null;
         }
-
-        var converter = property.GetValueConverter() ?? property.GetTypeMapping().Converter;
-        if (converter is null || converter.ProviderClrType != typeof(string))
-            return null;
-
-        var converterType = converter.GetType();
-        var isBuiltInToString = converterType == typeof(GuidToStringConverter)
-            || (converterType.IsGenericType
-                && converterType.GetGenericTypeDefinition() is var definition
-                && (definition == typeof(NumberToStringConverter<>) || definition == typeof(EnumToStringConverter<>)));
-        if (!isBuiltInToString)
-            return null;
 
         var operand = TranslateValue(value, forSerialization: null);
         return operand is null

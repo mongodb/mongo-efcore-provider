@@ -34,7 +34,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// F5: a regex runs on the STORED value, so a string stored as a BSON ObjectId (<c>[BsonRepresentation(ObjectId)]</c>)
 /// cannot be searched with <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>/<c>Like</c>/<c>Regex.IsMatch</c>/case-folded
 /// equality. The native translator used to emit a regex that silently matched nothing (<c>[]</c>); it now declines, so
-/// NativeOnly throws and Native falls back to the driver (which raises the server's loud error, as on main).
+/// NativeOnly throws and Native falls back to the driver-LINQ bridge, which refuses the function over the stored form (EF-465).
 /// A plain string property of the same shapes still translates natively.
 /// </summary>
 [XUnitCollection("QueryTests")]
@@ -74,7 +74,7 @@ public class NativeRepresentedStringMethodTests(TemporaryDatabaseFixture databas
     private static List<string> Run(SingleEntityDbContext<Doc> db, Expression<Func<Doc, bool>> predicate)
         => db.Entities.AsNoTracking().Where(predicate).Select(d => d.Code).ToList();
 
-    private void AssertDeclined(Expression<Func<Doc, bool>> predicate, Type? expectedDriverException = null)
+    private void AssertDeclined(Expression<Func<Doc, bool>> predicate)
     {
         var collection = Seed();
 
@@ -87,7 +87,7 @@ public class NativeRepresentedStringMethodTests(TemporaryDatabaseFixture databas
         using var native = Create(collection, MongoQueryMode.Native);
         var nativeEx = Assert.ThrowsAny<Exception>(() => Run(native, predicate));
 
-        Assert.IsType(expectedDriverException ?? typeof(MongoCommandException), driverEx);
+        Assert.IsType<NotSupportedException>(driverEx); // the bridge refuses the function over the stored form (EF-465)
         Assert.Equal(driverEx.GetType(), nativeEx.GetType());
     }
 
@@ -108,14 +108,13 @@ public class NativeRepresentedStringMethodTests(TemporaryDatabaseFixture databas
     [Fact] public void Contains_declines() => AssertDeclined(d => d.Id.Contains("f1f7"));
     [Fact] public void ToLower_equality_declines() => AssertDeclined(d => d.Id.ToLower() == "507f1f77bcf86cd799439011");
 
-    // The driver has no translation for EF.Functions.Like, Regex.IsMatch or a field-to-field StartsWith (the
-    // ExpressionNotSupportedException cases below): Native falls back to it and gets the same
-    // ExpressionNotSupportedException as DriverLinq (never a silent []).
+    // Every shape is refused by the driver-LINQ bridge with a NotSupportedException (it used to reach the driver, which raised the
+    // server's error or ExpressionNotSupportedException); Native falls back to it and gets the same exception as DriverLinq (never a silent []).
     [Fact]
     public void Like_declines()
-        => AssertDeclined(d => EF.Functions.Like(d.Id, "507f%"), typeof(ExpressionNotSupportedException));
+        => AssertDeclined(d => EF.Functions.Like(d.Id, "507f%"));
 
-    [Fact] public void Regex_IsMatch_declines() => AssertDeclined(d => Regex.IsMatch(d.Id, "^507f"), typeof(ExpressionNotSupportedException));
+    [Fact] public void Regex_IsMatch_declines() => AssertDeclined(d => Regex.IsMatch(d.Id, "^507f"));
 
     [Fact]
     public void Equals_ignore_case_declines()
@@ -123,15 +122,15 @@ public class NativeRepresentedStringMethodTests(TemporaryDatabaseFixture databas
 
     [Fact]
     public void Reversed_Regex_IsMatch_declines()
-        => AssertDeclined(d => Regex.IsMatch("507f1f77bcf86cd799439011", d.Id), typeof(ExpressionNotSupportedException));
+        => AssertDeclined(d => Regex.IsMatch("507f1f77bcf86cd799439011", d.Id));
 
     [Fact]
     public void Regex_IsMatch_with_represented_pattern_field_declines()
-        => AssertDeclined(d => Regex.IsMatch(d.Code, d.Id), typeof(ExpressionNotSupportedException));
+        => AssertDeclined(d => Regex.IsMatch(d.Code, d.Id));
 
     [Fact]
     public void Field_to_field_StartsWith_declines()
-        => AssertDeclined(d => d.Code.StartsWith(d.Id), typeof(ExpressionNotSupportedException));
+        => AssertDeclined(d => d.Code.StartsWith(d.Id));
 
     // Controls: the same shapes over a plain string property still translate natively and return correct rows.
     [Fact] public void Control_StartsWith() => AssertNativeAndExpected(d => d.Code.StartsWith("Al"), ["Alpha"]);
