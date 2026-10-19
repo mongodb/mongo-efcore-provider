@@ -396,4 +396,113 @@ public class NativeJoinScopeTranslatorTests
         var field = Assert.IsType<MongoFieldExpression>(result);
         Assert.Equal("Name", field.ElementName);
     }
+
+    // ── TryTranslateSingleScope: any single scope in a chain, not just the root ─────────────────────────────
+
+    [Fact]
+    public void TryTranslateSingleScope_translates_a_root_scoped_value_over_a_two_level_chain()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Outer.Outer.Name — root (scope 0): must resolve unprefixed, same as TryTranslateRootScopeOnly.
+        Expression body = Expression.PropertyOrField(Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Outer"), "Name");
+
+        var translated = NativeJoinScopeTranslator.TryTranslateSingleScope(scope, x, body, valueMode: true, out var result);
+
+        Assert.True(translated);
+        var field = Assert.IsType<MongoFieldExpression>(result);
+        Assert.Equal("Name", field.ElementName);
+    }
+
+    [Fact]
+    public void TryTranslateSingleScope_translates_the_first_joins_inner_field_prefixed()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Outer.Inner.Total — the FIRST join's Inner side (scope 1).
+        Expression body = Expression.PropertyOrField(Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Inner"), "Total");
+
+        var translated = NativeJoinScopeTranslator.TryTranslateSingleScope(scope, x, body, valueMode: true, out var result);
+
+        Assert.True(translated);
+        var field = Assert.IsType<MongoFieldExpression>(result);
+        Assert.Equal(InnerPrefix + ".Total", field.ElementName);
+    }
+
+    [Fact]
+    public void TryTranslateSingleScope_translates_the_second_joins_inner_field_prefixed()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Inner.Label — the SECOND (outermost) join's Inner side (scope 2).
+        Expression body = Expression.PropertyOrField(Expression.PropertyOrField(x, "Inner"), "Label");
+
+        var translated = NativeJoinScopeTranslator.TryTranslateSingleScope(scope, x, body, valueMode: true, out var result);
+
+        Assert.True(translated);
+        var field = Assert.IsType<MongoFieldExpression>(result);
+        Assert.Equal("_lookup_Other.Label", field.ElementName);
+    }
+
+    [Fact]
+    public void TryTranslateSingleScope_translates_a_computed_expression_within_one_level()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Outer.Inner.Total + 1 — computed, but still rooted at exactly ONE scope (level 1).
+        Expression body = Expression.Add(
+            Expression.PropertyOrField(Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Inner"), "Total"),
+            Expression.Constant(1));
+
+        var translated = NativeJoinScopeTranslator.TryTranslateSingleScope(scope, x, body, valueMode: true, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        var left = Assert.IsType<MongoFieldExpression>(binary.Left);
+        Assert.Equal(InnerPrefix + ".Total", left.ElementName);
+    }
+
+    [Fact]
+    public void TryTranslateSingleScope_declines_a_leaf_mixing_root_and_a_joins_inner_scope()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Outer.Outer.Name.Length + x.Inner.Label.Length — spans scope 0 AND scope 2. Use string.Length
+        // (an int-returning member, not a method call) so this is purely an arithmetic-over-two-scopes shape,
+        // not confounded by a separate "method calls aren't translatable" decline reason.
+        Expression body = Expression.Add(
+            Expression.PropertyOrField(
+                Expression.PropertyOrField(Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Outer"), "Name"),
+                "Length"),
+            Expression.PropertyOrField(
+                Expression.PropertyOrField(Expression.PropertyOrField(x, "Inner"), "Label"), "Length"));
+
+        var translated = NativeJoinScopeTranslator.TryTranslateSingleScope(scope, x, body, valueMode: true, out var result);
+
+        Assert.False(translated);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void TryTranslateSingleScope_declines_a_shape_the_underlying_translator_cannot_handle()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Inner.Label.ToUpper() — resolves to a single scope (2), but ToUpper() has no query-dialect
+        // equivalent (mirrors NativeJoinScopeTranslatorTests.Declines_a_shape_the_underlying_translator_cannot_handle).
+        var label = Expression.PropertyOrField(Expression.PropertyOrField(x, "Inner"), "Label");
+        var toUpper = typeof(string).GetMethod(nameof(string.ToUpper), System.Type.EmptyTypes)!;
+        Expression body = Expression.Call(label, toUpper);
+
+        var translated = NativeJoinScopeTranslator.TryTranslateSingleScope(scope, x, body, valueMode: true, out var result);
+
+        Assert.False(translated);
+        Assert.Null(result);
+    }
 }

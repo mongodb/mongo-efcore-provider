@@ -650,34 +650,24 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
     }
 
     [Fact]
-    public void Bare_constant_leaf_is_not_admitted_by_the_tier_2_node_kind_gate()
+    public void Bare_constant_leaf_now_goes_native_via_the_project_literal_wrap()
     {
-        // THE MUTATION TEST FOR THE NODE-KIND GATE. Tier 2 gates on the resulting NODE KIND — an arithmetic
-        // MongoBinaryExpression or a MongoConvertExpression, both of which render as aggregation-operator
-        // DOCUMENTS — rather than on "the leaf translated successfully", which would additionally admit a bare
-        // constant or captured parameter. The constant is FALSY on purpose, because that is where the two
-        // spellings diverge.
-        //
-        // WHAT THE MUTATION ACTUALLY PRODUCES, MEASURED (gate relaxed to plain translation success, rebuilt,
-        // re-run) — and it is NOT what the WRAPPED gate's own recorded measurement produces, so the two must not
-        // be conflated. A wrapped `new { b.Title, X = 0 }` hard-FAILS under the default Native mode, because the
-        // falsy leaf sits beside an inclusion and `$project` cannot mix exclusion with inclusion. A BARE `0` has
-        // no sibling at all, so nothing is mixed and MongoDB ACCEPTS the pipeline; the shaper then folds the
-        // constant client-side and the VALUES stay correct. So a values-only test would be VACUOUS here, and the
-        // observable difference is the emitted pipeline:
-        //
-        //   declined (today)  { "$project" : { "_v" : { "$literal" : 0 }, "_id" : 0 } }   ← the DRIVER's rendering
-        //   gate relaxed      { "$project" : { "_v" : 0, "_id" : 0 } }                    ← native's, a pure EXCLUSION
-        //
-        // Both were captured from this test. The first is a genuine value projection; the second is not a value
-        // projection at all — `$project` reads a bare `0` as an exclusion FLAG — so the aggregate returns whole
-        // documents minus two fields and the correct answers arrive only because the shaper never needed the
-        // pipeline's output for a constant. That accident is not a contract, and it is what the node-kind gate
-        // keeps out. Red counts for the mutation are in the task report.
-        var (collection, _) = Seed(nameof(Bare_constant_leaf_is_not_admitted_by_the_tier_2_node_kind_gate));
+        // Tier 2 (TryDeriveSyntheticAlias) now admits a bare MongoConstantExpression/MongoParameterExpression
+        // outright (a dedicated gate arm, unconditional — no subtree check needed, unlike the arithmetic/cast/
+        // conditional/coalesce arms). This USED TO be declined on purpose: `$project` reads a bare, un-wrapped
+        // value as an inclusion(1)/exclusion(0) flag rather than a literal, so a bare FALSY constant like `0`
+        // would have rendered as a pure EXCLUSION (`{ "_v" : 0, "_id" : 0 }`) — returning whole documents minus
+        // two fields, with the correct VALUES arriving only by accident (the shaper never needed the pipeline's
+        // output for a constant). MongoPipelineFactory.RenderProject now $literal-wraps a bare constant/
+        // parameter projection value exactly as RenderAddFields already did for $set, so the native pipeline
+        // renders IDENTICALLY to what the driver-LINQ fallback always rendered
+        // (`{ "_v" : { "$literal" : 0 }, "_id" : 0 }`) — closing the hazard structurally rather than by
+        // declining. This test now pins that all three modes agree, byte-for-byte on the MQL for Native.
+        var (collection, _) = Seed(nameof(Bare_constant_leaf_now_goes_native_via_the_project_literal_wrap));
 
-        // (1) The discriminating leg, asserted in BOTH directions so neither a stray `$literal` elsewhere in the
-        // pipeline nor a coincidental substring can carry it.
+        // (1) Native: goes native now, with the SAME `$literal`-wrapped shape the driver-LINQ fallback always
+        // emitted -- asserted in both directions so neither a stray `$literal` elsewhere nor a coincidental
+        // substring can carry it.
         using (var db = CreateContextWithLogging(collection, MongoQueryMode.Native, out var spy))
         {
             Assert.Equal([0, 0, 0, 0, 0],
@@ -688,18 +678,18 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
             Assert.DoesNotContain("\"_v\" : 0", mql);
         }
 
-        // (2) And the values are unchanged on the escape hatch too, plus the clean decline that proves the
-        // routing.
+        // (2) Unchanged on the escape hatch.
         using (var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq))
         {
             Assert.Equal([0, 0, 0, 0, 0],
                 driverLinq.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => 0).ToList());
         }
 
+        // (3) NativeOnly: succeeds now -- the "went native" signal, with the same correct values.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => 0).ToList());
+            Assert.Equal([0, 0, 0, 0, 0],
+                nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => 0).ToList());
         }
     }
 

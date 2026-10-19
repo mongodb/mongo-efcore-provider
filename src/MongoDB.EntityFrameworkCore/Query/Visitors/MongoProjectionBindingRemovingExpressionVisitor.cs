@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -29,6 +30,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 using MongoDB.EntityFrameworkCore.Storage;
 
@@ -237,6 +239,37 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     if (projection.Expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked })
                     {
                         return BsonBinding.CreateGetElementValue(DocParameter, projection.Alias, projectionBindingExpression.Type);
+                    }
+
+                    // Native string-to-char-sequence projection leaf: the WRITE side
+                    // (NativeProjectionBinder.TryTranslateLeaf, MongoProjectionBindingExpressionVisitor.Visit)
+                    // pushed down only the raw string field under this alias — MongoDB has no native
+                    // char/char-sequence BSON representation — and registered the WHOLE
+                    // AsEnumerable()/ToList()/ToArray() call as this leaf's projection mapping. Read the raw
+                    // string back through the ordinary property-aware path (so a value converter / non-default
+                    // BsonRepresentation on the source property still applies), then rebuild the ORIGINAL call
+                    // with its single argument replaced by that raw read: the compiled shaper lambda performs
+                    // the actual char-sequence materialization at execution time exactly as
+                    // `Enumerable.ToList(rawString)` would in memory, since `string` implements
+                    // `IEnumerable<char>`. The mixed shaper does the same thing against a whole, un-projected
+                    // document — see MongoMixedProjectionBindingRemovingExpressionVisitor
+                    // .TryBindStringSequenceLeaf, which is what keeps an explicit MongoQueryMode.DriverLinq (and
+                    // any other route into that shaper) correct for this leaf.
+                    if (projection.Expression is MethodCallExpression stringSequenceCall
+                        && NativeProjectionBinder.IsStringSequenceMaterializationCall(stringSequenceCall)
+                        && TryResolveFieldAccess(stringSequenceCall.Arguments[0]).Property is { } stringSequenceProperty)
+                    {
+                        // The emit side only admits this leaf over a string-typed field
+                        // (IsStringSequenceMaterializationCall requires the call's source expression to be typed
+                        // `string`), so a non-string property here means the resolver and the emit side have
+                        // disagreed about which member this leaf reads.
+                        Debug.Assert(stringSequenceProperty.ClrType == typeof(string),
+                            $"String-sequence projection leaf resolved to non-string property "
+                            + $"'{stringSequenceProperty.Name}' of type '{stringSequenceProperty.ClrType}'.");
+
+                        var rawStringRead = BsonBinding.CreateGetValueExpression(
+                            DocParameter, projection.Alias, stringSequenceProperty, typeof(string));
+                        return Expression.Call(stringSequenceCall.Method, rawStringRead);
                     }
 
                     // Resolve the source IProperty so we apply its serializer / nullability —

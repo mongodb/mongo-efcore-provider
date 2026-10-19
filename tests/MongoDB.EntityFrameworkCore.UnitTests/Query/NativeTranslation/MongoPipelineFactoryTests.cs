@@ -74,6 +74,50 @@ public class MongoPipelineFactoryTests
     }
 
     // ------------------------------------------------------------------
+    // Test 1b: `args[i]`-shaped query-parameter array element extraction (EF-322's
+    // Query_with_array_parameter gap) — Build extracts the element from the raw ARRAY parameter value,
+    // per execution, before serializing it.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Build_extracts_array_element_from_the_raw_parameter_value()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            field,
+            new MongoParameterExpression("args_0", nameProperty, arrayElementIndex: 0));
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(pred) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var first = factory.Build(new Dictionary<string, object?> { ["args_0"] = new[] { "ALFKI", "ANATR" } });
+        var second = factory.Build(new Dictionary<string, object?> { ["args_0"] = new[] { "OTHER", "ANATR" } });
+
+        Assert.Equal(BsonDocument.Parse("{ $match: { Name: \"ALFKI\" } }"), first[0]);
+        Assert.Equal(BsonDocument.Parse("{ $match: { Name: \"OTHER\" } }"), second[0]);
+    }
+
+    [Fact]
+    public void Build_extracts_a_non_zero_array_element_from_the_raw_parameter_value()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            field,
+            new MongoParameterExpression("args_0", nameProperty, arrayElementIndex: 1));
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(pred) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["args_0"] = new[] { "ALFKI", "ANATR" } });
+
+        Assert.Equal(BsonDocument.Parse("{ $match: { Name: \"ANATR\" } }"), result[0]);
+    }
+
+    // ------------------------------------------------------------------
     // Test 2: constant value baked into template — Build with empty dict works
     // ------------------------------------------------------------------
 

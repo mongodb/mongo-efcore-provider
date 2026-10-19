@@ -151,6 +151,32 @@ public class MongoFieldPrefixRewriterTests
         Assert.False(rewritten.Negated);
     }
 
+    // EF-322: MongoInExpression over a MongoValueListExpression (per-element independently-parameterized
+    // $in values, e.g. `new[] { prm1, prm2 }.Contains(...)`) must rewrite its field like any other
+    // MongoInExpression, leaving the value-list elements alone (they pass through Rewrite's own
+    // MongoParameterExpression arm unchanged).
+    [Fact]
+    public void Prefixes_the_in_field_and_leaves_value_list_elements_alone()
+    {
+        var expr = new MongoInExpression(
+            Field("Name"),
+            new MongoValueListExpression(
+            [
+                new MongoParameterExpression("p0", GetProperty("Name")),
+                new MongoParameterExpression("p1", GetProperty("Name"))
+            ]),
+            negated: false);
+
+        var rewritten = (MongoInExpression)Rewrite(expr, "_lookup_Refs");
+
+        Assert.Equal("_lookup_Refs.Name", rewritten.Field.ElementName);
+        var list = Assert.IsType<MongoValueListExpression>(rewritten.Values);
+        Assert.Equal(2, list.Elements.Count);
+        Assert.Equal("p0", Assert.IsType<MongoParameterExpression>(list.Elements[0]).Name);
+        Assert.Equal("p1", Assert.IsType<MongoParameterExpression>(list.Elements[1]).Name);
+        Assert.False(rewritten.Negated);
+    }
+
     // REGRESSION: this arm used to rebuild the node with the two-argument constructor, silently defaulting
     // NullSafe back to false. NullSafe is what makes the aggregation renderer wrap the reference in $ifNull so a
     // MISSING element compares equal to null the way $expr's own $eq does not — so dropping it turned an

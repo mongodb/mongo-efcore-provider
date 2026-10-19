@@ -46,7 +46,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : false, "else" : true } }] } } }
 """);
     }
 
@@ -145,7 +145,7 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : true } }
             """);
     }
 
@@ -685,7 +685,7 @@ Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { 
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { } }
             """);
     }
 
@@ -725,7 +725,7 @@ Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { 
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { } }
             """);
     }
 
@@ -921,7 +921,7 @@ Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : [{ "$gt" : ["$_id", 50] 
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : "$Discontinued" }, { "$gt" : ["$_id", 50] }] } } }
+            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : ["$Discontinued"] }, { "$gt" : ["$_id", 50] }] } } }
             """);
     }
 
@@ -931,7 +931,7 @@ Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : [{ "$gt" : ["$_id", 50] 
 
         AssertMql(
             """
-            Products.
+            Products.{ "$match" : { "$expr" : true } }
             """);
     }
 
@@ -941,7 +941,7 @@ Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : [{ "$gt" : ["$_id", 50] 
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$not" : { "$gt" : 50 } } } }
+            Products.{ "$match" : { "$expr" : { "$ne" : [{ "$gt" : ["$_id", 50] }, true] } } }
             """);
     }
 
@@ -1000,7 +1000,7 @@ Products.{ "$match" : { "$expr" : { "$not" : [{ "$or" : [{ "$not" : [{ "$and" : 
         await base.Where_comparison_to_nullable_bool(async);
         AssertMql(
             """
-Customers.{ "$match" : { "$expr" : { "$let" : { "vars" : { "start" : { "$subtract" : [{ "$strLenCP" : "$_id" }, 2] } }, "in" : { "$and" : [{ "$gte" : ["$$start", 0] }, { "$eq" : [{ "$indexOfCP" : ["$_id", "KI", "$$start"] }, "$$start"] }] } } } } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "KI$", "options" : "s" } } } }
 """);
     }
 
@@ -1009,8 +1009,8 @@ Customers.{ "$match" : { "$expr" : { "$let" : { "vars" : { "start" : { "$subtrac
         await base.Where_true(async);
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$match" : { } }
+""");
     }
 
     public override async Task Where_false(bool async)
@@ -1039,20 +1039,20 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 #else
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
-            """,
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
-            """,
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""",
             //
             """
-            Customers.
-            """);
+Customers.{ "$match" : { } }
+""");
 #endif
     }
 
@@ -1078,12 +1078,21 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_expression_invoke_2(bool async)
     {
+#if EF8 || EF9
         // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Where_expression_invoke_2(async);
         AssertMql(
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner._id" : "ALFKI" } }
 """);
+    #else
+        // Failed: Throws ExpressionNotSupportedException (query not translated)
+        await base.Where_expression_invoke_2(async);
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer._id" : "ALFKI" } }
+""");
+#endif
     }
 
     public override async Task Where_expression_invoke_3(bool async)
@@ -1153,8 +1162,8 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
-            """);
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : false, "else" : true } }] } } }
+""");
     }
 #endif
 
@@ -1297,7 +1306,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }, { "$lookup" : { 
 """,
             //
             """
-OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "$or" : [{ "_inner._id" : 10643 }, { "_inner._id" : 10692 }, { "_inner._id" : 10702 }, { "_inner._id" : 10835 }, { "_inner._id" : 10952 }, { "_inner._id" : 11011 }] } }
+OrderDetails.{ "$match" : { "_id.OrderID" : { "$in" : [10643, 10692, 10702, 10835, 10952, 11011] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }
 """);
     }
 
@@ -1352,7 +1361,7 @@ OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : 
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : { "$type" : -1 } } }
+            Orders.{ "$match" : { "$expr" : false } }
             """);
     }
 
@@ -1362,7 +1371,7 @@ OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : 
 
         AssertMql(
             """
-Products.{ "$match" : { "UnitPrice" : { "$gt" : 100.0 } } }
+Products.{ "$match" : { "$and" : [{ "UnitPrice" : { "$type" : "number" } }, { "$expr" : { "$gt" : [{ "$toDouble" : "$UnitPrice" }, 100.0] } }] } }
 """);
     }
 
@@ -1674,7 +1683,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 10 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_t" : null } }
+            Customers.{ "$match" : { } }
             """);
     }
 
@@ -1684,48 +1693,28 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 10 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_t" : { "$ne" : null } } }
+            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
             """);
     }
 
     public override async Task GetType_on_non_hierarchy3(bool async)
     {
-        // Fails: Entity equality issue EF-202 (driver-LINQ mode, which executes and returns wrong data).
-        // Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.GetType_on_non_hierarchy3(async), typeof(EqualException));
+        await base.GetType_on_non_hierarchy3(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-                Customers.{ "$match" : { "_t" : null } }
-                """);
-        }
+        AssertMql(
+            """
+            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
+            """);
     }
 
     public override async Task GetType_on_non_hierarchy4(bool async)
     {
-        // Fails: Entity equality issue EF-202 (driver-LINQ mode, which executes and returns wrong data).
-        // Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.GetType_on_non_hierarchy4(async), typeof(EqualException));
+        await base.GetType_on_non_hierarchy4(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-                Customers.{ "$match" : { "_t" : { "$ne" : null } } }
-                """);
-        }
+        AssertMql(
+            """
+            Customers.{ "$match" : { } }
+            """);
     }
 
     public override async Task Case_block_simplification_works_correctly(bool async)
@@ -2205,7 +2194,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : ["ALF", "KI"
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 3 }, { "$project" : { "_v" : "$ContactTitle", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 3 }, { "$group" : { "_id" : { "ContactTitle" : "$ContactTitle" } } }, { "$project" : { "ContactTitle" : "$_id.ContactTitle", "_id" : 0 } }
             """);
     }
 #endif

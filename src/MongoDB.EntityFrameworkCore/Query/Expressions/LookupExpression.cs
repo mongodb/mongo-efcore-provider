@@ -25,11 +25,12 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <summary>
 /// Distinguishes WHY this lookup carries a non-empty <see cref="LookupExpression.PipelineStages"/> sub-pipeline, since
 /// each reason has a different native-eligibility answer. <see cref="None"/>: no pipeline stages.
-/// <see cref="FallbackOnly"/>: TPH discriminator narrowing or a filtered Include (OrderBy/Skip/Take on the
-/// Include target, EF-440) — both remain fallback/mixed-visitor-only (see
-/// <c>MongoSelectLowerer.AppendLookupStages</c>'s exhaustive pipeline-kind dispatch).
-/// <see cref="NestedInclude"/>: a collection-then-collection/reference <c>ThenInclude</c> (EF-450) — its
-/// nested <c>$lookup</c>(s), staged by <c>MongoProjectionBindingExpressionVisitor</c>'s
+/// <see cref="FallbackOnly"/>: TPH discriminator narrowing — remains fallback/mixed-visitor-only (see
+/// <c>MongoSelectLowerer.AppendLookupStages</c>'s exhaustive pipeline-kind dispatch). <see cref="FilteredInclude"/>:
+/// a filtered Include (OrderBy/Skip/Take on the Include target, EF-440) — its sub-pipeline is the same
+/// <c>let</c>+<c>pipeline</c> <c>$lookup</c> shape as <see cref="NestedInclude"/> and is native-eligible for the
+/// same reason (EF-322). <see cref="NestedInclude"/>: a collection-then-collection/reference <c>ThenInclude</c>
+/// (EF-450) — its nested <c>$lookup</c>(s), staged by <c>MongoProjectionBindingExpressionVisitor</c>'s
 /// <c>ExtractNestedIncludePipeline</c>/<c>ExtractThenIncludesFromSubquery</c>/<c>AddReferenceLookupStages</c>,
 /// render via the same <c>let</c>+<c>pipeline</c> shape (<see cref="LookupExpression.ToLookupStageDocument"/>)
 /// the driver-LINQ fallback bridge already used. <see cref="CorrelatedReducer"/>: a reference-collection-nav
@@ -41,6 +42,7 @@ internal enum LookupPipelineKind
 {
     None,
     FallbackOnly,
+    FilteredInclude,
     NestedInclude,
     CorrelatedReducer
 }
@@ -237,6 +239,32 @@ internal sealed class LookupExpression
             }
 
             return !HasPipeline && !ForceUnwind && As == GetLookupAlias(navigation);
+        }
+    }
+
+    /// <summary>
+    /// A collection Include reached via a <c>ThenInclude</c> off a REFERENCE Include (e.g.
+    /// <c>Orders.Include(o =&gt; o.Customer.Orders)</c>) rather than off the query root: the collection nav's
+    /// declaring type is the reference's own target, so
+    /// <c>MongoProjectionBindingExpressionVisitor</c>'s "flat multi-lookup mode" prefixes both
+    /// <see cref="LocalField"/> and <see cref="As"/> with the confirmed
+    /// reference lookup's own alias ("_lookup_Mid.Something"/"_lookup_Mid._lookup_Leaves") so the shaper reads
+    /// the array nested under the unwound intermediate document rather than at the document root. Otherwise
+    /// identical to <see cref="IsNativeCollectionLookup"/> — no pipeline, not force-unwound — just with a
+    /// PREFIXED <see cref="As"/> instead of the bare alias.
+    /// </summary>
+    public bool IsTransitiveCollectionLookup
+    {
+        get
+        {
+            if (Navigation is not { IsCollection: true } navigation)
+            {
+                return false;
+            }
+
+            var plainAlias = GetLookupAlias(navigation);
+            return !HasPipeline && !ForceUnwind && As != plainAlias
+                && As.EndsWith("." + plainAlias, System.StringComparison.Ordinal);
         }
     }
 

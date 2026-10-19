@@ -364,12 +364,14 @@ public class SlotPopulationTests
     }
 
     [Fact]
-    public void Bare_constant_leaf_does_not_populate_projection() // projection-safety: $project would misread {X:5}
+    public void Constant_leaf_now_populates_projection_via_the_literal_wrap() // MongoPipelineFactory.RenderProject $literal-wraps a bare constant/parameter value, so $project can no longer misread {X:5} as a flag
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { X = 5 }));
 
-        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
-        Assert.Empty(mongoQuery.Select.Projection);
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        var projection = Assert.Single(mongoQuery.Select.Projection);
+        Assert.Equal("X", projection.Alias);
+        Assert.IsType<MongoConstantExpression>(projection.Expression);
     }
 
     [Fact]

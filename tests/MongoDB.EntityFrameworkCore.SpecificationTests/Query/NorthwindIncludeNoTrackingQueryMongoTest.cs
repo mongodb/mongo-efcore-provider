@@ -259,13 +259,25 @@ Customers.{ "$match" : { "_id" : "ALFKI ?" } }, { "$limit" : 2 }, { "$lookup" : 
 
     public override async Task Include_collection_with_left_join_clause_with_filter(bool async)
     {
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Include_collection_with_left_join_clause_with_filter(async);
 
+#if EF8 || EF9
+        // NativeSlotPopulator's candidate-join arm only matches QueryableMethods.{Join,GroupJoin} plus (EF10-only)
+        // QueryableMethods.LeftJoin — EF8/EF9's GroupJoin+DefaultIfEmpty flattens onto EF's own internal LeftJoin
+        // shim instead (MongoQueryableMethodTranslatingExpressionVisitor.Ef8Ef9LeftJoinMethod), which isn't
+        // recognized there, so the query is marked non-native before any join-scope binder runs. Pre-existing,
+        // version-generic gap (see NativeJoinScopeProjectionBinder's remarks), unrelated to this shape's own
+        // left-outer/collection-navigation eligibility, which EF-TBD fixed on EF10.
         AssertMql(
             """
 Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_outer._id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_outer._lookup_Orders" } }
 """);
+#else
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders_join" } }, { "$unwind" : { "path" : "$_lookup_Orders_join", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+""");
+#endif
     }
 
     public override async Task Include_duplicate_collection(bool async)
@@ -326,7 +338,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$eq" : [{ "$mod" : ["$_id.OrderID", 23]
 
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_outer._id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_outer._lookup_Orders" } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders_join" } }, { "$unwind" : { "path" : "$_lookup_Orders_join", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """);
     }
 
@@ -370,12 +382,18 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$lookup" : { "from" : "Cust
 
     public override async Task Include_with_complex_projection(bool async)
     {
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Include_with_complex_projection(async);
+#if EF8 || EF9
         AssertMql(
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "CustomerId" : { "_id" : "$_v._inner._id" }, "_id" : 0 } }
 """);
+#else
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "CustomerId" : { "Id" : "$_lookup_Customer._id" }, "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task Include_collection_order_by_non_key_with_skip(bool async)
@@ -393,7 +411,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_outer._id" : "ALFKI" } }, { "$sort" : { "_outer.City" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_outer._lookup_Orders" } }
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$set" : { "__sort0" : "$City" } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders_join" } }, { "$unwind" : { "path" : "$_lookup_Orders_join", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """);
     }
 
@@ -1013,7 +1031,7 @@ Customers.{ "$skip" : 10 }, { "$lookup" : { "from" : "Orders", "localField" : "_
         await base.Include_where_skip_take_projection(async);
         AssertMql(
             """
-OrderDetails.{ "$match" : { "Quantity" : 10 } }, { "$sort" : { "_id.OrderID" : 1, "_id.ProductID" : 1 } }, { "$skip" : 1 }, { "$limit" : 2 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "CustomerID" : "$Inner.CustomerID", "_id" : 0 } }
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$match" : { "Quantity" : 10 } }, { "$sort" : { "_id.OrderID" : 1, "_id.ProductID" : 1 } }, { "$skip" : 1 }, { "$limit" : 2 }, { "$project" : { "CustomerID" : "$_lookup_Order.CustomerID", "_id" : 0 } }
 """);
     }
 
@@ -1048,7 +1066,6 @@ Products.{ "$match" : { "$and" : [{ "$expr" : { "$eq" : [{ "$mod" : ["$_id", 17]
 
     public override async Task Include_empty_reference_sets_IsLoaded(bool async)
     {
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Include_empty_reference_sets_IsLoaded(async);
 
         AssertMql(
@@ -1070,7 +1087,7 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "ReportsTo", "for
         await base.Include_collection_with_conditional_order_by(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$cond" : { "if" : { "$eq" : [{ "$indexOfCP" : ["$_id", "S"] }, 0] }, "then" : 1, "else" : 2 } } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$cond" : { "if" : { "$eq" : [{ "$indexOfCP" : ["$_id", "S"] }, 0] }, "then" : 1, "else" : 2 } } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """);
     }
 

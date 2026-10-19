@@ -249,27 +249,23 @@ public class NativeProjectionBinderBareBodyTests
     }
 
     [Fact]
-    public void Bare_constant_leaf_is_declined()
+    public void Bare_constant_leaf_is_admitted_under_the_reserved_synthetic_alias()
     {
         var mongoQ = TestQuery();
         Expression<Func<Order, int>> selector = _ => 0;
 
-        // Deliberate, and it is the tier-2 gate's own mutation target. A falsy constant renders as a BARE VALUE,
-        // which $project reads as an inclusion/exclusion FLAG rather than a literal. Gating tier 2 on the
-        // resulting NODE KIND — an arithmetic MongoBinaryExpression or a MongoConvertExpression, both of which
-        // render as DOCUMENTS — is what keeps this out; gating on "the leaf translated" would not.
-        //
-        // WHAT THE MUTATION PRODUCES FOR A *BARE* BODY IS NOT THE WRAPPED MEASUREMENT, AND THIS COMMENT USED TO
-        // QUOTE THE WRAPPED ONE. A wrapped `new { b.Title, X = 0 }` hard-fails ("Cannot do exclusion on field X
-        // in inclusion projection") because the falsy flag sits beside an inclusion. A bare `0` has no sibling,
-        // so nothing is mixed: MEASURED, the relaxed gate emits a legal pure-exclusion
-        // {"$project": {"_v": 0, "_id": 0}} and the VALUES still come back correct, because the shaper folds a
-        // constant client-side. The damage is a junk pipeline, not an abort — which is why the functional pin,
-        // NativeComputedBareProjectionTests.Bare_constant_leaf_is_not_admitted_by_the_tier_2_node_kind_gate,
-        // asserts the emitted MQL rather than values.
-        Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
-        Assert.Empty(mongoQ.Select.Projection);
-        Assert.False(mongoQ.Select.IsBareProjection);
+        // Tier 2's dedicated constant/parameter arm admits this unconditionally (no subtree check needed,
+        // unlike the arithmetic/cast/conditional/coalesce arms). A falsy constant renders as a BARE VALUE,
+        // which $project would read as an inclusion/exclusion FLAG rather than a literal if emitted verbatim —
+        // but MongoPipelineFactory.RenderProject now $literal-wraps a bare MongoConstantExpression/
+        // MongoParameterExpression projection value (mirroring RenderAddFields' existing $set wrap), so the
+        // rendered pipeline is a genuine value projection, never a flag. See
+        // NativeComputedBareProjectionTests.Bare_constant_leaf_now_goes_native_via_the_project_literal_wrap
+        // for the end-to-end functional pin asserting the emitted MQL.
+        Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.IsType<MongoConstantExpression>(projection.Expression);
+        Assert.Equal(ProjectionAliasTier.Synthetic, mongoQ.Select.BareProjectionTier);
     }
 
     [Fact]

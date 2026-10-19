@@ -369,7 +369,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 // Plain C# returns false here (e.g. ((int?)1).Equals((ulong)2)); left untouched, the driver's
                 // Equals translator instead tries to serialize the RHS with the LHS's serializer and throws
                 // (EF-221). Fold to the correct constant instead.
-                if (IsAlwaysFalseAcrossTypeMismatch(instanceEqualsCall.Object!, instanceEqualsCall.Arguments[0]))
+                if (ExpressionExtensionMethods.IsAlwaysFalseAcrossTypeMismatch(instanceEqualsCall.Object!, instanceEqualsCall.Arguments[0]))
                     return Expression.Constant(false);
 
                 break;
@@ -397,7 +397,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
                 // Same mismatched-type fold as the instance-call case above (EF-221): object.Equals(a, b)
                 // with genuinely incompatible simple types (e.g. int vs ulong) is always false in plain C#.
-                if (AreMismatchedExactEqualityTypes(
+                if (ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(
                         Nullable.GetUnderlyingType(left.Type) ?? left.Type,
                         Nullable.GetUnderlyingType(right.Type) ?? right.Type))
                     return Expression.Constant(false);
@@ -792,37 +792,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             {
                 { MongoVectorSearchScoreStage.ScoreField, new BsonDocument("$meta", "vectorSearchScore") }
             });
-
-    // Types whose Equals(object) requires an exact runtime-type match, i.e. no cross-type equality.
-    private static readonly HashSet<Type> ExactTypeEqualityTypes =
-    [
-        typeof(bool), typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
-        typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double),
-        typeof(decimal), typeof(char), typeof(string), typeof(Guid), typeof(DateTime),
-        typeof(DateTimeOffset), typeof(TimeSpan)
-    ];
-
-    /// <summary>
-    /// True when <paramref name="receiver"/>.Equals(<paramref name="argument"/>) is guaranteed to return
-    /// <see langword="false"/> at runtime because the two sides are known-different simple types with no
-    /// cross-type equality (e.g. <c>((int?)1).Equals((ulong)2)</c>).
-    /// </summary>
-    private static bool IsAlwaysFalseAcrossTypeMismatch(Expression receiver, Expression argument)
-    {
-        var receiverType = Nullable.GetUnderlyingType(receiver.Type) ?? receiver.Type;
-        var argumentType = argument.RemoveObjectConvert().Type;
-        argumentType = Nullable.GetUnderlyingType(argumentType) ?? argumentType;
-
-        return AreMismatchedExactEqualityTypes(receiverType, argumentType);
-    }
-
-    /// <summary>
-    /// True when <paramref name="left"/> and <paramref name="right"/> are different <see cref="ExactTypeEqualityTypes"/>
-    /// members, so equality between them is always false. Scoped to that set rather than any mismatched
-    /// types, since an arbitrary type's <c>Equals(object)</c> override could compare across types.
-    /// </summary>
-    private static bool AreMismatchedExactEqualityTypes(Type left, Type right)
-        => left != right && ExactTypeEqualityTypes.Contains(left) && ExactTypeEqualityTypes.Contains(right);
 
     protected override Expression VisitMethodCall(MethodCallExpression node)
     {

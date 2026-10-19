@@ -87,7 +87,7 @@ internal static class NativeSelectManyBinder
             return false;
         var innerParam = innerLambda.Parameters[0];
 
-        if (!innerLambda.Body.TryGetProjectionMembers(out var members))
+        if (!innerLambda.Body.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true))
             return false;
 
         var outerTranslator = new MongoExpressionTranslator(outerEntityType);
@@ -249,7 +249,10 @@ internal static class NativeSelectManyBinder
                 : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, filter, userExpr);
         }
 
-        var lookup = new LookupExpression(navigation, forceUnwind: true);
+        // A cross-collection reference SelectMany flatten is always inner-join semantics (a principal with no
+        // children drops out) regardless of LookupExpression's Include-oriented default of true — explicit,
+        // since MongoSelectLowerer's ForceUnwind arm now reads this property instead of hard-coding false.
+        var lookup = new LookupExpression(navigation, forceUnwind: true) { PreserveNullAndEmptyArrays = false };
         // AddLookup dedupes on the alias (As) — if a same-nav Include-registered lookup were already pending,
         // this call would be a no-op and UnwindSource.Lookup below would point at an instance not actually in
         // the pending list. That collision can't happen here: a reference SelectMany is always projected-only
@@ -325,7 +328,9 @@ internal static class NativeSelectManyBinder
             return false;
 
         var scope2 = LookupExpression.GetLookupAlias(navigation);
-        var lookup2 = new LookupExpression(navigation, forceUnwind: true);
+        // See the level-1 flatten above: a cross-collection reference SelectMany is always inner-join
+        // semantics, set explicitly now that the lowerer no longer hard-codes it.
+        var lookup2 = new LookupExpression(navigation, forceUnwind: true) { PreserveNullAndEmptyArrays = false };
         lookup2.LocalField = level1Source.InnerScopePath + "." + lookup2.LocalField;
         mongoQ.AddLookup(lookup2);
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Reference(scope2, navigation.TargetEntityType, lookup2));
@@ -525,7 +530,7 @@ internal static class NativeSelectManyBinder
             return false;
         var ti = selector.Parameters[0];
 
-        var isBareBody = !selector.Body.TryGetProjectionMembers(out var members);
+        var isBareBody = !selector.Body.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true);
         if (isBareBody)
         {
             // Deliberately narrow: ONLY an arithmetic computed body is admitted bare. A bare member access

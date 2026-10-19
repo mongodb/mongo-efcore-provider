@@ -42,11 +42,30 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// instance, per execution, to obtain the actual value before serialization. See the entity-equality
     /// rewrite in <c>MongoExpressionTranslator.EntityEquality.cs</c>.
     /// </param>
-    public MongoParameterExpression(string name, IProperty? forSerialization, bool extractFromEntityValue = false)
+    /// <param name="arrayElementIndex">See <see cref="ArrayElementIndex"/>. Mutually exclusive with
+    /// <paramref name="extractFromEntityValue"/> — no node needs both.</param>
+    /// <param name="rawElementType">See <see cref="RawElementType"/>.</param>
+    /// <param name="extractEntityKeyFromArrayElements">
+    /// When <see langword="true"/>, the runtime value bound to <paramref name="name"/> is an ARRAY of WHOLE
+    /// ENTITY instances (e.g. the collection side of <c>customers.Contains(c)</c>), not an array of the
+    /// property's own values — <paramref name="forSerialization"/>'s <see cref="IPropertyBase.GetGetter"/>
+    /// must be applied to EACH non-null element, per execution, before it is serialized; a
+    /// <see langword="null"/> element passes through as a BSON null rather than being extracted. Mutually
+    /// exclusive with <paramref name="extractFromEntityValue"/> and <paramref name="arrayElementIndex"/> — this
+    /// is the per-ELEMENT analog of <see cref="ExtractFromEntityValue"/>, for the $in-values side of an
+    /// entity-list <c>Contains</c> rather than a single entity-typed comparand. See the entity-list-Contains
+    /// rewrite in <c>MongoExpressionTranslator.EntityEquality.cs</c>.
+    /// </param>
+    public MongoParameterExpression(
+        string name, IProperty? forSerialization, bool extractFromEntityValue = false, int? arrayElementIndex = null,
+        Type? rawElementType = null, bool extractEntityKeyFromArrayElements = false)
     {
         Name = name;
         ForSerialization = forSerialization;
         ExtractFromEntityValue = extractFromEntityValue;
+        ArrayElementIndex = arrayElementIndex;
+        RawElementType = rawElementType;
+        ExtractEntityKeyFromArrayElements = extractEntityKeyFromArrayElements;
     }
 
     /// <summary>The parameter name.</summary>
@@ -61,6 +80,32 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// See the constructor parameter of the same name.
     /// </summary>
     public bool ExtractFromEntityValue { get; }
+
+    /// <summary>
+    /// When set, the runtime value bound to <see cref="Name"/> is an ARRAY or a TUPLE, and this is the
+    /// constant index of the element actually compared — the element at this index must be extracted from
+    /// the array/tuple, per execution, before it is serialized with <see cref="ForSerialization"/>'s
+    /// serializer. Two distinct shapes produce this: <c>args[0]</c> where <c>args</c> is a compiled query's
+    /// own array-typed parameter (see
+    /// <see cref="NativeTranslation.NativeQueryParameter.TryGetParameterArrayElementIndex"/>), and a
+    /// <c>Tuple.Create(...)</c> operand EF Core's parameter extraction funcletized into a single
+    /// materialized-tuple parameter (see
+    /// <see cref="NativeTranslation.MongoExpressionTranslator.TryDecomposeTupleOperand"/>).
+    /// </summary>
+    public int? ArrayElementIndex { get; }
+
+    /// <summary>
+    /// When <see cref="ForSerialization"/> is <see langword="null"/> (a property-less, COMPUTED-needle
+    /// <c>Contains</c> collection — see <c>MongoExpressionTranslator.TranslateInValuesRaw</c>), the CLR type of
+    /// the collection's elements, used by the renderer to pick a default (representation-less) element
+    /// serializer instead of assuming <see cref="string"/>.
+    /// </summary>
+    public Type? RawElementType { get; }
+
+    /// <summary>
+    /// See the constructor parameter of the same name.
+    /// </summary>
+    public bool ExtractEntityKeyFromArrayElements { get; }
 
     /// <inheritdoc />
     public override Type Type

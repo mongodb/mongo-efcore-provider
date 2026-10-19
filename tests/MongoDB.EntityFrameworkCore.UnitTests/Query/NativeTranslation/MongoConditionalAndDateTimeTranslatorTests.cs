@@ -28,6 +28,7 @@ public class MongoConditionalAndDateTimeTranslatorTests
     {
         public ObjectId Id { get; set; }
         public int Amount { get; set; }
+        public int? NullableAmount { get; set; }
         public bool Flag { get; set; }
         public DateTime Occurred { get; set; }
         public DateTimeOffset? OccurredOffset { get; set; }
@@ -226,6 +227,43 @@ public class MongoConditionalAndDateTimeTranslatorTests
             r => r.Flag ? r.Amount : r.Amount,
             mb => mb.Entity<Row>().Property(r => r.Amount)
                 .HasConversion(v => v, v => v));
+
+        Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    [Fact]
+    public void Coalesce_over_a_nullable_field_and_a_constant_translates_to_ifnull()
+    {
+        var (translator, body) = BuildValueBody(r => r.NullableAmount ?? 5);
+
+        Assert.True(translator.TryTranslateValue(body, out var result));
+
+        var coalesce = Assert.IsType<MongoCoalesceExpression>(result);
+        Assert.IsType<MongoFieldExpression>(coalesce.Left);
+        Assert.Equal(5, Assert.IsType<MongoConstantExpression>(coalesce.Right).Value);
+    }
+
+    [Fact]
+    public void Coalesce_chain_nests_on_the_right_operand()
+    {
+        var (translator, body) = BuildValueBody(
+            r => (r.NullableAmount + 1) ?? (r.NullableAmount + 2) ?? (r.NullableAmount + 3));
+
+        Assert.True(translator.TryTranslateValue(body, out var result));
+
+        var outer = Assert.IsType<MongoCoalesceExpression>(result);
+        Assert.IsType<MongoBinaryExpression>(outer.Left);
+        var inner = Assert.IsType<MongoCoalesceExpression>(outer.Right);
+        Assert.IsType<MongoBinaryExpression>(inner.Left);
+        Assert.IsType<MongoBinaryExpression>(inner.Right);
+    }
+
+    [Fact]
+    public void Coalesce_declines_when_a_branch_is_unsupported()
+    {
+        // string.Concat has no native translation at all, so a branch that reaches it must decline the
+        // WHOLE coalesce, not silently drop that branch.
+        var (translator, body) = BuildValueBody(r => r.NullableAmount ?? int.Parse("x"));
 
         Assert.False(translator.TryTranslateValue(body, out _));
     }
