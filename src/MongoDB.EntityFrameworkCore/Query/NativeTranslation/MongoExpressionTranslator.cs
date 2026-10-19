@@ -19,6 +19,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Threading;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure; // IsEFPropertyMethod()
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -379,7 +380,9 @@ internal sealed partial class MongoExpressionTranslator
     {
         result = null;
 
-        if (ContainsParameterOrExtensionNode(node) || ContainsNonDeterministicCall(node))
+        // A clock member must never be baked into the cached template: it is a per-execution value
+        // (TryCreateRuntimeClockParameter); a clock subtree that isn't admitted there declines.
+        if (ContainsParameterOrExtensionNode(node) || NonDeterministicCalls.ContainsNonDeterministicCall(node) || RuntimeClock.ContainsClock(node))
             return false;
 
         object? value;
@@ -392,37 +395,16 @@ internal sealed partial class MongoExpressionTranslator
             return false; // the subtree throws when evaluated (e.g. an invalid DateTime); decline, don't crash
         }
 
-        // Relabel (not convert) a non-Utc DateTime as Utc. Otherwise BsonValue.Create calls ToUniversalTime,
+        // Relabel (not convert) a non-Utc DateTime literal as Utc. Otherwise BsonValue.Create calls ToUniversalTime,
         // which depends on the host time zone and can skew the rendered $date (e.g. Europe/Dublin's pre-1916
-        // -00:25 LMT offset), diverging from the tick value the in-memory comparison uses.
+        // -00:25 LMT offset), diverging from the tick value the in-memory comparison uses. Only literals reach here:
+        // a clock (Local `Now`/`Today`) is declined above, since relabelling it would shift the instant by the host's
+        // UTC offset.
         if (value is DateTime { Kind: not DateTimeKind.Utc } dateTimeValue)
             value = DateTime.SpecifyKind(dateTimeValue, DateTimeKind.Utc);
 
         result = new MongoConstantExpression(value, forSerialization: null);
         return true;
-    }
-
-    private static bool ContainsNonDeterministicCall(Expression node)
-    {
-        var finder = new NonDeterministicCallFinder();
-        finder.Visit(node);
-        return finder.Found;
-    }
-
-    private sealed class NonDeterministicCallFinder : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        protected override Expression VisitMethodCall(MethodCallExpression node)
-        {
-            if (NonDeterministicCalls.IsNonDeterministic(node))
-            {
-                Found = true;
-                return node;
-            }
-
-            return base.VisitMethodCall(node);
-        }
     }
 
     private static bool ContainsParameterOrExtensionNode(Expression node)
@@ -672,6 +654,11 @@ internal sealed partial class MongoExpressionTranslator
     // Returns null for any unsupported node (the caller propagates null → false return).
     private MongoExpression? TranslateNode(Expression node)
     {
+        // A closed boolean holding a clock (`DateTime.Now != myDate`) is evaluated per execution; renders as
+        // `{ $expr: <placeholder> }` like a bare boolean query parameter.
+        if (TryCreateRuntimeClockParameter(node, forSerialization: null) is { } runtimeClock)
+            return runtimeClock;
+
         switch (node)
         {
             // --- Logical binary operators ---
@@ -987,7 +974,7 @@ internal sealed partial class MongoExpressionTranslator
                     if (receiverIsOuter && _innerPrefix is null)
                         return null;
 
-                    if (receiverProperty.ClrType != typeof(string))
+                    if (!IsRegexSearchableString(receiverProperty))
                         return null;
 
                     property = receiverProperty;
@@ -1551,12 +1538,15 @@ internal sealed partial class MongoExpressionTranslator
                 ? null
                 : property;
 
-    // A bare constant or query parameter (including a constant-index `args[0]` into a parameter array), not a member
-    // or arithmetic. Identifies the query-native (member vs. value) shape.
+    // A bare constant or query parameter (including a constant-index `args[0]` into a parameter array), or a closed
+    // clock subtree evaluated per execution (RuntimeClock.IsRuntimeEvaluable, the predicate TranslateValue's
+    // TryCreateRuntimeClockParameter admits by), not a member or arithmetic. Identifies the query-native
+    // (member vs. value) shape.
     private static bool IsSimpleValue(Expression node)
         => node is ConstantExpression
            || NativeQueryParameter.TryGetQueryParameterName(node, out _)
-           || NativeQueryParameter.TryGetParameterArrayElementIndex(node, out _, out _);
+           || NativeQueryParameter.TryGetParameterArrayElementIndex(node, out _, out _)
+           || RuntimeClock.IsRuntimeEvaluable(node);
 
     internal static MongoBinaryOperator? MapComparisonOperator(ExpressionType nodeType)
         => nodeType switch
@@ -1603,6 +1593,11 @@ internal sealed partial class MongoExpressionTranslator
     /// </remarks>
     private MongoExpression? TranslateOperand(Expression node, bool allowNumericWidening = false)
     {
+        // A maximal closed subtree holding a clock (`DateTime.Now.AddMonths(-1)`) is evaluated whole, in .NET, per
+        // execution: exact C# semantics, and never baked into the cached template.
+        if (TryCreateRuntimeClockParameter(node, forSerialization: null) is { } runtimeClock)
+            return runtimeClock;
+
         if (node is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
         {
             var fromType = unary.Operand.Type.UnwrapNullableType();
@@ -1625,7 +1620,12 @@ internal sealed partial class MongoExpressionTranslator
                 if (!AllFieldsDefaultSerialized(converted))
                     return null;
 
-                return new MongoConvertExpression(converted, toType);
+                // An enum field's cast to its underlying type relabels the stored integer (identity-like): stage the
+                // field bare, as the driver does, so a MISSING field stays MISSING (driver-LINQ read default) rather
+                // than $toInt's null. A computed enum (`(int)o.OrderDate.DayOfWeek`) keeps its $toInt.
+                return converted is MongoFieldExpression or MongoOuterFieldExpression && IsEnumUnderlyingRelabel(fromType, toType)
+                    ? converted
+                    : new MongoConvertExpression(converted, toType);
             }
 
             return TranslateOperand(unary.Operand, allowNumericWidening); // benign or widening convert
@@ -1978,7 +1978,30 @@ internal sealed partial class MongoExpressionTranslator
         if (NativeQueryParameter.TryGetParameterArrayElementIndex(node, out var arrayParameterName, out var index))
             return new MongoParameterExpression(arrayParameterName, forSerialization, arrayElementIndex: index, valueType: node.Type);
 
-        return null;
+        return TryCreateRuntimeClockParameter(node, forSerialization);
+    }
+
+    private static int _runtimeParameterSeed;
+
+    /// <summary>
+    /// Returns a per-execution <see cref="MongoParameterExpression"/> (with a
+    /// <see cref="MongoParameterExpression.RuntimeEvaluator"/>) for a closed subtree holding a clock member
+    /// (<see cref="RuntimeClock.IsRuntimeEvaluable"/>); <see langword="null"/> otherwise.
+    /// </summary>
+    /// <remarks>
+    /// The value is serialized like a query parameter: through <paramref name="forSerialization"/>'s serializer when
+    /// compared to a property (so <c>o.Created &lt; DateTime.UtcNow.AddDays(-1)</c> stays a query-dialect
+    /// <c>{ Created: { $lt: ... } }</c>), else via <c>BsonValue.Create</c>. Both convert a Local <c>DateTime</c> to
+    /// its UTC instant, as driver-LINQ does.
+    /// </remarks>
+    internal static MongoParameterExpression? TryCreateRuntimeClockParameter(Expression node, IProperty? forSerialization)
+    {
+        if (!RuntimeClock.IsRuntimeEvaluable(node))
+            return null;
+
+        var name = "__mongoef_runtime_" + Interlocked.Increment(ref _runtimeParameterSeed);
+        return new MongoParameterExpression(
+            name, forSerialization, valueType: node.Type, runtimeEvaluator: RuntimeClock.CompileEvaluator(node));
     }
 
     /// <summary>
@@ -2075,6 +2098,19 @@ internal sealed partial class MongoExpressionTranslator
         }
 
         return (fromType == typeof(char) && toType == typeof(int)) || toType == typeof(object);
+    }
+
+    /// <summary>
+    /// The <see cref="IsIdentityLikeConvert"/> case that leaves even the CLR numeric type unchanged: an enum to its exact
+    /// underlying type (<c>(int)x.Status</c>). A default-serialized enum stores that integer, so the cast is a relabeling
+    /// the driver doesn't render as <c>$toX</c>. Shared by the translator (stages the cast bare), the projection read
+    /// side (reads it like an identity cast) and the malformed-value classifier (the field answers MISSING as itself).
+    /// </summary>
+    internal static bool IsEnumUnderlyingRelabel(Type fromType, Type toType)
+    {
+        fromType = Nullable.GetUnderlyingType(fromType) ?? fromType;
+        toType = Nullable.GetUnderlyingType(toType) ?? toType;
+        return fromType.IsEnum && toType == Enum.GetUnderlyingType(fromType) && IsIdentityLikeConvert(fromType, toType);
     }
 
     // Whether an aggregation $not over this AndAlso/OrElse tree is its exact complement: every leaf is either a numeric

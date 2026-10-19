@@ -797,7 +797,7 @@ internal sealed partial class MongoExpressionTranslator
         try
         {
             var coerced = BsonValueSerializer.Coerce(elementType, constant.Value);
-            var rendered = BsonValueSerializer.SerializeThroughWriter(itemInfo.Serializer, coerced);
+            var rendered = BsonValueSerializer.SerializeNullAware(itemInfo.Serializer, coerced);
             return new MongoConstantExpression(rendered, forSerialization: null);
         }
         catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException

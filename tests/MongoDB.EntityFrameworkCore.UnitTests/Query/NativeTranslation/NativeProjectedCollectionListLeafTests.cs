@@ -36,6 +36,7 @@ public class NativeProjectedCollectionListLeafTests
     {
         public string Id { get; set; } = "";
         public string Name { get; set; } = "";
+        public string Code { get; set; } = "";
         public ICollection<Order> Orders { get; set; } = null!;
     }
 
@@ -60,7 +61,8 @@ public class NativeProjectedCollectionListLeafTests
         mb.Entity<Order>().HasMany(o => o.OrderDetails).WithOne(d => d.Order).HasForeignKey(d => d.OrderId);
     };
 
-    private static (bool Accepted, MongoQueryExpression Query) Bind(Func<IQueryable<Customer>, IQueryable> buildQuery)
+    private static (bool Accepted, MongoQueryExpression Query) Bind(
+        Func<IQueryable<Customer>, IQueryable> buildQuery, Func<LambdaExpression, LambdaExpression>? rewriteSelector = null)
     {
         using var db = new TestDbContext<Customer>(Model);
 
@@ -76,6 +78,10 @@ public class NativeProjectedCollectionListLeafTests
         var select = Assert.IsAssignableFrom<MethodCallExpression>(preprocessed);
         Assert.Equal(nameof(Queryable.Select), select.Method.Name);
         var selector = Assert.IsAssignableFrom<LambdaExpression>(select.Arguments[1].UnwrapLambdaFromQuote());
+        if (rewriteSelector != null)
+        {
+            selector = rewriteSelector(selector);
+        }
 
         var mongoQ = new MongoQueryExpression(entityType);
         return (NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector), mongoQ);
@@ -170,6 +176,78 @@ public class NativeProjectedCollectionListLeafTests
         Assert.Contains(mongoQ.Select.Projection, p => p.Alias == "Name");
         Assert.Contains(mongoQ.Select.Projection, p => p.Alias == "_lookup_Orders");
         Assert.Contains(mongoQ.Select.Projection, p => p.Alias == "_id");
+    }
+
+    /// <summary>
+    /// F11: the recognizer resolves the navigation through <see cref="NativeCorrelationMatcher"/>, so a correlation
+    /// on a non-key outer member must decline rather than read the key-correlated <c>$lookup</c>. A user can't spell
+    /// that tree (an explicit <c>db.Orders.Where(o =&gt; o.CustomerId == c.Code).ToList()</c> fails EF translation
+    /// in every mode, on main too), so the nav-expanded tree's outer key accesses are rewritten. The string key makes
+    /// nav-expansion emit <c>Property(c, "Id") != null AndAlso Equals(Property(c, "Id"), Property(o, "CustomerId"))</c>:
+    /// occurrence 0 is the null guard, occurrence 1 the compared key. Rewriting them back to <c>Id</c> is accepted,
+    /// which shows each decline comes from the correlation, not the rewrite.
+    /// </summary>
+    [Theory]
+    [InlineData(nameof(Customer.Id), true, true, true)]
+    [InlineData(nameof(Customer.Code), true, true, false)] // guard and compared key both non-key
+    [InlineData(nameof(Customer.Code), false, true, false)] // compared key non-key, guard on the key
+    [InlineData(nameof(Customer.Code), true, false, false)] // compared key is the key, guard on a different member
+    public void Correlation_on_a_non_key_outer_member_declines(
+        string memberName, bool rewriteGuard, bool rewriteComparedKey, bool expectAccepted)
+    {
+        var (accepted, mongoQ) = Bind(
+            q => q.Select(c => new { c.Name, Orders = c.Orders.ToList() }),
+            selector => RewriteOuterKeyAccess(selector, memberName, rewriteGuard, rewriteComparedKey));
+
+        Assert.Equal(expectAccepted, accepted);
+        if (!expectAccepted)
+        {
+            Assert.Empty(mongoQ.Select.Projection);
+            Assert.Empty(mongoQ.GetPendingLookups());
+        }
+    }
+
+    /// <summary>
+    /// Replaces the selected accesses to the outer parameter's <c>Id</c> (member or <c>EF.Property</c>; occurrence 0
+    /// is the null guard, 1 the compared key) with <paramref name="memberName"/>.
+    /// </summary>
+    private static LambdaExpression RewriteOuterKeyAccess(
+        LambdaExpression selector, string memberName, bool rewriteGuard, bool rewriteComparedKey)
+    {
+        var rewriter = new OuterKeyAccessRewriter(selector.Parameters[0], memberName, [rewriteGuard, rewriteComparedKey]);
+        var body = rewriter.Visit(selector.Body);
+        Assert.True(rewriter.Occurrences == 2, $"expected a guarded key correlation: {selector}");
+        return Expression.Lambda(body, selector.Parameters);
+    }
+
+    private sealed class OuterKeyAccessRewriter(ParameterExpression outer, string memberName, bool[] rewrite)
+        : ExpressionVisitor
+    {
+        public int Occurrences { get; private set; }
+
+        protected override Expression VisitMember(MemberExpression node)
+            => node.Expression == outer && node.Member.Name == nameof(Customer.Id)
+                ? Replace(node)
+                : base.VisitMember(node);
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+            => node.Method.IsEFPropertyMethod()
+               && node.Arguments is [var root, ConstantExpression { Value: nameof(Customer.Id) }]
+               && root == outer
+                ? Replace(node)
+                : base.VisitMethodCall(node);
+
+        private Expression Replace(Expression node)
+        {
+            var occurrence = Occurrences++;
+            if (occurrence >= rewrite.Length || !rewrite[occurrence])
+            {
+                return node;
+            }
+
+            Expression replacement = Expression.Property(outer, memberName);
+            return replacement.Type == node.Type ? replacement : Expression.Convert(replacement, node.Type);
+        }
     }
 
     // A navigation declared as a concrete List<T>: .ToArray()/.ToHashSet() nav-expand to an earlier-collapsed

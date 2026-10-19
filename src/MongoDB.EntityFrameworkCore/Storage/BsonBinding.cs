@@ -131,6 +131,24 @@ internal static class BsonBinding
             property.IsNullable ? mappedType.MakeNullable() : mappedType);
     }
 
+    /// <summary>
+    /// Create the expression which reads a bare scalar projection leaf like <see cref="CreateGetValueExpression"/>, but
+    /// via <see cref="GetScalarProjectionValueAtElement{T}"/>: a missing element of a required property reads
+    /// <see langword="default"/>.
+    /// </summary>
+    internal static Expression CreateGetScalarProjectionValueExpression(
+        Expression bsonDocExpression,
+        string name,
+        IProperty property,
+        Type mappedType)
+        => Expression.Call(
+            null,
+            GetScalarProjectionValueAtElementMethodInfo.MakeGenericMethod(
+                property.IsNullable ? mappedType.MakeNullable() : mappedType),
+            bsonDocExpression,
+            Expression.Constant(name),
+            Expression.Constant(property));
+
     internal static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
 
@@ -349,6 +367,10 @@ internal static class BsonBinding
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetPropertyValueAtElement));
 
+    private static readonly MethodInfo GetScalarProjectionValueAtElementMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetScalarProjectionValueAtElement));
+
     private static readonly MethodInfo GetElementValueMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetElementValue));
@@ -472,6 +494,38 @@ internal static class BsonBinding
         if (property.IsNullable) return default;
 
         throw new InvalidOperationException($"Document element '{elementName}' is missing for required non-nullable property '{property.Name}'.");
+    }
+
+    /// <summary>
+    /// Reads a bare scalar projection leaf from the flat alias in the projected document. Identical to
+    /// <see cref="GetPropertyValueAtElement{T}"/> except that a MISSING element of a required property reads
+    /// <c>default(T)</c> instead of throwing, as driver-LINQ's <c>$project</c> push-down did. Only the Projection
+    /// route uses this; whole-entity materialization stays strict. An explicit BSON null still throws. A reference-typed
+    /// required leaf (e.g. <c>string</c>) reads <see langword="null"/> for a missing element, deliberately mirroring
+    /// the driver.
+    /// </summary>
+    internal static T? GetScalarProjectionValueAtElement<T>(BsonDocument document, string elementName, IReadOnlyProperty property)
+    {
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+
+        // As GetPropertyValueAtElement: the value lives at the flat alias, not the property's original element path.
+        var projectedSerializationInfo = new BsonSerializationInfo(
+            elementName,
+            serializationInfo.Serializer,
+            serializationInfo.NominalType);
+
+        // Check the RAW element: for a value-typed T the deserialized value is never null, so a post-read null check
+        // can't see an explicit BSON null (driver-LINQ throws FormatException for it). Except through the driver's
+        // BooleanSerializer, which reads null as false, as driver-LINQ did (see
+        // MongoAggregationExpressionRenderer.DriverReadsNullAsDefault).
+        if (!property.IsNullable && document.TryGetValue(elementName, out var raw) && raw.IsBsonNull
+            && serializationInfo.Serializer is not BooleanSerializer)
+        {
+            throw new InvalidOperationException(
+                $"Document element '{elementName}' is null for required non-nullable property '{property.Name}'.");
+        }
+
+        return TryReadElementValue(document, projectedSerializationInfo, out T? value) ? value : default;
     }
 
     internal static T? GetElementValueAtPath<T>(BsonDocument document, string[] path)

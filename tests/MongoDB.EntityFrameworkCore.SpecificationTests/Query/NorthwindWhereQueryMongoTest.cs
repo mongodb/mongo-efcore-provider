@@ -2299,7 +2299,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : true } }
             """);
     }
 
@@ -2309,7 +2309,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : true } }
             """);
     }
 
@@ -2319,7 +2319,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : true } }
             """);
     }
 
@@ -2329,7 +2329,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
 
         AssertMql(
             """
-            Employees.
+            Employees.{ "$match" : { "$expr" : true } }
             """);
     }
 

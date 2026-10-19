@@ -31,7 +31,9 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// <remarks>
 /// A constant source is filtered once, here, at compile time. A query-parameter source cannot be (its value is
 /// per-execution), so it is replaced by an EF runtime parameter (<see cref="QueryCompilationContext.RegisterRuntimeParameter"/>)
-/// whose extractor re-applies the filter to the parameter's value on every execution. Only a predicate that
+/// whose extractor re-applies the filter to the parameter's value on every execution. A predicate reading the clock
+/// always takes that per-execution path (a compile-time fold would bake the first reading into the cached plan), and
+/// one making a non-deterministic call is not folded at all. Only a predicate that
 /// references nothing but its own lambda parameter is folded; anything else is left untouched.
 /// </remarks>
 internal sealed class LocalCollectionFilterFoldingVisitor(QueryCompilationContext queryCompilationContext) : ExpressionVisitor
@@ -63,10 +65,19 @@ internal sealed class LocalCollectionFilterFoldingVisitor(QueryCompilationContex
             return false;
         }
 
+        // A non-deterministic call is never folded (main throws for it; the unfolded query reaches the same guard).
+        if (NonDeterministicCalls.ContainsNonDeterministicCall(predicate))
+        {
+            return false;
+        }
+
         var source = whereCall.Arguments[0];
         var toArray = EnumerableMethods.ToArray.MakeGenericMethod(whereCall.Method.GetGenericArguments()[0]);
 
-        if (source is ConstantExpression)
+        // A constant source is filtered once, at compile time, unless the predicate reads the clock: that is a
+        // per-execution value, so it takes the runtime-parameter path below (the cached plan would otherwise keep the
+        // first execution's reading).
+        if (source is ConstantExpression && !RuntimeClock.ContainsClock(predicate))
         {
             var evaluate = Expression.Lambda<Func<object?>>(
                 Expression.Convert(Expression.Call(toArray, whereCall), typeof(object)));
@@ -74,23 +85,32 @@ internal sealed class LocalCollectionFilterFoldingVisitor(QueryCompilationContex
             return true;
         }
 
-        if (NativeQueryParameter.TryGetQueryParameterName(source, out var parameterName))
+        Expression? sourceValue = null;
+        if (source is ConstantExpression)
         {
-            var queryContext = QueryCompilationContext.QueryContextParameter;
-            var sourceValue = Expression.Convert(
-                Expression.Property(ParameterValues(queryContext), "Item", Expression.Constant(parameterName)),
+            sourceValue = source;
+        }
+        else if (NativeQueryParameter.TryGetQueryParameterName(source, out var parameterName))
+        {
+            sourceValue = Expression.Convert(
+                Expression.Property(ParameterValues(QueryCompilationContext.QueryContextParameter), "Item", Expression.Constant(parameterName)),
                 source.Type);
-            var extractor = Expression.Lambda(
-                Expression.Call(toArray, Expression.Call(whereCall.Method, sourceValue, predicate)), queryContext);
-
-            // "__" prefix: on EF8/EF9 a query parameter is a ParameterExpression recognized by that prefix
-            // (NativeQueryParameter.TryGetQueryParameterName); harmless on EF10.
-            folded = queryCompilationContext.RegisterRuntimeParameter(
-                $"__mongo_filtered_{_foldedParameterCount++}", extractor);
-            return true;
         }
 
-        return false;
+        if (sourceValue is null)
+        {
+            return false;
+        }
+
+        var extractor = Expression.Lambda(
+            Expression.Call(toArray, Expression.Call(whereCall.Method, sourceValue, predicate)),
+            QueryCompilationContext.QueryContextParameter);
+
+        // "__" prefix: on EF8/EF9 a query parameter is a ParameterExpression recognized by that prefix
+        // (NativeQueryParameter.TryGetQueryParameterName); harmless on EF10.
+        folded = queryCompilationContext.RegisterRuntimeParameter(
+            $"__mongo_filtered_{_foldedParameterCount++}", extractor);
+        return true;
     }
 
     private static Expression ParameterValues(ParameterExpression queryContext)

@@ -29,11 +29,13 @@ internal sealed class MongoGroupAccumulatorStage : MongoPipelineStage
     /// <param name="accumulator">The MQL accumulator operator ("$sum" / "$min" / "$max" / "$avg").</param>
     /// <param name="operand">The value expression fed to the accumulator.</param>
     /// <param name="outputField">The output field name (conventionally "v").</param>
-    public MongoGroupAccumulatorStage(string accumulator, MongoExpression operand, string outputField)
+    /// <param name="wrapsOperand">Whether the accumulator reduces <c>{_v: operand}</c> documents; see <see cref="WrapsOperand"/>.</param>
+    public MongoGroupAccumulatorStage(string accumulator, MongoExpression operand, string outputField, bool wrapsOperand = false)
     {
         Accumulator = accumulator;
         Operand = operand;
         OutputField = outputField;
+        WrapsOperand = wrapsOperand;
     }
 
     /// <summary>The MQL accumulator operator ("$sum" / "$min" / "$max" / "$avg").</summary>
@@ -44,4 +46,11 @@ internal sealed class MongoGroupAccumulatorStage : MongoPipelineStage
 
     /// <summary>The output field name (conventionally "v").</summary>
     public string OutputField { get; }
+
+    /// <summary>
+    /// Whether the accumulator reduces <c>{_v: operand}</c> documents instead of the bare operand
+    /// (<see cref="NativeAggregateReadBack.ReducesWrappedValue"/>), so a MISSING or null operand takes part in the
+    /// ordering rather than being skipped.
+    /// </summary>
+    public bool WrapsOperand { get; }
 }

@@ -957,6 +957,14 @@ internal static class MongoAggregationExpressionRenderer
         };
 
     /// <summary>
+    /// <see cref="MayBeNull"/>, except that a query parameter is judged by its CLR type (like
+    /// <see cref="DateAddAmountMayBeNull"/>): a captured non-nullable <c>int</c> is never null, although
+    /// <see cref="MayBeNull"/> counts every parameter as possibly null.
+    /// </summary>
+    internal static bool MayBeNullOperand(MongoExpression operand)
+        => operand is MongoParameterExpression { ValueType: { } valueType } ? IsNullableClrType(valueType) : MayBeNull(operand);
+
+    /// <summary>
     /// Whether <paramref name="node"/>, whose CLR type is a non-nullable value type, may nonetheless evaluate to null:
     /// <c>$strLenCP</c>/<c>$indexOfCP</c> over a possibly-null string (null-guarded, see <see cref="NullPropagating"/>),
     /// directly or through arithmetic, a cast, a math function or a conditional branch. Read back as that non-nullable type, the null would
@@ -966,8 +974,8 @@ internal static class MongoAggregationExpressionRenderer
     /// native. Filters are unaffected: the relational null guard covers them.
     /// </summary>
     /// <remarks>
-    /// Doesn't count a date operator over a nullable date (<c>o.OrderDate.Value.Day</c>, <c>.AddDays(1)</c>) as null
-    /// behind the type, unlike
+    /// Doesn't count a date operator over a nullable date (<c>o.OrderDate.Value.Day</c>, <c>.AddDays(1)</c>), or an
+    /// operator over a nullable stored value (<c>x.Score.Value + 1</c>), as null behind the type, unlike
     /// <see cref="ClassifyNonNullableValueRead"/>: declining those group keys and accumulators would move grouped queries
     /// that are native today onto the fallback, and a group key has no throw-on-null read yet. Their null still reads
     /// as <c>0</c> (EF-461).
@@ -987,9 +995,11 @@ internal static class MongoAggregationExpressionRenderer
 
     // nonNull: operands a conditional's test has proven non-null on the branch being inspected
     // (`s == null ? 0 : s.Length` reads Length only where s isn't null). dateParts: whether a date part over a
-    // nullable date counts (see MayBeNullBehindNonNullableType's remarks).
+    // nullable date counts (see MayBeNullBehindNonNullableType's remarks). missingFields: whether a non-nullable
+    // property's field counts too, as it would in a malformed document that omits it (projection leaves only; see
+    // NonNullableValueRead.ThrowOnMalformedNull).
     private static NullBehindNonNullable WalkNullBehindNonNullableType(
-        MongoExpression node, IReadOnlyList<MongoExpression> nonNull, bool dateParts)
+        MongoExpression node, IReadOnlyList<MongoExpression> nonNull, bool dateParts, bool missingFields = false)
         => node switch
         {
             MongoStringLengthExpression length => new(MayBeNullUnlessProven(length.Operand, nonNull), false),
@@ -999,39 +1009,55 @@ internal static class MongoAggregationExpressionRenderer
             // flagged MongoProjection.ThrowsOnNull: the same possibly-null value, read by reference.
             MongoElementRefExpression { ThrowsOnNull: true } => new(true, false),
             MongoBinaryExpression { IsArithmetic: true } arithmetic
-                => WalkNullBehindNonNullableType(arithmetic.Left, nonNull, dateParts)
-                   | WalkNullBehindNonNullableType(arithmetic.Right, nonNull, dateParts),
-            MongoConvertExpression convert => WalkNullBehindNonNullableType(convert.Operand, nonNull, dateParts),
+                => WalkNullBehindNonNullableType(arithmetic.Left, nonNull, dateParts, missingFields)
+                   | WalkNullBehindNonNullableType(arithmetic.Right, nonNull, dateParts, missingFields),
+            MongoConvertExpression convert => WalkNullBehindNonNullableType(convert.Operand, nonNull, dateParts, missingFields),
             // Date operators answer null for a null date, which a non-nullable read would take as 0 / 00:00 /
             // DateTime.MinValue where EF throws: $year/$month/.../$dateTrunc/$dateDiff (`o.OrderDate.Value.Year`), $dateAdd
             // (`o.OrderDate.Value.AddDays(1)`, also null for a null amount), and a DateTimeOffset's local reconstruction
             // (`o.Dto.Value.DateTime`, a $dateAdd typed DateTime over the nullable stored offset).
             MongoDatePartExpression datePart when dateParts
                 => new NullBehindNonNullable(MayBeNullUnlessProven(datePart.Operand, nonNull), false)
-                   | WalkNullBehindNonNullableType(datePart.Operand, nonNull, dateParts),
+                   | WalkNullBehindNonNullableType(datePart.Operand, nonNull, dateParts, missingFields),
             MongoDateAddExpression dateAdd when dateParts
                 => new NullBehindNonNullable(
                        MayBeNullUnlessProven(dateAdd.StartDate, nonNull) || DateAddAmountMayBeNull(dateAdd.Amount, nonNull), false)
-                   | WalkNullBehindNonNullableType(dateAdd.StartDate, nonNull, dateParts)
-                   | WalkNullBehindNonNullableType(dateAdd.Amount, nonNull, dateParts),
+                   | WalkNullBehindNonNullableType(dateAdd.StartDate, nonNull, dateParts, missingFields)
+                   | WalkNullBehindNonNullableType(dateAdd.Amount, nonNull, dateParts, missingFields),
             MongoDateTimeOffsetLocalExpression local when dateParts
-                => new NullBehindNonNullable(MayBeNullUnlessProven(local.Operand, nonNull), false),
-            MongoMathExpression math => WalkMath(math, nonNull, dateParts),
+                => new NullBehindNonNullable(MayBeNullUnlessProven(local.Operand, nonNull), false)
+                   | WalkNullBehindNonNullableType(local.Operand, nonNull, dateParts, missingFields),
+            // A nullable-typed stored value under a non-nullable operator (`x.Score!.Value + 1`, `Math.Abs(x.Score!.Value)`,
+            // `c ? x.Score!.Value : 0`, with `.Value` peeled to the field): the operator propagates its null, which a
+            // non-nullable read would take as 0 where EF throws. A non-nullable property's field answers false here
+            // (MayBeNull is its CLR type), so `x.A + x.B` is not flagged. Projection leaves only (dateParts, as for the
+            // date operators above): group keys and accumulators are unchanged. A bare field leaf never reaches here
+            // (ClassifyNonNullableValueRead reads it property-aware). With missingFields, a non-nullable property's
+            // field counts too: a document that omits it makes the operator answer null (ThrowOnMalformedNull).
+            MongoFieldExpression or MongoOuterFieldExpression when dateParts
+                => new NullBehindNonNullable(MayBeNullUnlessProven(node, nonNull, missingFields), false),
+            MongoMathExpression math => WalkMath(math, nonNull, dateParts, missingFields),
             // Either branch may be the value read, each under what the test proves on it: `s == null ? a : b` and
             // `string.IsNullOrEmpty(s) ? a : b` make s non-null in b; `s != null ? a : b` makes it non-null in a.
             MongoConditionalExpression conditional
-                => WalkNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)], dateParts)
-                   | WalkNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)], dateParts),
+                => WalkNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)], dateParts, missingFields)
+                   | WalkNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)], dateParts, missingFields),
+            // `x.Score ?? x.Rank`: $ifNull answers the fallback when the nullable side is null or missing, so a missing
+            // non-nullable fallback field (or an operator over one) is the leaf's malformed-document value. Only with
+            // missingFields: group keys and accumulators are unchanged.
+            MongoCoalesceExpression coalesce when missingFields
+                => WalkNullBehindNonNullableType(coalesce.Right, nonNull, dateParts, missingFields),
             _ => default
         };
 
     // $max/$min skip a null operand and Sign's $switch orders it below 0 (MongoGroupElementTranslator
     // .IsNullPropagatingMathFunction), so over a possibly-null operand they may answer non-null where EF throws.
-    private static NullBehindNonNullable WalkMath(MongoMathExpression math, IReadOnlyList<MongoExpression> nonNull, bool dateParts)
+    private static NullBehindNonNullable WalkMath(
+        MongoMathExpression math, IReadOnlyList<MongoExpression> nonNull, bool dateParts, bool missingFields)
     {
         var operands = default(NullBehindNonNullable);
         foreach (var operand in math.Operands)
-            operands |= WalkNullBehindNonNullableType(operand, nonNull, dateParts);
+            operands |= WalkNullBehindNonNullableType(operand, nonNull, dateParts, missingFields);
 
         return MongoGroupElementTranslator.IsNullPropagatingMathFunction(math.Function)
             ? operands
@@ -1042,8 +1068,11 @@ internal static class MongoAggregationExpressionRenderer
     // type. Only the root document's own key (element "_id", unprefixed): a join's inner-scope field is a prefixed path
     // ("inner._id"), and under a left-outer join that sub-document is missing for an unmatched row, so it may be null.
     // Deliberately local to this predicate, not in MayBeNull: MayBeNull also drives the render-time $ifNull guards.
-    private static bool MayBeNullUnlessProven(MongoExpression operand, IReadOnlyList<MongoExpression> nonNull)
-        => MayBeNull(operand)
+    // missingFields: a stored field counts as possibly null whatever its property's nullability (a malformed
+    // document may omit it), still excepting the primary key and proven operands.
+    private static bool MayBeNullUnlessProven(
+        MongoExpression operand, IReadOnlyList<MongoExpression> nonNull, bool missingFields = false)
+        => (MayBeNull(operand) || missingFields && operand is MongoFieldExpression or MongoOuterFieldExpression)
            && !(operand is MongoFieldExpression { NullSafe: false, ElementName: "_id" } field
                  && field.Property.IsPrimaryKey())
            && !nonNull.Any(proven => IsSameStoredValue(proven, operand));
@@ -1099,8 +1128,10 @@ internal static class MongoAggregationExpressionRenderer
     /// <summary>
     /// How a projection leaf read back as <paramref name="readType"/> handles a null behind the non-nullable type
     /// (<see cref="ReadsNullAsDefault"/>, and also a date operator over a nullable date: <c>o.OrderDate.Value.Year</c>,
-    /// <c>.Value.TimeOfDay</c>, <c>.Value.AddDays(1)</c>, <c>o.Dto.Value.DateTime</c>): <see cref="NonNullableValueRead.Plain"/>
-    /// when there is none;
+    /// <c>.Value.TimeOfDay</c>, <c>.Value.AddDays(1)</c>, <c>o.Dto.Value.DateTime</c>, and an operator over a nullable
+    /// stored value: <c>x.Score.Value + 1</c>, <c>Math.Abs(x.Score.Value)</c>, <c>c ? x.Score.Value : 0</c>):
+    /// <see cref="NonNullableValueRead.Plain"/> when there is none, or when the leaf is itself a bare field (read
+    /// through its property's binding);
     /// <see cref="NonNullableValueRead.ThrowOnNull"/> when every operator between that null and the leaf's value
     /// propagates it, so reading the leaf as <c>T?</c> and throwing on null is exactly EF's
     /// "Nullable object must have a value."; <see cref="NonNullableValueRead.Decline"/> when an operator may absorb it
@@ -1116,11 +1147,168 @@ internal static class MongoAggregationExpressionRenderer
         if (!readType.IsValueType || Nullable.GetUnderlyingType(readType) is not null)
             return NonNullableValueRead.Plain;
 
+        // A bare property leaf (`x.Score!.Value`) is read through the property's binding, which already handles its
+        // null; flagging it would only make later operators (Distinct, set ops, groups) decline it.
+        if (node is MongoFieldExpression or MongoOuterFieldExpression)
+            return NonNullableValueRead.Plain;
+
         var walk = WalkNullBehindNonNullableType(node, [], dateParts: true);
-        return !walk.MayBeNull ? NonNullableValueRead.Plain
-            : walk.MayAbsorb ? NonNullableValueRead.Decline
-            : NonNullableValueRead.ThrowOnNull;
+        if (walk.MayBeNull)
+            return walk.MayAbsorb ? NonNullableValueRead.Decline : NonNullableValueRead.ThrowOnNull;
+
+        // Never null over well-formed documents, but a computation over a non-nullable property's field answers null
+        // when a malformed document omits it (`x.Rank + 1`). The read side alone reads it strictly; the emit side and
+        // every later operator treat it as Plain (flagging non-nullable fields would decline Distinct/Min/Max/group
+        // keys over every `x.A + x.B`).
+        if (!WalkNullBehindNonNullableType(node, [], dateParts: true, missingFields: true).MayBeNull)
+            return NonNullableValueRead.Plain;
+
+        // Where the leaf selects the omitted field itself (`x.Rank > 1 ? -1 : x.Rank`), the server answers MISSING rather
+        // than null, which driver-LINQ's deserializer read as default.
+        return MayAnswerMissing(readType, node) == MissingAnswer.Missing
+            ? NonNullableValueRead.DefaultOnMalformedMissing
+            : NonNullableValueRead.ThrowOnMalformedNull;
     }
+
+    /// <summary>
+    /// How a bare stored field <paramref name="node"/>, grouped on by a projected Distinct and read back as
+    /// <paramref name="readType"/>, treats a malformed document: <see cref="ClassifyNonNullableValueRead"/> answers
+    /// <see cref="NonNullableValueRead.Plain"/> for a bare field because the Projection route reads it through its
+    /// property (missing reads default, null throws), but a Distinct key is read back from the <c>$group</c> output, where
+    /// a lone key turns MISSING into null. <see cref="NonNullableValueRead.DefaultOnMalformedMissing"/> when read as the
+    /// field's own type (<c>x.Rank</c>, and the identity casts <c>(int)x.Rank</c>, <c>(int)x.Score</c> the driver drops):
+    /// MISSING is driver-LINQ's omitted member (default) and null throws. <see cref="NonNullableValueRead.ThrowOnMalformedNull"/>
+    /// under a widening the translator dropped (<c>(long)x.Rank</c>, <c>(long)x.Score</c>), which the driver renders as
+    /// <c>$toLong</c>, null for both. <see cref="NonNullableValueRead.Plain"/> for a nullable read, a <c>bool</c>
+    /// (<see cref="DriverReadsNullAsDefault"/>), the primary key (never missing), and anything that isn't a bare field. A
+    /// non-default-serialized (value-converted) field is marked too when read as its own type (<c>x.Conv</c> with
+    /// <c>HasConversion&lt;string&gt;()</c>; the flatten is read through the property, so the converter applies:
+    /// MISSING reads default, null throws, as main's converter did); under a dropped widening it stays
+    /// <see cref="NonNullableValueRead.Plain"/>, since a strict read is a generic read the converter would defeat. A marked
+    /// converted key still combines with another marked Distinct of an equivalently stored key, but no longer with a plain
+    /// projected operand (<c>Distinct().Concat(q.Select(x =&gt; x.Conv))</c> declines; plan Task 2.2.11).
+    /// </summary>
+    internal static NonNullableValueRead ClassifyMalformedFieldRead(Type readType, MongoExpression node)
+    {
+        if (!readType.IsValueType
+            || Nullable.GetUnderlyingType(readType) is not null
+            || DriverReadsNullAsDefault(readType)
+            || node is not (MongoFieldExpression or MongoOuterFieldExpression)
+            || IsRootPrimaryKey(node))
+            return NonNullableValueRead.Plain;
+
+        var missingAnswer = MayAnswerMissing(readType, node);
+        if (!MongoExpressionTranslator.AllFieldsDefaultSerialized(node))
+            return missingAnswer == MissingAnswer.Missing && ReadsConvertedDistinctKeyThroughProperty(readType, node)
+                ? NonNullableValueRead.DefaultOnMalformedMissing
+                : NonNullableValueRead.Plain;
+
+        return missingAnswer == MissingAnswer.Missing
+            ? NonNullableValueRead.DefaultOnMalformedMissing
+            : NonNullableValueRead.ThrowOnMalformedNull;
+    }
+
+    /// <summary>
+    /// Whether a marked projected-Distinct key over the non-default-serialized bare field <paramref name="node"/>, read
+    /// back as <paramref name="readType"/>, is read through the field's property (so its value converter applies):
+    /// a non-nullable property read as its own CLR type. The read side
+    /// (<c>MongoProjectionBindingRemovingExpressionVisitor.TryCreateThrowOnMalformedNullAliasRead</c>) calls this too.
+    /// </summary>
+    internal static bool ReadsConvertedDistinctKeyThroughProperty(Type readType, MongoExpression node)
+        => node is MongoFieldExpression field
+           && !MongoExpressionTranslator.AllFieldsDefaultSerialized(field)
+           && field.Property.ClrType == readType;
+
+    /// <summary>
+    /// Whether driver-LINQ's deserializer for a non-nullable <paramref name="readType"/> reads an explicit BSON null as
+    /// <c>default</c> rather than throwing: the driver's <c>BooleanSerializer</c> reads null as <see langword="false"/>
+    /// (every other value serializer throws <c>FormatException</c>). A value of this type that is null or MISSING in a
+    /// malformed document reads <c>default</c> on main either way, so there is nothing to throw for.
+    /// </summary>
+    internal static bool DriverReadsNullAsDefault(Type readType)
+        => readType == typeof(bool);
+
+    /// <summary>
+    /// Whether a join-scope projection leaf <paramref name="node"/> read back as <paramref name="readType"/> is a bare
+    /// stored scalar of a non-nullable property read as its own type (<c>o.Customer!.Rank</c>, <c>o.Customer!.Flag</c>),
+    /// which the Projection route reads through that property like a root bare leaf (decision D-F10): a MISSING element
+    /// (an unmatched optional reference after <c>$lookup</c>, or a matched document that omits the field) reads
+    /// <c>default</c>, as driver-LINQ's <c>$project</c> push-down did; an explicit null throws, except a <c>bool</c>
+    /// (<see cref="DriverReadsNullAsDefault"/>). The single predicate behind the read
+    /// (<c>MongoProjectionBindingRemovingExpressionVisitor.TryCreateJoinScopeBareScalarRead</c>).
+    /// </summary>
+    internal static bool ReadsJoinScopeBareScalarThroughProperty(Type readType, MongoExpression node)
+        => readType.IsValueType
+           && Nullable.GetUnderlyingType(readType) is null
+           && node is MongoFieldExpression field
+           && field.Property.ClrType == readType;
+
+    /// <summary>
+    /// <paramref name="classified"/>, a <see cref="ClassifyNonNullableValueRead"/> answer for a value of type
+    /// <paramref name="classifiedType"/> (a projected Distinct's key), for that value read back as
+    /// <paramref name="readType"/>. Read as a wider type (<c>(long)(c ? -1 : x.Rank)</c>, whose widening the translator
+    /// unwrapped where driver-LINQ renders <c>$toLong</c>), a <see cref="NonNullableValueRead.DefaultOnMalformedMissing"/>
+    /// value's MISSING is driver-LINQ's null, so it reads strictly, as <see cref="MayAnswerMissing"/> decides for a leaf.
+    /// </summary>
+    internal static NonNullableValueRead ReclassifyMalformedReadAs(NonNullableValueRead classified, Type classifiedType, Type readType)
+        => classified == NonNullableValueRead.DefaultOnMalformedMissing
+           && classifiedType.UnwrapNullableType() != readType.UnwrapNullableType()
+           && !MongoExpressionTranslator.IsEnumUnderlyingRelabel(classifiedType, readType)
+            ? NonNullableValueRead.ThrowOnMalformedNull
+            : classified;
+
+    /// <summary>
+    /// Whether <paramref name="node"/>, read back as <paramref name="readType"/>, may be MISSING on the server where
+    /// driver-LINQ's rendering of the same value is null: a stored field reached through <c>$cond</c>/<c>$ifNull</c> value
+    /// positions whose type isn't the read type sits under a widening the translator dropped (<c>(long)x.Rank</c>), which
+    /// the driver renders as <c>$toLong</c>. See <see cref="MayAnswerMissing"/>.
+    /// </summary>
+    internal static bool MayAnswerUnfaithfulMissing(Type readType, MongoExpression node)
+        => !IsRootPrimaryKey(node) && MayAnswerMissing(readType.UnwrapNullableType(), node) == MissingAnswer.Unfaithful;
+
+    // The root document's own primary key ("_id", unprefixed): never missing from a stored document.
+    private static bool IsRootPrimaryKey(MongoExpression node)
+        => node is MongoFieldExpression { NullSafe: false, ElementName: "_id" } key && key.Property.IsPrimaryKey();
+
+    private enum MissingAnswer
+    {
+        // Never MISSING: an operator or $toX over the field answers null instead.
+        Never,
+
+        // MISSING exactly where driver-LINQ's rendering of the same leaf is.
+        Missing,
+
+        // MISSING natively where driver-LINQ answers null: under a widening cast the translator unwrapped
+        // (TryTranslateValue) but the driver renders as $toX (`(long)(c ? -1 : x.Rank)`, `c ? x.Big : x.Rank` as long).
+        Unfaithful
+    }
+
+    // Whether a value read back as `readType` may be MISSING on the server: a stored field reached through the
+    // value positions of $cond (either branch) and $ifNull (the fallback; the nullable side is replaced when missing).
+    // Any other operator answers null for a missing operand. A field whose type isn't the read type sits under a
+    // widening conversion the translator dropped, which driver-LINQ renders as $toX (answering null), so a native
+    // MISSING there must not read as default. One unfaithful position makes the whole leaf strict: the read can't tell
+    // which branch the server took.
+    private static MissingAnswer MayAnswerMissing(Type readType, MongoExpression node)
+        => node switch
+        {
+            MongoConditionalExpression conditional
+                => Combine(MayAnswerMissing(readType, conditional.IfTrue), MayAnswerMissing(readType, conditional.IfFalse)),
+            MongoCoalesceExpression coalesce => MayAnswerMissing(readType, coalesce.Right),
+            // An enum read as its underlying type is the translator's bare relabel (IsEnumUnderlyingRelabel), which the
+            // driver doesn't render as $toX either.
+            MongoFieldExpression or MongoOuterFieldExpression
+                => node.Type.UnwrapNullableType() == readType
+                   || MongoExpressionTranslator.IsEnumUnderlyingRelabel(node.Type, readType)
+                    ? MissingAnswer.Missing
+                    : MissingAnswer.Unfaithful,
+            _ => MissingAnswer.Never
+        };
+
+    private static MissingAnswer Combine(MissingAnswer a, MissingAnswer b)
+        => a == MissingAnswer.Unfaithful || b == MissingAnswer.Unfaithful ? MissingAnswer.Unfaithful
+            : a == MissingAnswer.Missing || b == MissingAnswer.Missing ? MissingAnswer.Missing
+            : MissingAnswer.Never;
 
     private static bool IsNullableClrType(Type type)
         => !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
@@ -1144,5 +1332,23 @@ internal enum NonNullableValueRead
     ThrowOnNull,
 
     /// <summary>An operator may absorb the null into a non-null answer where EF throws: decline.</summary>
-    Decline
+    Decline,
+
+    /// <summary>
+    /// The value is never null over well-formed documents, but a computation over a non-nullable property's field
+    /// (<c>x.Rank + 1</c>, <c>Math.Abs(x.Rank)</c>) answers null when a document omits that field. Emit-side callers
+    /// treat it exactly as <see cref="Plain"/>; only the native <c>Projection</c>-route read side acts on it, reading
+    /// the leaf as <c>T?</c> and throwing EF's "Nullable object must have a value." on null, where driver-LINQ's
+    /// deserializer threw <c>FormatException</c>, rather than reading <c>default(T)</c>.
+    /// </summary>
+    ThrowOnMalformedNull,
+
+    /// <summary>
+    /// As <see cref="ThrowOnMalformedNull"/>, but the leaf may select the omitted field itself (a <c>$cond</c> branch or
+    /// <c>$ifNull</c> fallback: <c>x.Rank > 1 ? -1 : x.Rank</c>, <c>x.Score ?? x.Rank</c>), for which the server answers
+    /// MISSING rather than null, exactly where driver-LINQ's rendering does. The read side reads a missing value as
+    /// <c>default(T)</c>, as driver-LINQ's deserializer did (and as a bare <c>x.Rank</c> does), and throws on null.
+    /// Emit-side callers treat it exactly as <see cref="Plain"/>.
+    /// </summary>
+    DefaultOnMalformedMissing
 }
