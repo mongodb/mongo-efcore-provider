@@ -188,8 +188,8 @@ internal sealed class MongoPipelineFactory
                     new BsonDocument("$meta", "vectorSearchScore"))),
             MongoGroupAccumulatorStage group => RenderGroup(group, placeholders),
             MongoGroupStage keyedGroup => RenderKeyedGroup(keyedGroup, placeholders),
-            // First half of the whole-entity Distinct() dedup, same BSON as RenderUnionWith's Union dedup.
-            MongoGroupByRootStage => new BsonDocument("$group", new BsonDocument("_id", "$$ROOT")),
+            // First half of the whole-entity Distinct() dedup, shared with RenderUnionWith's Union dedup.
+            MongoGroupByRootStage => GroupByRootStage(),
             // First half of the unordered Last()/LastOrDefault() pattern.
             MongoLastRowStage => new BsonDocument("$group",
                 new BsonDocument { { "_id", BsonNull.Value }, { "_last", new BsonDocument("$last", "$$ROOT") } }),
@@ -306,20 +306,9 @@ internal sealed class MongoPipelineFactory
 
     private static BsonDocument RenderProject(MongoProjectStage stage, PlaceholderTable placeholders)
     {
-        var body = new BsonDocument();
-        foreach (var projection in stage.Projections)
-        {
-            var rendered = MongoAggregationExpressionRenderer.Render(projection.Expression, placeholders);
-
-            // $project reads a bare value as an inclusion/exclusion flag, so a constant/parameter leaf
-            // (Select(x => 8)) must be $literal-wrapped, or a 0/false constant aborts the aggregate.
-            if (projection.Expression is MongoConstantExpression or MongoParameterExpression)
-            {
-                rendered = new BsonDocument("$literal", rendered);
-            }
-
-            body.Add(projection.Alias, rendered);
-        }
+        // $project reads a bare value as an inclusion/exclusion flag, so a constant/parameter leaf
+        // (Select(x => 8)) must be $literal-wrapped, or a 0/false constant aborts the aggregate.
+        var body = RenderFields(stage.Projections, placeholders);
 
         // Suppress the default _id unless the projection deliberately emits an "_id" output field.
         if (!body.Contains("_id"))
@@ -334,20 +323,16 @@ internal sealed class MongoPipelineFactory
     // as a field path, so OrderBy(x => "$Label") (or such a parameter value) would silently sort by that field.
     // SubstituteValue still finds a sentinel inside { "$literal": <sentinel> }.
     private static BsonDocument RenderAddFields(MongoAddFieldsStage stage, PlaceholderTable placeholders)
+        => new("$set", RenderFields(stage.Fields, placeholders));
+
+    // One "<alias>: <value>" element per field, each value $literal-wrapped if a constant/parameter (see RenderBranch).
+    private static BsonDocument RenderFields(IEnumerable<MongoProjection> fields, PlaceholderTable placeholders)
     {
         var body = new BsonDocument();
-        foreach (var field in stage.Fields)
-        {
-            var rendered = MongoAggregationExpressionRenderer.Render(field.Expression, placeholders);
-            if (field.Expression is MongoConstantExpression or MongoParameterExpression)
-            {
-                rendered = new BsonDocument("$literal", rendered);
-            }
+        foreach (var field in fields)
+            body.Add(field.Alias, MongoAggregationExpressionRenderer.RenderBranch(field.Expression, placeholders));
 
-            body.Add(field.Alias, rendered);
-        }
-
-        return new BsonDocument("$set", body);
+        return body;
     }
 
     private static BsonDocument RenderUnset(MongoUnsetStage stage)
@@ -375,25 +360,17 @@ internal sealed class MongoPipelineFactory
         }
         else
         {
-            id = RenderKeyPart(grouping.Key[0].FieldRef, placeholders);
+            // A constant/parameter key part is $literal-wrapped: a "$"-prefixed string as _id (or an _id sub-field)
+            // would otherwise be read as a field path and silently group by that field.
+            id = MongoAggregationExpressionRenderer.RenderBranch(grouping.Key[0].FieldRef, placeholders);
         }
 
         var group = new BsonDocument { { "_id", id } };
         foreach (var acc in grouping.Accumulators)
         {
-            BsonValue operand;
-            if (acc.Operand is null)
-            {
-                operand = 1;
-            }
-            else
-            {
-                operand = MongoAggregationExpressionRenderer.Render(acc.Operand, placeholders);
-                if (acc.Operand is MongoConstantExpression or MongoParameterExpression)
-                {
-                    operand = new BsonDocument("$literal", operand);
-                }
-            }
+            var operand = acc.Operand is null
+                ? 1
+                : MongoAggregationExpressionRenderer.RenderBranch(acc.Operand, placeholders);
 
             group.Add(acc.OutputField, new BsonDocument(acc.Operator, operand));
         }
@@ -405,21 +382,14 @@ internal sealed class MongoPipelineFactory
     // flatten $project, projection ternaries) would see missing rather than null: $expr's $eq: [missing, null] is
     // false, and a missing and a null part would form two groups where C# forms one. $ifNull: [part, null] normalizes
     // missing to null once, here, for every part that may be null. A single-part _id needs no wrapping: $group
-    // already groups a missing scalar _id as null.
+    // already groups a missing scalar _id as null. Each part is $literal-wrapped as in RenderKeyedGroup.
     private static BsonValue RenderCompositeKeyPart(MongoExpression fieldRef, PlaceholderTable placeholders)
-        => fieldRef is not (MongoConstantExpression or MongoParameterExpression
-               or MongoFieldExpression { NullSafe: true }) // already renders as $ifNull
-           && MongoAggregationExpressionRenderer.MayBeNull(fieldRef)
-            ? new BsonDocument("$ifNull", new BsonArray { RenderKeyPart(fieldRef, placeholders), BsonNull.Value })
-            : RenderKeyPart(fieldRef, placeholders);
-
-    // A constant/parameter key part is $literal-wrapped: a "$"-prefixed string as _id (or an _id sub-field)
-    // would otherwise be read as a field path and silently group by that field.
-    private static BsonValue RenderKeyPart(MongoExpression fieldRef, PlaceholderTable placeholders)
     {
-        var rendered = MongoAggregationExpressionRenderer.Render(fieldRef, placeholders);
-        return fieldRef is MongoConstantExpression or MongoParameterExpression
-            ? new BsonDocument("$literal", rendered)
+        var rendered = MongoAggregationExpressionRenderer.RenderBranch(fieldRef, placeholders);
+        return fieldRef is not (MongoConstantExpression or MongoParameterExpression
+                   or MongoFieldExpression { NullSafe: true }) // already renders as $ifNull
+               && MongoAggregationExpressionRenderer.MayBeNull(fieldRef)
+            ? MongoAggregationExpressionRenderer.IfNull(rendered, BsonNull.Value)
             : rendered;
     }
 
@@ -476,8 +446,8 @@ internal sealed class MongoPipelineFactory
 
         if (stage.Dedup)
         {
-            yield return new BsonDocument("$group", new BsonDocument("_id", "$$ROOT"));
-            yield return new BsonDocument("$replaceRoot", new BsonDocument("newRoot", "$_id"));
+            yield return GroupByRootStage();
+            yield return ReplaceRootWithIdStage();
         }
     }
 
@@ -499,14 +469,14 @@ internal sealed class MongoPipelineFactory
         });
 
         // Outer (first operand) side: dedup + tag as _a.
-        yield return new BsonDocument("$group", new BsonDocument("_id", "$$ROOT"));
+        yield return GroupByRootStage();
         yield return Tag(a: true, b: false);
 
         // Inner (second operand) side, rendered into the shared placeholder table, itself deduped + tagged.
         var innerPipeline = new BsonArray();
         foreach (var operandStage in stage.OperandStages)
             innerPipeline.Add(RenderStage(operandStage, renderer, placeholders));   // shared placeholders
-        innerPipeline.Add(new BsonDocument("$group", new BsonDocument("_id", "$$ROOT")));
+        innerPipeline.Add(GroupByRootStage());
         innerPipeline.Add(Tag(a: false, b: true));
         yield return new BsonDocument("$unionWith", new BsonDocument
         {
@@ -528,8 +498,16 @@ internal sealed class MongoPipelineFactory
         yield return new BsonDocument("$match", new BsonDocument { { "_a", true }, { "_b", keepInB } });
 
         // Restore the plain document (the re-unify $group put _doc under _id).
-        yield return new BsonDocument("$replaceRoot", new BsonDocument("newRoot", "$_id"));
+        yield return ReplaceRootWithIdStage();
     }
+
+    // { $group: { _id: "$$ROOT" } }: whole-document dedup (Distinct(), Union, each Intersect/Except side).
+    private static BsonDocument GroupByRootStage()
+        => new("$group", new BsonDocument("_id", "$$ROOT"));
+
+    // { $replaceRoot: { newRoot: "$_id" } }: restores the document a preceding $group put under _id.
+    private static BsonDocument ReplaceRootWithIdStage()
+        => new("$replaceRoot", new BsonDocument("newRoot", "$_id"));
 
     /// <summary>
     /// Clones the template and substitutes every placeholder sentinel with its serialized runtime value.
@@ -597,8 +575,7 @@ internal sealed class MongoPipelineFactory
                 var limit = limitValue.ToInt64();
                 if (limit == 0)
                 {
-                    pipeline[i] = new BsonDocument("$match",
-                        new BsonDocument("_id", new BsonDocument("$type", -1)));
+                    pipeline[i] = new BsonDocument("$match", MongoQueryLanguageRenderer.AlwaysFalseFilter());
                     continue;
                 }
 
@@ -680,6 +657,11 @@ internal sealed class MongoPipelineFactory
     {
         var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex, regexCaseInsensitive) = _placeholders.Entries[index];
 
+        // Coerces to the serializer's ValueType (which differs from the property ClrType the compile-time path
+        // uses when a value converter is present) and serializes via the shared path used for constants.
+        BsonValue Serialize(object? value)
+            => BsonValueSerializer.SerializeThroughWriter(serializer!, BsonValueSerializer.Coerce(serializer!.ValueType, value));
+
         if (!parameterValues.TryGetValue(name, out var rawValue))
             throw new InvalidOperationException(
                 $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
@@ -700,8 +682,7 @@ internal sealed class MongoPipelineFactory
                     continue;
                 }
 
-                var coerced = BsonValueSerializer.Coerce(serializer!.ValueType, getter.GetClrValue(element));
-                array.Add(BsonValueSerializer.SerializeThroughWriter(serializer, coerced));
+                array.Add(Serialize(getter.GetClrValue(element)));
             }
 
             return array;
@@ -753,17 +734,11 @@ internal sealed class MongoPipelineFactory
         {
             var array = new BsonArray();
             foreach (var element in (System.Collections.IEnumerable)rawValue!)
-            {
-                var coerced = BsonValueSerializer.Coerce(serializer.ValueType, element);
-                array.Add(BsonValueSerializer.SerializeThroughWriter(serializer, coerced));
-            }
+                array.Add(Serialize(element));
 
             return array;
         }
 
-        // Coerces to the serializer's ValueType (which differs from the property ClrType the compile-time path
-        // uses when a value converter is present) and serializes via the shared path used for constants.
-        rawValue = BsonValueSerializer.Coerce(serializer.ValueType, rawValue);
-        return BsonValueSerializer.SerializeThroughWriter(serializer, rawValue);
+        return Serialize(rawValue);
     }
 }

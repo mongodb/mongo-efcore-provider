@@ -57,6 +57,28 @@ internal static class TypeExtensions
         return implementations.Length != 1 ? null : implementations[0].GenericTypeArguments.FirstOrDefault();
     }
 
+    /// <summary>
+    /// The <c>T</c> of the <see cref="IEnumerable{T}"/> <paramref name="type"/> is or implements (the element type
+    /// for an array), or <see langword="null"/>. Unlike <see cref="TryGetItemType(Type)"/>, the first
+    /// <see cref="IEnumerable{T}"/> implementation wins when there are several.
+    /// </summary>
+    internal static Type? TryGetEnumerableElementType(this Type type)
+    {
+        if (type.IsArray)
+            return type.GetElementType();
+
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+            return type.GetGenericArguments()[0];
+
+        foreach (var iface in type.GetInterfaces())
+        {
+            if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                return iface.GetGenericArguments()[0];
+        }
+
+        return null;
+    }
+
     internal static ConstructorInfo? GetDeclaredConstructor(
         [DynamicallyAccessedMembers(
             DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.NonPublicConstructors)]

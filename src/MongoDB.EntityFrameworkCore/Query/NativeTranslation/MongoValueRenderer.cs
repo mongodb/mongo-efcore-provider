@@ -14,8 +14,11 @@
  */
 
 using System;
+using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
@@ -23,7 +26,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
 /// Renders a <see cref="MongoConstantExpression"/> or <see cref="MongoParameterExpression"/> to a
-/// <see cref="BsonValue"/>. Shared by <see cref="MongoQueryLanguageRenderer"/> and
+/// <see cref="BsonValue"/>, and an <c>$in</c> haystack to a <see cref="BsonArray"/>. Shared by <see cref="MongoQueryLanguageRenderer"/> and
 /// <see cref="MongoAggregationExpressionRenderer"/> so a constant and a parameter of the same value emit identical
 /// BSON and serializer failures are handled uniformly.
 /// </summary>
@@ -64,6 +67,62 @@ internal static class MongoValueRenderer
             default:
                 throw new NativeTranslationNotSupportedException(
                     $"Cannot render value node of type '{node.GetType().Name}'.");
+        }
+    }
+
+    /// <summary>
+    /// Whether <see cref="RenderInValues"/> renders <paramref name="values"/> without throwing.
+    /// </summary>
+    internal static bool IsRenderableInValues(MongoExpression values)
+        => values is MongoConstantExpression { Value: System.Collections.IEnumerable } or MongoParameterExpression
+            or MongoValueListExpression;
+
+    /// <summary>
+    /// Renders the haystack of an <c>$in</c>/<c>$nin</c> (either dialect) to a BSON array, or to an array placeholder
+    /// for a parameter collection.
+    /// </summary>
+    /// <exception cref="NativeTranslationNotSupportedException">
+    /// <paramref name="values"/> is not a shape <see cref="IsRenderableInValues"/> admits.
+    /// </exception>
+    internal static BsonValue RenderInValues(MongoExpression values, PlaceholderTable placeholders)
+    {
+        switch (values)
+        {
+            case MongoConstantExpression { Value: System.Collections.IEnumerable items } constant:
+            {
+                var array = new BsonArray();
+                foreach (var item in items)
+                    array.Add(RenderValue(new MongoConstantExpression(item, constant.ForSerialization!), placeholders));
+                return array;
+            }
+            case MongoParameterExpression parameter:
+            {
+                // No backing property: only for a computed needle (TranslateInValuesRaw), so use a default
+                // serializer for RawElementType.
+                var elementSerializer = parameter.ForSerialization is not null
+                    ? BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization).Serializer
+                    : parameter.RawElementType is { } rawElementType
+                        ? typeof(ITuple).IsAssignableFrom(rawElementType)
+                            // The driver's own Tuple/ValueTuple serializers write one BSON array per tuple, matching how
+                            // a MongoTupleExpression needle renders; BsonSerializerFactory.CreateTypeSerializer would fall
+                            // through to a class-map (document) serializer for a tuple type.
+                            ? BsonSerializer.LookupSerializer(rawElementType)
+                            : BsonSerializerFactory.CreateTypeSerializer(rawElementType)
+                        : StringSerializer.Instance;
+                return parameter.ExtractEntityKeyFromArrayElements
+                    ? placeholders.CreateEntityKeyArrayPlaceholder(parameter.Name, parameter.ForSerialization!, elementSerializer)
+                    : placeholders.CreateArrayPlaceholder(parameter.Name, elementSerializer);
+            }
+            case MongoValueListExpression list:
+            {
+                var array = new BsonArray();
+                foreach (var element in list.Elements)
+                    array.Add(RenderValue(element, placeholders));
+                return array;
+            }
+            default:
+                throw new NativeTranslationNotSupportedException(
+                    $"Cannot render 'in' values of type '{values.GetType().Name}'.");
         }
     }
 

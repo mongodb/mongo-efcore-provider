@@ -34,13 +34,13 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// </remarks>
 internal static class MongoIncludeFixups
 {
-    public static readonly MethodInfo IncludeReferenceMethodInfo
+    private static readonly MethodInfo IncludeReferenceMethodInfo
         = typeof(MongoIncludeFixups).GetTypeInfo().GetDeclaredMethod(nameof(IncludeReference))!;
 
-    public static readonly MethodInfo IncludeCollectionMethodInfo
+    private static readonly MethodInfo IncludeCollectionMethodInfo
         = typeof(MongoIncludeFixups).GetTypeInfo().GetDeclaredMethod(nameof(IncludeCollection))!;
 
-    public static readonly MethodInfo IsAssignableFromMethodInfo
+    private static readonly MethodInfo IsAssignableFromMethodInfo
         = typeof(IReadOnlyEntityType).GetMethod(
             nameof(IReadOnlyEntityType.IsAssignableFrom), [typeof(IReadOnlyEntityType)])!;
 
@@ -53,7 +53,7 @@ internal static class MongoIncludeFixups
     /// </summary>
     /// <remarks>
     /// The trailing <c>bool</c> (<c>SetLoaded</c>) is unused here but keeps the signature identical to
-    /// <c>IncludeCollection</c> for the call sites that build the call expression.
+    /// <c>IncludeCollection</c> so <see cref="CreateIncludeCall"/> builds both the same way.
     /// </remarks>
     private static void IncludeReference<TIncludingEntity, TIncludedEntity>(
         InternalEntityEntry? entry,
@@ -151,10 +151,57 @@ internal static class MongoIncludeFixups
     }
 
     /// <summary>
+    /// Builds the fix-up call for an <c>Include</c> of <paramref name="navigation"/>:
+    /// <c>if (navigation.DeclaringEntityType.IsAssignableFrom(concreteEntityType)) IncludeReference|IncludeCollection(...)</c>,
+    /// choosing <c>IncludeCollection</c> for a collection navigation.
+    /// </summary>
+    /// <param name="navigation">The included navigation.</param>
+    /// <param name="entityEntry">
+    /// The including entity's <see cref="InternalEntityEntry"/>, or a <see langword="null"/> constant of that type
+    /// when not tracking.
+    /// </param>
+    /// <param name="instance">The materialized including entity.</param>
+    /// <param name="concreteEntityType">The including entity's concrete <see cref="IEntityType"/>.</param>
+    /// <param name="relatedEntity">
+    /// The materialized related entity (reference) or <c>IEnumerable&lt;TIncluded&gt;</c> of them (collection).
+    /// </param>
+    /// <param name="setLoaded">The <c>IncludeExpression.SetLoaded</c> flag.</param>
+    public static Expression CreateIncludeCall(
+        INavigation navigation,
+        Expression entityEntry,
+        Expression instance,
+        Expression concreteEntityType,
+        Expression relatedEntity,
+        bool setLoaded)
+    {
+        var includingClrType = navigation.DeclaringEntityType.ClrType;
+        var relatedEntityClrType = navigation.TargetEntityType.ClrType;
+        var inverseNavigation = navigation.Inverse;
+        var fixup = GenerateFixup(includingClrType, relatedEntityClrType, navigation, inverseNavigation);
+        var includeMethod = navigation.IsCollection ? IncludeCollectionMethodInfo : IncludeReferenceMethodInfo;
+
+        return Expression.IfThen(
+            Expression.Call(
+                Expression.Constant(navigation.DeclaringEntityType, typeof(IReadOnlyEntityType)),
+                IsAssignableFromMethodInfo,
+                Expression.Convert(concreteEntityType, typeof(IReadOnlyEntityType))),
+            Expression.Call(
+                includeMethod.MakeGenericMethod(includingClrType, relatedEntityClrType),
+                entityEntry,
+                instance,
+                concreteEntityType,
+                relatedEntity,
+                Expression.Constant(navigation),
+                Expression.Constant(inverseNavigation, typeof(INavigation)),
+                Expression.Constant(fixup),
+                Expression.Constant(setLoaded)));
+    }
+
+    /// <summary>
     /// Compiles the fix-up delegate that wires <c>relatedEntity</c> onto <c>entity</c> through
     /// <paramref name="navigation"/> and, when present, <paramref name="inverseNavigation"/>.
     /// </summary>
-    public static Delegate GenerateFixup(
+    private static Delegate GenerateFixup(
         Type entityType,
         Type relatedEntityType,
         INavigation navigation,

@@ -145,13 +145,8 @@ internal sealed partial class MongoExpressionTranslator
     /// </summary>
     public bool TryTranslateField(Expression keySelectorBody, [NotNullWhen(true)] out MongoFieldExpression? result)
     {
-        result = null;
-        if (!TryResolveMember(UnwrapOrderPreserving(keySelectorBody), out var property, out var path, out var isOuter)
-            || isOuter) // Sort keys are never inside a $filter/$map scope; guards against a future two-scope caller.
-            return false;
-
-        result = new MongoFieldExpression(property, path);
-        return true;
+        // Inner-only: sort keys are never inside a $filter/$map scope; guards against a future two-scope caller.
+        return TryResolveInnerField(UnwrapOrderPreserving(keySelectorBody), out result);
     }
 
     /// <summary>
@@ -205,7 +200,7 @@ internal sealed partial class MongoExpressionTranslator
         if (node is not MemberExpression { Expression: { } receiver } member)
             return false;
 
-        var receiverType = Nullable.GetUnderlyingType(receiver.Type) ?? receiver.Type;
+        var receiverType = receiver.Type.UnwrapNullableType();
         if (receiverType != typeof(DateTime) && receiverType != typeof(DateTimeOffset))
             return false;
 
@@ -261,6 +256,11 @@ internal sealed partial class MongoExpressionTranslator
         if (!DatePartsByMemberName.TryGetValue(member.Member.Name, out var plainPart))
             return false;
 
+        // The server extracts the part from the stored UTC instant, but a Local-kind property materializes as local
+        // time, so Hour/Date/Year... would silently disagree with the C# value (EF-459). Decline; driver-LINQ throws.
+        if (NativeDateTimeKindReadBack.ReferencesKindSensitiveProperty(receiverExpr))
+            return false;
+
         result = new MongoDatePartExpression(receiverExpr, plainPart);
         return true;
     }
@@ -285,14 +285,12 @@ internal sealed partial class MongoExpressionTranslator
         result = null;
         if (leaf is not MemberExpression { Member.Name: nameof(DateTime.TimeOfDay), Expression: { } receiver }
             || receiver.Type != typeof(DateTime)
-            || !TryResolveMember(receiver, out var property, out var fieldPath, out var isOuter)
-            || isOuter
-            || property.GetDateTimeKind() == DateTimeKind.Local)
+            || !TryResolveInnerField(receiver, out var field)
+            || field.Property.GetDateTimeKind() == DateTimeKind.Local)
         {
             return false;
         }
 
-        var field = new MongoFieldExpression(property, fieldPath);
         if (!AllFieldsDefaultSerialized(field))
             return false;
 
@@ -355,6 +353,12 @@ internal sealed partial class MongoExpressionTranslator
         if (startDate is null)
             return false;
 
+        // Calendar arithmetic (day/month/year) over a Local-kind property differs from UTC arithmetic across a DST
+        // change (EF-459); hour and smaller units are exact in both and stay native.
+        if (NativeDateTimeKindReadBack.IsCalendarUnit(unit)
+            && NativeDateTimeKindReadBack.ReferencesKindSensitiveProperty(startDate))
+            return false;
+
         var amount = TranslateOperand(call.Arguments[0], allowNumericWidening: true);
         if (amount is null)
             return false;
@@ -366,13 +370,16 @@ internal sealed partial class MongoExpressionTranslator
     /// <summary>
     /// Evaluates a closed subtree (no lambda parameter, EF query parameter, or other extension node) to a
     /// <see cref="MongoConstantExpression"/>. Covers literals EF's parameter extraction leaves un-folded because a
-    /// sibling operand references the query source. Declines for anything that can't be compiled in isolation.
+    /// sibling operand references the query source. Declines for anything that can't be compiled in isolation, and for
+    /// a non-deterministic call (<see cref="NonDeterministicCalls"/>): EF leaves <c>Guid.NewGuid()</c> in the tree, so
+    /// such a subtree does reach here, and evaluating it once would bake one value into every row
+    /// (NonDeterministicFunctionTests.Guid_NewGuid_in_closed_date_add_receiver_throws).
     /// </summary>
     private static bool TryEvaluateClosedSubtree(Expression node, out MongoExpression? result)
     {
         result = null;
 
-        if (ContainsParameterOrExtensionNode(node))
+        if (ContainsParameterOrExtensionNode(node) || ContainsNonDeterministicCall(node))
             return false;
 
         object? value;
@@ -393,6 +400,29 @@ internal sealed partial class MongoExpressionTranslator
 
         result = new MongoConstantExpression(value, forSerialization: null);
         return true;
+    }
+
+    private static bool ContainsNonDeterministicCall(Expression node)
+    {
+        var finder = new NonDeterministicCallFinder();
+        finder.Visit(node);
+        return finder.Found;
+    }
+
+    private sealed class NonDeterministicCallFinder : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (NonDeterministicCalls.IsNonDeterministic(node))
+            {
+                Found = true;
+                return node;
+            }
+
+            return base.VisitMethodCall(node);
+        }
     }
 
     private static bool ContainsParameterOrExtensionNode(Expression node)
@@ -488,7 +518,7 @@ internal sealed partial class MongoExpressionTranslator
 
     private static bool IsIntegerType(Type type)
     {
-        var t = Nullable.GetUnderlyingType(type) ?? type;
+        var t = type.UnwrapNullableType();
         return t == typeof(int) || t == typeof(long) || t == typeof(short) || t == typeof(byte)
             || t == typeof(sbyte) || t == typeof(uint) || t == typeof(ulong) || t == typeof(ushort);
     }
@@ -609,8 +639,8 @@ internal sealed partial class MongoExpressionTranslator
     {
         while (e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u)
         {
-            var fromType = Nullable.GetUnderlyingType(u.Operand.Type) ?? u.Operand.Type;
-            var toType = Nullable.GetUnderlyingType(u.Type) ?? u.Type;
+            var fromType = u.Operand.Type.UnwrapNullableType();
+            var toType = u.Type.UnwrapNullableType();
 
             if (fromType != toType
                 && toType != typeof(object)
@@ -736,9 +766,8 @@ internal sealed partial class MongoExpressionTranslator
                 {
                     Method.Name: nameof(object.Equals), Object: not null, Arguments.Count: 1
                 } nullableEqualsCall
-                when (Nullable.GetUnderlyingType(nullableEqualsCall.Object!.Type) ?? nullableEqualsCall.Object.Type)
-                     == (Nullable.GetUnderlyingType(nullableEqualsCall.Arguments[0].RemoveObjectConvert().Type)
-                         ?? nullableEqualsCall.Arguments[0].RemoveObjectConvert().Type):
+                when nullableEqualsCall.Object!.Type.UnwrapNullableType()
+                     == nullableEqualsCall.Arguments[0].RemoveObjectConvert().Type.UnwrapNullableType():
                 return TranslateComparisonCore(
                     nullableEqualsCall.Object!, nullableEqualsCall.Arguments[0].RemoveObjectConvert(), ExpressionType.Equal);
 
@@ -770,8 +799,8 @@ internal sealed partial class MongoExpressionTranslator
                 if (leftArg.Type != rightArg.Type)
                 {
                     return ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(
-                        Nullable.GetUnderlyingType(leftArg.Type) ?? leftArg.Type,
-                        Nullable.GetUnderlyingType(rightArg.Type) ?? rightArg.Type)
+                        leftArg.Type.UnwrapNullableType(),
+                        rightArg.Type.UnwrapNullableType())
                         ? new MongoConstantExpression(false, forSerialization: null)
                         : null;
                 }
@@ -858,7 +887,7 @@ internal sealed partial class MongoExpressionTranslator
                      && Unwrap(containsItem) is ConstantExpression
                      && TryResolveMember(Unwrap(arrayReceiver), out var arrayProperty, out var arrayFieldPath, out var arrayIsOuter)
                      && !arrayIsOuter // outer-scoped array receivers aren't supported
-                     && GetEnumerableElementType(arrayProperty.ClrType) is not null:
+                     && arrayProperty.ClrType.TryGetEnumerableElementType() is not null:
             {
                 var itemNode = TranslateArrayContainsItem(Unwrap(containsItem), arrayProperty);
                 if (itemNode is null)
@@ -894,7 +923,7 @@ internal sealed partial class MongoExpressionTranslator
                 // A constructed Tuple/ValueTuple needle over entity fields (`ids.Contains(new Tuple<int, int>(o.OrderID,
                 // o.ProductID))`) renders as an MQL array, like the tuple-equality operand. Only a query-PARAMETER haystack
                 // is admitted: its elements serialize through the driver's tuple serializer (one BSON array per tuple, see
-                // MongoAggregationExpressionRenderer.RenderInValues); a constant haystack would go through BsonValue.Create,
+                // MongoValueRenderer.RenderInValues); a constant haystack would go through BsonValue.Create,
                 // which cannot serialize a tuple.
                 if (IsTupleType(itemExpr.Type)
                     && TryDecomposeTupleOperand(Unwrap(itemExpr), out var tupleElements)
@@ -997,14 +1026,12 @@ internal sealed partial class MongoExpressionTranslator
                     // produces): a $regularExpression pattern must be a literal, so this renders only in the
                     // aggregation dialect ($indexOfCP/$strLenCP). Cross-scope pairs aren't supported.
                     if (property is null || receiverIsOuter
-                        || !TryResolveMember(Unwrap(termExpr), out var termProperty, out var termFieldPath, out var termIsOuter)
-                        || termIsOuter
-                        || termProperty.ClrType != typeof(string))
+                        || !TryResolveInnerStringField(Unwrap(termExpr), out var termField))
                     {
                         return null;
                     }
 
-                    termNode = new MongoFieldExpression(termProperty, termFieldPath);
+                    termNode = termField;
 
                     // Case-insensitive field-to-field declines: RenderRegexAsExpr would fold via $toLower, which is
                     // ASCII-only (leaves É, Б, Ω unchanged), and no $expr operator does Unicode case folding, so
@@ -1050,18 +1077,19 @@ internal sealed partial class MongoExpressionTranslator
                         new MongoConstantExpression(1, forSerialization: null));
                 }
 
-                // A correlated element predicate (references the enclosing entity). $elemMatch can't reference the
-                // enclosing document, so when the free parameter is this translator's own SelfParam (by reference),
-                // build a two-scope child and emit a MongoQuantifierExpression ($anyElementTrue/$allElementsTrue
-                // over $map). Correlation reaching further out declines.
-                if (ReferencesEnclosingScope(elementLambda.Body, elementLambda.Parameters[0], out var quantifierFreeParam))
+                if (!TryCreateElementPredicateTranslator(
+                        elementLambda, elementType, out var elementTranslator, out var isCorrelated))
                 {
-                    if (SelfParam is null || !ReferenceEquals(quantifierFreeParam, SelfParam))
-                        return null;
+                    return null;
+                }
 
-                    var correlatedElementTranslator = new MongoExpressionTranslator(
-                        elementType, outerParam: SelfParam, outerEntityType: _entityType, innerPrefix: null);
-                    if (!correlatedElementTranslator.TryTranslate(elementLambda.Body, out var correlatedPredicate))
+                // A correlated element predicate (references the enclosing entity). $elemMatch can't reference the
+                // enclosing document, so a correlation on SelfParam gets a two-scope child and emits a
+                // MongoQuantifierExpression ($anyElementTrue/$allElementsTrue over $map). Correlation reaching further
+                // out has already declined.
+                if (isCorrelated)
+                {
+                    if (!elementTranslator.TryTranslate(elementLambda.Body, out var correlatedPredicate))
                         return null;
 
                     // No negation for All here: $allElementsTrue is itself "for all".
@@ -1081,7 +1109,6 @@ internal sealed partial class MongoExpressionTranslator
 
                 // An element-scoped translator yields element-relative paths, as $elemMatch requires (mirror of
                 // NativeSelectManyBinder.TryBuildOwnedInnerFilter, which then prefixes them).
-                var elementTranslator = new MongoExpressionTranslator(elementType);
                 if (!elementTranslator.TryTranslate(elementLambda.Body, out var translated))
                     return null;
 
@@ -1296,6 +1323,11 @@ internal sealed partial class MongoExpressionTranslator
         if (TryResolveMember(leftUnwrapped, out var leftProperty, out var leftPath, out var leftIsOuter)
             && IsSimpleValue(rightUnwrapped))
         {
+            // A relational operator runs on the stored form; decline unless it orders like the CLR value (EF-337).
+            // Equality is exact whatever the storage.
+            if (!ComparisonPreservesClrOrdering(nodeType, leftProperty!))
+                return null;
+
             // A widening or identity-like cast on the member side is absorbed; any other cast falls through to the
             // $expr path as an explicit $toX (see HasNumericConvert), gated by CanFallThroughToExpr, with a type
             // bracket for a relational comparison.
@@ -1339,6 +1371,9 @@ internal sealed partial class MongoExpressionTranslator
         else if (TryResolveMember(rightUnwrapped, out var rightProperty, out var rightPath, out var rightIsOuter)
                  && IsSimpleValue(leftUnwrapped))
         {
+            if (!ComparisonPreservesClrOrdering(nodeType, rightProperty!))
+                return null;
+
             if (HasNumericConvert(right, rightProperty!.ClrType, out var rightWideningTarget, out var rightIdentityLike))
             {
                 if (!CanFallThroughToExpr(rightProperty))
@@ -1487,6 +1522,11 @@ internal sealed partial class MongoExpressionTranslator
     private static bool NeedsNumericTypeBracket(ExpressionType comparisonNodeType)
         => IsRelationalComparison(comparisonNodeType);
 
+    // Query-native member-vs-value arm of TranslateComparisonCore; see StoredOrdering. The field-to-field/$expr arm is
+    // stricter (AllFieldsDefaultSerialized).
+    private static bool ComparisonPreservesClrOrdering(ExpressionType nodeType, IProperty property)
+        => !IsRelationalComparison(nodeType) || StoredOrdering.PreservesClrOrdering(property);
+
     // The four type-bracketed operators. Equality is absent: $eq/$ne partition every value, including null/missing.
     private static bool IsRelationalComparison(ExpressionType nodeType)
         => nodeType is ExpressionType.LessThan or ExpressionType.LessThanOrEqual
@@ -1518,7 +1558,7 @@ internal sealed partial class MongoExpressionTranslator
            || NativeQueryParameter.TryGetQueryParameterName(node, out _)
            || NativeQueryParameter.TryGetParameterArrayElementIndex(node, out _, out _);
 
-    private static MongoBinaryOperator? MapComparisonOperator(ExpressionType nodeType)
+    internal static MongoBinaryOperator? MapComparisonOperator(ExpressionType nodeType)
         => nodeType switch
         {
             ExpressionType.Equal => MongoBinaryOperator.Equal,
@@ -1565,8 +1605,8 @@ internal sealed partial class MongoExpressionTranslator
     {
         if (node is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
         {
-            var fromType = Nullable.GetUnderlyingType(unary.Operand.Type) ?? unary.Operand.Type;
-            var toType = Nullable.GetUnderlyingType(unary.Type) ?? unary.Type;
+            var fromType = unary.Operand.Type.UnwrapNullableType();
+            var toType = unary.Type.UnwrapNullableType();
 
             // Boxing to object never changes the value; unwrap it rather than decline (there's no $toX for object).
             if (fromType != toType && toType != typeof(object)
@@ -1688,7 +1728,7 @@ internal sealed partial class MongoExpressionTranslator
         }
 
         // Math/MathF function calls.
-        if (TryTranslateMath(node, allowNumericWidening, out var math))
+        if (TryTranslateMath(node, out var math))
             return math;
 
         // string.Trim()/TrimStart()/TrimEnd() and their char/char[] overloads.
@@ -1754,28 +1794,12 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoSizeExpression(arrayPath, node.Type, nullSafe: true);
 
             // A filtered count: the element predicate translates like a quantifier's, with the same correlated
-            // guard. Single-scope TryResolveMember resolves by name, so without it an enclosing member sharing a
-            // name with an element member would silently retarget to the element. A correlation on SelfParam (by
-            // reference) uses a two-scope child; anything else declines. countFreeParam is null when there are two
-            // or more distinct free parameters, which the identity check then declines.
-            MongoExpressionTranslator countElementTranslator;
-            if (ReferencesEnclosingScope(countPredicate.Body, countPredicate.Parameters[0], out var countFreeParam))
+            // guard (see TryCreateElementPredicateTranslator).
+            if (!TryCreateElementPredicateTranslator(countPredicate, countElementType, out var countElementTranslator, out _)
+                || !countElementTranslator.TryTranslate(countPredicate.Body, out var elementPredicate))
             {
-                if (SelfParam is null || countFreeParam is null || !ReferenceEquals(countFreeParam, SelfParam))
-                    return null;
-
-                // innerPrefix null, not "": the renderer prepends "$$e." via $filter's "as" variable (see the
-                // two-scope constructor).
-                countElementTranslator = new MongoExpressionTranslator(
-                    countElementType, outerParam: SelfParam, outerEntityType: _entityType, innerPrefix: null);
-            }
-            else
-            {
-                countElementTranslator = new MongoExpressionTranslator(countElementType);
-            }
-
-            if (!countElementTranslator.TryTranslate(countPredicate.Body, out var elementPredicate))
                 return null;
+            }
 
             // Deliberately no renderability or AllFieldsDefaultSerialized gate: a translate-time decline sends a
             // projection leaf (Select(b => new { N = b.Posts.Count(pred) })) to the generic fall-through, which throws
@@ -1864,18 +1888,24 @@ internal sealed partial class MongoExpressionTranslator
     /// <c>$concat</c> (for brevity only; nesting would also work).
     /// </summary>
     private MongoExpression? TranslateStringConcat(BinaryExpression node, bool allowNumericWidening)
+        => TranslateConcatParts([node.Left, node.Right], allowNumericWidening);
+
+    /// <summary>
+    /// Translates each of <paramref name="parts"/> via <see cref="TranslateConcatOperand"/>, in order, into one
+    /// <see cref="MongoConcatExpression"/>, splicing a nested concat's operands in place; declines if any part does.
+    /// </summary>
+    private MongoExpression? TranslateConcatParts(IEnumerable<Expression> parts, bool allowNumericWidening)
     {
-        var left = TranslateConcatOperand(node.Left, allowNumericWidening);
-        if (left is null)
-            return null;
-
-        var right = TranslateConcatOperand(node.Right, allowNumericWidening);
-        if (right is null)
-            return null;
-
         var operands = new List<MongoExpression>();
-        operands.AddRange(left is MongoConcatExpression leftConcat ? leftConcat.Operands : [left]);
-        operands.AddRange(right is MongoConcatExpression rightConcat ? rightConcat.Operands : [right]);
+        foreach (var part in parts)
+        {
+            var operand = TranslateConcatOperand(part, allowNumericWidening);
+            if (operand is null)
+                return null;
+
+            operands.AddRange(operand is MongoConcatExpression nested ? nested.Operands : [operand]);
+        }
+
         return new MongoConcatExpression(operands);
     }
 
@@ -1890,6 +1920,11 @@ internal sealed partial class MongoExpressionTranslator
     /// </remarks>
     private MongoExpression? TranslateConcatOperand(Expression operand, bool allowNumericWidening)
     {
+        // $toString over a stored DateTimeOffset renders its {DateTime, Ticks, Offset} sub-document as BSON JSON
+        // (EF-217). Shared with the driver-LINQ bridge, which throws for the same operand.
+        if (Visitors.MongoProjectionBindingExpressionVisitor.IsDateTimeOffsetValue(operand))
+            return null;
+
         if (operand is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked, Type: var boxedType } boxing
             && boxedType == typeof(object))
             operand = boxing.Operand;
@@ -1921,11 +1956,11 @@ internal sealed partial class MongoExpressionTranslator
     // Numeric CLR types accepted by $add/$subtract/$multiply/$divide/$mod.
     internal static bool IsNumericType(Type type)
     {
-        var underlying = Nullable.GetUnderlyingType(type) ?? type;
-        return underlying == typeof(int) || underlying == typeof(long) || underlying == typeof(short)
-            || underlying == typeof(byte) || underlying == typeof(sbyte) || underlying == typeof(uint)
-            || underlying == typeof(ulong) || underlying == typeof(ushort)
-            || underlying == typeof(float) || underlying == typeof(double) || underlying == typeof(decimal);
+        if (IsIntegerType(type))
+            return true;
+
+        var underlying = type.UnwrapNullableType();
+        return underlying == typeof(float) || underlying == typeof(double) || underlying == typeof(decimal);
     }
 
     /// <summary>
@@ -1971,11 +2006,11 @@ internal sealed partial class MongoExpressionTranslator
     {
         toleratedWideningTarget = null;
         var sawIdentityLike = false;
-        var underlying = Nullable.GetUnderlyingType(propertyClrType) ?? propertyClrType;
+        var underlying = propertyClrType.UnwrapNullableType();
         while (operand is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u)
         {
-            var to = Nullable.GetUnderlyingType(u.Type) ?? u.Type;
-            var from = Nullable.GetUnderlyingType(u.Operand.Type) ?? u.Operand.Type;
+            var to = u.Type.UnwrapNullableType();
+            var from = u.Operand.Type.UnwrapNullableType();
 
             // Skip nullability-only layers (long -> long?): from == to would otherwise decline. EF lowers a lifted
             // uint -> long widening as `Convert(Convert(e.EmployeeID, Int64), Nullable<Int64>)`.
@@ -2055,7 +2090,7 @@ internal sealed partial class MongoExpressionTranslator
         };
 
     // Mirrors a relational operator when the member is on the right-hand side.
-    private static ExpressionType Mirror(ExpressionType nodeType)
+    internal static ExpressionType Mirror(ExpressionType nodeType)
         => nodeType switch
         {
             ExpressionType.LessThan => ExpressionType.GreaterThan,

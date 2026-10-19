@@ -260,6 +260,19 @@ public class ReferenceIncludeRecognizerTests
         Assert.True(((INavigation)include.Navigation!).IsCollection);
     }
 
+    // A collection Include on the root of a two-level chain arrives as ti => Include(ti.Outer.Outer, Orders). The
+    // recognizer is structural; TranslateSelect resolves the hop chain to a scope index and admits only the root.
+    [Fact]
+    public void Collection_include_recognizer_accepts_a_collection_include_over_a_chained_join_scope()
+    {
+        var selector = ReferenceIncludeTestTrees.Build(doubleHop: true, collectionNavigation: true);
+
+        var include = MongoQueryableMethodTranslatingExpressionVisitor.TryGetCollectionIncludeOverJoinScope(selector);
+
+        Assert.NotNull(include);
+        Assert.True(((INavigation)include.Navigation!).IsCollection);
+    }
+
     [Fact]
     public void Collection_include_recognizer_rejects_a_bare_parameter_collection_include()
     {

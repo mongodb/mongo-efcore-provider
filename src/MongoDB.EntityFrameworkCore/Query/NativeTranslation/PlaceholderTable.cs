@@ -37,12 +37,24 @@ internal sealed class PlaceholderTable
     /// </remarks>
     internal const string SentinelKey = "__mongoef_param__";
 
-    private readonly List<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty, int? ArrayElementIndex, bool RegexCaseInsensitive)> _entries = [];
+    /// <summary>
+    /// One recorded parameter site: what <c>MongoPipelineFactory.Build</c> needs to substitute its value per execution.
+    /// </summary>
+    internal readonly record struct Entry(
+        string Name,
+        IBsonSerializer? Serializer,
+        bool IsArray,
+        MongoRegexKind? RegexKind,
+        IProperty? EntityMemberProperty,
+        int? ArrayElementIndex,
+        bool RegexCaseInsensitive);
+
+    private readonly List<Entry> _entries = [];
 
     /// <summary>
     /// A read-only view of all accumulated placeholder entries, in insertion order.
     /// </summary>
-    public IReadOnlyList<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty, int? ArrayElementIndex, bool RegexCaseInsensitive)> Entries => _entries;
+    public IReadOnlyList<Entry> Entries => _entries;
 
     /// <summary>
     /// Appends a value placeholder and returns its sentinel.
@@ -55,9 +67,7 @@ internal sealed class PlaceholderTable
     /// <returns>A sentinel <c>{ __mongoef_param__: &lt;index&gt; }</c>, the index into <see cref="Entries"/>.</returns>
     public BsonValue CreatePlaceholder(string parameterName, IBsonSerializer? serializer)
     {
-        var index = _entries.Count;
-        _entries.Add((parameterName, serializer, false, null, null, null, false));
-        return new BsonDocument(SentinelKey, new BsonInt32(index));
+        return Add(new Entry(parameterName, serializer, false, null, null, null, false));
     }
 
     /// <summary>
@@ -67,9 +77,7 @@ internal sealed class PlaceholderTable
     /// </summary>
     public BsonValue CreateEntityMemberPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer serializer)
     {
-        var index = _entries.Count;
-        _entries.Add((parameterName, serializer, false, null, entityMemberProperty, null, false));
-        return new BsonDocument(SentinelKey, new BsonInt32(index));
+        return Add(new Entry(parameterName, serializer, false, null, entityMemberProperty, null, false));
     }
 
     /// <summary>
@@ -78,9 +86,7 @@ internal sealed class PlaceholderTable
     /// </summary>
     public BsonValue CreateArrayPlaceholder(string parameterName, IBsonSerializer elementSerializer)
     {
-        var index = _entries.Count;
-        _entries.Add((parameterName, elementSerializer, true, null, null, null, false));
-        return new BsonDocument(SentinelKey, new BsonInt32(index));
+        return Add(new Entry(parameterName, elementSerializer, true, null, null, null, false));
     }
 
     /// <summary>
@@ -90,9 +96,7 @@ internal sealed class PlaceholderTable
     /// </summary>
     public BsonValue CreateEntityKeyArrayPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer elementSerializer)
     {
-        var index = _entries.Count;
-        _entries.Add((parameterName, elementSerializer, true, null, entityMemberProperty, null, false));
-        return new BsonDocument(SentinelKey, new BsonInt32(index));
+        return Add(new Entry(parameterName, elementSerializer, true, null, entityMemberProperty, null, false));
     }
 
     /// <summary>
@@ -101,9 +105,7 @@ internal sealed class PlaceholderTable
     /// </summary>
     public BsonValue CreateArrayElementPlaceholder(string parameterName, int elementIndex, IBsonSerializer? serializer)
     {
-        var index = _entries.Count;
-        _entries.Add((parameterName, serializer, false, null, null, elementIndex, false));
-        return new BsonDocument(SentinelKey, new BsonInt32(index));
+        return Add(new Entry(parameterName, serializer, false, null, null, elementIndex, false));
     }
 
     /// <summary>
@@ -117,8 +119,14 @@ internal sealed class PlaceholderTable
     /// <param name="caseInsensitive">Emit options <c>"is"</c> instead of <c>"s"</c>.</param>
     public BsonValue CreateRegexPlaceholder(string parameterName, MongoRegexKind kind, bool caseInsensitive = false)
     {
+        return Add(new Entry(parameterName, null, false, kind, null, null, caseInsensitive));
+    }
+
+    // Records the entry and returns its sentinel, whose index is the entry's position in Entries.
+    private BsonValue Add(Entry entry)
+    {
         var index = _entries.Count;
-        _entries.Add((parameterName, null, false, kind, null, null, caseInsensitive));
+        _entries.Add(entry);
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 

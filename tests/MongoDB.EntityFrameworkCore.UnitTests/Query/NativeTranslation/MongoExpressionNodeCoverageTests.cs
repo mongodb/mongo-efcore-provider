@@ -730,7 +730,7 @@ public class MongoExpressionNodeCoverageTests
         ["MongoUnaryExpression|QL.Render"] = "rendered",
 
         // Not top-level-renderable: exists only as MongoInExpression.Values / MongoComputedInExpression.Values,
-        // dispatched by RenderInValues/CanRenderInValues. As a bare node it falls closed everywhere.
+        // dispatched by RenderInValues/MongoValueRenderer.IsRenderableInValues. As a bare node it falls closed everywhere.
         ["MongoValueListExpression|Agg.CanRender"] = "false",
         ["MongoValueListExpression|Agg.Render"] = "declined",
         ["MongoValueListExpression|AllFieldsDefaultSerialized"] = "true",

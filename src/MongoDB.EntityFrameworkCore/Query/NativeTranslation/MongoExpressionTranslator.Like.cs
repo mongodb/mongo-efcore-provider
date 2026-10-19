@@ -63,14 +63,9 @@ internal sealed partial class MongoExpressionTranslator
             return true;
         }
 
-        if (!TryResolveMember(matchExpr, out var property, out var fieldPath, out var isOuter)
-            || isOuter
-            || property.ClrType != typeof(string))
-        {
+        if (!TryResolveInnerStringField(matchExpr, out var fieldNode))
             return false;
-        }
 
-        var fieldNode = new MongoFieldExpression(property, fieldPath);
         var termNode = new MongoConstantExpression(patternLiteral, forSerialization: null);
         result = new MongoRegexExpression(fieldNode, MongoRegexKind.Like, termNode, negated: false);
         return true;

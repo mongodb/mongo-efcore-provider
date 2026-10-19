@@ -56,6 +56,8 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
         public string? E { get; set; }
         public string? C { get; set; }
         public Inner? O { get; set; }
+        public int? I1 { get; set; }
+        public int? I2 { get; set; }
     }
 
     public class CtorDto(string? name, int n)
@@ -301,6 +303,27 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
                 .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)));
     }
 
+    // EF-460: a concatenation or arithmetic leaf under the same retained Select used to be re-evaluated over the
+    // projected documents' missing S/T/I1/I2 and answer silently wrong values ("<null>:" for every row, where C# answers
+    // "b:b", "<null>:Abc", "b:Abcb"). It now fails translation like the Substring leaf above. Reading the projected V by
+    // name instead is not an option: the driver's $concat answers null where C# treats a null operand as empty.
+    [Theory]
+    [InlineData(nameof(MongoQueryMode.DriverLinq))]
+    [InlineData(nameof(MongoQueryMode.Native))]
+    public void Concat_and_arithmetic_leaf_under_a_retained_pushed_down_Select(string mode)
+    {
+        AssertEveryRowThrows(mode, q => q.Select(x => new { R = x.O, V = x.S + x.T }).Distinct()
+                .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)));
+        AssertEveryRowThrows(mode, q => q.Select(x => new { R = x.O, V = x.S + x.T })
+                .Union(q.Select(x => new { R = x.O, V = x.S + x.T }))
+                .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)));
+        AssertEveryRowThrows(mode, q => q.Select(x => new { R = x.O, V = x.I1 + x.I2 }).Distinct()
+                .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)));
+        AssertEveryRowThrows(mode, q => q.Select(x => new { R = x.O, V = x.I1 * 2 + x.I2 })
+                .Union(q.Select(x => new { R = x.O, V = x.I1 * 2 + x.I2 }))
+                .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)));
+    }
+
     private void AssertEveryRowThrows(
         string mode,
         Func<IQueryable<Row>, IEnumerable<string>> query,
@@ -379,17 +402,17 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
             },
             new BsonDocument
             {
-                { "_id", ObjectId.GenerateNewId() }, { "Label", "sNull" }, { "S", BsonNull.Value }, { "T", "b" },
+                { "_id", ObjectId.GenerateNewId() }, { "Label", "sNull" }, { "S", BsonNull.Value }, { "T", "b" }, { "I1", BsonNull.Value }, { "I2", 5 },
                 { "e_t", "b" }, { "C", "pre:b" }, { "O", new BsonDocument("W", "b") }
             },
             new BsonDocument
             {
-                { "_id", ObjectId.GenerateNewId() }, { "Label", "tNull" }, { "S", "Abc" }, { "T", BsonNull.Value },
+                { "_id", ObjectId.GenerateNewId() }, { "Label", "tNull" }, { "S", "Abc" }, { "T", BsonNull.Value }, { "I1", 4 }, { "I2", BsonNull.Value },
                 { "e_t", BsonNull.Value }, { "C", BsonNull.Value }, { "O", new BsonDocument("W", BsonNull.Value) }
             },
             new BsonDocument
             {
-                { "_id", ObjectId.GenerateNewId() }, { "Label", "value" }, { "S", "Abc" }, { "T", "b" },
+                { "_id", ObjectId.GenerateNewId() }, { "Label", "value" }, { "S", "Abc" }, { "T", "b" }, { "I1", 2 }, { "I2", 3 },
                 { "e_t", "b" }, { "C", "pre:b" }, { "O", new BsonDocument("W", "b") }
             }
         ]);

@@ -582,6 +582,40 @@ public class MongoQueryLanguageRendererTests
             rendered);
     }
 
+    // EF-247: $regularExpression needs a literal, so a Pattern whose pattern is a field or a parameter must render
+    // through $expr/$regexMatch (MongoExpressionNodeCoverageTests can't see this shape-conditional routing).
+    [Fact]
+    public void Pattern_kind_with_field_pattern_falls_through_to_expr_regexMatch()
+    {
+        var name = GetProperty<Customer>("Name");
+        var nickname = GetProperty<Customer>("Nickname");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(name, "Name"), MongoRegexKind.Pattern,
+            new MongoFieldExpression(nickname, "Nickname"), negated: false, patternOptions: "i");
+
+        var result = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$expr" : { "$regexMatch" : { "input" : "$Name", "regex" : "$Nickname", "options" : "i" } } }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Pattern_kind_with_parameter_pattern_falls_through_to_expr_regexMatch()
+    {
+        var name = GetProperty<Customer>("Name");
+        var placeholders = new PlaceholderTable();
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(name, "Name"), MongoRegexKind.Pattern,
+            new MongoParameterExpression("p", forSerialization: null), negated: false);
+
+        var result = new MongoQueryLanguageRenderer().Render(expr, placeholders);
+
+        Assert.Contains("\"$expr\"", result.ToJson());
+        Assert.DoesNotContain("$regularExpression", result.ToJson());
+        Assert.Contains("$regexMatch", result.ToJson());
+    }
+
     [Fact]
     public void Field_to_field_regex_falls_through_to_expr()
     {

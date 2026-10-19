@@ -34,6 +34,7 @@ public class MongoExpressionTranslatorRegexIsMatchTests
     {
         public int Id { get; set; }
         public string Text { get; set; } = "";
+        public string Other { get; set; } = "";
     }
 
     private static MongoExpressionTranslator BuildTranslator()
@@ -154,7 +155,48 @@ public class MongoExpressionTranslatorRegexIsMatchTests
     }
 
     [Fact]
-    public void Forward_IsMatch_with_parameterized_pattern_declines()
+    public void Forward_IsMatch_with_field_pattern_translates_to_Pattern_kind_with_field_term()
+    {
+        Expression<Func<Entity, bool>> predicate = e => Regex.IsMatch(e.Text, e.Other);
+
+        Assert.True(BuildTranslator().TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.Equal(MongoRegexKind.Pattern, regex.Kind);
+        Assert.Equal(nameof(Entity.Text), Assert.IsType<MongoFieldExpression>(regex.Field).ElementName);
+        Assert.Equal(nameof(Entity.Other), Assert.IsType<MongoFieldExpression>(regex.Term).ElementName);
+    }
+
+    [Fact]
+    public void Forward_IsMatch_with_field_pattern_keeps_constant_options()
+    {
+        Expression<Func<Entity, bool>> predicate = e => Regex.IsMatch(e.Text, e.Other, RegexOptions.IgnoreCase);
+
+        Assert.True(BuildTranslator().TryTranslate(predicate.Body, out var result));
+        Assert.Equal("i", Assert.IsType<MongoRegexExpression>(result).PatternOptions);
+    }
+
+    [Fact]
+    public void Forward_IsMatch_with_field_pattern_and_non_constant_options_declines()
+    {
+        var options = RegexOptions.IgnoreCase;
+        Expression<Func<Entity, bool>> predicate = e => Regex.IsMatch(e.Text, e.Other, options);
+
+        Assert.False(BuildTranslator().TryTranslate(predicate.Body, out _));
+    }
+
+    [Fact]
+    public void Forward_IsMatch_with_computed_pattern_declines()
+    {
+        Expression<Func<Entity, bool>> predicate = e => Regex.IsMatch(e.Text, e.Other + "x");
+
+        Assert.False(BuildTranslator().TryTranslate(predicate.Body, out _));
+    }
+
+    // A parameterized pattern (a closure/query parameter) needs the EF parameter rewrite to be recognized, which the
+    // functional tests cover (NativeRegexIsMatchNonConstantPatternTests). Here a captured variable that EF has not
+    // parameterized is neither a constant nor a field, and must decline.
+    [Fact]
+    public void Forward_IsMatch_with_unparameterized_closure_pattern_declines()
     {
         var pattern = "^S";
         Expression<Func<Entity, bool>> predicate = e => Regex.IsMatch(e.Text, pattern);

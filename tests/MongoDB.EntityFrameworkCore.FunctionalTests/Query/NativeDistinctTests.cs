@@ -20,6 +20,7 @@ using System.Threading;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
@@ -341,15 +342,22 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         public OrderStatus PrevStatus { get; set; }
         public OrderStatus AltStatus { get; set; }
         public OrderStatus UpperStatus { get; set; }
+
+        // Stored-serialization partners configured per test (StoredSerialization.StoredAlike): two bools and two ints
+        // that a test gives equal or different converters.
+        public bool FlagA { get; set; }
+        public bool FlagB { get; set; }
+        public int CodeA { get; set; }
+        public int CodeB { get; set; }
     }
 
     private static ConvertedOrder[] SeedConvertedOrders() =>
     [
-        new() { Id = ObjectId.GenerateNewId(), Status = OrderStatus.New, Year = 2020, Rank = 7, Paid = true, PlainStatus = OrderStatus.New, PrevStatus = OrderStatus.New, AltStatus = OrderStatus.Cancelled, UpperStatus = OrderStatus.New },
-        new() { Id = ObjectId.GenerateNewId(), Status = OrderStatus.New, Year = 2020, Paid = false, PlainStatus = OrderStatus.Shipped, PrevStatus = OrderStatus.New, AltStatus = OrderStatus.Cancelled, UpperStatus = OrderStatus.Cancelled },
-        new() { Id = ObjectId.GenerateNewId(), Status = OrderStatus.Shipped, Year = 2021, Rank = 3, Paid = true, PlainStatus = OrderStatus.New, PrevStatus = OrderStatus.New, AltStatus = OrderStatus.New, UpperStatus = OrderStatus.New },
-        new() { Id = ObjectId.GenerateNewId(), Status = OrderStatus.Shipped, Year = 999, Rank = 7, Paid = true, PlainStatus = OrderStatus.New, PrevStatus = OrderStatus.Shipped, AltStatus = OrderStatus.New, UpperStatus = OrderStatus.New },
-        new() { Id = ObjectId.GenerateNewId(), Status = OrderStatus.Cancelled, Year = 2021, Paid = false, PlainStatus = OrderStatus.New, PrevStatus = OrderStatus.Shipped, AltStatus = OrderStatus.Shipped, UpperStatus = OrderStatus.New },
+        new() { Id = ObjectId.GenerateNewId(), Status = OrderStatus.New, Year = 2020, Rank = 7, Paid = true, PlainStatus = OrderStatus.New, PrevStatus = OrderStatus.New, AltStatus = OrderStatus.Cancelled, UpperStatus = OrderStatus.New, FlagA = true, FlagB = true, CodeA = 1, CodeB = 1 },
+        new() { Id = ObjectId.GenerateNewId(), Status = OrderStatus.New, Year = 2020, Paid = false, PlainStatus = OrderStatus.Shipped, PrevStatus = OrderStatus.New, AltStatus = OrderStatus.Cancelled, UpperStatus = OrderStatus.Cancelled, FlagA = true, FlagB = false, CodeA = 2, CodeB = 3 },
+        new() { Id = ObjectId.GenerateNewId(), Status = OrderStatus.Shipped, Year = 2021, Rank = 3, Paid = true, PlainStatus = OrderStatus.New, PrevStatus = OrderStatus.New, AltStatus = OrderStatus.New, UpperStatus = OrderStatus.New, FlagA = false, FlagB = false, CodeA = 2, CodeB = 3 },
+        new() { Id = ObjectId.GenerateNewId(), Status = OrderStatus.Shipped, Year = 999, Rank = 7, Paid = true, PlainStatus = OrderStatus.New, PrevStatus = OrderStatus.Shipped, AltStatus = OrderStatus.New, UpperStatus = OrderStatus.New, FlagA = true, FlagB = false, CodeA = 4, CodeB = 1 },
+        new() { Id = ObjectId.GenerateNewId(), Status = OrderStatus.Cancelled, Year = 2021, Paid = false, PlainStatus = OrderStatus.New, PrevStatus = OrderStatus.Shipped, AltStatus = OrderStatus.Shipped, UpperStatus = OrderStatus.New, FlagA = false, FlagB = false, CodeA = 4, CodeB = 5 },
     ];
 
     private static void ConfigureConverters(ModelBuilder mb)
@@ -455,6 +463,20 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
 
     private static List<OrderStatus> Sorted(IQueryable<OrderStatus> query) => query.ToList().OrderBy(v => v).ToList();
 
+    // EF-337: an order-sensitive operator over a converted Distinct key declines natively, and Native and DriverLinq both
+    // get the driver-LINQ bridge's refusal naming the property; never an answer computed from the stored form. The same
+    // query evaluated in memory over the materialized entities (the client-side workaround the message suggests)
+    // documents the correct answer.
+    private void AssertStoredOrderingRefusal<T>(
+        string name, Func<IQueryable<ConvertedOrder>, List<T>> query, string property, List<T> expected)
+    {
+        var run = ConvertedRunner(name, query);
+        Assert.Equal(typeof(NotSupportedException), DeclinesToSameFailure(run));
+        Assert.Contains($"'{property}'", Assert.Throws<NotSupportedException>(() => run(MongoQueryMode.Native)).Message);
+
+        Assert.Equal(expected, ConvertedRunner(name + "_oracle", q => query(q.ToList().AsQueryable()))(MongoQueryMode.Native));
+    }
+
     // For a shape whose driver-LINQ fallback throws: NativeOnly declines, and Native (falling back) throws the same
     // exception type as DriverLinq rather than answering natively. Returns that exception type.
     private static Type DeclinesToSameFailure<T>(Func<MongoQueryMode, List<T>> run)
@@ -511,25 +533,49 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
-    public void Bare_scalar_value_converted_Distinct_then_OrderBy_sorts_by_stored_value_goes_native()
+    public void Bare_scalar_value_converted_Distinct_then_OrderBy_is_refused()
     {
-        // Stored (string) order, not enum-numeric order: the same order driver-LINQ and a native
-        // OrderBy(o => o.Status) over the entity give.
-        var result = NativeModeAssert.NativeAndParity(ConvertedRunner(
-            nameof(Bare_scalar_value_converted_Distinct_then_OrderBy_sorts_by_stored_value_goes_native),
-            q => q.Select(o => o.Status).Distinct().OrderBy(v => v).ToList()));
-
-        Assert.Equal([OrderStatus.Cancelled, OrderStatus.New, OrderStatus.Shipped], result);
+        // Sorting the stored (string) form would give Cancelled, New, Shipped instead of the enum order (EF-337): native
+        // declines and the driver-LINQ fallback refuses, naming the property.
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_Distinct_then_OrderBy_is_refused),
+            q => q.Select(o => o.Status).Distinct().OrderBy(v => v).ToList(),
+            "ConvertedOrder.Status",
+            [OrderStatus.New, OrderStatus.Shipped, OrderStatus.Cancelled]);
     }
 
     [Fact]
-    public void Bare_scalar_value_converted_Distinct_then_OrderByDescending_Take_goes_native()
+    public void Bare_scalar_value_converted_Distinct_then_OrderByDescending_Take_is_refused()
     {
-        var result = NativeModeAssert.NativeAndParity(ConvertedRunner(
-            nameof(Bare_scalar_value_converted_Distinct_then_OrderByDescending_Take_goes_native),
-            q => q.Select(o => o.Status).Distinct().OrderByDescending(v => v).Take(2).ToList()));
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_Distinct_then_OrderByDescending_Take_is_refused),
+            q => q.Select(o => o.Status).Distinct().OrderByDescending(v => v).Take(2).ToList(),
+            "ConvertedOrder.Status",
+            [OrderStatus.Cancelled, OrderStatus.Shipped]);
+    }
 
-        Assert.Equal([OrderStatus.Shipped, OrderStatus.New], result);
+    [Fact]
+    public void Bare_scalar_order_preserving_converted_Distinct_then_OrderBy_goes_native()
+    {
+        // The refusal above is only for storage that doesn't order like the CLR value. EF's CastingConverter int -> long
+        // is on the StoredOrdering allow-list, so a post-Distinct sort over it stays native and sorts correctly.
+        var run = ConvertedRunner<int[]>(
+            nameof(Bare_scalar_order_preserving_converted_Distinct_then_OrderBy_goes_native),
+            q =>
+            {
+                var distinct = q.Select(o => o.Year).Distinct();
+                return [distinct.OrderBy(v => v).ToArray(), distinct.OrderByDescending(v => v).Take(2).ToArray()];
+            },
+            mb =>
+            {
+                ConfigureConverters(mb);
+                mb.Entity<ConvertedOrder>().Property(o => o.Year).HasConversion<long>();
+            });
+
+        var result = NativeModeAssert.NativeAndParity(run);
+
+        Assert.Equal([999, 2020, 2021], result[0]);
+        Assert.Equal([2021, 2020], result[1]);
     }
 
     [Fact]
@@ -565,38 +611,43 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 [
                     distinct.ToList().OrderBy(v => v).ToArray(),
                     distinct.Where(v => v == 2021).ToArray(),
-                    distinct.Where(v => v != 2021).ToList().OrderBy(v => v).ToArray(),
-                    // Stored-string order and comparison ("999" > "2021"), as on driver-LINQ.
-                    distinct.OrderBy(v => v).ToArray(),
-                    distinct.Where(v => v > 2020).ToList().OrderBy(v => v).ToArray()
+                    distinct.Where(v => v != 2021).ToList().OrderBy(v => v).ToArray()
                 ];
             }));
 
         Assert.Equal([999, 2020, 2021], result[0]);
         Assert.Equal([2021], result[1]);
         Assert.Equal([999, 2020], result[2]);
-        Assert.Equal([2020, 2021, 999], result[3]);
-        Assert.Equal([999, 2021], result[4]);
+
+        // Stored-string order and comparison ("999" > "2021") are refused (EF-337).
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_int_to_string_converted_Distinct_materializes_and_compares_goes_native) + "_OrderBy",
+            q => q.Select(o => o.Year).Distinct().OrderBy(v => v).ToList(),
+            "ConvertedOrder.Year",
+            [999, 2020, 2021]);
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_int_to_string_converted_Distinct_materializes_and_compares_goes_native) + "_Where",
+            q => q.Select(o => o.Year).Distinct().Where(v => v > 2020).ToList(),
+            "ConvertedOrder.Year",
+            [2021]);
     }
 
     [Fact]
     public void Bare_scalar_bool_to_string_converted_Distinct_goes_native()
     {
-        // Paid is stored as "Y"/"N". Materialization and stored-value ordering have a driver-LINQ oracle.
-        var result = NativeModeAssert.NativeAndParity(ConvertedRunner<bool[]>(
+        // Paid is stored as "Y"/"N". Materialization has a driver-LINQ oracle; ordering by the stored form is refused
+        // (EF-337).
+        var result = NativeModeAssert.NativeAndParity(ConvertedRunner(
             nameof(Bare_scalar_bool_to_string_converted_Distinct_goes_native),
-            q =>
-            {
-                var distinct = q.Select(o => o.Paid).Distinct();
-                return
-                [
-                    distinct.ToList().OrderBy(v => v).ToArray(),
-                    distinct.OrderByDescending(v => v).ToArray(),
-                ];
-            }));
+            q => q.Select(o => o.Paid).Distinct().ToList().OrderBy(v => v).ToList()));
 
-        Assert.Equal([false, true], result[0]);
-        Assert.Equal([true, false], result[1]);
+        Assert.Equal([false, true], result);
+
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_bool_to_string_converted_Distinct_goes_native) + "_OrderByDescending",
+            q => q.Select(o => o.Paid).Distinct().OrderByDescending(v => v).ToList(),
+            "ConvertedOrder.Paid",
+            [true, false]);
     }
 
     [Fact]
@@ -656,16 +707,17 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
-    public void Bare_scalar_value_converted_Distinct_then_selectorless_aggregate_declines_cleanly()
+    public void Bare_scalar_value_converted_Distinct_then_selectorless_aggregate_is_refused()
     {
         // A selector-less Max/Min/Sum/Average would reduce the stored values and read the result through a generic
         // CLR serializer (Max over the enum stored as a string throws InvalidCastException natively); it declines,
-        // like the ungrouped Select(o => o.Status).Max(). The fallback reduces the stored strings too ("Shipped").
-        var result = NativeModeAssert.DeclinesCleanly(ConvertedRunner(
-            nameof(Bare_scalar_value_converted_Distinct_then_selectorless_aggregate_declines_cleanly),
-            q => new List<OrderStatus> { q.Select(o => o.Status).Distinct().Max() }));
-
-        Assert.Equal([OrderStatus.Shipped], result);
+        // like the ungrouped Select(o => o.Status).Max(), and the driver-LINQ fallback refuses it (EF-337) instead of
+        // reducing the stored strings ("Shipped").
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_Distinct_then_selectorless_aggregate_is_refused),
+            q => new List<OrderStatus> { q.Select(o => o.Status).Distinct().Max() },
+            "ConvertedOrder.Status",
+            [OrderStatus.Cancelled]);
     }
 
     [Fact]
@@ -719,52 +771,50 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
-    public void Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Average_declines_to_driver_failure()
+    public void Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Average_is_refused()
     {
-        // Native once answered 0 here (a $avg over the stored strings, read back as a number). It now declines
-        // (TryBindDistinctTerminalAggregate's non-default-serialized key guard), so Native fails exactly as the
-        // driver-LINQ fallback does ($avg over strings is null: "Cannot deserialize a 'Double' from BsonType 'Null'")
-        // instead of silently answering 0.
-        var failure = DeclinesToSameFailure(ConvertedRunner(
-            nameof(Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Average_declines_to_driver_failure),
-            q => new List<double> { q.Select(o => o.Year).Distinct().Average() }));
-
-        Assert.Equal(typeof(FormatException), failure);
+        // Native once answered 0 here (a $avg over the stored strings, read back as a number). It declines
+        // (TryBindDistinctTerminalAggregate's non-default-serialized key guard), and the driver-LINQ fallback refuses it
+        // (EF-337) rather than running a $avg over strings.
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Average_is_refused),
+            q => new List<double> { q.Select(o => o.Year).Distinct().Average() },
+            "ConvertedOrder.Year",
+            [1680.0]);
     }
 
     [Fact]
-    public void Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Sum_declines_cleanly()
+    public void Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Sum_is_refused()
     {
-        // Declines like Average. NB: the driver-LINQ fallback's $sum skips the stored strings and answers 0 (the true
-        // sum is 5040), so only parity with the fallback is pinned; native is not the one answering 0.
-        var result = NativeModeAssert.DeclinesCleanly(ConvertedRunner(
-            nameof(Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Sum_declines_cleanly),
-            q => new List<int> { q.Select(o => o.Year).Distinct().Sum() }));
-
-        Assert.Single(result);
+        // Declines like Average; the driver-LINQ fallback refuses it (EF-337) instead of a $sum that skips the stored
+        // strings and answers 0 (the true sum is 5040).
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Sum_is_refused),
+            q => new List<int> { q.Select(o => o.Year).Distinct().Sum() },
+            "ConvertedOrder.Year",
+            [5040]);
     }
 
     [Fact]
-    public void Bare_scalar_value_converted_enum_Distinct_then_relational_Where_goes_native()
+    public void Bare_scalar_value_converted_enum_Distinct_then_relational_Where_is_refused()
     {
-        // Stored-string comparison, as on driver-LINQ and a native Where over the entity field: "Shipped" > "New",
-        // "Cancelled" < "New".
-        var result = NativeModeAssert.NativeAndParity(ConvertedRunner<OrderStatus[]>(
-            nameof(Bare_scalar_value_converted_enum_Distinct_then_relational_Where_goes_native),
-            q =>
-            {
-                var distinct = q.Select(o => o.Status).Distinct();
-                return
-                [
-                    distinct.Where(v => v > OrderStatus.New).ToList().OrderBy(v => v).ToArray(),
-                    distinct.Where(v => v < OrderStatus.Shipped).ToList().OrderBy(v => v).ToArray(),
-                    distinct.Where(v => v >= OrderStatus.New).ToList().OrderBy(v => v).ToArray(),
-                ];
-            }));
-
-        Assert.Equal([OrderStatus.Shipped], result[0]);
-        Assert.Equal([OrderStatus.New, OrderStatus.Cancelled], result[1]);
-        Assert.Equal([OrderStatus.New, OrderStatus.Shipped], result[2]);
+        // A stored-string comparison ("Shipped" > "New", "Cancelled" < "New") disagrees with the enum order, so it is
+        // refused (EF-337) rather than answered.
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_enum_Distinct_then_relational_Where_is_refused) + "_gt",
+            q => q.Select(o => o.Status).Distinct().Where(v => v > OrderStatus.New).ToList(),
+            "ConvertedOrder.Status",
+            [OrderStatus.Shipped, OrderStatus.Cancelled]);
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_enum_Distinct_then_relational_Where_is_refused) + "_lt",
+            q => q.Select(o => o.Status).Distinct().Where(v => v < OrderStatus.Shipped).ToList(),
+            "ConvertedOrder.Status",
+            [OrderStatus.New]);
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_enum_Distinct_then_relational_Where_is_refused) + "_ge",
+            q => q.Select(o => o.Status).Distinct().Where(v => v >= OrderStatus.New).ToList(),
+            "ConvertedOrder.Status",
+            [OrderStatus.New, OrderStatus.Shipped, OrderStatus.Cancelled]);
     }
 
     [Fact]
@@ -786,8 +836,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     // --- Projected set ops over value-converted operands (OperandSerializationsMatch) ---
     //
     // Dedup and Intersect/Except compare the STORED values and source1's shaper reads every combined row, so each
-    // alias must be stored the same way on both operands: the same property, both default-serialized, or equivalent
-    // converters. Otherwise the set op declines (Union/Concat fall back; Intersect/Except hard-fail).
+    // alias must be stored the same way on both operands: the same property, both default-serialized, or stored alike
+    // (StoredSerialization.StoredAlike). Otherwise the set op declines (Union/Concat fall back; Intersect/Except hard-fail).
 
     [Fact]
     public void Converted_Distinct_set_ops_over_the_same_property_go_native()
@@ -900,6 +950,218 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal([OrderStatus.New, OrderStatus.Shipped, OrderStatus.Cancelled], result);
     }
 
+    // --- One stored-serialization rule (StoredSerialization.StoredAlike) for projected set-op operands ---
+    //
+    // Two different properties under one alias are compatible iff they're stored identically: equal BsonRepresentation
+    // (both none, or equal), equal provider type, and equivalent converters (none, the same instance, or the same type
+    // with structurally equal to/from-provider expressions). Status: {New, New, Shipped, Shipped, Cancelled};
+    // PrevStatus: {New, New, New, Shipped, Shipped}.
+
+    private static void StatusAndPrevStatusAsStrings(ModelBuilder mb)
+    {
+        mb.Entity<ConvertedOrder>().Property(o => o.Status).HasBsonRepresentation(BsonType.String);
+        mb.Entity<ConvertedOrder>().Property(o => o.PrevStatus).HasBsonRepresentation(BsonType.String);
+    }
+
+    [Fact]
+    public void Union_over_two_properties_with_the_same_bson_representation_goes_native()
+    {
+        var wrapped = NativeModeAssert.NativeAndParity(ConvertedRunner(
+            nameof(Union_over_two_properties_with_the_same_bson_representation_goes_native),
+            q => q.Select(o => new { S = o.Status }).Union(q.Select(o => new { S = o.PrevStatus }))
+                .ToList().Select(r => r.S).OrderBy(v => v).ToList(),
+            StatusAndPrevStatusAsStrings));
+
+        Assert.Equal([OrderStatus.New, OrderStatus.Shipped, OrderStatus.Cancelled], wrapped);
+
+        var concat = NativeModeAssert.NativeAndParity(ConvertedRunner(
+            nameof(Union_over_two_properties_with_the_same_bson_representation_goes_native) + "C",
+            q => q.Select(o => new { S = o.Status }).Concat(q.Select(o => new { S = o.PrevStatus }))
+                .ToList().Select(r => r.S).OrderBy(v => v).ToList(),
+            StatusAndPrevStatusAsStrings));
+
+        // Status {New, New, Shipped, Shipped, Cancelled} ++ PrevStatus {New, New, New, Shipped, Shipped}.
+        Assert.Equal(
+            [
+                OrderStatus.New, OrderStatus.New, OrderStatus.New, OrderStatus.New, OrderStatus.New,
+                OrderStatus.Shipped, OrderStatus.Shipped, OrderStatus.Shipped, OrderStatus.Shipped,
+                OrderStatus.Cancelled
+            ],
+            concat);
+    }
+
+    [Fact]
+    public void Intersect_and_Except_over_two_properties_with_the_same_bson_representation_go_native_with_hand_oracle()
+    {
+        // Intersect/Except have no driver-LINQ oracle.
+        var run = ConvertedRunner<OrderStatus[]>(
+            nameof(Intersect_and_Except_over_two_properties_with_the_same_bson_representation_go_native_with_hand_oracle),
+            q =>
+            [
+                q.Select(o => new { S = o.Status }).Intersect(q.Select(o => new { S = o.PrevStatus }))
+                    .ToList().Select(r => r.S).OrderBy(v => v).ToArray(),
+                q.Select(o => new { S = o.Status }).Except(q.Select(o => new { S = o.PrevStatus }))
+                    .ToList().Select(r => r.S).OrderBy(v => v).ToArray(),
+            ],
+            StatusAndPrevStatusAsStrings);
+
+        var result = run(MongoQueryMode.NativeOnly);
+
+        Assert.Equal([OrderStatus.New, OrderStatus.Shipped], result[0]);
+        Assert.Equal([OrderStatus.Cancelled], result[1]);
+    }
+
+    [Fact]
+    public void Set_ops_over_provider_type_conversion_and_an_explicit_equivalent_converter_go_native()
+    {
+        // Status: HasConversion<string>() (a provider-type annotation; EF picks EnumToStringConverter<OrderStatus>).
+        // PrevStatus: an explicit EnumToStringConverter<OrderStatus> instance (no annotation). Both store "New" etc.,
+        // so they're stored alike; the configured provider-type annotation plays no part in serialization.
+        Action<ModelBuilder> configure = mb =>
+        {
+            mb.Entity<ConvertedOrder>().Property(o => o.Status).HasConversion<string>();
+            mb.Entity<ConvertedOrder>().Property(o => o.PrevStatus).HasConversion(new EnumToStringConverter<OrderStatus>());
+        };
+
+        var union = NativeModeAssert.NativeAndParity(ConvertedRunner(
+            nameof(Set_ops_over_provider_type_conversion_and_an_explicit_equivalent_converter_go_native),
+            q => q.Select(o => new { S = o.Status }).Union(q.Select(o => new { S = o.PrevStatus }))
+                .ToList().Select(r => r.S).OrderBy(v => v).ToList(),
+            configure));
+
+        Assert.Equal([OrderStatus.New, OrderStatus.Shipped, OrderStatus.Cancelled], union);
+
+        // Intersect/Except have no driver-LINQ oracle.
+        var run = ConvertedRunner<OrderStatus[]>(
+            nameof(Set_ops_over_provider_type_conversion_and_an_explicit_equivalent_converter_go_native) + "I",
+            q =>
+            [
+                q.Select(o => new { S = o.Status }).Intersect(q.Select(o => new { S = o.PrevStatus }))
+                    .ToList().Select(r => r.S).OrderBy(v => v).ToArray(),
+                q.Select(o => new { S = o.Status }).Except(q.Select(o => new { S = o.PrevStatus }))
+                    .ToList().Select(r => r.S).OrderBy(v => v).ToArray(),
+            ],
+            configure);
+
+        var result = run(MongoQueryMode.NativeOnly);
+
+        Assert.Equal([OrderStatus.New, OrderStatus.Shipped], result[0]);
+        Assert.Equal([OrderStatus.Cancelled], result[1]);
+    }
+
+    [Fact]
+    public void Set_ops_over_two_properties_with_different_bson_representations_decline()
+    {
+        // Status stored "Shipped", PrevStatus stored 1L: equal in C#, never equal as stored.
+        Action<ModelBuilder> configure = mb =>
+        {
+            mb.Entity<ConvertedOrder>().Property(o => o.Status).HasBsonRepresentation(BsonType.String);
+            mb.Entity<ConvertedOrder>().Property(o => o.PrevStatus).HasBsonRepresentation(BsonType.Int64);
+        };
+
+        AssertSetOpsDecline(
+            nameof(Set_ops_over_two_properties_with_different_bson_representations_decline), configure,
+            q => q.Select(o => new { S = o.Status }).Concat(q.Select(o => new { S = o.PrevStatus }))
+                .ToList().Select(r => r.S.ToString()).OrderBy(v => v).ToList(),
+            q => q.Select(o => new { S = o.Status }).Intersect(q.Select(o => new { S = o.PrevStatus })).ToList());
+    }
+
+    [Fact]
+    public void Set_ops_over_two_properties_with_differently_configured_BoolToStringConverters_decline()
+    {
+        // FlagA true is stored "Y", FlagB true "T": the same converter type and provider type, different constants in
+        // the conversion expressions.
+        Action<ModelBuilder> configure = mb =>
+        {
+            mb.Entity<ConvertedOrder>().Property(o => o.FlagA).HasConversion(new BoolToStringConverter("N", "Y"));
+            mb.Entity<ConvertedOrder>().Property(o => o.FlagB).HasConversion(new BoolToStringConverter("F", "T"));
+        };
+
+        AssertSetOpsDecline(
+            nameof(Set_ops_over_two_properties_with_differently_configured_BoolToStringConverters_decline), configure,
+            q => q.Select(o => new { F = o.FlagA }).Concat(q.Select(o => new { F = o.FlagB }))
+                .ToList().Select(r => r.F.ToString()).OrderBy(v => v).ToList(),
+            q => q.Select(o => new { F = o.FlagA }).Intersect(q.Select(o => new { F = o.FlagB })).ToList(),
+            // The driver-LINQ fallback reads FlagB's "T" through FlagA's converter (true only for "Y"), so its Concat
+            // answers false for every FlagB row. A pre-existing driver-path misread, not this decline's concern.
+            fallbackMatchesOracle: false);
+    }
+
+    // Each call captures `prefix` in a new closure object.
+    private static void HasPrefixedConversion(ModelBuilder mb, System.Linq.Expressions.Expression<Func<ConvertedOrder, int>> property, string prefix)
+        => mb.Entity<ConvertedOrder>().Property(property)
+            .HasConversion(v => prefix + v, v => int.Parse(v.Substring(prefix.Length)));
+
+    [Fact]
+    public void Set_ops_over_two_properties_with_closure_capturing_converters_decline()
+    {
+        // CodeA and CodeB both store 1 as "c1", but each converter's expressions capture their own closure object,
+        // which structural comparison can't see into: declined (conservatively), not admitted.
+        Action<ModelBuilder> configure = mb =>
+        {
+            HasPrefixedConversion(mb, o => o.CodeA, "c");
+            HasPrefixedConversion(mb, o => o.CodeB, "c");
+        };
+
+        AssertSetOpsDecline(
+            nameof(Set_ops_over_two_properties_with_closure_capturing_converters_decline), configure,
+            q => q.Select(o => new { C = o.CodeA }).Concat(q.Select(o => new { C = o.CodeB }))
+                .ToList().Select(r => r.C.ToString()).OrderBy(v => v).ToList(),
+            q => q.Select(o => new { C = o.CodeA }).Intersect(q.Select(o => new { C = o.CodeB })).ToList());
+    }
+
+    [Fact]
+    public void Set_ops_over_two_properties_with_identical_non_capturing_lambda_converters_go_native()
+    {
+        // Control for the closure test: the same encoding written as a non-capturing lambda on each property gives two
+        // converter instances with structurally equal expressions. CodeA {1, 2, 2, 4, 4}; CodeB {1, 3, 3, 1, 5}.
+        Action<ModelBuilder> configure = mb =>
+        {
+            mb.Entity<ConvertedOrder>().Property(o => o.CodeA).HasConversion(v => "c" + v, v => int.Parse(v.Substring(1)));
+            mb.Entity<ConvertedOrder>().Property(o => o.CodeB).HasConversion(v => "c" + v, v => int.Parse(v.Substring(1)));
+        };
+
+        var union = NativeModeAssert.NativeAndParity(ConvertedRunner(
+            nameof(Set_ops_over_two_properties_with_identical_non_capturing_lambda_converters_go_native),
+            q => q.Select(o => new { C = o.CodeA }).Union(q.Select(o => new { C = o.CodeB }))
+                .ToList().Select(r => r.C).OrderBy(v => v).ToList(),
+            configure));
+
+        Assert.Equal([1, 2, 3, 4, 5], union);
+
+        var intersect = ConvertedRunner(
+            nameof(Set_ops_over_two_properties_with_identical_non_capturing_lambda_converters_go_native) + "I",
+            q => q.Select(o => new { C = o.CodeA }).Intersect(q.Select(o => new { C = o.CodeB }))
+                .ToList().Select(r => r.C).OrderBy(v => v).ToList(),
+            configure)(MongoQueryMode.NativeOnly);
+
+        Assert.Equal([1], intersect);
+    }
+
+    // A stored-form mismatch under one alias: Concat declines natively and Native answers as the driver-LINQ fallback
+    // does (compared with the in-memory answer over materialized rows unless fallbackMatchesOracle is false); Intersect
+    // has no driver-LINQ oracle and hard-fails in every mode rather than answering from the stored forms.
+    private void AssertSetOpsDecline(
+        string name,
+        Action<ModelBuilder> configure,
+        Func<IQueryable<ConvertedOrder>, List<string>> concat,
+        Func<IQueryable<ConvertedOrder>, object> intersect,
+        bool fallbackMatchesOracle = true)
+    {
+        var fallback = NativeModeAssert.DeclinesCleanly(ConvertedRunner(name, concat, configure));
+        Assert.Equal(10, fallback.Count);
+
+        if (fallbackMatchesOracle)
+        {
+            var expected = ConvertedRunner(name + "_oracle", q => concat(q.ToList().AsQueryable()), configure)(MongoQueryMode.Native);
+            Assert.Equal(expected, fallback);
+        }
+
+        var intersectRun = ConvertedRunner(name + "I", q => new List<object> { intersect(q) }, configure);
+        Assert.Throws<InvalidOperationException>(() => intersectRun(MongoQueryMode.NativeOnly));
+        Assert.Throws<InvalidOperationException>(() => intersectRun(MongoQueryMode.Native));
+    }
+
     [Fact]
     public void Cross_collection_converted_set_ops_with_the_same_converter_go_native_with_hand_oracle()
     {
@@ -928,8 +1190,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     public void Cross_collection_set_ops_with_mismatched_stored_forms_decline(string otherConfiguration)
     {
         // Converted.Status is stored "Shipped"; Others.Status is stored 1 (plain), "shipped" (lowercase converter) or
-        // "Shipped" via a BsonRepresentation (same bytes by coincidence, still declined: not the same property and no
-        // converter to compare). Before OperandSerializationsMatch these went native and dedup'd nothing
+        // "Shipped" via a BsonRepresentation (same bytes by coincidence, still declined: a converter on one side and a
+        // representation on the other aren't stored alike). Before OperandSerializationsMatch these went native and dedup'd nothing
         // (Union: New, New, Shipped, Shipped, Cancelled), intersected to empty, or threw reading 1 as a string, for
         // bare, bare-Distinct and mixed operands alike. There is no driver-LINQ oracle (cross-DbSet), so Union/Concat
         // decline and Intersect/Except hard-fail.

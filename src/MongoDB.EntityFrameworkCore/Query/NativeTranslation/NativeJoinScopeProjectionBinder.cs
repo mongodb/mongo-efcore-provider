@@ -73,10 +73,7 @@ internal static class NativeJoinScopeProjectionBinder
     internal static bool TryBindProjection(
         MongoQueryExpression mongoQ, LambdaExpression selector, JoinInfo joinInfo)
     {
-        if (mongoQ.Select.JoinScope is not { } scope
-            || joinInfo.Lookup is null
-            || mongoQ.Select.Projection.Count > 0
-            || selector.Parameters.Count != 1)
+        if (!TryGetEligibleScope(mongoQ, selector, joinInfo, out var scope))
         {
             return false;
         }
@@ -143,19 +140,18 @@ internal static class NativeJoinScopeProjectionBinder
             }
 
             if (includesResolvableInLeaf && MongoTransparentScopeResolver.TryResolveScopeDepth(
-                    unwrappedLeafBody, rootParam, hopNames: ["Outer", "Inner"], sourceCount: scope.Levels.Count, out var scopeIndex))
+                    unwrappedLeafBody, rootParam, MongoTransparentScopeResolver.TransparentIdentifierHops,
+                    sourceCount: scope.Levels.Count, out var scopeIndex))
             {
                 if (scopeIndex == 0)
                 {
-                    if (!seenAliases.Add(alias))
+                    if (!TryStage(
+                            alias,
+                            new MongoElementRefExpression(
+                                MongoElementRefExpression.WholeRootDocumentPath, mongoQ.CollectionExpression.EntityType.ClrType)))
                     {
                         return false;
                     }
-
-                    staged.Add(new MongoProjection(
-                        alias,
-                        new MongoElementRefExpression(
-                            MongoElementRefExpression.WholeRootDocumentPath, mongoQ.CollectionExpression.EntityType.ClrType)));
                 }
                 else if (!TryStageInnerLevel(scope.Levels[scopeIndex - 1], staged, seenAliases))
                 {
@@ -209,18 +205,12 @@ internal static class NativeJoinScopeProjectionBinder
                     translatedNestedMembers.Add((nestedMemberName, nestedLeaf));
                 }
 
-                if (declined)
+                if (declined
+                    || !TryStage(alias, new MongoDocumentConstructionExpression(leafBody, translatedNestedMembers)))
                 {
                     return false;
                 }
 
-                if (!seenAliases.Add(alias))
-                {
-                    return false;
-                }
-
-                staged.Add(new MongoProjection(
-                    alias, new MongoDocumentConstructionExpression(leafBody, translatedNestedMembers)));
                 continue;
             }
 
@@ -234,12 +224,11 @@ internal static class NativeJoinScopeProjectionBinder
                 && TryTranslateScopeNullCheckConditional(mongoQ, scope, rootParam, conditionalLeaf, out var conditionalValue))
             {
                 // Read back whole by alias: a branch construction its class map would misread must decline.
-                if (NativeProjectionBinder.IsMisreadWholeValueLeaf(conditionalValue) || !seenAliases.Add(alias))
+                if (NativeProjectionBinder.IsMisreadWholeValueLeaf(conditionalValue) || !TryStage(alias, conditionalValue))
                 {
                     return false;
                 }
 
-                staged.Add(new MongoProjection(alias, conditionalValue));
                 continue;
             }
 
@@ -247,12 +236,11 @@ internal static class NativeJoinScopeProjectionBinder
             // entity-null comparison. Same gate as the bare-body arm (TryBindNullCheckProjection).
             if (TryTranslateScopeNullCheck(mongoQ, scope, rootParam, leafBody, out var nullCheckValue))
             {
-                if (!seenAliases.Add(alias))
+                if (!TryStage(alias, nullCheckValue))
                 {
                     return false;
                 }
 
-                staged.Add(new MongoProjection(alias, nullCheckValue));
                 continue;
             }
 
@@ -289,12 +277,10 @@ internal static class NativeJoinScopeProjectionBinder
 
             // A ternary/coalesce over constructions is read back whole by alias through the type's class map, which
             // may name elements differently from the members the native sub-document carries (`Id` vs `_id`).
-            if (NativeProjectionBinder.IsMisreadWholeValueLeaf(computedLeaf) || !seenAliases.Add(alias))
+            if (NativeProjectionBinder.IsMisreadWholeValueLeaf(computedLeaf) || !TryStage(alias, computedLeaf, throwsOnNull))
             {
                 return false;
             }
-
-            staged.Add(new MongoProjection(alias, computedLeaf, ThrowsOnNull: throwsOnNull));
         }
 
         // A whole-entity leaf forces both fallback legs to shape whole, un-projected documents, so every sibling
@@ -315,6 +301,34 @@ internal static class NativeJoinScopeProjectionBinder
 
         ConfirmEntireChain(mongoQ, scope);
         return true;
+
+        // Claims the alias (deduped case-insensitively, as above) and stages the leaf; false on a collision.
+        bool TryStage(string alias, MongoExpression value, bool throwsOnNull = false)
+        {
+            if (!seenAliases.Add(alias))
+            {
+                return false;
+            }
+
+            staged.Add(new MongoProjection(alias, value, ThrowsOnNull: throwsOnNull));
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The shared eligibility gate of the <c>Select</c>-over-join-scope binders: the query has a join scope backed by a
+    /// native <c>$lookup</c>, nothing is projected yet, and the selector takes the single transparent-identifier
+    /// parameter.
+    /// </summary>
+    private static bool TryGetEligibleScope(
+        MongoQueryExpression mongoQ, LambdaExpression selector, JoinInfo joinInfo,
+        [NotNullWhen(true)] out MongoJoinScope? scope)
+    {
+        scope = mongoQ.Select.JoinScope;
+        return scope is not null
+               && joinInfo.Lookup is not null
+               && mongoQ.Select.Projection.Count == 0
+               && selector.Parameters.Count == 1;
     }
 
     /// <summary>
@@ -360,8 +374,8 @@ internal static class NativeJoinScopeProjectionBinder
         if (include.Navigation is not INavigation { IsCollection: false } navigation
             || navigation.IsEmbedded()
             || !MongoTransparentScopeResolver.TryResolveScopeDepth(
-                include.NavigationExpression, rootParam, hopNames: ["Outer", "Inner"], sourceCount: scope.Levels.Count,
-                out var targetScopeIndex)
+                include.NavigationExpression, rootParam, MongoTransparentScopeResolver.TransparentIdentifierHops,
+                sourceCount: scope.Levels.Count, out var targetScopeIndex)
             || targetScopeIndex == 0
             || mongoQ.Joins[targetScopeIndex - 1].Navigation != navigation)
         {
@@ -380,10 +394,7 @@ internal static class NativeJoinScopeProjectionBinder
     internal static bool TryBindConditionalProjection(
         MongoQueryExpression mongoQ, LambdaExpression selector, JoinInfo joinInfo)
     {
-        if (mongoQ.Select.JoinScope is not { } scope
-            || joinInfo.Lookup is null
-            || mongoQ.Select.Projection.Count > 0
-            || selector.Parameters.Count != 1
+        if (!TryGetEligibleScope(mongoQ, selector, joinInfo, out var scope)
             || selector.Body is not ConditionalExpression conditional)
         {
             return false;
@@ -408,10 +419,7 @@ internal static class NativeJoinScopeProjectionBinder
     internal static bool TryBindNullCheckProjection(
         MongoQueryExpression mongoQ, LambdaExpression selector, JoinInfo joinInfo)
     {
-        if (mongoQ.Select.JoinScope is not { } scope
-            || joinInfo.Lookup is null
-            || mongoQ.Select.Projection.Count > 0
-            || selector.Parameters.Count != 1
+        if (!TryGetEligibleScope(mongoQ, selector, joinInfo, out var scope)
             || !TryTranslateScopeNullCheck(mongoQ, scope, selector.Parameters[0], selector.Body, out var nullCheck))
         {
             return false;
