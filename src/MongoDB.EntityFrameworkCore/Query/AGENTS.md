@@ -237,6 +237,9 @@ Rendering (null/missing/dialect semantics):
 - **Local-collection folding never folds a non-deterministic call or a clock member**
   (`LocalCollectionFilterFoldingVisitor`). The fold runs in the preprocessor for every mode, so a folded
   `Guid.NewGuid()`/`DateTime.UtcNow` would be baked into the cached plan.
+- **A non-deterministic call must stay in the tree for `NonDeterministicCalls` to refuse it.** EF's default filter only keeps
+  `Random.Next` and `Guid.NewGuid`; `MongoEvaluatableExpressionFilter` keeps every call `IsNonDeterministic` recognizes
+  (`NextDouble`, `NextSingle`, `NextInt64`, `Guid.CreateVersion7`), or EF parameterizes it and every row shares one value (EF-464).
 - **Read modes: how a non-nullable value read back treats null and MISSING.** Driver-LINQ is the oracle: a malformed
   document must answer what it answered there, never a silent `0`. Emit side decides once per value leaf
   (`MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead`; projected Distinct over a bare field uses
