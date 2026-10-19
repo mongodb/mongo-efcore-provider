@@ -32,9 +32,11 @@ internal sealed partial class MongoQueryExpression
     private readonly List<JoinInfo> _joins = [];
 
     /// <summary>
-    /// Pending $lookup stages, ordered so a transitive lookup (whose <see cref="LookupExpression.LocalField"/> reads an
-    /// earlier lookup's <see cref="LookupExpression.As"/>, e.g. <c>_lookup_Order.CustomerID</c>) is emitted AFTER the
-    /// lookup it depends on; joins can be registered in any order.
+    /// Pending $lookup stages for cross-collection collection Include operations, ordered so that a
+    /// transitive lookup (whose <see cref="LookupExpression.LocalField"/> matches against an
+    /// already-unwound intermediate lookup's <see cref="LookupExpression.As"/> field, e.g.
+    /// <c>_lookup_Order.CustomerID</c>) is emitted AFTER the lookup it depends on. Joins can be
+    /// registered in an order that doesn't respect this dependency, so we sort here.
     /// </summary>
     public IReadOnlyList<LookupExpression> GetPendingLookups()
         => OrderLookupsByDependency(_pendingLookups);
@@ -116,17 +118,9 @@ internal sealed partial class MongoQueryExpression
         return synthesized;
     }
 
-    /// <summary>Registers a <c>$lookup</c> stage for a cross-collection collection Include.</summary>
-    /// <remarks>
-    /// The same navigation can be registered twice: first as a bare placeholder by the emit side, then with its
-    /// <c>ThenInclude</c> sub-pipeline by the bind side. First-wins dedup would drop the real pipeline (a
-    /// <c>ThenInclude(OrderDetails)</c> returned zero rows), so the incoming pipeline is merged into the existing
-    /// object; replacing it would lose <c>ForceUnwind</c>/<c>PreserveNullAndEmptyArrays</c>/<c>InjectAfterRoot</c>
-    /// and orphan <see cref="JoinInfo.Lookup"/>. The <see cref="LookupPipelineKind"/> stamp is write-once.
-    /// The merge is one-directional (<c>!existing.HasPipeline &amp;&amp; lookup.HasPipeline</c>): an incoming pipeline
-    /// over an existing one (e.g. a TPH discriminator <c>$match</c>) is not merged. Unreachable today because the
-    /// emit-side recognizers decline those shapes; a latent gap if those guards are relaxed.
-    /// </remarks>
+    /// <summary>
+    /// Register a $lookup stage for a cross-collection collection Include.
+    /// </summary>
     public void AddLookup(LookupExpression lookup)
     {
         var existingIndex = _pendingLookups.FindIndex(l => l.As == lookup.As);
@@ -174,13 +168,17 @@ internal sealed partial class MongoQueryExpression
         => _correlatedReducerLeaves.Add(leaf);
 
     /// <summary>
-    /// Inner collections involved in joins, deduplicated by entity type (what serializer registration needs). Use
-    /// <see cref="Joins"/> to reason about join count, order or navigation, since two joins can share a target type.
+    /// Inner collections involved in join operations, deduplicated by entity type — one entry per
+    /// joined collection, which is what serializer registration needs. Use <see cref="Joins"/> for
+    /// anything that has to reason about the number of joins, positional ordering, or which navigation
+    /// each one came from, since two joins can share a target entity type.
     /// </summary>
     public IReadOnlyDictionary<IEntityType, MongoCollectionExpression> InnerCollections
         => _innerCollections;
 
-    /// <summary>The cross-collection joins on this query, in registration order.</summary>
+    /// <summary>
+    /// The cross-collection joins on this query, in registration order, one entry per join.
+    /// </summary>
     public IReadOnlyList<JoinInfo> Joins => _joins;
 
     /// <summary>
@@ -199,9 +197,12 @@ internal sealed partial class MongoQueryExpression
     }
 
     /// <summary>
-    /// Registers a cross-collection join; the returned <see cref="JoinInfo"/> is filled in with the navigation and
-    /// <c>$lookup</c> once resolved from the key selector.
+    /// Register a cross-collection join. The returned <see cref="JoinInfo"/> is filled in with the
+    /// join's navigation and <c>$lookup</c> once they have been resolved from the join's key selector.
     /// </summary>
+    /// <param name="innerEntityType">The <see cref="IEntityType"/> of the joined (inner) collection.</param>
+    /// <param name="isLeftOuter">Whether the LINQ operator that introduced this join is left-outer.</param>
+    /// <returns>The <see cref="JoinInfo"/> recording this join.</returns>
     public JoinInfo AddJoin(IEntityType innerEntityType, bool isLeftOuter)
     {
         var join = new JoinInfo(innerEntityType, isLeftOuter);
@@ -209,20 +210,32 @@ internal sealed partial class MongoQueryExpression
         return join;
     }
 
-    /// <summary>Whether this query joins across collections.</summary>
+    /// <summary>
+    /// Whether this query involves join operations across multiple collections.
+    /// </summary>
     public bool IsJoinQuery => _innerCollections.Count > 0;
 
     /// <summary>
-    /// Whether this query is materialized from the driver's native LeftJoin output (root under <c>_outer</c>, the
-    /// joined reference under <c>_inner</c>). Computed rather than tracked, as the shaper's single source of truth:
-    /// used only with an inner collection AND no forced-unwind lookup (which flattens the document to root-level
-    /// <c>_lookup_*</c> fields; see <see cref="Visitors.MongoEFToLinqTranslatingExpressionVisitor"/>'s
-    /// <c>StripJoinForLookup</c> path).
+    /// Whether this query is materialized from the driver's native LeftJoin output, which nests the
+    /// root entity under <c>_outer</c> and the single joined reference under <c>_inner</c>.
+    /// <para>
+    /// This is the single source of truth for the shaper's document shape and is computed directly
+    /// from the emission decision rather than tracked as mutable state: the driver's native LeftJoin
+    /// is only used when there is at least one inner collection AND no <c>$lookup</c>+<c>$unwind</c>
+    /// stage was registered (any forced-unwind lookup flattens the document to root-level
+    /// <c>_lookup_*</c> fields instead — see <see cref="Visitors.MongoEFToLinqTranslatingExpressionVisitor"/>'s
+    /// <c>StripJoinForLookup</c> path). When this is <see langword="false"/>, every cross-collection
+    /// projection reads its own root-level <c>_lookup_&lt;NavigationName&gt;</c> field.
+    /// </para>
     /// </summary>
     public bool UsesDriverJoinFields
         => _innerCollections.Count > 0 && !_pendingLookups.Any(l => l.ForceUnwind);
 
-    /// <summary>Registers an inner collection for a join.</summary>
+    /// <summary>
+    /// Register an inner collection for a join operation.
+    /// </summary>
+    /// <param name="entityType">The <see cref="IEntityType"/> of the inner collection.</param>
+    /// <returns>The <see cref="MongoCollectionExpression"/> for the inner collection.</returns>
     public MongoCollectionExpression AddInnerCollection(IEntityType entityType)
     {
         if (!_innerCollections.TryGetValue(entityType, out var collection))

@@ -180,7 +180,7 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
     }
 
     // The native pipeline has no per-join position for paging, so each interleaved shape above must decline
-    // (IsSingleEligibleNativeJoinScope / MongoSelectDefinition.HasPagingRecordedBetweenJoins) rather than defer
+    // (TryAdmitSingleEligibleNativeJoinScope / MongoSelectDefinition.HasPagingRecordedBetweenJoins) rather than defer
     // the paging past both $lookup blocks (which returns the wrong page).
     [Theory]
     [InlineData("WrappedSkipTake")]

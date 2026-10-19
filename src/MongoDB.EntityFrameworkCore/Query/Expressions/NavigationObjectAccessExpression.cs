@@ -15,7 +15,16 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class NavigationObjectAccessExpression : ObjectAccessExpression
 {
-    /// <summary>Creates an access for an embedded entity navigation.</summary>
+    /// <summary>
+    /// Create a <see cref="NavigationObjectAccessExpression"/> for an embedded entity navigation.
+    /// </summary>
+    /// <param name="navigation">The <see cref="INavigation"/> this object access relates to.</param>
+    /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the object.</param>
+    /// <param name="required">
+    /// <see langword="true"/> if this object is required,
+    /// <see langword="false"/> if it is optional.
+    /// </param>
+    /// <exception cref="InvalidOperationException"></exception>
     public NavigationObjectAccessExpression(
         INavigation navigation,
         Expression accessExpression,
@@ -27,7 +36,14 @@ internal sealed class NavigationObjectAccessExpression : ObjectAccessExpression
     {
     }
 
-    /// <summary>Creates an access with an explicit field name, for cross-collection $lookup results.</summary>
+    /// <summary>
+    /// Create a <see cref="NavigationObjectAccessExpression"/> with an explicit field name.
+    /// Used for cross-collection $lookup results.
+    /// </summary>
+    /// <param name="navigation">The <see cref="INavigation"/> this object access relates to.</param>
+    /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the object.</param>
+    /// <param name="required">Whether this object is required.</param>
+    /// <param name="name">The explicit field name to access in the document.</param>
     public NavigationObjectAccessExpression(
         INavigation navigation,
         Expression accessExpression,

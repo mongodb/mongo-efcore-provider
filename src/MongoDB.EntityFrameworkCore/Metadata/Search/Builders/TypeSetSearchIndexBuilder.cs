@@ -57,6 +57,7 @@ public class TypeSetSearchIndexBuilder(SearchIndexDefinition indexDefinition, st
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/field-types/autocomplete-type/"/>.
     /// </remarks>
     /// <param name="nestedBuilder">A <see cref="AutoCompleteSearchIndexBuilder"/> delegate to configure this indexing.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TypeSetSearchIndexBuilder IndexAsAutoComplete(Action<AutoCompleteSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsAutoComplete());
@@ -82,6 +83,7 @@ public class TypeSetSearchIndexBuilder(SearchIndexDefinition indexDefinition, st
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/field-types/boolean-type/"/>.
     /// </remarks>
     /// <param name="nestedBuilder">A <see cref="BooleanSearchIndexBuilder"/> delegate to configure this indexing.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TypeSetSearchIndexBuilder IndexAsBoolean(Action<BooleanSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsBoolean());
@@ -107,6 +109,7 @@ public class TypeSetSearchIndexBuilder(SearchIndexDefinition indexDefinition, st
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/field-types/date-type/"/>.
     /// </remarks>
     /// <param name="nestedBuilder">A <see cref="DateSearchIndexBuilder"/> delegate to configure this indexing.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TypeSetSearchIndexBuilder IndexAsDate(Action<DateSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsDate());
@@ -132,6 +135,7 @@ public class TypeSetSearchIndexBuilder(SearchIndexDefinition indexDefinition, st
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/field-types/geo-type/"/>.
     /// </remarks>
     /// <param name="nestedBuilder">A <see cref="GeoSearchIndexBuilder"/> delegate to configure this indexing.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TypeSetSearchIndexBuilder IndexAsGeo(Action<GeoSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsGeo());
@@ -157,6 +161,7 @@ public class TypeSetSearchIndexBuilder(SearchIndexDefinition indexDefinition, st
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/field-types/number-type/"/>.
     /// </remarks>
     /// <param name="nestedBuilder">A <see cref="NumberSearchIndexBuilder"/> delegate to configure this indexing.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TypeSetSearchIndexBuilder IndexAsNumber(Action<NumberSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsNumber());
@@ -182,6 +187,7 @@ public class TypeSetSearchIndexBuilder(SearchIndexDefinition indexDefinition, st
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/field-types/object-id-type/"/>.
     /// </remarks>
     /// <param name="nestedBuilder">A <see cref="ObjectIdSearchIndexBuilder"/> delegate to configure this indexing.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TypeSetSearchIndexBuilder IndexAsObjectId(Action<ObjectIdSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsObjectId());
@@ -207,6 +213,7 @@ public class TypeSetSearchIndexBuilder(SearchIndexDefinition indexDefinition, st
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/field-types/string-type/"/>.
     /// </remarks>
     /// <param name="nestedBuilder">A <see cref="StringSearchIndexBuilder"/> delegate to configure this indexing.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TypeSetSearchIndexBuilder IndexAsString(Action<StringSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsString());
@@ -234,6 +241,7 @@ public class TypeSetSearchIndexBuilder(SearchIndexDefinition indexDefinition, st
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/field-types/token-type/"/>.
     /// </remarks>
     /// <param name="nestedBuilder">A <see cref="TokenSearchIndexBuilder"/> delegate to configure this indexing.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TypeSetSearchIndexBuilder IndexAsToken(Action<TokenSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsToken());
@@ -259,6 +267,7 @@ public class TypeSetSearchIndexBuilder(SearchIndexDefinition indexDefinition, st
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/field-types/uuid-type/"/>.
     /// </remarks>
     /// <param name="nestedBuilder">A <see cref="UuidSearchIndexBuilder"/> delegate to configure this indexing.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public TypeSetSearchIndexBuilder IndexAsUuid(Action<UuidSearchIndexBuilder> nestedBuilder)
     {
         nestedBuilder(IndexAsUuid());

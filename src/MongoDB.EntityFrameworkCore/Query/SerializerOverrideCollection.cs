@@ -31,15 +31,24 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Supports cross-collection <c>Join</c>/<c>GroupJoin</c>: the driver's <c>JoinMethodToPipelineTranslator</c> requires the
-/// inner operand to be a bare collection queryable and rejects one wrapped in <c>.As(serializer)</c>, so EF's serializer
-/// can't be injected that way. The driver derives the inner pipeline-input serializer from
-/// <c>collection.DocumentSerializer</c> (<c>MongoQueryProvider&lt;TDocument&gt;.PipelineInputSerializer</c>), so overriding
-/// only that carries EF's element-name/discriminator/representation mappings onto the inner side.
+/// This exists to support cross-collection <c>Join</c> / <c>GroupJoin</c> (used by cross-collection
+/// <c>Include</c> and navigation translation). The MongoDB C# driver's
+/// <c>JoinMethodToPipelineTranslator</c> requires the join's inner operand to be a bare
+/// <c>IMongoQueryable</c> backed by a collection (a <see cref="System.Linq.Expressions.ConstantExpression"/>);
+/// it rejects an operand wrapped in <c>.As(serializer)</c> (a <c>MethodCallExpression</c>).
+/// We therefore cannot use <c>.As(...)</c> to inject EF's serializer on the inner side.
 /// </para>
 /// <para>
-/// The driver only reads <see cref="CollectionNamespace"/> and <see cref="DocumentSerializer"/> during query translation;
-/// every other member just delegates.
+/// The driver derives the inner pipeline-input serializer from <c>collection.DocumentSerializer</c>
+/// (see <c>MongoQueryProvider&lt;TDocument&gt;.PipelineInputSerializer</c>). By wrapping the collection
+/// and overriding only <see cref="DocumentSerializer"/>, calling <c>AsQueryable()</c> produces a
+/// bare-collection queryable the join translator accepts, while still carrying EF's element-name /
+/// discriminator / BSON-representation mappings on the inner side.
+/// </para>
+/// <para>
+/// All other members delegate to the wrapped collection. The driver only ever reads
+/// <see cref="CollectionNamespace"/> and <see cref="DocumentSerializer"/> from this instance during
+/// query translation; the remaining members are present only to satisfy the interface.
 /// </para>
 /// </remarks>
 internal sealed class SerializerOverrideCollection<TDocument> : IMongoCollection<TDocument>

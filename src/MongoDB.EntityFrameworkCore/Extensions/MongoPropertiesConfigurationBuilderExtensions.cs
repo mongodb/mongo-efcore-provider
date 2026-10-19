@@ -33,6 +33,7 @@ public static class MongoPropertiesConfigurationBuilderExtensions
     /// <param name="bsonType">The <see cref="BsonType"/> to store these properties as.</param>
     /// <param name="allowOverflow">Whether to allow overflow or not.</param>
     /// <param name="allowTruncation">Whether to allow truncation or not.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertiesConfigurationBuilder HaveBsonRepresentation(
         this PropertiesConfigurationBuilder propertiesConfigurationBuilder,
         BsonType bsonType,
@@ -53,6 +54,7 @@ public static class MongoPropertiesConfigurationBuilderExtensions
     /// <param name="bsonType">The <see cref="BsonType"/> to store these properties as.</param>
     /// <param name="allowOverflow">Whether to allow overflow or not.</param>
     /// <param name="allowTruncation">Whether to allow truncation or not.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertiesConfigurationBuilder<TProperty> HaveBsonRepresentation<TProperty>(
         this PropertiesConfigurationBuilder<TProperty> propertiesConfigurationBuilder,
         BsonType bsonType,
@@ -65,6 +67,7 @@ public static class MongoPropertiesConfigurationBuilderExtensions
     /// </summary>
     /// <param name="propertiesConfigurationBuilder">The builder for the properties being configured.</param>
     /// <param name="dateTimeKind">The <see cref="DateTimeKind"/> to store these properties as.</param>
+    /// <returns>The same builder instance so that multiple calls can be chained.</returns>
     public static PropertiesConfigurationBuilder HaveDateTimeKind(
         this PropertiesConfigurationBuilder propertiesConfigurationBuilder,
         DateTimeKind dateTimeKind)

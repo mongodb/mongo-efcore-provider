@@ -38,6 +38,7 @@ public class NumberSearchIndexBuilder(SearchIndexNumberDefinition definition)
     /// <see cref="SearchNumberRepresentation.Double"/> for indexing large double values without rounding.
     /// </remarks>
     /// <param name="representation">The representation used, from <see cref="SearchNumberRepresentation"/>.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public NumberSearchIndexBuilder WithRepresentation(SearchNumberRepresentation representation)
     {
         definition.Representation = representation;
@@ -52,6 +53,7 @@ public class NumberSearchIndexBuilder(SearchIndexNumberDefinition definition)
     /// Only one of this or <see cref="IndexDoubles"/> can be set to <see langword="false"/>.
     /// </remarks>
     /// <param name="indexIntegers">If <see langword="false"/>, then integers are not indexed, otherwise they are.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public NumberSearchIndexBuilder IndexIntegers(bool indexIntegers = true)
     {
         definition.IndexIntegers = indexIntegers;
@@ -68,6 +70,7 @@ public class NumberSearchIndexBuilder(SearchIndexNumberDefinition definition)
     /// <param name="indexDoubles">
     /// If <see langword="false"/>, then floating-point values are not indexed, otherwise they are.
     /// </param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public NumberSearchIndexBuilder IndexDoubles(bool indexDoubles = true)
     {
         definition.IndexDoubles = indexDoubles;
