@@ -132,7 +132,7 @@ internal static class BsonBinding
     }
 
     /// <summary>
-    /// Create the expression which reads a bare scalar projection leaf like <see cref="CreateGetValueExpression"/>, but
+    /// Create the expression which reads a bare scalar projection leaf like <see cref="CreateGetValueExpression(Expression, string?, IProperty, Type)"/>, but
     /// via <see cref="GetScalarProjectionValueAtElement{T}"/>: a missing element of a required property reads
     /// <see langword="default"/>.
     /// </summary>
