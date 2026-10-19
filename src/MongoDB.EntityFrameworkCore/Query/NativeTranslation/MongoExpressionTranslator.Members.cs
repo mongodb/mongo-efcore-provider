@@ -329,6 +329,10 @@ internal sealed partial class MongoExpressionTranslator
     /// 2 when the leaf is a scalar under a navigation (one hop is <see cref="TryResolveMember"/>'s fast path);
     /// 1 when the leaf is itself the navigation.
     /// </param>
+    /// <param name="scopeRootFallback">
+    /// In two-scope mode, a chain rooted on neither known parameter declines unless this is set, in which case it is
+    /// scoped to this translator's own entity type (as <see cref="TryResolveMember"/> does).
+    /// </param>
     /// <param name="names">The hop names, root-first, on success.</param>
     /// <param name="scopeType">The entity type the first hop resolves against, on success.</param>
     /// <param name="isOuter">
@@ -355,6 +359,7 @@ internal sealed partial class MongoExpressionTranslator
     private bool TryBeginOwnedHopWalk(
         Expression node,
         int minimumHops,
+        bool scopeRootFallback,
         [NotNullWhen(true)] out List<string>? names,
         [NotNullWhen(true)] out IEntityType? scopeType,
         out bool isOuter)
@@ -385,7 +390,7 @@ internal sealed partial class MongoExpressionTranslator
             return false;
 
         isOuter = _outerParam is not null && ReferenceEquals(rootParam, _outerParam);
-        if (_outerParam is not null && !isOuter)
+        if (_outerParam is not null && !isOuter && !scopeRootFallback)
             return false; // two-scope mode, rooted on neither known parameter — decline rather than guess
 
         hopNames.Reverse(); // now root-first: [firstNav, ..., leaf]
@@ -436,7 +441,7 @@ internal sealed partial class MongoExpressionTranslator
         property = null;
         fieldPath = null;
 
-        if (!TryBeginOwnedHopWalk(node, minimumHops: 2, out var names, out var scopeType, out isOuter))
+        if (!TryBeginOwnedHopWalk(node, minimumHops: 2, scopeRootFallback: false, out var names, out var scopeType, out isOuter))
             return false;
 
         var segments = new List<string>(names.Count);
@@ -511,7 +516,7 @@ internal sealed partial class MongoExpressionTranslator
         path = null;
         targetType = null;
 
-        if (!TryBeginOwnedHopWalk(node, minimumHops: 1, out var names, out var scopeType, out isOuter))
+        if (!TryBeginOwnedHopWalk(node, minimumHops: 1, scopeRootFallback: false, out var names, out var scopeType, out isOuter))
             return false;
 
         // Every hop, including the last, must be an embedded single reference. minimumHops: 1 above guarantees at
@@ -544,7 +549,11 @@ internal sealed partial class MongoExpressionTranslator
         arrayPath = null;
         elementType = null;
 
-        if (!TryBeginOwnedHopWalk(source, minimumHops: 1, out var names, out var scopeType, out isOuter))
+        // EF-446: a non-outer root is scoped to this translator's entity type rather than declined, mirroring
+        // TryResolveMember. A plain nested quantifier over the element's own collection can then sit inside an
+        // already-correlated quantifier (`b.Posts.Any(p => p.Comments.Any(c => c.Title == b.Title))`); an array
+        // reached THROUGH the outer scope is still declined by the callers' isOuter check.
+        if (!TryBeginOwnedHopWalk(source, minimumHops: 1, scopeRootFallback: true, out var names, out var scopeType, out isOuter))
             return false;
 
         // Every hop but the last must be an embedded single reference; the FINAL hop is the quantifier's own

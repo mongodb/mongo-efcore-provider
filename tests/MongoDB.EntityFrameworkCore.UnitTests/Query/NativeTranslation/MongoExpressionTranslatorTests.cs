@@ -2566,6 +2566,29 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
+    public void EF_446_nested_quantifier_correlated_to_root_is_admitted()
+    {
+        // The test above never sets SelfParam, so it declines for the trivial reason that
+        // TryCreateElementPredicateTranslator has no root to match against at the OUTER level — it never actually
+        // exercises the "does a grandchild correlation to the SAME root work" question. This test mirrors
+        // NativeSlotPopulator's real wiring (SelfParam = the predicate's own root parameter) to test that
+        // question directly.
+        // Genuinely TWO scopes deep: p.Comments is a normal (non-outer-sourced) owned collection of the
+        // element scope p, so this does NOT hit the separate "array itself reached through outer scope"
+        // decline (EF-421's own out-of-scope case) — it isolates the ONE guard EF-446 fixed: does a THIRD
+        // scope's predicate (c.Text == b.Title) correlating all the way back to the ROOT (b) get admitted.
+        var entityType = GetOwnedBlogEntityType();
+        Expression<Func<OwnedBlog, bool>> predicate = b => b.Posts.Any(p => p.Comments.Any(c => c.Text == b.Title));
+        var translator = NewTranslator(entityType);
+        translator.SelfParam = predicate.Parameters[0]; // mirrors NativeSlotPopulator.PopulateNativeSlots
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var outer = Assert.IsType<MongoQuantifierExpression>(result);
+        var inner = Assert.IsType<MongoQuantifierExpression>(outer.ElementPredicate);
+        Assert.IsType<MongoBinaryExpression>(inner.ElementPredicate);
+    }
+
+    [Fact]
     public void Nested_owned_collection_Any_is_not_declined_by_the_correlation_guard()
     {
         // The guard must not over-decline: `c` is bound by the inner lambda, not free, so nested Any translates.
