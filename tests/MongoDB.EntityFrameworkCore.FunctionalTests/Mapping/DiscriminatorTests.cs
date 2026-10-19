@@ -139,9 +139,7 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
         }
 
         {
-            // Succeeding under NativeOnly is itself the "went native" signal: TryBuildDiscriminatorPredicate
-            // no longer rejects a value-converted discriminator (EF-349's driver-LINQ fix made the native
-            // and driver-LINQ discriminator BSON agree), so this no longer falls back / throws.
+            // Succeeding under NativeOnly proves a value-converted discriminator translates natively.
             using var db = SingleEntityDbContext.Create(collection, configuration,
                 optionsBuilderAction: b => new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly));
             var customer = Assert.Single(db.Entities.OfType<KeyedCustomer>());

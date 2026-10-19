@@ -20,24 +20,13 @@ using System.Linq.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Represents a LITERAL nested sub-document built, at projection time, from a fresh CLR object construction
-/// (<c>new Book { Id = e.Id, Title = e.Title }</c>) whose own member values are plain root-relative fields —
-/// as opposed to an owned navigation's ALREADY-STORED sub-document (<see cref="MongoElementRefExpression"/>,
-/// EF-441), which this node is deliberately NOT a replacement for.
+/// A literal nested sub-document built at projection time from a CLR construction
+/// (<c>new Book { Id = e.Id, Title = e.Title }</c>) over root-relative fields; distinct from an owned
+/// navigation's stored sub-document (<see cref="MongoElementRefExpression"/>).
 /// </summary>
 /// <remarks>
-/// <para>
-/// EF-447. Renders as an inline BSON document whose keys are <see cref="Members"/>' names and whose values are
-/// each member's own rendered <see cref="MongoExpression"/> (see <c>MongoAggregationExpressionRenderer</c>) — a
-/// <c>$project</c> stage can legally emit a nested document VALUE this way (<c>{Book: {Id: "$Id", ...}}</c>),
-/// distinct from a dotted OUTPUT KEY.
-/// </para>
-/// <para>
-/// <see cref="OriginalExpression"/> is carried purely for MATERIALIZATION — rebuilding the CLR object
-/// (<see cref="Expression.New(System.Reflection.ConstructorInfo)"/>/<see cref="MemberInitExpression"/>) once
-/// each member's value has been read back off the result document. It is never re-translated; all translation
-/// happened once, into <see cref="Members"/>, at emit time.
-/// </para>
+/// Renders as an inline document value (<c>{Book: {Id: "$Id", ...}}</c>) keyed by <see cref="Members"/>' names.
+/// <see cref="OriginalExpression"/> is used only to rebuild the CLR object on read; it is never re-translated.
 /// </remarks>
 internal sealed class MongoDocumentConstructionExpression : MongoExpression
 {
@@ -50,15 +39,13 @@ internal sealed class MongoDocumentConstructionExpression : MongoExpression
     }
 
     /// <summary>
-    /// The original <see cref="NewExpression"/> or <see cref="MemberInitExpression"/> this node was translated
-    /// from — kept only so the read side can rebuild the same CLR construction (constructor/member set) once it
-    /// has read each member's value back off the result document.
+    /// The original <see cref="NewExpression"/> or <see cref="MemberInitExpression"/>, used to rebuild the CLR
+    /// object once member values are read back.
     /// </summary>
     public Expression OriginalExpression { get; }
 
     /// <summary>
-    /// The leaf's own members, in the ORIGINAL construction's declaration order — each a member name paired
-    /// with the natively-translated <see cref="MongoExpression"/> that produces its value.
+    /// Member names paired with their translated values, in the original construction's declaration order.
     /// </summary>
     public IReadOnlyList<(string MemberName, MongoExpression Value)> Members { get; }
 

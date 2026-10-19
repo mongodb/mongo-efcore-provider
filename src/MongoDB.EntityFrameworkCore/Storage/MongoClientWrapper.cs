@@ -99,31 +99,23 @@ public class MongoClientWrapper : IMongoClientWrapper
     {
         log = () => { };
 
-        // A native entity reducer (First/Single/…) has Cardinality != Enumerable but still carries a
-        // NativePipeline (a synthesized $limit) — it must flow into the NativePipeline block below so EF
-        // Core's base cardinality reduction runs over the returned cursor enumerable. ExecuteScalar is
-        // only for the driver-LINQ scalar/reducer path, which has no NativePipeline.
+        // Native reducers (First/Single/...) are non-Enumerable but carry a NativePipeline; they must take the
+        // cursor path below so EF Core's cardinality reduction runs. ExecuteScalar is driver-LINQ only.
         if (executableQuery.Cardinality != ResultCardinality.Enumerable && executableQuery.NativePipeline is null)
             return ExecuteScalar<T>(executableQuery);
 
         if (executableQuery.NativePipeline is { } stages)
         {
-            // The native pipeline is already known here, so set the log action before issuing the aggregate.
-            // This mirrors the driver-LINQ path (whose stages are captured at build time) and ensures the MQL
-            // is logged even when execution against the server throws. Unlike the driver-LINQ path, the native
-            // stages are logged directly (the driver Provider was never asked to translate, so its LoggedStages
-            // would be empty) — this surfaces the real $match/$sort/$lookup pipeline in the MQL log.
+            // Set the log action before executing so the MQL is logged even if the server throws. Log the
+            // native stages directly; the driver Provider never translated anything, so its LoggedStages is empty.
             var loggedStages = stages as BsonDocument[] ?? stages.ToArray();
             log = () => _commandLogger.ExecutedMqlQuery(executableQuery.CollectionNamespace, loggedStages);
             if (executableQuery.Streaming)
             {
                 Debug.Assert(executableQuery.OutputSerializer != null, "Streaming native path requires output serializer.");
 
-                // One-pass "deserialize IS materialize": the custom output serializer runs the compiled EF
-                // materializer off the cursor's own IBsonReader, so the Aggregate cursor yields finished
-                // (T == the shaped entity) instances directly — a single forward pass, no RawBsonDocument
-                // wrapper + second materialization pass. T is the shaped result type, so the supplied
-                // serializer is an IBsonSerializer<T>.
+                // The output serializer runs the compiled EF materializer off the cursor's IBsonReader, so the
+                // cursor yields shaped T instances in one pass (no intermediate BsonDocument).
                 var entityCollection = Database.GetCollection<BsonDocument>(executableQuery.CollectionNamespace.CollectionName);
                 PipelineDefinition<BsonDocument, BsonDocument> basePipe = loggedStages;
                 var typedPipeline = basePipe.As((IBsonSerializer<T>)executableQuery.OutputSerializer);

@@ -18,23 +18,15 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Represents <c>{ &lt;Operator&gt;: "$path" }</c> — an aggregation-expression-dialect ARRAY-reducing operator
-/// (<c>$avg</c>/<c>$max</c>/<c>$min</c>/<c>$sum</c>) applied to a named array field, as opposed to the SAME
-/// operator names used as a <c>$group</c> accumulator (which reduce over the grouped documents themselves,
-/// not a stored array).
+/// <c>{ &lt;Operator&gt;: "$path" }</c> — an array-reducing <c>$avg</c>/<c>$max</c>/<c>$min</c>/<c>$sum</c> over a
+/// named array field (not the <c>$group</c> accumulator of the same name).
 /// </summary>
 /// <remarks>
-/// EF-322's sole use: the flattening <c>$project</c> that follows a <c>GroupBy(key).Select(aggregate)</c>'s
-/// <c>$group</c>, for a member of the shape <c>g.Select(e =&gt; e.Field).Distinct().Average()</c> (and
-/// <c>.Max()</c>/<c>.Min()</c>/<c>.Sum()</c>) — <c>NativeGroupByBinder.TryBindAccumulator</c> binds the
-/// <c>$group</c> accumulator itself as <c>$addToSet</c> (collecting the group's DISTINCT projected values into
-/// an array), and this node reduces that array back to the single scalar the aggregate asked for. Does not
-/// wrap a <see cref="MongoFieldExpression"/> for the same reason <see cref="MongoSizeExpression"/> (its
-/// <c>Count</c>/<c>LongCount</c> sibling — <c>$size</c> needs no array-reduce wrapper at all) does not: the
-/// accumulator's own output field is a synthetic <c>$group</c>-stage alias, with no backing
-/// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>. No null-safety wrapping is needed (contrast
-/// <see cref="MongoSizeExpression.NullSafe"/> for an embedded array that may be missing): a <c>$group</c>
-/// accumulator field is written for every group by construction, never missing.
+/// Used in the flattening <c>$project</c> after <c>$group</c> for <c>g.Select(e =&gt; e.Field).Distinct().Average()</c>
+/// and friends: <c>NativeGroupByBinder.TryBindAccumulator</c> collects distinct values with <c>$addToSet</c>, and
+/// this reduces that array to the scalar. Holds a field name rather than a <see cref="MongoFieldExpression"/>
+/// because the accumulator alias has no backing property. No null-safety wrap: a <c>$group</c> accumulator field is
+/// always present.
 /// </remarks>
 internal sealed class MongoArrayReduceExpression : MongoExpression
 {

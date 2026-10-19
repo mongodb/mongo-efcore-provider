@@ -23,10 +23,10 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-380: a second-join key selector reaching through an owned/embedded navigation on an
-/// already-joined intermediate (e.g. <c>Order.Buyer.Address.RegionId</c>) used to emit an unscoped
-/// <c>$lookup</c> localField ("RegionId" instead of "_lookup_Buyer.Address.RegionId"), silently
-/// matching nothing and leaving <c>Region</c> null despite matching data existing.
+/// A second-join key selector reaching through an owned navigation on an already-joined intermediate (e.g.
+/// <c>Order.Buyer.Address.RegionId</c>) must scope the <c>$lookup</c> localField under the join alias
+/// ("_lookup_Buyer.Address.RegionId", not "RegionId"); otherwise it silently matches nothing and leaves
+/// <c>Region</c> null.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class ThenIncludeThroughOwnedNavigationTests(TemporaryDatabaseFixture database)
@@ -57,9 +57,9 @@ public class ThenIncludeThroughOwnedNavigationTests(TemporaryDatabaseFixture dat
     }
 
     /// <summary>
-    /// Sibling owned navigations sharing a CLR type (<c>ShippingAddress</c> / <c>BillingAddress</c>, both
-    /// <c>J2Address</c>) must resolve via the real navigation graph, not a CLR-type guess — otherwise
-    /// owner resolution could pick the sibling with no <c>Region</c> relationship, dropping the $lookup.
+    /// Sibling owned navigations sharing a CLR type (<c>ShippingAddress</c>/<c>BillingAddress</c>) must resolve via
+    /// the navigation graph, not the CLR type, or the sibling without <c>Region</c> could be picked and the
+    /// <c>$lookup</c> dropped.
     /// </summary>
     [Fact]
     public void ThenInclude_through_one_of_two_sibling_owned_navigations_sharing_a_clr_type_resolves_the_correct_one()

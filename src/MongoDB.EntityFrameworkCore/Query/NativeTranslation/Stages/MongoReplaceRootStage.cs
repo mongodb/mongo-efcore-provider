@@ -18,22 +18,17 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// <summary>
 /// A <c>$replaceRoot</c> stage that promotes a field to the root document.
 /// <para>
-/// When <see cref="MergeOwnerKeySentinels"/> is <see langword="true"/> (owned bare-element SelectMany):
-/// merges in the owner key and array ordinal so the re-rooted owned element's shadow key properties
-/// materialize non-null. Both sentinels are nested one level under a SINGLE reserved wrapper field
-/// (<see cref="ShadowField"/>), never as two individually-named top-level keys:
+/// With <see cref="MergeOwnerKeySentinels"/> (owned bare-element SelectMany), the owner key and array ordinal
+/// are merged in so the owned element's shadow keys materialize:
 /// <c>{ $replaceRoot: { newRoot: { $mergeObjects: [ "$&lt;NewRoot&gt;",
-/// { __mongoef_shadow: { __ownerKey: "$_id", __ord: "$__ord" } } ] } } }</c>.
-/// The nesting is what keeps an ordinary stored property from colliding with the sentinels: because
-/// <c>$mergeObjects</c> merges the sentinel document AFTER the unwound element, a same-named real field
-/// would be silently overwritten — with the wrapper, only the one reserved <see cref="ShadowField"/> name
-/// can collide (and the translator declines that shape; see
-/// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable</c>).
+/// { __mongoef_shadow: { __ownerKey: "$_id", __ord: "$__ord" } } ] } } }</c>. Nesting under one reserved
+/// <see cref="ShadowField"/> limits collisions with stored fields (which <c>$mergeObjects</c> would silently
+/// overwrite) to that one name, which the translator declines
+/// (<c>MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable</c>).
 /// </para>
 /// <para>
-/// When <see cref="MergeOwnerKeySentinels"/> is <see langword="false"/> (reference bare-entity SelectMany):
-/// a plain <c>{ $replaceRoot: { newRoot: "$&lt;NewRoot&gt;" } }</c> — a reference entity carries its own real
-/// stored key, so no sentinel merge is needed.
+/// Otherwise (reference bare-entity SelectMany) a plain <c>{ $replaceRoot: { newRoot: "$&lt;NewRoot&gt;" } }</c>,
+/// since a reference entity has a stored key.
 /// </para>
 /// </summary>
 internal sealed class MongoReplaceRootStage : MongoPipelineStage
@@ -47,18 +42,14 @@ internal sealed class MongoReplaceRootStage : MongoPipelineStage
     public string NewRoot { get; }
 
     /// <summary>
-    /// Selects which of the two forms described in the class-level <see cref="MongoReplaceRootStage"/> summary
-    /// to render: <see langword="true"/> for the owned sentinel-merge form, <see langword="false"/> for the
-    /// plain <c>$replaceRoot</c> form.
+    /// <see langword="true"/> for the owned sentinel-merge form; <see langword="false"/> for a plain
+    /// <c>$replaceRoot</c>.
     /// </summary>
     public bool MergeOwnerKeySentinels { get; }
 
     /// <summary>
-    /// The single reserved top-level field the sentinel merge adds to the re-rooted document. The owner-key
-    /// and ordinal sentinels are nested one level UNDER it (<c>__mongoef_shadow.__ownerKey</c> /
-    /// <c>__mongoef_shadow.__ord</c>), so an ordinary stored property can only ever collide with this ONE
-    /// name — never with <see cref="OwnerKeyField"/>/<see cref="OrdinalField"/> individually, which are not
-    /// top-level keys of the merged document.
+    /// The single reserved top-level field the sentinel merge adds; <see cref="OwnerKeyField"/> and
+    /// <see cref="OrdinalField"/> are nested under it, so only this name can collide with a stored property.
     /// </summary>
     public const string ShadowField = "__mongoef_shadow";
 

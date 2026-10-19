@@ -30,40 +30,22 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-449: end-to-end functional coverage for a reference-collection-nav <c>First</c>/<c>FirstOrDefault</c>
-/// reduced to a scalar member inside a projection (<c>a.IdentificationMethods.FirstOrDefault().Method</c>) —
-/// the first task in this feature's plan to prove the shape against a real MongoDB server rather than the
-/// unit-tested translation pipeline in isolation.
+/// End-to-end coverage for a reference-collection-nav <c>First</c>/<c>FirstOrDefault</c> reduced to a scalar member
+/// in a projection (<c>a.IdentificationMethods.FirstOrDefault().Method</c>).
 /// </summary>
 /// <remarks>
 /// <para>
-/// <c>FirstOrDefault().Member</c> needs NO new read-side code: the <c>$lookup</c>'s sub-pipeline narrows to
-/// 0-or-1 matched documents, the left-outer <c>$unwind</c> (<c>preserveNullAndEmptyArrays: true</c>) turns a
-/// no-match into a <c>null</c> lookup field, and <c>"$_lookup_IdentificationMethods.Method"</c> on a
-/// <c>null</c> parent evaluates to MISSING in a <c>$project</c> stage (confirmed empirically here, not merely
-/// assumed — see <see cref="FirstOrDefault_over_empty_reference_collection_reads_as_default"/>'s own remarks) —
-/// which the pre-existing generic alias read (<c>BsonBinding.GetElementValue&lt;T&gt;</c>) already turns into
-/// <c>default(T)</c> for a nullable-typed read (a reference type like <c>string</c> here), matching
-/// <c>FirstOrDefault()</c>'s own LINQ contract with no new code.
+/// <c>FirstOrDefault().Member</c>: on no match, the left-outer <c>$unwind</c> nulls the lookup field and the dotted
+/// <c>$project</c> read yields a missing field, which the generic alias read turns into <c>default(T)</c> for a
+/// nullable type.
 /// </para>
 /// <para>
-/// <c>First().Member</c> DOES need new read-side code: without it, the same missing-field read would silently
-/// return <c>default(T)</c> too, which is wrong — <c>Enumerable.First()</c> must throw
-/// <see cref="InvalidOperationException"/>("Sequence contains no elements") when the source is empty. The fix
-/// (<c>MongoProjectionBindingRemovingExpressionVisitor</c>'s alias-read branch) checks the projection alias
-/// against <c>MongoQueryExpression.CorrelatedReducerLeaves</c>: if the alias matches a leaf with
-/// <c>ThrowOnEmpty == true</c>, it emits a check-and-throw around the raw alias read instead of the ordinary
-/// unconditional read, keyed purely by alias so no other leaf kind is affected.
-/// </para>
-/// <para>
-/// EF-449 FIX: that alias-only check is only sound for a NON-nullable reduced member — a matched row whose own
-/// member happens to be null/absent is otherwise indistinguishable from "no related row" and <c>First()</c>
-/// would incorrectly throw for a row that genuinely exists. <c>NativeProjectionBinder.TryGetCorrelatedReducerLeaf</c>
-/// closes this by declining <c>First()</c> (never <c>FirstOrDefault()</c>) up front when the reduced member's own
-/// type is nullable (<c>Nullable&lt;T&gt;</c> or a reference type, e.g. <c>string</c> — <c>Method</c> here) —
-/// see <see cref="First_over_nullable_typed_member_declines"/> and
-/// <see cref="FirstOrDefault_over_nullable_typed_member_still_works"/>. The <c>First()</c> tests below therefore
-/// reduce to <c>Rank</c> (a non-nullable <c>int</c>), not <c>Method</c>.
+/// <c>First().Member</c> must throw on empty rather than return <c>default(T)</c>;
+/// <c>MongoProjectionBindingRemovingExpressionVisitor</c> emits a check-and-throw for aliases matching a
+/// <c>ThrowOnEmpty</c> leaf in <c>MongoQueryExpression.CorrelatedReducerLeaves</c>. That is only sound for a
+/// non-nullable member (a matched row with a null member looks like no row), so
+/// <c>NativeProjectionBinder.TryGetCorrelatedReducerLeaf</c> declines <c>First()</c> over a nullable member; the
+/// <c>First()</c> tests therefore reduce to <c>Rank</c> (<c>int</c>).
 /// </para>
 /// </remarks>
 [XUnitCollection("QueryTests")]
@@ -78,9 +60,9 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     }
 
     /// <summary>
-    /// The member kind the motivating spec test
-    /// (<c>BuiltInDataTypesMongoTest.Can_read_back_mapped_enum_from_collection_first_or_default</c>) reduces to:
-    /// an enum, i.e. a NON-NULLABLE VALUE TYPE. See the "nullable-widened" section at the bottom of this file.
+    /// Enum member, i.e. a non-nullable value type, as in
+    /// <c>BuiltInDataTypesMongoTest.Can_read_back_mapped_enum_from_collection_first_or_default</c>. See the
+    /// "nullable-widened" section below.
     /// </summary>
     private enum IdentificationKind
     {
@@ -132,7 +114,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         return new AnimalDbContext(database, animals, methods, mode, loggerFactory);
     }
 
-    // ── FirstOrDefault: no new read-side code, verified against real data ─────────────────────────────────────
+    // ── FirstOrDefault ───────────────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
     public void FirstOrDefault_member_returns_correct_value_when_a_related_row_exists()
@@ -146,17 +128,13 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
             .Select(a => new { a.Id, M = a.IdentificationMethods.OrderBy(m => m.Rank).FirstOrDefault()!.Method })
             .Single();
 
-        // NativeOnly succeeding proves this shape genuinely went native rather than gracefully falling back.
+        // NativeOnly succeeding proves this shape went native.
         Assert.Equal("Microchip", result.M);
     }
 
     /// <summary>
-    /// The empirical claim under test: when the $lookup's sub-pipeline matches nothing, the left-outer $unwind
-    /// makes the lookup field null, and reading a dotted path through it ("$_lookup_IdentificationMethods.Method")
-    /// in a $project stage produces a MISSING field on the projected document (not a present null) — which the
-    /// existing generic alias read already turns into default(string) = null, matching FirstOrDefault()'s LINQ
-    /// contract, with no new code. This must fail (return a thrown exception, a BSON error, or a non-null wrong
-    /// value) if that empirical claim about MongoDB's $project semantics turns out to be false.
+    /// No match: the dotted <c>$project</c> read through the nulled lookup field must produce a missing field, read
+    /// back as null. Fails if MongoDB's <c>$project</c> semantics differ.
     /// </summary>
     [Fact]
     public void FirstOrDefault_over_empty_reference_collection_reads_as_default()
@@ -173,7 +151,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         Assert.Null(result.M);
     }
 
-    // ── First: new read-side code (throw-on-empty), verified against real data ────────────────────────────────
+    // ── First: throw-on-empty ────────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
     public void First_member_returns_correct_value_when_a_related_row_exists()
@@ -182,8 +160,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
             MongoQueryMode.NativeOnly, nameof(First_member_returns_correct_value_when_a_related_row_exists),
             out var withMethods, out _);
 
-        // Reduces to Rank (non-nullable int), not Method (string) — see the class remarks for why First()
-        // declines a nullable-typed reduced member (EF-449 fix).
+        // Reduces to Rank (non-nullable), since First() declines a nullable member (see class remarks).
         var result = db.Animals
             .Where(a => a.Id == withMethods)
             .Select(a => new { a.Id, R = a.IdentificationMethods.OrderBy(m => m.Rank).First().Rank })
@@ -207,8 +184,8 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         Assert.Equal("Sequence contains no elements", ex.Message);
     }
 
-    /// <summary>Same throw-on-empty assertion under the default <see cref="MongoQueryMode.Native"/> gate too,
-    /// so the behavior isn't accidentally specific to <c>NativeOnly</c>'s own error path.</summary>
+    /// <summary>Throw-on-empty under the default <see cref="MongoQueryMode.Native"/> mode too, not just
+    /// <c>NativeOnly</c>.</summary>
     [Fact]
     public void First_over_empty_reference_collection_throws_under_default_native_mode()
     {
@@ -224,17 +201,12 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         Assert.Equal("Sequence contains no elements", ex.Message);
     }
 
-    // ── EF-449 bug fix: First() over a NULLABLE-typed reduced member declines instead of mis-throwing ─────────
+    // ── First() over a nullable-typed reduced member declines ────────────────────────────────────────────────────
 
     /// <summary>
-    /// The bug this fix closes: <c>First()</c> reduced to <c>Method</c> (a <c>string</c>, i.e. nullable) cannot
-    /// be told apart on the read side between "no related row" and "a related row exists but its Method is
-    /// null/absent" — so <c>NativeProjectionBinder.TryGetCorrelatedReducerLeaf</c> now declines this shape
-    /// entirely, up front at translate time. This whole leaf family has no driver-LINQ fallback oracle (a
-    /// reference-collection-nav reduction is not a shape the C# driver's own LINQ v3 provider understands
-    /// either), so the decline surfaces as EF Core's own generic "could not be translated" failure rather than
-    /// admitting a leaf that could incorrectly throw "Sequence contains no elements" for a row that genuinely
-    /// exists.
+    /// <c>First()</c> over a nullable member (<c>Method</c>) can't distinguish "no row" from "row with null
+    /// Method", so it declines at translate time rather than wrongly throwing. No driver-LINQ fallback exists for
+    /// this shape, so the decline surfaces as EF's "could not be translated".
     /// </summary>
     [Fact]
     public void First_over_nullable_typed_member_declines()
@@ -252,10 +224,8 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     }
 
     /// <summary>
-    /// The discriminating control for <see cref="First_over_nullable_typed_member_declines"/>:
-    /// <c>FirstOrDefault()</c> over the exact same nullable member (<c>Method</c>) is completely unaffected by
-    /// the fix and still goes native and reads correctly — only <c>First()</c>'s ambiguous throw-on-empty case
-    /// is narrowed.
+    /// Control for <see cref="First_over_nullable_typed_member_declines"/>: <c>FirstOrDefault()</c> over the same
+    /// nullable member still goes native and reads correctly.
     /// </summary>
     [Fact]
     public void FirstOrDefault_over_nullable_typed_member_still_works()
@@ -272,14 +242,10 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         Assert.Equal("Microchip", result.M);
     }
 
-    // ── Task 7: predicate / ordering / multi-document correctness ─────────────────────────────────────────────
+    // ── Predicate / ordering / multi-document correctness ────────────────────────────────────────────────────────
     //
-    // No driver-LINQ oracle exists for this shape (confirmed across Tasks 1-6: it hard-fails under
-    // MongoQueryMode.DriverLinq too, in the driver's own LINQ v3 provider), so these tests follow the file's
-    // established pattern above: seed known rows with a known relationship, compute the expected value by hand
-    // from that seed data, and assert the native (NativeOnly, to prove genuine native execution) result matches.
-    // Each case seeds multiple candidate rows where picking the wrong one would produce a different, wrong
-    // answer — not a single-candidate setup that would pass even with a broken predicate/sort.
+    // No driver-LINQ oracle exists for this shape, so expected values are computed by hand from the seed. Each
+    // case seeds several candidates so a wrong pick gives a different answer.
 
     private AnimalDbContext CreateEmptyContext(MongoQueryMode mode, string name, out string animals, out string methods)
     {
@@ -365,9 +331,8 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
             new IdentificationMethod { Id = ObjectId.GenerateNewId(), Method = "EarTag", Rank = 3, AnimalId = animalId },
         ]);
 
-        // Without the predicate, OrderBy(Rank).FirstOrDefault() would pick "Microchip" (Rank 1). The predicate
-        // excludes it, so the correct answer is the next-lowest-ranked matching row, "Tattoo" (Rank 2) — not
-        // "EarTag", and not "Microchip" leaking through because the filter was silently ignored.
+        // Without the predicate, OrderBy(Rank) would pick "Microchip" (Rank 1); with it, the answer is "Tattoo"
+        // (Rank 2), not "EarTag".
         var result = db.Animals
             .Where(a => a.Id == animalId)
             .Select(a => new
@@ -411,8 +376,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         var rex = results.Single(r => r.Id == animal1);
         var fido = results.Single(r => r.Id == animal2);
 
-        // If the correlation leaked across documents (e.g. a global "first" instead of a per-document one),
-        // both would end up with the same Method value.
+        // A correlation leak across documents (global rather than per-document first) gives both the same Method.
         Assert.Equal("Microchip", rex.M);
         Assert.Equal("EarTag", fido.M);
     }
@@ -433,9 +397,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
             new IdentificationMethod { Id = ObjectId.GenerateNewId(), Method = "Tattoo", Rank = 2, AnimalId = animalId },
         ]);
 
-        // NativeOnly throws NativeTranslationNotSupportedException on any decline/fallback, so a passing result
-        // here proves the predicate+ordering combination genuinely goes native rather than passing by
-        // coincidence via a fallback path.
+        // NativeOnly throws on any decline/fallback, so passing proves predicate+ordering went native.
         var result = await db.Animals
             .Where(a => a.Id == animalId)
             .Select(a => new
@@ -448,14 +410,10 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         Assert.Equal("Tattoo", result.M);
     }
 
-    // ── EF-449 fix 2: FirstOrDefault() over a NON-NULLABLE VALUE-TYPE reduced member ───────────────────────────
+    // ── FirstOrDefault() over a non-nullable value-type member ───────────────────────────────────────────────────
     //
-    // The shape the motivating spec test needs, and the one this file's original tests never exercised (they
-    // reduced either a `string` via FirstOrDefault, or an `int` via First()). EF's nav-expansion represents "no
-    // match" for a value-type FirstOrDefault() by WIDENING the reduced member to Nullable<T> inside the inner
-    // Select and converting the reducer result back to the non-nullable T at the very end — so the recognizer
-    // sees a UnaryExpression(Convert) leaf, not the MethodCallExpression it used to require. NativeOnly
-    // throughout, so a pass proves genuine native execution rather than a graceful fallback.
+    // EF's nav-expansion widens the member to Nullable<T> inside the inner Select and converts back to T at the
+    // end, so the recognizer sees a Convert leaf rather than a MethodCallExpression. NativeOnly throughout.
 
     [Fact]
     public void FirstOrDefault_over_a_non_nullable_int_member_returns_the_correct_value()
@@ -469,24 +427,18 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
             .Select(a => new { a.Id, R = a.IdentificationMethods.OrderByDescending(m => m.Rank).FirstOrDefault()!.Rank })
             .Single();
 
-        // 2 (Tattoo) is the HIGHEST rank; 1 (Microchip) is both the lowest and the positional first, so a
+        // 2 (Tattoo) is the highest rank; 1 (Microchip) is both the lowest and the positional first, so a
         // dropped $sort or a mis-resolved member would produce a different value.
         Assert.Equal(2, result.R);
     }
 
     /// <summary>
-    /// The empty-collection half: <c>FirstOrDefault()</c>'s LINQ contract is <c>default(T)</c>, which for a
-    /// non-nullable value type is <c>0</c> / the zero-valued enum — NOT a throw and not a null-reference.
+    /// Empty collection: <c>FirstOrDefault()</c> must yield <c>default(T)</c> (0 / zero enum), not throw.
     /// <para>
-    /// This test is the MUTATION EVIDENCE that the widened shape needs REAL read-side work. When no row matched,
-    /// the reduced field is simply MISSING from the left-outer <c>$unwind</c>'s output — and for a NON-NULLABLE
-    /// <c>T</c> the ordinary generic alias read does NOT yield <c>default(T)</c>, it THROWS
-    /// ("Document element 'R' is missing but required"). So
-    /// <c>MongoProjectionBindingRemovingExpressionVisitor.IsDefaultOnEmptyCorrelatedReducerLeaf</c> recognizes
-    /// this leaf kind by alias and emits an explicit absent-or-null → <c>default(T)</c> conditional ahead of the
-    /// numeric-cast branch; reverting that branch reproduces the missing-element throw here. (An earlier version
-    /// of this docstring claimed the generic read already yielded <c>default(T)</c> — disproven by exactly that
-    /// mutation.)
+    /// For a non-nullable <c>T</c> the generic alias read throws on the missing field ("Document element 'R' is
+    /// missing but required"), so
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor.IsDefaultOnEmptyCorrelatedReducerLeaf</c> emits an
+    /// absent-or-null → <c>default(T)</c> conditional; removing it makes this test throw.
     /// </para>
     /// </summary>
     [Fact]
@@ -539,9 +491,8 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     }
 
     /// <summary>
-    /// A single query returning BOTH a populated and an empty row, so the two cases are proven to coexist in one
-    /// pipeline rather than only in separate single-document queries (a per-document correlation failure would
-    /// otherwise be invisible: the empty row would read the populated row's value).
+    /// Populated and empty rows in one query: a per-document correlation failure would make the empty row read
+    /// the populated row's value.
     /// </summary>
     [Fact]
     public async Task FirstOrDefault_over_a_value_type_member_mixes_populated_and_empty_rows_in_one_query()
@@ -568,9 +519,8 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     }
 
     /// <summary>
-    /// The widened shape with an <c>OrderBy</c> AND a constant predicate — MEASURED to nest identically to the
-    /// unwrapped shape (<c>Where(fk).OrderBy(k).Where(pred).Select(m =&gt; Convert(m.Rank, int?)).FirstOrDefault()</c>),
-    /// so the pre-existing chain walk handles it once the two wrapping <c>Convert</c>s are peeled.
+    /// Widened shape with <c>OrderBy</c> and a constant predicate; nests like the unwrapped shape, so the chain
+    /// walk handles it once the two <c>Convert</c>s are peeled.
     /// </summary>
     [Fact]
     public void FirstOrDefault_over_a_value_type_member_with_predicate_and_ordering_returns_the_correct_value()
@@ -615,21 +565,15 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         Assert.Equal(2, result.R);
     }
 
-    // ── Sibling-leaf coverage: a WHOLE-ROOT-ENTITY leaf beside a reducer leaf ──────────────────────────────────
+    // ── Sibling leaves: whole-root entity beside a reducer ───────────────────────────────────────────────────────
     //
-    // `new { a, M = a.Nav.FirstOrDefault().Member }` — the `a` leaf is the WHOLE entity, projected as $$ROOT
-    // (EF-412). Traced during EF-449's final review: this combination is ADMITTED, because the reducer leaf sets
-    // neither `hasArrayLeaf` nor `hasOwnedNavEntityLeaf`, so the sibling-readability sweep those flags trigger
-    // never runs over it. That the combination is admitted was a code-reading conclusion only, so it is proven
-    // empirically here rather than assumed: the two leaves read from different places in the projected document
-    // ($$ROOT for the entity, `_lookup_<Nav>.<Member>` for the reducer), and either one silently shadowing the
-    // other would show up as a wrong Name/Rank below.
+    // `new { a, M = a.Nav.FirstOrDefault().Member }` is admitted (the reducer sets neither hasArrayLeaf nor
+    // hasOwnedNavEntityLeaf). The leaves read from different places ($$ROOT vs `_lookup_<Nav>.<Member>`), so
+    // one shadowing the other shows up as a wrong Name/Rank.
 
     /// <summary>
-    /// The reducer leaf sits beside a whole-root-entity <c>$$ROOT</c> leaf, over the NULLABLE-widened
-    /// (non-nullable value-type member) reducer shape. <c>NativeOnly</c>, so a pass proves the combination
-    /// genuinely goes native rather than landing on a fallback — and this family has no driver-LINQ oracle to
-    /// fall back TO, so a decline here would surface as a hard failure, not a silently different path.
+    /// Reducer leaf beside a whole-entity <c>$$ROOT</c> leaf, over the widened (non-nullable member) shape.
+    /// No driver-LINQ fallback exists, so a decline would be a hard failure.
     /// </summary>
     [Fact]
     public void Whole_root_entity_leaf_beside_a_reducer_leaf_reads_both_correctly()
@@ -655,9 +599,8 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     }
 
     /// <summary>
-    /// The same sibling pairing over the NON-widened reducer shape (a <c>string</c> member, already nullable, so
-    /// no <c>Convert</c> peel is involved) — the two shapes reach the leaf recognizer down different paths, so
-    /// both are covered rather than assuming they behave alike once past it.
+    /// Same pairing over the non-widened shape (<c>string</c> member, no <c>Convert</c> peel), which reaches the
+    /// recognizer by a different path.
     /// </summary>
     [Fact]
     public async Task Whole_root_entity_leaf_beside_a_string_reducer_leaf_reads_both_correctly()

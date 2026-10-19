@@ -24,32 +24,20 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// It holds the RAW argument nodes for the query vector, the limit and the options rather than
-/// pre-extracted values, mirroring what the driver-LINQ bridge's own <c>ParamValue&lt;T&gt;</c> does: each is
-/// an EF query parameter (or, defensively, a constant) whose value is only known per execution. They are
-/// resolved at Build time through
-/// <see cref="NativeTranslation.NativeQueryParameter.TryGetQueryParameterName"/>, which is where the
-/// EF8/EF9-vs-EF10 query-parameter-node difference is encapsulated — that helper is the whole reason no
-/// version-conditional compilation appears anywhere on this path.
+/// The query vector, limit and options are kept as raw argument nodes (EF query parameters, or defensively
+/// constants) and resolved per execution via
+/// <see cref="NativeTranslation.NativeQueryParameter.TryGetQueryParameterName"/>, which hides the EF8/EF9-vs-EF10 parameter-node difference. The pre-filter is translated at compile time and its
+/// parameters go into the shared <c>PlaceholderTable</c>.
 /// </para>
 /// <para>
-/// The pre-filter, by contrast, IS translated at compile time (it is a predicate the native translator
-/// either supports or declines), and any parameter inside it is recorded as an ordinary placeholder
-/// sentinel in the shared <c>PlaceholderTable</c>, so it substitutes in the same pass as every other stage.
-/// </para>
-/// <para>
-/// <see cref="PropertyLambda"/> is kept as an EF <see cref="LambdaExpression"/> rather than a resolved
-/// element path because the driver's own <c>PipelineStageDefinitionBuilder.VectorSearch</c> takes an
-/// <c>Expression&lt;Func&lt;TDoc, TField&gt;&gt;</c> and derives the document path from it — which is how a
-/// nested selector such as <c>e =&gt; e.Preface.Floats</c> renders as <c>"Preface.Floats"</c> for free, and
-/// is why this feature needs no MQL path-rendering logic of its own.
+/// <see cref="PropertyLambda"/> stays a <see cref="LambdaExpression"/> because the driver's
+/// <c>PipelineStageDefinitionBuilder.VectorSearch</c> derives the document path from it (e.g.
+/// <c>e =&gt; e.Preface.Floats</c> → <c>"Preface.Floats"</c>).
 /// </para>
 /// </remarks>
 /// <param name="EntityType">
-/// The entity type the vector search is rooted on (the query's own collection entity type). Carried here
-/// because the deferred stage builder needs it for member resolution, the driver's generic builder call and
-/// the entity serializer used to render the stage — and <c>MongoPipelineFactory</c> itself is deliberately
-/// free of any model/entity-type knowledge.
+/// The root entity type, needed by the deferred stage builder for member resolution and serialization, since
+/// <c>MongoPipelineFactory</c> has no model knowledge.
 /// </param>
 /// <param name="PropertyLambda">The vector property selector — <c>Arguments[1]</c>, unwrapped from its quote.</param>
 /// <param name="PreFilter">

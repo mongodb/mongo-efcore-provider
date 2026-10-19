@@ -19,18 +19,12 @@ using System.Linq.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Represents a binary comparison or logical operation in a MongoDB query expression tree.
-/// Logical operators (<see cref="MongoBinaryOperator.AndAlso"/>, <see cref="MongoBinaryOperator.OrElse"/>)
-/// always produce <see cref="bool"/>; comparison operators take their type from the left operand.
+/// A binary comparison, logical or arithmetic operation. <see cref="MongoBinaryOperator.AndAlso"/> and
+/// <see cref="MongoBinaryOperator.OrElse"/> are typed <see cref="bool"/>; every other operator takes the left
+/// operand's type.
 /// </summary>
 internal sealed class MongoBinaryExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoBinaryExpression"/>.
-    /// </summary>
-    /// <param name="op">The binary operator.</param>
-    /// <param name="left">The left operand.</param>
-    /// <param name="right">The right operand.</param>
     public MongoBinaryExpression(MongoBinaryOperator op, MongoExpression left, MongoExpression right)
     {
         Operator = op;
@@ -38,25 +32,21 @@ internal sealed class MongoBinaryExpression : MongoExpression
         Right = right;
     }
 
-    /// <summary>The binary operator.</summary>
     public MongoBinaryOperator Operator { get; }
 
-    /// <summary>The left operand.</summary>
     public MongoExpression Left { get; }
 
-    /// <summary>The right operand.</summary>
     public MongoExpression Right { get; }
 
     /// <inheritdoc />
     public override Type Type
         => Operator is MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
+            or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual
+            or MongoBinaryOperator.LessThan or MongoBinaryOperator.LessThanOrEqual
+            or MongoBinaryOperator.GreaterThan or MongoBinaryOperator.GreaterThanOrEqual
             ? typeof(bool)
             : Left.Type;
 
-    /// <summary>
-    /// Returns a new <see cref="MongoBinaryExpression"/> if either operand changed;
-    /// otherwise returns <see langword="this"/>.
-    /// </summary>
     public MongoBinaryExpression Update(MongoExpression left, MongoExpression right)
         => ReferenceEquals(left, Left) && ReferenceEquals(right, Right)
             ? this

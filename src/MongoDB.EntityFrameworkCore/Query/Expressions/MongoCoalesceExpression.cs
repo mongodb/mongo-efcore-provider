@@ -19,15 +19,11 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
 /// A null-coalescing operator (<c>left ?? right</c>), rendered in the aggregation-expression dialect as
-/// <c>$ifNull</c>. A chained coalesce (<c>a ?? b ?? c</c>) nests on the RIGHT operand, matching
-/// <see cref="System.Linq.Expressions.BinaryExpression"/>'s own left-associative <c>Coalesce</c> shape, so
-/// <c>a ?? b ?? c</c> becomes <c>MongoCoalesceExpression(a, MongoCoalesceExpression(b, c))</c>.
+/// <c>$ifNull</c>. <c>a ?? b ?? c</c> nests on the right: <c>Coalesce(a, Coalesce(b, c))</c>.
 /// </summary>
 /// <remarks>
-/// This node is deliberately NOT admitted by <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c> — same
-/// as its sibling <see cref="MongoConditionalExpression"/> — it has no query-dialect form, and <c>$expr</c>
-/// (which is what a native <c>$project</c>/<c>$match</c> would need to wrap it in) is a hard server error inside
-/// <c>$elemMatch</c>.
+/// Not query-dialect renderable (like <see cref="MongoConditionalExpression"/>): it would need <c>$expr</c>,
+/// which is a server error inside <c>$elemMatch</c>.
 /// </remarks>
 internal sealed class MongoCoalesceExpression(MongoExpression left, MongoExpression right) : MongoExpression
 {
@@ -39,11 +35,8 @@ internal sealed class MongoCoalesceExpression(MongoExpression left, MongoExpress
 
     /// <inheritdoc />
     /// <remarks>
-    /// Prefers <see cref="Right"/>'s type — matching C#'s own <c>??</c> typing (<c>int? ?? int</c> has type
-    /// <c>int</c>, the non-nullable right operand's type) — unless <see cref="Right"/> is a null-valued
-    /// <see cref="MongoConstantExpression"/>, whose own <c>.Type</c> falls back to <c>typeof(object)</c> and
-    /// carries no meaningful type information; then <see cref="Left"/>'s type is used instead. Same fallback
-    /// shape <see cref="MongoConditionalExpression"/> uses for its own branch preference.
+    /// <see cref="Right"/>'s type, matching C# <c>??</c> typing (<c>int? ?? int</c> is <c>int</c>), unless
+    /// <see cref="Right"/> is a null constant (typed <c>object</c>), in which case <see cref="Left"/>'s type.
     /// </remarks>
     public override Type Type { get; } = right is MongoConstantExpression { Value: null } ? left.Type : right.Type;
 }

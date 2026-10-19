@@ -17,22 +17,16 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
-/// <summary>
-/// Represents a <c>$skip</c> aggregation stage that skips a specified number of documents.
-/// </summary>
+/// <summary>A <c>$skip</c> aggregation stage.</summary>
 internal sealed class MongoSkipStage : MongoPipelineStage
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MongoSkipStage"/> class.
-    /// </summary>
-    /// <param name="offset">The expression that evaluates to the number of documents to skip.</param>
+    /// <summary>Creates a <see cref="MongoSkipStage"/>.</summary>
+    /// <param name="offset">The number of documents to skip.</param>
     public MongoSkipStage(MongoExpression offset)
     {
         Offset = offset;
     }
 
-    /// <summary>
-    /// Gets the expression that evaluates to the number of documents to skip.
-    /// </summary>
+    /// <summary>The number of documents to skip.</summary>
     public MongoExpression Offset { get; }
 }

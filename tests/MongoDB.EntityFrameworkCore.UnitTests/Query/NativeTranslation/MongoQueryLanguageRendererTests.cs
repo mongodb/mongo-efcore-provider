@@ -38,9 +38,8 @@ public class MongoQueryLanguageRendererTests
         public string Name { get; set; } = null!;
         public string Nickname { get; set; } = null!;
 
-        // Final-review fix 3 (EF-421 round 2): a value-converted (non-default-serialized) bool, so a bare
-        // outer-scoped reference to it under Not can exercise RenderUnary's fall-to-$expr branch's own
-        // truthiness guard (see Not_over_a_bare_outer_field_with_non_default_serialization_declines... below).
+        // A value-converted bool, for the truthiness guard in RenderUnary's fall-to-$expr branch (see
+        // Not_over_a_bare_outer_field_with_non_default_serialization_declines...).
         public bool ConvertedActive { get; set; }
     }
 
@@ -80,7 +79,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 1: simple GreaterThan comparison → { Age: { $gt: 21 } }
+    // simple GreaterThan comparison → { Age: { $gt: 21 } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -99,7 +98,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 2: AndAlso of two ranges on the same field merges operator docs
+    // AndAlso of two ranges on the same field merges operator docs
     //         Age > 21 && Age < 65 → { Age: { $gt: 21, $lt: 65 } }
     // ------------------------------------------------------------------
 
@@ -125,7 +124,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 3: Equal comparison → bare { Age: value } (no $eq wrapper)
+    // Equal comparison → bare { Age: value } (no $eq wrapper)
     // ------------------------------------------------------------------
 
     [Fact]
@@ -144,7 +143,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 4: NotEqual → { Age: { $ne: value } }
+    // NotEqual → { Age: { $ne: value } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -163,7 +162,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 5: LessThanOrEqual → { Age: { $lte: value } }
+    // LessThanOrEqual → { Age: { $lte: value } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -182,7 +181,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 6: GreaterThanOrEqual → { Age: { $gte: value } }
+    // GreaterThanOrEqual → { Age: { $gte: value } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -201,7 +200,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 7: OrElse → { $or: [ { Age: { $lt: 18 } }, { Age: { $gt: 65 } } ] }
+    // OrElse → { $or: [ { Age: { $lt: 18 } }, { Age: { $gt: 65 } } ] }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -228,7 +227,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 8: bare bool field → { Active: true }
+    // bare bool field → { Active: true }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -243,7 +242,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 9: Not(bool field) → { Active: { $ne: true } }
+    // Not(bool field) → { Active: { $ne: true } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -259,7 +258,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 10: B2 parameter placeholder — renders sentinel, records in PlaceholderTable
+    // Parameter placeholder — renders sentinel, records in PlaceholderTable
     // ------------------------------------------------------------------
 
     [Fact]
@@ -280,8 +279,7 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal("p0", placeholders.Entries[0].Name);
         Assert.NotNull(placeholders.Entries[0].Serializer);
 
-        // The rendered body must be { Age: { $gt: <sentinel> } } where the sentinel is
-        // a placeholder marker document that TryGetPlaceholderIndex recognises as index 0.
+        // { Age: { $gt: <sentinel> } }, where the sentinel is recognized as placeholder index 0.
         var rendered_doc = Assert.IsType<BsonDocument>(rendered);
         var ageCond = Assert.IsType<BsonDocument>(rendered_doc["Age"]);
         var sentinelValue = ageCond["$gt"];
@@ -290,7 +288,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 11: AndAlso with two different fields — no merge, remain flat { f1: ..., f2: ... }
+    // AndAlso with two different fields — no merge, remain flat { f1: ..., f2: ... }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -313,14 +311,13 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 12: MongoConstantExpression with null ForSerialization (Skip/Take count)
+    // MongoConstantExpression with null ForSerialization (Skip/Take count)
     //          → BsonValue.Create(value), no throw
     // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_constant_with_null_ForSerialization_as_BsonValue()
     {
-        // MongoConstantExpression(5, forSerialization: null) — Skip/Take count
         var constant = new MongoConstantExpression(5, forSerialization: null);
         var placeholders = new PlaceholderTable();
 
@@ -330,31 +327,28 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 13: MongoParameterExpression with null ForSerialization (Skip/Take count)
+    // MongoParameterExpression with null ForSerialization (Skip/Take count)
     //          → placeholder with null serializer, no throw
     // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_parameter_with_null_ForSerialization_as_null_serializer_placeholder()
     {
-        // MongoParameterExpression("p", forSerialization: null) — Skip/Take count
         var parameter = new MongoParameterExpression("p", forSerialization: null);
         var placeholders = new PlaceholderTable();
 
         var result = MongoValueRenderer.RenderValue(parameter, placeholders);
 
-        // Must record a placeholder entry with null serializer.
         Assert.Single(placeholders.Entries);
         Assert.Equal("p", placeholders.Entries[0].Name);
         Assert.Null(placeholders.Entries[0].Serializer);
 
-        // The returned value must be a valid sentinel.
         Assert.True(PlaceholderTable.TryGetPlaceholderIndex(result, out var index));
         Assert.Equal(0, index);
     }
 
     // ------------------------------------------------------------------
-    // Test 14: field-to-field comparison → { $expr: { $eq: ['$Age', '$Score'] } }
+    // field-to-field comparison → { $expr: { $eq: ['$Age', '$Score'] } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -371,7 +365,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 15: mixed AND keeps the indexable branch in query dialect
+    // mixed AND keeps the indexable branch in query dialect
     // ------------------------------------------------------------------
 
     [Fact]
@@ -394,10 +388,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 16: `== null` renders as a bare null value → { Name: null }
-    // Matches the driver-LINQ fallback's rendering, which also relies on
-    // MongoDB's standard { field: null } semantics (matches explicit null
-    // OR a missing field) for `== null` predicates.
+    // `== null` renders as a bare null value → { Name: null } (matches null or missing)
     // ------------------------------------------------------------------
 
     [Fact]
@@ -413,7 +404,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 17: MongoInExpression over an inline constant collection → { field: { $in: [...] } }
+    // MongoInExpression over an inline constant collection → { field: { $in: [...] } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -429,7 +420,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 18: negated MongoInExpression over an inline constant collection → { field: { $nin: [...] } }
+    // negated MongoInExpression over an inline constant collection → { field: { $nin: [...] } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -445,10 +436,9 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 18b (EF-322): MongoInExpression over a MongoValueListExpression of separately-named parameters
-    // (`new[] { prm1, prm2 }.Contains(c.Age)`) → { Age: { $in: [<sentinel0>, <sentinel1>] } }, one
-    // independent placeholder entry per element — not a single CreateArrayPlaceholder sentinel for the
-    // whole array (that's the single-array-valued-parameter shape, unrelated to this one).
+    // MongoInExpression over a MongoValueListExpression of separate parameters
+    // (`new[] { prm1, prm2 }.Contains(c.Age)`) → { Age: { $in: [<sentinel0>, <sentinel1>] } }, one placeholder
+    // per element (not a single array placeholder).
     // ------------------------------------------------------------------
 
     [Fact]
@@ -482,9 +472,8 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 19-23: MongoRegexExpression (EF-329) → $regularExpression, matching the driver-LINQ v3
-    // rendering shape empirically captured under MongoQueryMode.DriverLinq (see Task 6 report):
-    // { field: { $regularExpression: { pattern: "<anchored/escaped>", options: "s" } } }.
+    // MongoRegexExpression → { field: { $regularExpression: { pattern, options: "s" } } }, the same
+    // shape the driver-LINQ path emits.
     // ------------------------------------------------------------------
 
     [Fact]
@@ -539,9 +528,8 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void Renders_parameterized_regex_term_as_a_placeholder_sentinel()
     {
-        // A parameterized term can't be escaped/anchored at render time (the value isn't known yet) — it
-        // must defer to a placeholder sentinel that MongoPipelineFactory.Build resolves per execution
-        // (see MongoPipelineFactoryTests for the end-to-end escape+anchor behavior at Build time).
+        // A parameterized term can't be escaped/anchored at render time; it defers to a placeholder resolved per
+        // execution (see MongoPipelineFactoryTests).
         var name = GetProperty<Customer>("Name");
         var placeholders = new PlaceholderTable();
         var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
@@ -566,6 +554,32 @@ public class MongoQueryLanguageRendererTests
         Assert.True(
             PlaceholderTable.TryGetPlaceholderIndex(rendered["Name"].AsBsonDocument["$not"], out var index));
         Assert.Equal(0, index);
+    }
+
+    [Fact]
+    public void Renders_pattern_kind_as_regex_with_its_own_options()
+    {
+        // Regex.IsMatch(field, constantPattern): pattern is unescaped and options come verbatim from
+        // PatternOptions, not from CaseInsensitive/"s".
+        var name = GetProperty<Customer>("Name");
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.Pattern, new MongoConstantExpression("^S", name), negated: false, patternOptions: "");
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+        Assert.Equal(
+            BsonDocument.Parse("{ Name: { $regularExpression: { pattern: '^S', options: '' } } }"),
+            rendered);
+    }
+
+    [Fact]
+    public void Renders_negated_pattern_kind_as_not_wrapped_regex()
+    {
+        var name = GetProperty<Customer>("Name");
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.Pattern, new MongoConstantExpression("^S", name), negated: true, patternOptions: "");
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+        Assert.Equal(
+            BsonDocument.Parse("{ Name: { $not: { $regularExpression: { pattern: '^S', options: '' } } } }"),
+            rendered);
     }
 
     [Fact]
@@ -608,8 +622,7 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void Renders_multi_condition_elem_match_as_a_single_element_match()
     {
-        // The whole point of $elemMatch over the dotted-path alternative: BOTH conditions must hold for
-        // the SAME element. Pinning the rendered shape locks that semantic.
+        // $elemMatch requires both conditions to hold for the same element, unlike the dotted-path alternative.
         var heading = GetPostProperty(nameof(Post.Heading));
         var rank = GetPostProperty(nameof(Post.Rank));
         var pred = new MongoElemMatchExpression(
@@ -651,9 +664,8 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void Renders_bare_Any_as_array_index_exists()
     {
-        // Bare Any() IS "Count >= 1" and is represented as exactly that, so the two cannot render differently.
-        // { "Posts.0": { $exists: true } } is index-usable AND correct for an empty array, a MISSING field, and
-        // an explicitly-null one ({ Posts: { $ne: [] } } would wrongly match the last two).
+        // Bare Any() is represented as Count >= 1. { "Posts.0": { $exists: true } } is index-usable and correct
+        // for empty, missing, and null arrays ({ Posts: { $ne: [] } } would wrongly match the last two).
         var pred = new MongoBinaryExpression(
             MongoBinaryOperator.GreaterThanOrEqual,
             new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
@@ -683,7 +695,7 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void Renders_nested_elem_match_with_relative_inner_path()
     {
-        // The inner array path is relative to the ELEMENT ("Comments"), not the root ("Posts.Comments").
+        // The inner array path is element-relative ("Comments"), not root-relative ("Posts.Comments").
         var heading = GetPostProperty(nameof(Post.Heading));
         var inner = new MongoElemMatchExpression(
             "Comments",
@@ -720,8 +732,7 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void IsQueryDialectRenderable_rejects_a_field_to_field_comparison()
     {
-        // Field-to-field has no query-dialect form: RenderNode would fall through to RenderAsExpr ($expr),
-        // which is not usable inside $elemMatch.
+        // Field-to-field has no query-dialect form; it would render as $expr, which is illegal inside $elemMatch.
         var rank = GetPostProperty(nameof(Post.Rank));
         var pred = new MongoBinaryExpression(
             MongoBinaryOperator.GreaterThan,
@@ -734,9 +745,7 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void IsQueryDialectRenderable_accepts_Not_over_a_query_native_comparison()
     {
-        // Flipped by the owned-collection All slice: RenderUnary now renders this as
-        // { Rank: { $not: { $eq: 2 } } }, the exact complement. Previously it threw, so the classifier
-        // correctly rejected it.
+        // RenderUnary renders this as { Rank: { $not: { $eq: 2 } } }, the exact complement.
         var rank = GetPostProperty(nameof(Post.Rank));
         var pred = new MongoUnaryExpression(
             MongoUnaryOperator.Not,
@@ -754,13 +763,9 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void Not_over_a_parameterized_equality_wraps_the_sentinel_in_eq()
     {
-        // Final-review finding I-1: the ONLY document-valued RenderComparison output RenderUnary's '$'-prefix
-        // check can actually see here is PlaceholderTable's parameter sentinel, { __mongoef_param__: N } —
-        // NOT "equality against a document-valued property" (RenderComparison only ever receives a mapped
-        // SCALAR IProperty leaf, so that input never occurs). The sentinel IS a BsonDocument but is NOT
-        // '$'-prefixed, so this pins that the $eq wrap still applies to it exactly as it does for an inline
-        // constant — i.e. !(x.Rank == capturedLocal) renders correctly, not as the illegal
-        // { Rank: { $not: { __mongoef_param__: 0 } } } bare-value-under-$not form.
+        // The only document-valued RenderComparison output RenderUnary's '$'-prefix check sees is the parameter
+        // sentinel { __mongoef_param__: N }. It isn't '$'-prefixed, so it still gets the $eq wrap and
+        // !(x.Rank == capturedLocal) doesn't render as the illegal { Rank: { $not: { __mongoef_param__: 0 } } }.
         var rank = GetPostProperty(nameof(Post.Rank));
         var pred = new MongoUnaryExpression(
             MongoUnaryOperator.Not,
@@ -783,14 +788,9 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void IsQueryDialectRenderable_still_rejects_but_Render_now_falls_to_expr_for_Not_over_a_field_to_field_comparison()
     {
-        // RenderUnary's query-dialect arm is still gated on IsQueryNativeComparison, so the QUERY dialect
-        // still cannot express this shape and the classifier must still reject it (unchanged — this keeps
-        // the $expr-inside-$elemMatch invariant intact, since IsQueryDialectRenderable is what a caller like
-        // an $elemMatch element predicate consults).
-        //
-        // EF-396: at the TOP level (not inside $elemMatch), RenderUnary no longer throws for this shape —
-        // it falls to MongoAggregationExpressionRenderer via CanRender/Render and renders
-        // { $expr: { $not: [ { $gt: ["$Rank", "$Other"] } ] } } instead of declining.
+        // The query dialect can't express this, so the classifier must reject it (keeping $expr out of
+        // $elemMatch). At the top level RenderUnary falls to the aggregation renderer instead:
+        // { $expr: { $not: [ { $gt: ["$Rank", "$Other"] } ] } }.
         var rank = GetPostProperty(nameof(Post.Rank));
         var pred = new MongoUnaryExpression(
             MongoUnaryOperator.Not,
@@ -811,17 +811,10 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void Not_over_a_bare_outer_field_with_non_default_serialization_declines_instead_of_expr_truthiness()
     {
-        // Final-review fix 3 (EF-421 round 2): RenderUnary's fall-to-$expr branch (the one exercised by the
-        // test immediately above, for a field-to-field comparison operand) calls
-        // MongoAggregationExpressionRenderer.CanRender(unary.Operand) directly on the OPERAND — NOT re-entering
-        // CanRender's own MongoUnaryExpression{Not} arm, which already carries the AllFieldsDefaultSerialized
-        // truthiness guard. A bare MongoOuterFieldExpression operand instead hits CanRender's unconditional top
-        // arm (`MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression => true`), so
-        // without this call site repeating the guard itself, a value-converted (non-default-serialized) outer
-        // bool under Not would render as { $expr: { $not: ["$ConvertedActive"] } } — raw truthiness on the
-        // STORED string ("True"/"False", both non-empty and therefore truthy) — instead of correctly declining.
-        // The render-time NativeTranslationNotSupportedException is caught by TryBuildPipeline as a graceful
-        // driver-LINQ fallback, matching every other truthiness guard in this file's disposition.
+        // RenderUnary's fall-to-$expr branch calls CanRender on the operand directly, bypassing CanRender's Not
+        // arm and its AllFieldsDefaultSerialized guard; a bare outer field is unconditionally renderable there.
+        // Without its own guard, a value-converted bool under Not would render as raw truthiness on the stored
+        // "True"/"False" strings (both truthy). The exception becomes a driver-LINQ fallback in TryBuildPipeline.
         var convertedActive = GetConvertedActiveProperty();
         var pred = new MongoUnaryExpression(
             MongoUnaryOperator.Not, new MongoOuterFieldExpression(convertedActive, "ConvertedActive"));
@@ -833,9 +826,7 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void Not_over_a_bare_outer_field_with_default_serialization_still_renders_via_expr()
     {
-        // Control for the test above: an OUTER bool field with ORDINARY (default) serialization must keep
-        // rendering successfully via $expr — the new guard must not over-decline a genuinely renderable outer
-        // bool under Not, only a non-default-serialized one.
+        // Control: a default-serialized outer bool under Not must still render via $expr.
         var active = GetProperty<Customer>("Active");
         var pred = new MongoUnaryExpression(MongoUnaryOperator.Not, new MongoOuterFieldExpression(active, "Active"));
 
@@ -898,7 +889,7 @@ public class MongoQueryLanguageRendererTests
             new MongoBinaryExpression(MongoBinaryOperator.AndAlso, good, good)));
         Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
             new MongoBinaryExpression(MongoBinaryOperator.AndAlso, good, bad)));
-        // Bare Any() IS "Count >= 1" — represented as a count comparison, not a MongoElemMatchExpression.
+        // Bare Any() is a count comparison, not a MongoElemMatchExpression.
         Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
             new MongoBinaryExpression(
                 MongoBinaryOperator.GreaterThanOrEqual,
@@ -907,15 +898,14 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // MongoSizeExpression.NullSafe (EF-322 Task 2)
+    // MongoSizeExpression.NullSafe
     // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_a_null_safe_size_in_the_expr_dialect_with_ifNull()
     {
-        // $size against a MISSING or explicitly-null embedded array is a HARD SERVER ERROR that aborts the
-        // whole aggregate — the same failure mode the driver's own count translation has. $ifNull maps both
-        // states to [], giving 0, which is what LINQ's Count answers for a missing embedded array.
+        // $size on a missing or null array is a server error that aborts the aggregate. $ifNull maps both to [],
+        // giving 0, which is what LINQ's Count answers.
         var pred = new MongoBinaryExpression(
             MongoBinaryOperator.GreaterThan,
             new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
@@ -923,8 +913,9 @@ public class MongoQueryLanguageRendererTests
 
         var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
 
+        // The parameter is the lower side of $gt, so the comparison is the second conjunct of its null guard.
         var expr = rendered.AsBsonDocument["$expr"].AsBsonDocument;
-        var size = expr["$gt"].AsBsonArray[0].AsBsonDocument;
+        var size = expr["$and"].AsBsonArray[1].AsBsonDocument["$gt"].AsBsonArray[0].AsBsonDocument;
         Assert.Equal(
             BsonDocument.Parse("{ $size: { $ifNull: [ '$Posts', [] ] } }"),
             size);
@@ -933,9 +924,8 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void Renders_a_non_null_safe_size_without_ifNull_so_the_lookup_alias_form_is_unchanged()
     {
-        // The projected reference-collection Count path constructs MongoSizeExpression with the DEFAULT
-        // nullSafe: false, because a $lookup output alias is always an array. Several committed spec
-        // baselines pin { "$size" : "$_lookup_Orders" }; this test is what keeps them from moving.
+        // The projected reference-collection Count uses nullSafe: false, since a $lookup alias is always an
+        // array. Spec baselines pin { "$size" : "$_lookup_Orders" }.
         var rendered = MongoAggregationExpressionRenderer.Render(
             new MongoSizeExpression("_lookup_Orders", typeof(int)), new PlaceholderTable());
 
@@ -1010,11 +1000,8 @@ public class MongoQueryLanguageRendererTests
             BsonDocument.Parse("{ 'Posts.2': { $exists: true } }"),
             RenderCount(MongoBinaryOperator.GreaterThan, 2L));
 
-    // NOTE: the brief specified a single [Theory]/[InlineData(MongoBinaryOperator..., ...)] here, but
-    // MongoBinaryOperator is internal and a public [Theory] method cannot expose an internal type in its
-    // signature (CS0051) while the class itself stays public — the same CS0051 already documented in
-    // MongoExpressionNegatorTests.cs. Split into five [Fact]s (via a private, non-public helper) carrying
-    // the identical assertions instead.
+    // Five [Fact]s via a private helper rather than a [Theory]: MongoBinaryOperator is internal, and a public
+    // [Theory] can't expose it in its signature (CS0051).
 
     // Tautologies and contradictions: no index arithmetic is possible, so these are NOT admissible in the
     // query dialect and must route to $expr, which handles them correctly and generally.
@@ -1049,14 +1036,8 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void A_hand_built_non_integer_count_threshold_routes_to_expr()
     {
-        // This node is constructed directly (Count(...) below builds a MongoBinaryExpression by hand), not
-        // translated from LINQ — that framing matters here. `Where(b => b.Posts.Count > 2.5)` written as
-        // ordinary C# LINQ never reaches TryGetIntegerThreshold at all: C# promotes the int count via a
-        // compiler-inserted Convert(count, double), and TranslateOperand's convert guard (allowNumericWidening:
-        // false on the comparison path) rejects that convert first, so the whole predicate falls back to
-        // driver-LINQ before this renderer is ever consulted. TryGetIntegerThreshold's non-integral rejection
-        // is real code, but it is reachable only from a hand-built tree like this one — the same class of
-        // statement as the Count() > 0 upstream-rewrite finding recorded in Query/AGENTS.md.
+        // Reachable only from a hand-built tree: in real LINQ, `Count > 2.5` inserts Convert(count, double), which
+        // TranslateOperand's convert guard rejects first, so the predicate falls back before this renderer.
         var rendered = RenderCount(MongoBinaryOperator.GreaterThan, 2.5).AsBsonDocument;
 
         Assert.True(rendered.Contains("$expr"));
@@ -1067,9 +1048,8 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void A_parameterized_count_threshold_is_not_query_dialect_renderable()
     {
-        // This is what makes a parameterized count nested inside $elemMatch decline with NO new guard: the
-        // quantifier arm already gates its child on this classifier, and $expr inside $elemMatch is a hard
-        // server error.
+        // A parameterized count inside $elemMatch declines with no extra guard: the quantifier arm gates its
+        // child on this classifier, and $expr inside $elemMatch is a server error.
         var parameterized = new MongoBinaryExpression(
             MongoBinaryOperator.GreaterThan,
             new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
@@ -1086,9 +1066,8 @@ public class MongoQueryLanguageRendererTests
     [Fact]
     public void A_count_comparison_composes_inside_an_elem_match()
     {
-        // The whole point of the constant tier: pure query dialect, so it is legal inside $elemMatch, where
-        // $expr is a hard server error. The inner array path is ELEMENT-relative ("Comments"), as $elemMatch
-        // requires.
+        // The constant tier is pure query dialect, so it's legal inside $elemMatch (where $expr is a server
+        // error). The inner array path is element-relative, as $elemMatch requires.
         var pred = new MongoElemMatchExpression(
             "Posts",
             new MongoBinaryExpression(
