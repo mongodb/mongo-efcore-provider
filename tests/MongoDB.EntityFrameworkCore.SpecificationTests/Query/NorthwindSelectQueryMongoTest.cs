@@ -84,8 +84,8 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : 0 } }, "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$literal" : 0 } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_conditional_flatten_nested_results(bool async)
@@ -104,7 +104,7 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : false, "else" : true } }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
+Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : { "$literal" : false }, "else" : { "$literal" : true } } }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
 """);
     }
 
@@ -563,7 +563,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$toLong" : { "$abs" : "$_id" } }, "_id" : 0 } }
+            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$abs" : "$_id" }, "_id" : 0 } }
             """);
     }
 
@@ -592,8 +592,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", null] }, "then" : true, "else" : { "$lt" : ["$_id", 100] } } }, "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", null] }, "then" : { "$literal" : true }, "else" : { "$lt" : ["$_id", 100] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_over_10_nested_ternary_condition(bool isAsync)
@@ -602,8 +602,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "1"] }, "then" : "01", "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "2"] }, "then" : "02", "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "3"] }, "then" : "03", "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "4"] }, "then" : "04", "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "5"] }, "then" : "05", "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "6"] }, "then" : "06", "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "7"] }, "then" : "07", "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "8"] }, "then" : "08", "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "9"] }, "then" : "09", "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "10"] }, "then" : "10", "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "11"] }, "then" : "11", "else" : null } } } } } } } } } } } } } } } } } } } } } }, "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "1"] }, "then" : { "$literal" : "01" }, "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "2"] }, "then" : { "$literal" : "02" }, "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "3"] }, "then" : { "$literal" : "03" }, "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "4"] }, "then" : { "$literal" : "04" }, "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "5"] }, "then" : { "$literal" : "05" }, "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "6"] }, "then" : { "$literal" : "06" }, "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "7"] }, "then" : { "$literal" : "07" }, "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "8"] }, "then" : { "$literal" : "08" }, "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "9"] }, "then" : { "$literal" : "09" }, "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "10"] }, "then" : { "$literal" : "10" }, "else" : { "$cond" : { "if" : { "$eq" : ["$_id", "11"] }, "then" : { "$literal" : "11" }, "else" : { "$literal" : null } } } } } } } } } } } } } } } } } } } } } } }, "_id" : 0 } }
+""");
     }
 
 #if EF9
@@ -623,7 +623,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : 0 } }, "_id" : 0 } }
+            Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : "$_id", "else" : { "$literal" : 0 } } }, "_id" : 0 } }
             """);
     }
 
@@ -643,7 +643,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : false, "else" : true } }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
+Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : { "$literal" : false }, "else" : { "$literal" : true } } }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "_id" : 0 } }
 """);
     }
 
@@ -881,8 +881,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq"
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI"] }, "then" : 1, "else" : 2 } }, "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI"] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 2 } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_short_constant(bool async)
@@ -891,8 +891,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq"
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI"] }, "then" : 1, "else" : 2 } }, "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI"] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 2 } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_bool_constant(bool async)
@@ -901,8 +901,8 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq"
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI"] }, "then" : true, "else" : false } }, "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI"] }, "then" : { "$literal" : true }, "else" : { "$literal" : false } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Anonymous_projection_AsNoTracking_Selector(bool async)
@@ -927,19 +927,11 @@ Orders.{ "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }
 
     public override async Task Anonymous_projection_with_repeated_property_being_ordered_2(bool async)
     {
-#if EF8 || EF9
-        await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
-        AssertMql(
-            """
-Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "A" : "$_v._inner._id", "B" : "$_v._outer.CustomerID", "_id" : 0 } }
-""");
-    #else
         await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
         AssertMql(
             """
 Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "A" : "$_lookup_Customer._id", "B" : "$CustomerID", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Select_GetValueOrDefault_on_DateTime(bool async)
@@ -999,8 +991,8 @@ Customers.
 
         AssertMql(
             """
-            Orders.{ "$project" : { "One" : "$CustomerID", "Two" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", "ALFKI"] }, "then" : { "X" : "$_id", "Y" : { "$strLenCP" : "$CustomerID" } }, "else" : null } }, "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "One" : "$CustomerID", "Two" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", "ALFKI"] }, "then" : { "X" : "$_id", "Y" : { "$strLenCP" : "$CustomerID" } }, "else" : { "$literal" : null } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Multiple_select_many_with_predicate(bool async)
@@ -1133,7 +1125,7 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$let" : { "vars" : { "this" : { "_id" : "$_id", "City" : "$City" } }, "in" : "$$this.City" } } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 3 }, { "$project" : { "_id" : "$_id", "City" : "$City" } }
+            Customers.{ "$sort" : { "City" : 1 } }, { "$limit" : 3 }, { "$project" : { "_ctorArg0" : "$_id", "_ctorArg1" : "$City", "_id" : 0 } }
             """);
     }
 
@@ -1300,8 +1292,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$ifNull" : ["$EmployeeID", 0] }, "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "_v" : { "$ifNull" : ["$EmployeeID", { "$literal" : 0 }] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Project_uint_through_collection_FirstOrDefault(bool async)
@@ -1571,12 +1563,6 @@ Customers.
 
     public override async Task Custom_projection_reference_navigation_PK_to_FK_optimization(bool async)
     {
-#if EF8 || EF9
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Custom_projection_reference_navigation_PK_to_FK_optimization(async));
-
-        AssertMql();
-#else
         // native-join-scope-nested-projection ticket: this shape (`new Order { OrderID, Customer = new
         // Customer { CustomerID = o.Customer.CustomerID, City = o.Customer.City }, OrderDate }`) is exactly
         // the design's in-scope case — a nested MemberInit leaf sourced from a join scope, mixed with
@@ -1588,7 +1574,6 @@ Customers.
             """
 Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "OrderID" : "$_id", "Customer" : { "CustomerID" : "$_lookup_Customer._id", "City" : "$_lookup_Customer.City" }, "OrderDate" : "$OrderDate", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Projecting_Length_of_a_string_property_after_FirstOrDefault_on_correlated_collection(bool async)

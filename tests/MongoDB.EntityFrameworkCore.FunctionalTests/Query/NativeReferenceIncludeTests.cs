@@ -970,7 +970,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.All(orders, o => Assert.Equal("Springfield", o.UniCustomerWithAddress.Address.City));
     }
 
-#if !EF8 && !EF9
     [Fact]
     public void Optional_reference_Include_goes_native_with_a_left_outer_unwind()
     {
@@ -988,7 +987,31 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             "\", \"localField\" : \"CarrierId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Carrier\" } }, " +
             "{ \"$unwind\" : { \"path\" : \"$_lookup_Carrier\", \"preserveNullAndEmptyArrays\" : true } }");
     }
-#endif
+
+    [Fact]
+    public void Plain_bool_null_check_sort_key_over_optional_join_inner_matches_oracle()
+    {
+        // EF-322 follow-up: a PLAIN (non-ternary) nav-null-check sort key over a left-outer join's Inner side
+        // — `o => o.Carrier.Name != null` — must sort a row with a missing/dangling Carrier BEFORE a row with
+        // a real one (false < true), exactly like the in-memory LINQ oracle. Reproduces the pre-existing bug
+        // found during Phase 2 Group A review: the plain-value Inner-access arm (NativeSlotPopulator's
+        // `innerSortScope` arm) renders this as a bare `{"$ne": ["$_lookup_Carrier.Name", null]}` in the
+        // aggregation-expression dialect, where a MISSING `_lookup_Carrier` sub-document (both the null-FK and
+        // dangling-FK seeded rows hit this) makes `$_lookup_Carrier.Name` itself missing — and `$ne` against a
+        // missing operand answers `true`, not `false`, in $expr (unlike the ordinary query dialect's
+        // `{field: null}`, which treats missing and null alike). So every row appears to have a non-null
+        // Carrier, and the sort silently degrades to the ThenBy key alone.
+        using var nativeOnlyDb = CreateContext(MongoQueryMode.NativeOnly,
+            nameof(Plain_bool_null_check_sort_key_over_optional_join_inner_matches_oracle) + "_NativeOnly");
+        var nativeResults = nativeOnlyDb.Orders.OrderBy(o => o.Carrier.Name != null).ThenBy(o => o.Total).ToList();
+
+        using var oracleDb = CreateContext(MongoQueryMode.DriverLinq,
+            nameof(Plain_bool_null_check_sort_key_over_optional_join_inner_matches_oracle) + "_Oracle");
+        var oracle = oracleDb.Orders.Include(o => o.Carrier).AsEnumerable()
+            .OrderBy(o => o.Carrier?.Name != null).ThenBy(o => o.Total).Select(o => o.Total).ToList();
+
+        Assert.Equal(oracle, nativeResults.Select(o => o.Total).ToList());
+    }
 
     [Fact]
     public void Two_joins_onto_the_same_target_stay_declined()
@@ -1032,7 +1055,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(3, nativeResults.Count); // 4 orders seeded, 1 dangling buyer, inner Join drops it.
     }
 
-#if !EF8 && !EF9
     [Fact]
     public void Optional_reference_Include_with_a_reducer_and_a_navigation_null_predicate_falls_back_correctly()
     {
@@ -1100,7 +1122,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Null(nativeResult.Carrier);
         Assert.Null(driverResult.Carrier);
     }
-#endif
 
     private ReferenceIncludeDbContext CreateContext(
         MongoQueryMode mode, string name, ILoggerFactory? loggerFactory = null, bool buyerQueryFilter = false)

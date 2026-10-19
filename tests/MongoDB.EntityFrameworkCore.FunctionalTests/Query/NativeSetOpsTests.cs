@@ -1134,22 +1134,20 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal([1, 2, 3, 4, 5], result); // three disjoint sets {1,2} U {3} U {4,5}
     }
 
+    // EF-322 SP6: this used to document GroupBy composed after a completed Union falling back to driver-LINQ
+    // (TranslateGroupBy's post-terminal guard, `hadTerminalGrouping && !hasFinalizedPriorGrouping`, marked the
+    // query non-native unconditionally for ANY terminal, set op included). Now exempted via
+    // MongoSelectDefinition.IsSetOpTerminalOnly, so this shape goes native under NativeOnly instead of
+    // throwing — see GroupBy_after_Union_goes_native below for the dedicated pin. Renamed (was
+    // GroupBy_after_union_falls_back) and its assertion flipped to match; kept as a second, differently-keyed
+    // (bool, not string) regression pin rather than deleted outright.
     [Fact]
-    public void GroupBy_after_union_falls_back()
+    public void GroupBy_after_union_goes_native()
     {
-        var collection = SeedCollection(nameof(GroupBy_after_union_falls_back));
+        var collection = SeedCollection(nameof(GroupBy_after_union_goes_native));
 
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
-                    .GroupBy(i => i.Value % 2 == 0)
-                    .Select(g => new { g.Key, Count = g.Count() })
-                    .ToList());
-        }
-
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var result = nativeDb.Entities.Where(i => i.Value <= 3).Union(nativeDb.Entities.Where(i => i.Value >= 3))
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        var result = nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
             .GroupBy(i => i.Value % 2 == 0)
             .Select(g => new { g.Key, Count = g.Count() })
             .ToList().OrderBy(g => g.Key).ToList();
@@ -1365,6 +1363,114 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var native = Run(nativeDb);
         Assert.Equal(new[] { (1, 1), (2, 1), (3, 1), (4, 1), (5, 1) }, native);
         Assert.Equal(Run(driverDb), native);
+    }
+
+    // EF-322 follow-up (confirmed silent-wrong-data bug, found by whole-branch review): IsPlainGroupBySelect
+    // used to admit an operand carrying GroupPagingOps/GroupHavingPredicate/GroupOrderOp (a Skip/Take, HAVING,
+    // or OrderBy/ThenBy composed on the bare GroupBy result BEFORE its terminal Select(aggregate)) as a
+    // Union/Concat operand. MongoSelectLowerer's OperandsProjected path only ever emits that operand's own
+    // $group + flattening $project -- it has no stage for any of the three -- so admitting them SILENTLY
+    // DROPPED the composition: the operand still ran and contributed rows, just without its own
+    // paging/HAVING/ordering. These three tests pin the fix: each shape must now decline cleanly (throw
+    // NativeTranslationNotSupportedException under NativeOnly) while Native (via driver-LINQ fallback) and
+    // DriverLinq both still return the CORRECT result.
+
+    [Fact]
+    public void GroupBy_operand_with_skip_before_terminal_select_declines_and_stays_correct()
+    {
+        // GroupPagingOps case (newly reachable only since SP6 made Skip/Take composable on a bare
+        // GroupBy(key) result at all). Where(<=3).GroupBy(Value) yields singleton groups for {1,2,3};
+        // OrderBy(Key).Skip(1) drops Key==1, leaving {2,3}. Second operand: Where(>=3).GroupBy(Value), no
+        // paging -> {3,4,5}. Concat (no dedup) of the CORRECT operand1 {2,3} with operand2 {3,4,5} is 5 rows;
+        // the pre-fix bug silently ignored operand1's Skip and combined the UNPAGED {1,2,3} with {3,4,5} = 6
+        // rows instead.
+        var collection = SeedCollection(nameof(GroupBy_operand_with_skip_before_terminal_select_declines_and_stays_correct));
+
+        (int Key, int Count)[] Query(SingleEntityDbContext<Item> db)
+            => db.Entities.Where(i => i.Value <= 3).GroupBy(i => i.Value)
+                    .OrderBy(g => g.Key).Skip(1)
+                    .Select(g => new { g.Key, Count = g.Count() })
+                .Concat(db.Entities.Where(i => i.Value >= 3).GroupBy(i => i.Value)
+                    .Select(g => new { g.Key, Count = g.Count() }))
+                .ToList().OrderBy(x => x.Key).Select(x => (x.Key, x.Count)).ToArray();
+
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Query(nativeOnlyDb));
+
+        var expected = new[] { (2, 1), (3, 1), (3, 1), (4, 1), (5, 1) };
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        Assert.Equal(expected, Query(nativeDb));
+
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        Assert.Equal(expected, Query(driverDb));
+    }
+
+    [Fact]
+    public void GroupBy_operand_with_having_predicate_before_terminal_select_declines_and_stays_correct()
+    {
+        // GroupHavingPredicate case (pre-existing gap, older than SP6 -- simply never caught until now).
+        // Group by (Value <= 2) so the groups have DIFFERENT sizes (unlike GroupBy(Value), whose groups are
+        // always singletons here) -- the HAVING predicate must actually remove a group, or admitting it would
+        // produce the SAME result as declining it and the test couldn't tell the two apart.
+        // Operand1: Where(<=3) -> {1,2,3}; GroupBy(Value<=2) -> {true: [1,2] Count=2, false: [3] Count=1};
+        // Where(g.Count() >= 2) keeps ONLY {true, 2}, dropping {false, 1}.
+        // Operand2: Where(>=3) -> {3,4,5}; GroupBy(Value<=2) -> {false: [3,4,5] Count=3} (no HAVING).
+        // Concat (no dedup) of the CORRECTLY-filtered operand1 {(true,2)} with operand2 {(false,3)} is 2 rows;
+        // the pre-fix bug silently dropped the HAVING filter, admitting operand1's UNFILTERED {true,2}
+        // AND {false,1}, giving 3 rows instead ({false,1} should never have survived).
+        var collection = SeedCollection(nameof(GroupBy_operand_with_having_predicate_before_terminal_select_declines_and_stays_correct));
+
+        (bool Key, int Count)[] Query(SingleEntityDbContext<Item> db)
+            => db.Entities.Where(i => i.Value <= 3).GroupBy(i => i.Value <= 2)
+                    .Where(g => g.Count() >= 2)
+                    .Select(g => new { g.Key, Count = g.Count() })
+                .Concat(db.Entities.Where(i => i.Value >= 3).GroupBy(i => i.Value <= 2)
+                    .Select(g => new { g.Key, Count = g.Count() }))
+                .ToList().OrderBy(x => x.Key).Select(x => (x.Key, x.Count)).ToArray();
+
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Query(nativeOnlyDb));
+
+        var expected = new[] { (false, 3), (true, 2) };
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        Assert.Equal(expected, Query(nativeDb));
+
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        Assert.Equal(expected, Query(driverDb));
+    }
+
+    [Fact]
+    public void GroupBy_operand_with_order_only_before_terminal_select_declines_and_stays_correct()
+    {
+        // GroupOrderOp case with NO paging attached (OrderBy alone, no Skip/Take): NativeGroupByBinder sets
+        // GroupOrderOp whenever there are resolved orderings at all, regardless of whether paging follows
+        // (see NativeGroupByBinder.cs ~line 341), so this is independently reachable from the GroupPagingOps
+        // case above. An OrderBy alone doesn't change WHICH rows come out, only their order within the
+        // operand -- but Concat/Union both re-materialize as an unordered pipeline result (the ordering isn't
+        // preserved through $unionWith), so this test only asserts the (order-independent) row set, mirroring
+        // the other two cases' shape rather than an ordering guarantee this operator never made anyway.
+        var collection = SeedCollection(nameof(GroupBy_operand_with_order_only_before_terminal_select_declines_and_stays_correct));
+
+        (int Key, int Count)[] Query(SingleEntityDbContext<Item> db)
+            => db.Entities.Where(i => i.Value <= 3).GroupBy(i => i.Value)
+                    .OrderBy(g => g.Key)
+                    .Select(g => new { g.Key, Count = g.Count() })
+                .Concat(db.Entities.Where(i => i.Value >= 3).GroupBy(i => i.Value)
+                    .Select(g => new { g.Key, Count = g.Count() }))
+                .ToList().OrderBy(x => x.Key).Select(x => (x.Key, x.Count)).ToArray();
+
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Query(nativeOnlyDb));
+
+        var expected = new[] { (1, 1), (2, 1), (3, 1), (3, 1), (4, 1), (5, 1) };
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        Assert.Equal(expected, Query(nativeDb));
+
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        Assert.Equal(expected, Query(driverDb));
     }
 
     [Fact]
@@ -2534,6 +2640,121 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 .Union(db.Entities.Where(i => i.Value >= 2))
                 .Intersect(db.Entities.Where(i => i.Value == 2))
                 .ToList());
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void GroupBy_after_Union_goes_native(MongoQueryMode mode)
+    {
+        // Union_simple_groupby's exact shape: Where(...).Union(Where(...)).GroupBy(key).Select(aggregate).
+        // Union of {Value<=3} ({One,Two,Three}) and {Value>=3} ({Three,Four,Five}) dedups the shared
+        // Value==3 document (Three) — 5 distinct items, unique Names, so GroupBy(Name) yields 5 groups of 1.
+        var collection = SeedCollection(nameof(GroupBy_after_Union_goes_native) + mode);
+        using var db = Make(collection, mode);
+
+        // NOTE deviation from the brief's literal test text: an .OrderBy composed on the IQueryable directly
+        // AFTER GroupBy(key).Select(aggregate) hits NativeSlotPopulator's PRE-EXISTING post-group-operator
+        // guard (mongoQ.Select.HasTerminalOperator && !IsSetOpTerminalOnly && IsSevenSlotOperator) -- once
+        // IsGroupBy/Grouping are set by this GroupBy+Select, IsSetOpTerminalOnly is false regardless of the
+        // Union underneath, so the SAME guard that declines
+        // GroupBy_post_group_OrderBy_by_aggregate_matches_driver_linq (NativeGroupByTests.cs) fires here too --
+        // unrelated to this task's guard relaxations. Sorting client-side via .AsEnumerable() first (the same
+        // pattern NativeGroupByTests.cs itself uses for every ordered post-group assertion) keeps the ORDER BY
+        // off the native pipeline so this test actually exercises Task 1's fix instead of a pre-existing,
+        // orthogonal limitation.
+        var result = db.Entities
+            .Where(i => i.Value <= 3)
+            .Union(db.Entities.Where(i => i.Value >= 3))
+            .GroupBy(i => i.Name)
+            .Select(g => new { g.Key, Total = g.Count() })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .ToArray();
+
+        Assert.Equal(5, result.Length);
+        Assert.All(result, r => Assert.Equal(1, r.Total));
+        Assert.Equal(["Five", "Four", "One", "Three", "Two"], result.Select(r => r.Key).ToArray());
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Union_then_GroupBy_OrderBy_Skip_Select_goes_native(MongoQueryMode mode)
+    {
+        // Pins Task 1 (GroupBy after a completed Union) and Task 2 (OrderBy/Skip composed on the still-bare
+        // GroupBy result, before the terminal Select) working together in one query. Same Union as
+        // GroupBy_after_Union_goes_native above (5 distinct items, unique Names) — OrderBy(g => g.Key)
+        // ascending gives Five, Four, One, Three, Two; Skip(1) drops "Five", leaving the other four.
+        var collection = SeedCollection(nameof(Union_then_GroupBy_OrderBy_Skip_Select_goes_native) + mode);
+        using var db = Make(collection, mode);
+
+        var result = db.Entities
+            .Where(i => i.Value <= 3)
+            .Union(db.Entities.Where(i => i.Value >= 3))
+            .GroupBy(i => i.Name)
+            .OrderBy(g => g.Key)
+            .Skip(1)
+            .Select(g => new { g.Key, Total = g.Count() })
+            .ToArray();
+
+        Assert.Equal(
+            [("Four", 1), ("One", 1), ("Three", 1), ("Two", 1)],
+            result.Select(r => (r.Key, r.Total)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_after_Union_of_projected_operand_does_not_regress_the_preexisting_decline_path()
+    {
+        // A Distinct-shaped projected operand ahead of the Union hits a separate, pre-existing bug (EF-TBD —
+        // see the KNOWN BUG comment on MongoSelectLowerer's SetOperation.OperandsProjected branch, ~line 146)
+        // rather than either succeeding or declining cleanly, so it is out of scope here. This test instead
+        // pins a PLAIN projected operand (no Distinct): it reaches OperandsProjected: true but carries no
+        // operand-side Grouping, so it cannot hit that bug — it still declines via the pre-existing
+        // `hadTerminalGrouping && !hasFinalizedPriorGrouping` guard, proving this task's own guard relaxations
+        // introduce no new regression for an OperandsProjected-shaped operand.
+        var collection = SeedCollection(nameof(GroupBy_after_Union_of_projected_operand_does_not_regress_the_preexisting_decline_path));
+
+        (string Key, int Total)[] Query(SingleEntityDbContext<Item> db)
+            => db.Entities.Select(i => new { i.Name })
+                .Union(db.Entities.Select(i => new { i.Name }))
+                .GroupBy(x => x.Name)
+                .Select(g => new { g.Key, Total = g.Count() })
+                .AsEnumerable()
+                .Select(r => (r.Key, r.Total))
+                .ToArray();
+
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Query(nativeOnlyDb));
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        var result = Query(nativeDb);
+        Assert.Equal(5, result.Length);
+        Assert.All(result, r => Assert.Equal(1, r.Total));
+    }
+
+    [Fact]
+    public void GroupBy_after_Intersect_goes_native()
+    {
+        // {1,2,3} ∩ {2,3,4} = {2,3} (Two, Three) — 2 distinct names, so GroupBy(Name) yields 2 groups of 1.
+        // IsSetOpTerminalOnly is defined generically over IsSetOp (Union/Concat/Intersect/Except alike), and
+        // NativeGroupByBinder binds purely against the entity/accumulator shapes regardless of set-op kind,
+        // so a GroupBy composed after Intersect goes native too, not just after Union/Concat.
+        var collection = SeedCollection(nameof(GroupBy_after_Intersect_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+
+        var result = db.Entities
+            .Where(i => i.Value <= 3)
+            .Intersect(db.Entities.Where(i => i.Value >= 2 && i.Value <= 4))
+            .GroupBy(i => i.Name)
+            .Select(g => new { g.Key, Total = g.Count() })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .ToArray();
+
+        Assert.Equal(
+            [("Three", 1), ("Two", 1)],
+            result.Select(r => (r.Key, r.Total)).ToArray());
     }
 
     private static int CountOccurrences(string haystack, string needle)

@@ -594,15 +594,17 @@ public class SlotPopulationTests
     }
 
     [Fact]
-    public void GroupBy_with_computed_key_falls_back_without_throwing()
+    public void GroupBy_key_with_computed_expression_routes_native_GroupBy()
     {
-        // A computed key (c.Age + 1) is not natively representable; translation must complete (no hard-throw)
-        // and mark the query for driver-LINQ fallback.
+        // EF-322 SP1: a computed key (c.Age + 1) is now natively representable via
+        // NativeGroupByBinder.TryBindGroupKey's TryTranslateValue fallthrough — this used to fall back to
+        // driver-LINQ (pinned here as "falls back without throwing"); it now goes native instead, still
+        // without a hard-throw.
         var mongoQuery = TranslateToMongoQuery<Customer>(
             q => q.GroupBy(c => c.Age + 1).Select(g => new { g.Key, Count = g.Count() }));
 
-        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
-        Assert.NotNull(mongoQuery.CapturedExpression);
+        Assert.Equal(NativeRoute.GroupBy, mongoQuery.Select.Route);
+        Assert.NotNull(mongoQuery.Select.Grouping);
     }
 
     [Fact]
@@ -614,6 +616,54 @@ public class SlotPopulationTests
 
         Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
         Assert.NotNull(mongoQuery.CapturedExpression);
+    }
+
+    [Fact]
+    public void Skip_on_bare_GroupBy_result_defers_to_PendingGroupPaging_without_marking_non_native()
+    {
+        // EF-322 SP6: Skip/Take composed directly on the still-ungrouped GroupBy(key) result must be
+        // deferred (PendingGroupPaging), not declined by the general post-terminal guard — mirrors this
+        // file's own OrderBy/ThenBy carve-out proof for the identical composition position. Route is still
+        // Fallback here (same as GroupBy_without_terminal_Select_falls_back_without_throwing, immediately
+        // above) because no terminal Select ever finalizes Grouping in THIS query either — the point of this
+        // test is that HasUnsupportedOperator stays false and the Skip was actually recognized and deferred,
+        // not silently declined via the catch-all MarkNotNativelyRepresentable (which would ALSO leave Route
+        // at Fallback, so Route alone cannot distinguish the two — HasUnsupportedOperator and
+        // PendingGroupPaging are the actual discriminators here).
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.GroupBy(c => c.Age).Skip(0));
+
+        Assert.False(mongoQuery.Select.HasUnsupportedOperator);
+        var op = Assert.Single(mongoQuery.Select.PendingGroupPaging!);
+        Assert.Equal(0, Assert.IsType<MongoConstantExpression>(Assert.IsType<MongoSkipOp>(op).Count).Value);
+    }
+
+    [Fact]
+    public void Where_HAVING_after_Skip_on_bare_GroupBy_result_declines_instead_of_misordering()
+    {
+        // EF-322 fix round: a HAVING Where arriving AFTER a Skip already recorded into PendingGroupPaging
+        // (GroupBy(key).Skip(1).Where(g => g.Count() >= 2)) must decline outright — MongoSelectLowerer always
+        // emits GroupHavingPredicate BEFORE GroupPagingOps regardless of LINQ arrival order, so silently
+        // stashing this HAVING comparison on top of the already-recorded paging would apply it before the
+        // paging that, in the real LINQ chain, ran first — a wrong evaluation order, not a clean decline.
+        var mongoQuery = TranslateToMongoQuery<Customer>(
+            q => q.GroupBy(c => c.Age).Skip(1).Where(g => g.Count() >= 2));
+
+        Assert.True(mongoQuery.Select.HasUnsupportedOperator);
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
+    }
+
+    [Fact]
+    public void OrderBy_after_Skip_on_bare_GroupBy_result_declines_instead_of_misordering()
+    {
+        // EF-322 fix round: an OrderBy arriving AFTER a Skip already recorded into PendingGroupPaging
+        // (GroupBy(key).Skip(1).OrderByDescending(k => k)) must decline outright — mirrors the Where/HAVING
+        // guard immediately above for the identical reason (GroupOrderOp is always emitted BEFORE
+        // GroupPagingOps by the lowerer, regardless of LINQ arrival order).
+        var mongoQuery = TranslateToMongoQuery<Customer>(
+            q => q.GroupBy(c => c.Age).Skip(1).OrderByDescending(g => g.Key));
+
+        Assert.True(mongoQuery.Select.HasUnsupportedOperator);
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
     }
 
     // The set-op-gate regression (EF-441 Task 1's "also decide and implement" item): a nav-entity-leaf

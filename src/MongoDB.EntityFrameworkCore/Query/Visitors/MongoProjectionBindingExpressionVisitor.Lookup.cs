@@ -513,13 +513,51 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
+    /// For a collection Include whose declaring entity is already bound (by index, on this query expression) to a
+    /// JOINED entity — one read from a cross-collection <see cref="ObjectAccessExpression"/> at the document root,
+    /// e.g. the Inner side of <c>Owners.LeftJoin(Orders.Include(r =&gt; r.OrderLines), ...)</c> — returns the
+    /// pending forced-unwind <c>$lookup</c> that produces that sub-document (matched by its output alias, which is
+    /// exactly the access expression's <see cref="ObjectAccessExpression.Name"/>). This is the same
+    /// <see cref="EntityProjectionExpression.ParentAccessExpression"/> <see cref="RewriteCollectionIncludeForLookup"/>
+    /// builds the READ side from, so the Include's own <c>$lookup</c> can be scoped under the same sub-document
+    /// (nested into that join lookup's own sub-pipeline — see the caller in <see cref="VisitExtension"/>).
+    /// Returns <see langword="null"/> when the entity is not bound that way (e.g. the query root, or an
+    /// unbound/member-bound shaper), leaving the caller's type-based matching in charge.
+    /// </summary>
+    private LookupExpression TryGetDeclaringJoinLookup(IncludeExpression includeExpression)
+    {
+        var entityExpression = includeExpression.EntityExpression;
+        while (entityExpression is IncludeExpression wrappingInclude)
+        {
+            entityExpression = wrappingInclude.EntityExpression;
+        }
+
+        if (entityExpression is not StructuralTypeShaperExpression
+            {
+                ValueBufferExpression: ProjectionBindingExpression { Index: int index } binding
+            }
+            || binding.QueryExpression != _queryExpression
+            || _queryExpression.Projection[index].Expression is not EntityProjectionExpression
+            {
+                ParentAccessExpression: ObjectAccessExpression { AccessExpression: RootReferenceExpression } access
+            }
+            || access.Navigation is { } accessNavigation && accessNavigation.IsEmbedded())
+        {
+            return null;
+        }
+
+        return _queryExpression.GetPendingLookups().FirstOrDefault(l => l.As == access.Name && l.ShouldUnwind);
+    }
+
+    /// <summary>
     /// For cross-collection collection Include (e.g., Customer.Include(c => c.Orders)),
     /// build an IncludeExpression with a CollectionShaperExpression that reads from the $lookup array.
     /// The $lookup stage is appended via AppendLookupStages in the LINQ translator.
     /// </summary>
     private Expression RewriteCollectionIncludeForLookup(
         IncludeExpression includeExpression,
-        INavigation navigation)
+        INavigation navigation,
+        string lookupAlias)
     {
         _includedNavigations.Push(navigation);
         var visitedEntity = Visit(includeExpression.EntityExpression);
@@ -548,7 +586,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return base.VisitExtension(includeExpression);
         }
 
-        var lookupAlias = LookupExpression.GetLookupAlias(navigation);
         var objectArrayProjection = new ObjectArrayProjectionExpression(
             navigation, outerEntityProjection.ParentAccessExpression, lookupAlias);
 

@@ -56,8 +56,17 @@ public class MongoAggregationExpressionRendererDatePartTests
 
         var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
 
+        // SP4 final-review fix: a $cond branch that is itself a bare constant is now $literal-wrapped, the
+        // same way RenderProject/RenderAddFields already wrap a bare top-level constant/parameter (guards
+        // against a "$"-prefixed string branch being misread as a field-path reference) — applied uniformly
+        // to every constant branch, not just ones that happen to start with "$".
         Assert.Equal(
-            new BsonDocument("$cond", new BsonDocument { { "if", true }, { "then", 1 }, { "else", 2 } }),
+            new BsonDocument("$cond", new BsonDocument
+            {
+                { "if", true },
+                { "then", new BsonDocument("$literal", 1) },
+                { "else", new BsonDocument("$literal", 2) }
+            }),
             rendered);
     }
 

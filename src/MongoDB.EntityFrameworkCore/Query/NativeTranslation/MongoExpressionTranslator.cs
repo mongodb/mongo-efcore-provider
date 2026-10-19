@@ -644,6 +644,13 @@ internal sealed partial class MongoExpressionTranslator
             // MongoDateAddExpression immediately above.
             MongoStringIndexOfExpression indexOf
                 => AllFieldsDefaultSerialized(indexOf.Haystack) && AllFieldsDefaultSerialized(indexOf.Needle),
+            // $strLenCP runs directly against its operand's raw BSON representation, same reasoning as
+            // MongoStringIndexOfExpression immediately above.
+            MongoStringLengthExpression length => AllFieldsDefaultSerialized(length.Operand),
+            // Same reasoning as MongoStringLengthExpression immediately above: a Math/MathF function runs
+            // $abs/etc. directly against each operand's raw BSON representation, so a value-converted/
+            // non-default-represented field underneath would run the function against the WRONG value.
+            MongoMathExpression math => math.Operands.All(AllFieldsDefaultSerialized),
             // A constructed-tuple operand's elements each render through the raw $expr field path exactly
             // like an ordinary field-to-field/arithmetic operand — same reasoning as MongoBinaryExpression's
             // arm above, recursed per element instead of per side.
@@ -761,6 +768,13 @@ internal sealed partial class MongoExpressionTranslator
             case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } getTypeEq
                 when TryTranslateGetTypeComparison(getTypeEq, out var getTypeComparison):
                 return getTypeComparison;
+
+            // `root is T` against a non-hierarchy root entity — collapses to a compile-time constant
+            // true/false, same reasoning as the GetType() case just above. See
+            // MongoExpressionTranslator.TypeIs.cs.
+            case TypeBinaryExpression { NodeType: ExpressionType.TypeIs } typeIs
+                when TryTranslateTypeIs(typeIs, out var typeIsResult):
+                return typeIsResult;
 
             // The `.Equals(...)` spelling of the same shape — the only spelling composite-key entity types
             // support, since C# doesn't synthesize a `==` operator for them. See TryTranslateEntityEqualityCall.
@@ -1116,6 +1130,11 @@ internal sealed partial class MongoExpressionTranslator
 
                 return new MongoRegexExpression(fieldNode, kind, termNode, negated: false);
             }
+
+            // --- EF.Functions.Like(matchExpression, pattern) ---
+
+            case MethodCallExpression likeCall when TryTranslateLike(likeCall, out var likeResult):
+                return likeResult;
 
             // --- Quantifiers over an owned (embedded) collection: source.Any() / Any(pred) / All(pred) ---
 
@@ -1537,9 +1556,20 @@ internal sealed partial class MongoExpressionTranslator
                 // property it un-type-brackets the comparison (BSON total ordering admits null under $lt/$lte/
                 // $gt/$gte, where the query dialect would not), silently admitting null/missing rows a
                 // correlated SelectMany inner filter previously excluded.
+                //
+                // EF-322 follow-up: NullSafe when this field is the two-scope translator's Inner side
+                // (_innerPrefix non-null, !leftIsOuter) AND we're comparing it to a literal null via Equal/
+                // NotEqual — an unmatched left-outer-joined row's whole Inner sub-document is entirely MISSING
+                // (not an explicit null), so a nested field under it is itself missing, and $expr's $eq/$ne
+                // don't treat missing the same as null (see MongoFieldExpression.NullSafe's own remarks).
+                // Harmless when the join is actually required/inner (the Inner side is never missing there):
+                // $ifNull(present-field, null) is a no-op.
+                var leftNullSafe = _innerPrefix is not null && !leftIsOuter
+                    && rightUnwrapped is ConstantExpression { Value: null }
+                    && nodeType is ExpressionType.Equal or ExpressionType.NotEqual;
                 MongoExpression leftField = leftIsOuter && _innerPrefix is null
                     ? new MongoOuterFieldExpression(leftProperty, leftPath!)
-                    : new MongoFieldExpression(leftProperty, leftPath!);
+                    : new MongoFieldExpression(leftProperty, leftPath!, leftNullSafe);
                 return new MongoBinaryExpression(mongoOp.Value, leftField, valueExpr);
             }
         }
@@ -1573,9 +1603,13 @@ internal sealed partial class MongoExpressionTranslator
                     return null;
 
                 // Same confinement as the mirrored branch above — see its comment for the full rationale.
+                // Same EF-322 follow-up NullSafe rule as the mirrored branch above, mirrored onto this side.
+                var rightNullSafe = _innerPrefix is not null && !rightIsOuter
+                    && leftUnwrapped is ConstantExpression { Value: null }
+                    && nodeType is ExpressionType.Equal or ExpressionType.NotEqual;
                 MongoExpression rightField = rightIsOuter && _innerPrefix is null
                     ? new MongoOuterFieldExpression(rightProperty, rightPath!)
-                    : new MongoFieldExpression(rightProperty, rightPath!);
+                    : new MongoFieldExpression(rightProperty, rightPath!, rightNullSafe);
                 return new MongoBinaryExpression(mongoOp.Value, rightField, valueExpr);
             }
         }
@@ -1911,6 +1945,21 @@ internal sealed partial class MongoExpressionTranslator
 
             return null;
         }
+
+        // string.Length (`x.Name.Length`). Same reasoning as the IndexOf arm immediately above: placed here
+        // because a MemberExpression whose member is "Length" is never matched by TryResolveMember below (that
+        // resolves a MAPPED property/field, and Length has no backing IProperty), and the operand recurses
+        // through THIS method so it may itself be a field, a constant, or another computed expression.
+        if (TryMatchStringLength(node, out var lengthReceiver))
+        {
+            var lengthOperand = TranslateOperand(lengthReceiver, allowNumericWidening);
+            return lengthOperand is null ? null : new MongoStringLengthExpression(lengthOperand);
+        }
+
+        // A Math/MathF function call (`Math.Abs(x)`, etc.). Same reasoning as the DateAdd/IndexOf arms above:
+        // a MethodCallExpression is never matched by TryResolveMember below.
+        if (TryTranslateMath(node, allowNumericWidening, out var math))
+            return math;
 
         if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))
         {

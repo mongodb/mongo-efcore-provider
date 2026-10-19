@@ -354,7 +354,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // to the projected-path handling below instead of being silently mis-shaped here.
         if (queryMode != MongoQueryMode.DriverLinq
             && mongoQueryExpression.Select.Route == NativeRoute.WholeEntity
-            && IsCtorWrappedEntityShaper(shapedQueryExpression.ShaperExpression))
+            && IsCtorWrappedEntityShaper(
+                shapedQueryExpression.ShaperExpression, mongoQueryExpression.Select.HasClientWrappedWholeEntityShaper))
         {
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
                 (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
@@ -432,13 +433,76 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// actually means, since that route is otherwise a fallthrough answer rather than an affirmative one — see
     /// that branch's own remarks.
     /// </summary>
-    private static bool IsCtorWrappedEntityShaper(Expression shaperExpression)
+    private static bool IsCtorWrappedEntityShaper(Expression shaperExpression, bool hasClientWrappedWholeEntityShaper)
         => shaperExpression switch
         {
             NewExpression { Members: null, Arguments: [var ctorArgument] } => IsEntityShaperOperand(ctorArgument),
             MethodCallExpression methodCall => HasExactlyOneEntityShaperOperand(methodCall),
+            // The general sibling of the MethodCallExpression arm above, matching
+            // NativeProjectionBinder.IsClientOnlyWholeEntityExpression's own generalization: a client-only
+            // body (conditional, string-concat, cast, member-access chain) that wraps an opaque call whose
+            // sole entity-referencing operand is the whole entity — e.g. EF-322's
+            // Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression
+            // (`e.Manager != null ? "Employee " + ClientMethod(e) : ""`). NativeProjectionBinder already
+            // proved every entity reference in the ORIGINAL selector body resolves to the whole entity; this
+            // re-derives the same fact from the shaper-replaced tree (parameter substituted by the actual
+            // entity shaper), which is a structurally different expression built at a later visitor stage.
+            // Gated on HasClientWrappedWholeEntityShaper — set ONLY by that NativeProjectionBinder arm — so a
+            // PLAIN translatable conditional/binary/member tree with no opaque call at all (e.g. `x == null ?
+            // null : "" + x.OrderID + ""`) never matches here: that shape must keep falling through to
+            // whatever else handles a WholeEntity-routed non-entity shaper (the driver-LINQ push-down below).
+            // MEASURED regression otherwise: Ternary_Null_Equals_Non_Numeric_First_Part.
+            ConditionalExpression or BinaryExpression or UnaryExpression or MemberExpression
+                when hasClientWrappedWholeEntityShaper =>
+                IsClientOnlyWholeEntityShaperExpression(shaperExpression),
             _ => false
         };
+
+    /// <summary>
+    /// Recursive matcher backing <see cref="IsCtorWrappedEntityShaper"/>'s general-expression arm. True when
+    /// every appearance of the entity shaper in <paramref name="node"/> sits behind one of the combinator
+    /// shapes a client-only projection body plausibly uses — never as an operand extracted for separate
+    /// server-side computation. Mirrors <c>NativeProjectionBinder.IsClientOnlyWholeEntityExpression</c>'s own
+    /// recursion, one visitor stage later (post shaper-replace).
+    /// </summary>
+    private static bool IsClientOnlyWholeEntityShaperExpression(Expression node)
+    {
+        if (IsEntityShaperOperand(node))
+        {
+            return true;
+        }
+
+        return node switch
+        {
+            ConstantExpression => true,
+
+            // A plain scalar member read off the entity (e.g. `c.IsLondon` in the conditional's Test) that EF
+            // Core's own generic projection-binding fold already turned into an index into
+            // MongoQueryExpression's read-side projection registry — the SAME registry/visitor
+            // (MongoProjectionBindingRemovingExpressionVisitor) that resolves it for every other WholeEntity
+            // shape too, reading it straight off the whole raw document this path hands it (no $project
+            // narrowed the document, so every field EF bound this way is still present under its own name).
+            ProjectionBindingExpression => true,
+
+            ConditionalExpression conditional =>
+                IsClientOnlyWholeEntityShaperExpression(conditional.Test)
+                && IsClientOnlyWholeEntityShaperExpression(conditional.IfTrue)
+                && IsClientOnlyWholeEntityShaperExpression(conditional.IfFalse),
+
+            BinaryExpression binary =>
+                IsClientOnlyWholeEntityShaperExpression(binary.Left)
+                && IsClientOnlyWholeEntityShaperExpression(binary.Right),
+
+            UnaryExpression unary => IsClientOnlyWholeEntityShaperExpression(unary.Operand),
+
+            MemberExpression { Expression: not null } member =>
+                IsClientOnlyWholeEntityShaperExpression(member.Expression),
+
+            MethodCallExpression methodCall => HasExactlyOneEntityShaperOperand(methodCall),
+
+            _ => false
+        };
+    }
 
     private static bool IsEntityShaperOperand(Expression operand)
     {

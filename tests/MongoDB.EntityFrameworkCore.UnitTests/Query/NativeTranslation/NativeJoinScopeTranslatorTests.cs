@@ -505,4 +505,92 @@ public class NativeJoinScopeTranslatorTests
         Assert.False(translated);
         Assert.Null(result);
     }
+
+    // ── TryMatchScopeNullCheck: depth-agnostic null-check matcher ──────────────────────────────────────
+
+    [Fact]
+    public void Matches_bare_Inner_not_equal_null_at_depth_one()
+    {
+        var scope = NewScope(isLeftOuter: true);
+        var x = NewRootParam();
+        Expression test = Expression.NotEqual(
+            Expression.PropertyOrField(x, "Inner"), Expression.Constant(null, typeof(InnerEntity)));
+
+        var matched = NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, x, test, out var scopeIndex, out var isNotNull);
+
+        Assert.True(matched);
+        Assert.Equal(1, scopeIndex);
+        Assert.True(isNotNull);
+    }
+
+    [Fact]
+    public void Matches_null_equal_bare_Inner_operand_order_reversed()
+    {
+        var scope = NewScope(isLeftOuter: true);
+        var x = NewRootParam();
+        Expression test = Expression.Equal(
+            Expression.Constant(null, typeof(InnerEntity)), Expression.PropertyOrField(x, "Inner"));
+
+        var matched = NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, x, test, out var scopeIndex, out var isNotNull);
+
+        Assert.True(matched);
+        Assert.Equal(1, scopeIndex);
+        Assert.False(isNotNull);
+    }
+
+    [Fact]
+    public void Declines_null_check_against_the_root_scope()
+    {
+        // rootParam.Outer == null is never a meaningful join-scope null check — only an Inner side (index > 0)
+        // can be absent after a left-outer $lookup+$unwind.
+        var scope = NewScope(isLeftOuter: true);
+        var x = NewRootParam();
+        Expression test = Expression.Equal(
+            Expression.PropertyOrField(x, "Outer"), Expression.Constant(null, typeof(OuterEntity)));
+
+        var matched = NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, x, test, out _, out _);
+
+        Assert.False(matched);
+    }
+
+    [Fact]
+    public void Declines_a_member_access_beyond_the_bare_scope_leaf()
+    {
+        // ti.Inner.Name != null is a null-check on a FIELD of the joined entity, not on the join itself — the
+        // matcher must require the OPERAND to be the bare synthetic scope parameter, no further member access.
+        var scope = NewScope(isLeftOuter: true);
+        var x = NewRootParam();
+        Expression test = Expression.NotEqual(
+            Expression.PropertyOrField(Expression.PropertyOrField(x, "Inner"), "Name"),
+            Expression.Constant(null, typeof(string)));
+
+        var matched = NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, x, test, out _, out _);
+
+        Assert.False(matched);
+    }
+
+    [Fact]
+    public void Declines_a_self_compare_with_no_null_operand()
+    {
+        var scope = NewScope(isLeftOuter: true);
+        var x = NewRootParam();
+        Expression test = Expression.Equal(
+            Expression.PropertyOrField(x, "Inner"), Expression.PropertyOrField(x, "Inner"));
+
+        var matched = NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, x, test, out _, out _);
+
+        Assert.False(matched);
+    }
+
+    [Fact]
+    public void Declines_a_non_equality_test()
+    {
+        var scope = NewScope(isLeftOuter: true);
+        var x = NewRootParam();
+        Expression test = Expression.AndAlso(Expression.Constant(true), Expression.Constant(true));
+
+        var matched = NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, x, test, out _, out _);
+
+        Assert.False(matched);
+    }
 }

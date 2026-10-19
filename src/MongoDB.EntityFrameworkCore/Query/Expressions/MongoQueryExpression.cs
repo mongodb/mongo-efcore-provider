@@ -17,6 +17,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 
@@ -191,7 +193,20 @@ internal sealed partial class MongoQueryExpression : Expression
         //       Projection-iterating collision check runs at TRANSLATE time, strictly before this
         //       POSTPROCESS-time method ever runs, so it never sees the extra entry either).
         // Spec baselines for every EF-444 join-projection test are unchanged, corroborating this.
-        if (Projection.Any() && (_projectionMapping.Count == 0 || Select.Route != NativeRoute.Projection))
+        //
+        // HasClientWrappedWholeEntityShaper joins the Route == Projection carve-out above for the identical
+        // reason: NativeProjectionBinder's general client-only-expression arm (the ConditionalExpression/
+        // BinaryExpression/etc. sibling of the top-level client-method-wrap arm) leaves an ordinary scalar
+        // sibling (e.g. `e.Manager != null` alongside `ClientMethod(e)`) in the SAME shaper tree as a
+        // whole-entity operand. The whole-entity operand's own StructuralTypeShaperExpression case
+        // (MongoProjectionBindingExpressionVisitor) already called AddToProjection directly at translate
+        // time, making Projection non-empty before this method ever runs — but the scalar sibling's own
+        // _projectionMapping entry is untouched by that call and still needs flattening here, or
+        // GetProjectionIndex hits a non-constant entry (EF-322, measured:
+        // Select_with_client_method_embedded_in_conditional_expression_goes_native).
+        if (Projection.Any()
+            && (_projectionMapping.Count == 0
+                || (Select.Route != NativeRoute.Projection && !Select.HasClientWrappedWholeEntityShaper)))
         {
             return;
         }
@@ -215,12 +230,42 @@ internal sealed partial class MongoQueryExpression : Expression
             var alias = (Select.Route == NativeRoute.Projection || Select.IsDistinct)
                         && Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
                 ? overriddenAlias
-                : memberName;
+                : memberName ?? TryGetNaturalMemberAlias(expression);
 
             result[projectionMember] = Constant(AddToProjection(expression, alias));
         }
 
         _projectionMapping = result;
+    }
+
+    /// <summary>
+    /// Falls back to this when a <c>_projectionMapping</c> entry has no <see cref="ProjectionMember"/>-derived
+    /// name (<see cref="ProjectionMember.Last"/> is null, e.g. an EmptyProjectionMember) AND no
+    /// <see cref="Expressions.IAccessExpression"/> alias — the shape left behind by EF Core's OWN generic
+    /// projection-binding fold for a plain scalar member access it found OUTSIDE any construct our own
+    /// <c>MongoProjectionBindingExpressionVisitor</c> specially recognizes (e.g. a member read embedded inside
+    /// a client-only conditional/binary expression that NativeProjectionBinder's general
+    /// client-only-whole-entity arm left otherwise untouched — EF-322). Without this, <see cref="AddToProjection"/>
+    /// falls back to a null alias, which the read side treats as "read the whole document" — colliding with
+    /// any OTHER null-alias entry already registered (e.g. the SAME query's whole-entity operand) and silently
+    /// mis-aliasing the field.
+    /// </summary>
+    private static string? TryGetNaturalMemberAlias(Expression expression)
+    {
+        if (expression is not MemberExpression { Member: PropertyInfo property } memberExpression)
+        {
+            return null;
+        }
+
+        var current = memberExpression.Expression;
+        while (current is IncludeExpression include)
+        {
+            current = include.EntityExpression;
+        }
+
+        return current is StructuralTypeShaperExpression { StructuralType: IReadOnlyEntityType entityType }
+            ? entityType.FindProperty(property)?.GetElementName() ?? property.Name
+            : property.Name;
     }
 
     public void ReplaceProjectionMapping(IDictionary<ProjectionMember, Expression> projectionMapping)

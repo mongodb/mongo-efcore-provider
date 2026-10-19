@@ -208,7 +208,14 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Guard: two-argument ctor-only DTO still declines (falls back / throws under NativeOnly)
+    //  Sub-case 3: two-argument ctor-only DTO — multi-argument positional-ctor-DTO projection ticket
+    //
+    //  Previously declined unconditionally (the single-argument-cap comment on
+    //  NativeProjectionBinder.TryPopulateNativeProjection explains why). NativeProjectionBinder now has a
+    //  dedicated arm for a Members-null NewExpression with 2+ arguments, whose shaper is built by INDEX
+    //  (MongoQueryableMethodTranslatingExpressionVisitor.BuildPositionalCtorProjectionShaper) — see
+    //  MongoSelectDefinition.HasPositionalCtorProjectionShaper's remarks for why the generic
+    //  ProjectionMember/MemberInfo-keyed fold cannot be reused for more than one constructor argument.
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class TwoArgDto
@@ -219,23 +226,33 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     }
 
     [Fact]
-    public void Select_with_two_argument_ctor_only_dto_still_declines_under_native_only()
+    public void Select_with_two_argument_ctor_only_dto_goes_native()
     {
-        var collection = SeedCustomers(nameof(Select_with_two_argument_ctor_only_dto_still_declines_under_native_only));
+        var collection = SeedCustomers(nameof(Select_with_two_argument_ctor_only_dto_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.Select(x => new TwoArgDto(x.CustomerID, x.CustomerID)).ToList());
-    }
-
-    [Fact]
-    public void Select_with_two_argument_ctor_only_dto_still_works_under_default_native_mode_via_fallback()
-    {
-        var collection = SeedCustomers(nameof(Select_with_two_argument_ctor_only_dto_still_works_under_default_native_mode_via_fallback));
-        using var db = CreateContext(collection, MongoQueryMode.Native);
-
+        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
+        // here proves the 2-argument ctor-only DTO Select went native.
         var results = db.Entities.Select(x => new TwoArgDto(x.CustomerID, x.CustomerID)).ToList();
 
         Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.Equal(r.A, r.B));
+        Assert.Contains(results, r => r.A == "ALFKI");
+        Assert.Contains(results, r => r.A == "ANATR");
+    }
+
+    [Fact]
+    public void Select_with_two_argument_ctor_only_dto_still_works_under_explicit_driver_linq_mode()
+    {
+        var collection = SeedCustomers(
+            nameof(Select_with_two_argument_ctor_only_dto_still_works_under_explicit_driver_linq_mode));
+        using var db = CreateContext(collection, MongoQueryMode.DriverLinq);
+
+        // This ticket adds a native path alongside the existing driver-LINQ fallback; it must not change the
+        // fallback path's own behavior. Forcing DriverLinq here proves the pre-existing path still works.
+        var results = db.Entities.Select(x => new TwoArgDto(x.CustomerID, x.CustomerID)).ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.Equal(r.A, r.B));
     }
 }

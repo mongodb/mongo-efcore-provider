@@ -265,6 +265,74 @@ internal static class NativeJoinScopeTranslator
         return true;
     }
 
+    /// <summary>
+    /// Depth-agnostic generalization of <see cref="TryMatchInnerNullCheck"/>: recognizes
+    /// <c>rootParam.«Outer/Inner hop chain» == null</c> / <c>!= null</c> (either operand order) for ANY single
+    /// scope level (never the root — only an Inner side can be missing after a left-outer <c>$lookup</c>).
+    /// Resolves the null-checked operand via <see cref="TryRerootToBareScope"/>, which calls
+    /// <see cref="MongoTransparentScopeResolver.TryResolveScopeDepth"/> — the same safe, member-name-chain-based
+    /// mechanism <see cref="NativeJoinScopeProjectionBinder"/>'s whole-entity-leaf arm uses — never by CLR-type or
+    /// <c>ReferenceEquals</c> comparison the way <see cref="TryMatchInnerNullCheck"/>'s flat, depth-1-only
+    /// <see cref="IsBareInnerAccess"/> does. Structural recognition only: callers must separately verify the
+    /// resolved level's <c>IsLeftOuter</c>/non-collection eligibility (a plain inner <c>Join</c> or a collection
+    /// navigation makes the null test degenerate — always true or always false).
+    /// </summary>
+    public static bool TryMatchScopeNullCheck(
+        MongoJoinScope scope, ParameterExpression rootParam, Expression test,
+        out int scopeIndex, out bool isNotNull)
+    {
+        scopeIndex = -1;
+        isNotNull = false;
+
+        if (test is not BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } binary)
+        {
+            return false;
+        }
+
+        var leftIsBareScope = TryRerootToBareScope(scope, rootParam, binary.Left, out var leftIndex);
+        var rightIsBareScope = TryRerootToBareScope(scope, rootParam, binary.Right, out var rightIndex);
+
+        // Exactly one side must be a bare scope leaf — neither side (not this shape) or both sides (a degenerate
+        // self-compare, e.g. `ti.Inner == ti.Inner`, no null involved) decline alike.
+        if (leftIsBareScope == rightIsBareScope)
+        {
+            return false;
+        }
+
+        var (matchedIndex, otherSide) = leftIsBareScope ? (leftIndex, binary.Right) : (rightIndex, binary.Left);
+
+        // scopeIndex 0 is the root scope, which can never be "missing" — only an Inner side (index > 0) can be.
+        if (matchedIndex == 0 || otherSide is not ConstantExpression { Value: null })
+        {
+            return false;
+        }
+
+        scopeIndex = matchedIndex;
+        isNotNull = binary.NodeType == ExpressionType.NotEqual;
+        return true;
+    }
+
+    // Resolves bare scope leaves (e.g., `x.Inner` or `x.Outer.Inner` chains with no trailing member access).
+    // Uses MongoTransparentScopeResolver.TryResolveScopeDepth directly — the same safe, member-name-chain-based
+    // mechanism (never CLR-type/ReferenceEquals) that NativeJoinScopeProjectionBinder's existing whole-entity-leaf
+    // arm already uses for recognizing a bare Outer/Inner hop-chain terminus.
+    private static bool TryRerootToBareScope(
+        MongoJoinScope scope, ParameterExpression rootParam, Expression node, out int scopeIndex)
+    {
+        // Same guard as TryRerootToSingleScope's own "Final-review fix (M2)" (final-review fix, M5 — defense
+        // in depth, practically unreachable today given real call sites): rootParam.Type must actually be a
+        // TransparentIdentifier before delegating to TryResolveScopeDepth, so a body reached from some other
+        // call site whose parameter merely happens to expose members named "Outer"/"Inner" can't be mis-walked.
+        if (!rootParam.Type.IsTransparentIdentifierType())
+        {
+            scopeIndex = -1;
+            return false;
+        }
+
+        return MongoTransparentScopeResolver.TryResolveScopeDepth(
+            node, rootParam, hopNames: ["Outer", "Inner"], sourceCount: scope.Levels.Count, out scopeIndex);
+    }
+
     private static bool IsBareInnerAccess(ParameterExpression rootParam, Expression node)
         => node is MemberExpression { Member.Name: "Inner" } member
            && ReferenceEquals(member.Expression, rootParam)

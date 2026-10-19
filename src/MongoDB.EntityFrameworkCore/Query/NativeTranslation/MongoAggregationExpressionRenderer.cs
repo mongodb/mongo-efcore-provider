@@ -55,6 +55,10 @@ internal static class MongoAggregationExpressionRenderer
     public static BsonValue Render(MongoExpression node, PlaceholderTable placeholders, string? elementVariable = null)
         => node switch
         {
+            // NullSafe mirrors the MongoElementRefExpression{NullSafe:true} arm just below, for the same
+            // reason: see MongoFieldExpression.NullSafe's own remarks.
+            MongoFieldExpression { NullSafe: true } nullSafeField
+                => new BsonDocument("$ifNull", new BsonArray { FieldRef(nullSafeField.ElementName, elementVariable), BsonNull.Value }),
             MongoFieldExpression field => FieldRef(field.ElementName, elementVariable),
             // NullSafe wraps a MISSING element the same as an explicitly-stored null (see the node's own
             // remarks) — needed for an owned-nav null-equality check, where $expr's own $eq does not
@@ -64,6 +68,32 @@ internal static class MongoAggregationExpressionRenderer
             MongoElementRefExpression elementRef => FieldRef(elementRef.Path, elementVariable),
             // Always at document root, REGARDLESS of elementVariable — see the node's own remarks.
             MongoOuterFieldExpression outer => FieldRef(outer.ElementName, elementVariable: null),
+            // EF-322: the ONLY consumer today is a Select-side join-scope null-check ternary
+            // (`ti.Inner != null ? ti.Inner.City : null`) whose Test is rendered here as the MongoConditionalExpression's
+            // "if" — see NativeJoinScopeProjectionBinder.TryBindConditionalProjection. LookupAlias is a plain top-level
+            // field name (the $lookup's own "as"), so it renders through the same FieldRef helper as any other field.
+            //
+            // Wrapped in $ifNull, mirroring the NullSafe MongoElementRefExpression arm just above and for the
+            // EXACT SAME reason: after a $lookup + $unwind(preserveNullAndEmptyArrays: true), an unmatched row's
+            // LookupAlias field is genuinely MISSING (unset), not an explicit BSON null — and $eq/$ne in the
+            // aggregation-EXPRESSION dialect (unlike the query dialect's {field: null}) do NOT treat missing and
+            // null alike; BSON's Missing type sorts strictly below Null, so a bare $ne against an unmatched row's
+            // missing field evaluates true (wrongly reporting "present"). MEASURED against a real server: without
+            // the $ifNull normalization, an unmatched left-joined row's null-check comes back true and the
+            // ternary picks the WRONG (IfTrue) branch, itself reading a now-missing nested field, which $project
+            // then drops from the output entirely rather than emitting the intended IfFalse value — silently
+            // wrong data, not a translation failure. $ifNull(missing, null) => null and $ifNull(<doc>, null) =>
+            // <doc>, so the wrapped comparison is correct for both the matched and unmatched cases.
+            // Always at document root, REGARDLESS of elementVariable — a $lookup alias is always a ROOT-level
+            // field by construction (this node is never produced/read inside a $filter/$map element scope),
+            // exactly like the MongoOuterFieldExpression arm above (final-review fix, M4).
+            MongoLookupNullCheckExpression lookupNullCheck
+                => new BsonDocument(lookupNullCheck.IsNotNull ? "$ne" : "$eq",
+                    new BsonArray
+                    {
+                        new BsonDocument("$ifNull", new BsonArray { FieldRef(lookupNullCheck.LookupAlias, elementVariable: null), BsonNull.Value }),
+                        BsonNull.Value
+                    }),
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
             MongoSizeExpression size => RenderSize(size, elementVariable),
@@ -86,14 +116,14 @@ internal static class MongoAggregationExpressionRenderer
                 => new BsonDocument("$cond", new BsonDocument
                 {
                     { "if", Render(conditional.Test, placeholders, elementVariable) },
-                    { "then", Render(conditional.IfTrue, placeholders, elementVariable) },
-                    { "else", Render(conditional.IfFalse, placeholders, elementVariable) }
+                    { "then", RenderBranch(conditional.IfTrue, placeholders, elementVariable) },
+                    { "else", RenderBranch(conditional.IfFalse, placeholders, elementVariable) }
                 }),
             MongoCoalesceExpression coalesce
                 => new BsonDocument("$ifNull", new BsonArray
                 {
-                    Render(coalesce.Left, placeholders, elementVariable),
-                    Render(coalesce.Right, placeholders, elementVariable)
+                    RenderBranch(coalesce.Left, placeholders, elementVariable),
+                    RenderBranch(coalesce.Right, placeholders, elementVariable)
                 }),
             MongoDateTimeOffsetLocalExpression local
                 => new BsonDocument("$dateAdd", new BsonDocument
@@ -110,14 +140,21 @@ internal static class MongoAggregationExpressionRenderer
                     Render(indexOf.Haystack, placeholders, elementVariable),
                     Render(indexOf.Needle, placeholders, elementVariable)
                 }),
+            MongoStringLengthExpression length
+                => new BsonDocument("$strLenCP", Render(length.Operand, placeholders, elementVariable)),
+            MongoMathExpression math => RenderMath(math, placeholders, elementVariable),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
             // A constructed nested sub-document leaf (EF-447, `new Book { Id = e.Id, Title = e.Title }`).
-            // Each member renders through this SAME Render call, recursively, so a nested field ref renders as
-            // "$ElementName" (an aggregation-expression field path) exactly like any other computed leaf value —
-            // never a bare unprefixed name, which $project would otherwise misread as an inclusion flag.
+            // Each member renders through RenderBranch, not the bare Render call — a nested constant/parameter
+            // member (first possible as of EF-322's GroupBy nested-construction slice; EF-447's own usage only
+            // ever produced MongoFieldExpression members) needs the SAME $literal-wrapping a top-level $project
+            // value already gets, or MongoDB misreads a bare number/bool as an inclusion/exclusion flag and a
+            // bare "$"-prefixed string as a field-path reference. A field ref itself renders unaffected (only
+            // MongoConstantExpression/MongoParameterExpression get wrapped) as "$ElementName" exactly like any
+            // other computed leaf value — never a bare unprefixed name.
             MongoDocumentConstructionExpression construction
                 => new BsonDocument(construction.Members.Select(
-                    m => new BsonElement(m.MemberName, Render(m.Value, placeholders, elementVariable)))),
+                    m => new BsonElement(m.MemberName, RenderBranch(m.Value, placeholders, elementVariable)))),
             MongoConcatExpression concat
                 => new BsonDocument("$concat",
                     new BsonArray(concat.Operands.Select(o => Render(o, placeholders, elementVariable)))),
@@ -172,7 +209,7 @@ internal static class MongoAggregationExpressionRenderer
     public static bool CanRender(MongoExpression node)
         => node switch
         {
-            MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression => true,
+            MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression or MongoLookupNullCheckExpression => true,
             MongoConstantExpression or MongoParameterExpression => true,
             // EF-396 (review fix): $and/$or evaluate a BARE operand by TRUTHINESS, not by CLR boolean value —
             // the same hazard the Not arm below already guards against for its own bare-field operand. Without
@@ -209,15 +246,24 @@ internal static class MongoAggregationExpressionRenderer
             MongoDatePartExpression datePart => CanRender(datePart.Operand),
             MongoDateAddExpression dateAdd => CanRender(dateAdd.StartDate) && CanRender(dateAdd.Amount),
             MongoStringIndexOfExpression indexOf => CanRender(indexOf.Haystack) && CanRender(indexOf.Needle),
+            MongoStringLengthExpression length => CanRender(length.Operand),
+            MongoMathExpression math => math.Operands.All(CanRender),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
-            // Answers true unconditionally for any regex.Kind — this relies on RenderRegexAsExpr's switch over
-            // MongoRegexKind staying exhaustive (all 3 current members handled; its `_` arm throws and is
-            // presently unreachable). Adding a new MongoRegexKind member requires adding it to BOTH that switch
-            // and (implicitly) here at the same time, or this would wrongly admit a Kind that Render then throws
-            // on. Admits ANY Term shape (EF-322) — see the matching comment on Render's arm above for why a
+            // Answers true unconditionally for StartsWith/EndsWith/Contains — this relies on RenderRegexAsExpr's
+            // switch over MongoRegexKind staying exhaustive for those 3 members (its `_` arm throws and is
+            // otherwise unreachable). Adding a new MongoRegexKind member requires adding it to BOTH that switch
+            // and here at the same time, or this would wrongly admit a Kind that Render then throws on. Admits
+            // ANY Term shape for those 3 (EF-322) — see the matching comment on Render's arm above for why a
             // constant/parameter term has no fallback disposition to preserve at any of this method's call
             // sites.
+            // `Like` is EXCLUDED here deliberately: it has no $expr rendering (a LIKE pattern needs
+            // wildcard-to-regex conversion, not a literal substring search like $indexOfCP), and
+            // MongoExpressionTranslator.Like.cs only ever produces one in a $match-dialect position — but if
+            // that ever changes (e.g. a future negated-Like-inside-a-projection shape), this must decline
+            // rather than let RenderRegexAsExpr's default throw arm surface as a crash instead of a graceful
+            // decline-to-fallback.
+            MongoRegexExpression { Kind: MongoRegexKind.Like } => false,
             MongoRegexExpression regex => CanRender(regex.Field) && CanRender(regex.Term),
             MongoTupleExpression tuple => tuple.Elements.All(CanRender),
             // EF-322 follow-up: a constructed nested sub-document leaf (mirrors Render's own arm above).
@@ -276,6 +322,20 @@ internal static class MongoAggregationExpressionRenderer
     private static BsonValue FieldRef(string path, string? elementVariable)
         => elementVariable is null ? "$" + path : "$$" + elementVariable + "." + path;
 
+    // A $cond/$ifNull BRANCH gets the SAME $literal-wrapping RenderProject/RenderAddFields already apply to a
+    // bare TOP-LEVEL constant/parameter — MongoDB reads an unwrapped string starting with "$" as a field-path
+    // reference, not a literal value, and a $cond "then"/"else" or $ifNull operand is exactly as vulnerable to
+    // this misread as a top-level projected value is. Without this, `g.Key ?? "$Year"` silently returns null
+    // instead of the literal string "$Year", and a captured parameter whose runtime value happens to start
+    // with "$" can throw at execution time.
+    private static BsonValue RenderBranch(MongoExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var rendered = Render(node, placeholders, elementVariable);
+        return node is MongoConstantExpression or MongoParameterExpression
+            ? new BsonDocument("$literal", rendered)
+            : rendered;
+    }
+
     // MongoDB's $dayOfWeek returns 1 (Sunday)..7 (Saturday); .NET's DayOfWeek enum is 0 (Sunday)..6 (Saturday).
     // The subtraction is mandatory, not defensive — omitting it silently shifts every day of the week by one.
     private static BsonValue RenderDatePart(MongoDatePartExpression node, PlaceholderTable placeholders, string? elementVariable)
@@ -295,6 +355,58 @@ internal static class MongoAggregationExpressionRenderer
                 => new BsonDocument("$subtract", new BsonArray { new BsonDocument("$dayOfWeek", operand), 1 }),
             MongoDatePart.Date => new BsonDocument("$dateTrunc", new BsonDocument { { "date", operand }, { "unit", "day" } }),
             _ => throw new NativeTranslationNotSupportedException($"Unhandled {nameof(MongoDatePart)} '{node.Part}'.")
+        };
+    }
+
+    private static BsonValue RenderMath(MongoMathExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        BsonValue Arg(int i) => Render(node.Operands[i], placeholders, elementVariable);
+
+        return node.Function switch
+        {
+            MongoMathFunction.Abs => new BsonDocument("$abs", Arg(0)),
+            MongoMathFunction.Ceiling => new BsonDocument("$ceil", Arg(0)),
+            MongoMathFunction.Floor => new BsonDocument("$floor", Arg(0)),
+            MongoMathFunction.Exp => new BsonDocument("$exp", Arg(0)),
+            MongoMathFunction.Sqrt => new BsonDocument("$sqrt", Arg(0)),
+            MongoMathFunction.Truncate => new BsonDocument("$trunc", Arg(0)),
+            MongoMathFunction.Round => new BsonDocument("$round", Arg(0)),
+            MongoMathFunction.RoundDigits => new BsonDocument("$round", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.Ln => new BsonDocument("$ln", Arg(0)),
+            MongoMathFunction.Log10 => new BsonDocument("$log10", Arg(0)),
+            MongoMathFunction.Log2 => new BsonDocument("$log", new BsonArray { Arg(0), 2 }),
+            MongoMathFunction.LogNewBase => new BsonDocument("$log", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.Sign => new BsonDocument("$switch", new BsonDocument
+            {
+                {
+                    "branches", new BsonArray
+                    {
+                        new BsonDocument { { "case", new BsonDocument("$gt", new BsonArray { Arg(0), 0 }) }, { "then", 1 } },
+                        new BsonDocument { { "case", new BsonDocument("$lt", new BsonArray { Arg(0), 0 }) }, { "then", -1 } }
+                    }
+                },
+                { "default", 0 }
+            }),
+            MongoMathFunction.Pow => new BsonDocument("$pow", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.Atan2 => new BsonDocument("$atan2", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.Max => new BsonDocument("$max", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.Min => new BsonDocument("$min", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.DegreesToRadians => new BsonDocument("$degreesToRadians", Arg(0)),
+            MongoMathFunction.RadiansToDegrees => new BsonDocument("$radiansToDegrees", Arg(0)),
+            MongoMathFunction.Acos => new BsonDocument("$acos", Arg(0)),
+            MongoMathFunction.Acosh => new BsonDocument("$acosh", Arg(0)),
+            MongoMathFunction.Asin => new BsonDocument("$asin", Arg(0)),
+            MongoMathFunction.Asinh => new BsonDocument("$asinh", Arg(0)),
+            MongoMathFunction.Atan => new BsonDocument("$atan", Arg(0)),
+            MongoMathFunction.Atanh => new BsonDocument("$atanh", Arg(0)),
+            MongoMathFunction.Cos => new BsonDocument("$cos", Arg(0)),
+            MongoMathFunction.Cosh => new BsonDocument("$cosh", Arg(0)),
+            MongoMathFunction.Sin => new BsonDocument("$sin", Arg(0)),
+            MongoMathFunction.Sinh => new BsonDocument("$sinh", Arg(0)),
+            MongoMathFunction.Tan => new BsonDocument("$tan", Arg(0)),
+            MongoMathFunction.Tanh => new BsonDocument("$tanh", Arg(0)),
+            _ => throw new NativeTranslationNotSupportedException(
+                $"Unhandled {nameof(MongoMathFunction)} '{node.Function}'.")
         };
     }
 

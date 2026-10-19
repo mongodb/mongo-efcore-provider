@@ -135,11 +135,13 @@ internal static class ExpressionExtensionMethods
     /// </returns>
     /// <remarks>
     /// <para>
-    /// Eight sites read this same shape — two arms inside <c>NativeProjectionBinder</c>'s own switch, plus
-    /// <c>NativeProjectionBinder</c>'s document-construction leaf, <c>NativeJoinScopeProjectionBinder</c>,
-    /// <c>NativeSelectManyBinder</c>, <c>NativeGroupByBinder</c>, and the QMTEV's two shaper builders
-    /// (<c>TryBuildGroupResultShaper</c>, <c>BuildSelectManyResultShaper</c>, which additionally REBUILD the
-    /// construction — see <see cref="RebuildProjectionMembers"/>). They had **already drifted**: the
+    /// Nine sites read this same shape — three arms inside <c>NativeProjectionBinder</c>'s own switch (the
+    /// WRAPPED arm, the MULTI-ARGUMENT positional-ctor-DTO arm, added by the multi-argument
+    /// positional-ctor-DTO projection ticket), plus <c>NativeProjectionBinder</c>'s document-construction leaf,
+    /// <c>NativeJoinScopeProjectionBinder</c>, <c>NativeSelectManyBinder</c>, <c>NativeGroupByBinder</c>, and the
+    /// QMTEV's three shaper builders (<c>TryBuildGroupResultShaper</c>, <c>BuildSelectManyResultShaper</c>,
+    /// <c>BuildPositionalCtorProjectionShaper</c>, which additionally REBUILD the construction — see
+    /// <see cref="RebuildProjectionMembers"/>). They had **already drifted**: the
     /// <c>GroupBy</c> copy omitted both the <c>Members.Count == Arguments.Count</c> pairing check and the
     /// non-empty checks its five siblings carry, so it accepted a degenerate empty construction. This is the
     /// strict form; a degenerate body now declines and falls back, which is the safe direction.
