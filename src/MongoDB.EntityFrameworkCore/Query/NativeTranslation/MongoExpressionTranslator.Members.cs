@@ -52,10 +52,13 @@ internal sealed partial class MongoExpressionTranslator
     /// unconditional on the declaring type's root-ness; see <see cref="TryResolveOwnedFieldPath"/>'s leaf
     /// construction for the composed (scope-relative-prefix + local "_id.&lt;name&gt;" suffix) case.
     /// </summary>
-    private bool TryResolveMember(Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath)
+    private bool TryResolveMember(
+        Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath,
+        out bool isOuter)
     {
         property = null;
         fieldPath = null;
+        isOuter = false;
 
         // Peel Nullable<T>.Value: `x.A.Value` is a MemberExpression whose receiver is the member access we
         // actually want, so without this it misses the fast path below and is handed to the owned dotted-path
@@ -105,13 +108,13 @@ internal sealed partial class MongoExpressionTranslator
                 break;
 
             default:
-                return TryResolveOwnedFieldPath(node, out property, out fieldPath);
+                return TryResolveOwnedFieldPath(node, out property, out fieldPath, out isOuter);
         }
 
         // Two-scope mode: a member rooted on the outer param resolves against the outer entity type at document
         // root; every other member is inner-scoped. Identity (ReferenceEquals), never name — so a member name
         // shared between the two scopes cannot be mis-routed.
-        var isOuter = _outerParam is not null && ReferenceEquals(param, _outerParam);
+        isOuter = _outerParam is not null && ReferenceEquals(param, _outerParam);
         var scopeType = isOuter ? _outerEntityType! : _entityType;
 
         var resolved = scopeType.FindProperty(memberName);
@@ -151,8 +154,11 @@ internal sealed partial class MongoExpressionTranslator
     /// there is deliberately no <c>IsDocumentRoot</c> guard here, same reasoning as
     /// <see cref="TryResolveOwnedCollectionPath"/>'s own remarks.
     /// <para>
-    /// Two-scope mode (<c>_outerParam</c>/<c>_innerPrefix</c> set) is still declined: a cross-scope owned dotted
-    /// path is out of scope.
+    /// Two-scope mode (<c>_outerParam</c> set): a dotted chain rooted on the OUTER param resolves against
+    /// <c>_outerEntityType</c> (EF-421) — the root identity is checked the same way
+    /// <see cref="MongoExpressionTranslator.TryResolveMember"/> checks it for a single hop, never by name. A
+    /// dotted chain reached from an <c>_innerPrefix</c>-set (SelectMany-unwind) scope, or rooted on neither known
+    /// parameter, is still declined — that combination remains out of scope.
     /// </para>
     /// <para>
     /// <b>Why accepting any <see cref="ParameterExpression"/> root is safe</b> (same hazard, same resolution,
@@ -168,51 +174,116 @@ internal sealed partial class MongoExpressionTranslator
     /// with a "wrong" parameter identity.
     /// </para>
     /// </remarks>
-    private bool TryResolveOwnedFieldPath(
-        Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath)
+    /// <summary>
+    /// The shared PREAMBLE of all three owned-path resolvers below: rejects an inner-prefixed scope, collects
+    /// the access chain's hop names root-first, requires a <see cref="ParameterExpression"/> root, resolves
+    /// WHICH scope that root names, and seeds the entity type to walk from.
+    /// </summary>
+    /// <param name="node">The member-access / <c>EF.Property</c> chain to walk.</param>
+    /// <param name="minimumHops">
+    /// The fewest hops the calling resolver can act on — 2 where the leaf is a scalar under at least one
+    /// navigation (a single hop is <see cref="TryResolveMember"/>'s own fast path), 1 where the leaf is itself
+    /// the navigation.
+    /// </param>
+    /// <param name="names">The hop names, ROOT-FIRST, on success.</param>
+    /// <param name="scopeType">The entity type the first hop resolves against, on success.</param>
+    /// <param name="isOuter">
+    /// Whether the chain is rooted on this translator's OUTER parameter (always <see langword="false"/> in
+    /// single-scope mode). Callers that cannot render an outer-scoped result must decline on it.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// This was three near-identical copies, which had already diverged. It is the most invariant-critical code
+    /// in this file: the <c>isOuter</c> line is the "scope is resolved by parameter IDENTITY, never by member
+    /// name" rule from <c>Query/AGENTS.md</c>, whose failure mode is silently resolving a member against the
+    /// WRONG scope rather than declining. Two types sharing a property name (<c>Item.Name</c> vs
+    /// <c>Owner.Name</c>) is the standing regression test.
+    /// </para>
+    /// <para>
+    /// <b>Scope-relative by construction.</b> Callers build their path by joining each hop navigation's own
+    /// <see cref="MongoEntityTypeExtensions.GetContainingElementName"/> relative to the seeded
+    /// <paramref name="scopeType"/> — never via <see cref="MongoEntityTypeExtensions.GetDocumentPath"/>, which
+    /// is relative to the TRUE document root and would double-prefix when the scope is itself nested (an
+    /// owned-collection-element translator built for a quantifier / <c>SelectMany</c> element predicate, whose
+    /// caller separately prefixes the result). That is why there is deliberately no <c>IsDocumentRoot</c> guard
+    /// anywhere in this family.
+    /// </para>
+    /// <para>
+    /// <b>Why accepting any <see cref="ParameterExpression"/> root is safe in single-scope mode.</b> The walk
+    /// does not check WHICH parameter roots the chain, so alone it would resolve a chain rooted on an enclosing
+    /// parameter against this translator's own (wrong) scope type. That shape cannot reach here: the enclosing
+    /// parameter is free in an element-predicate body, so the quantifier arm's
+    /// <see cref="ReferencesEnclosingScope"/> guard — and <see cref="NativeSelectManyBinder"/>'s own
+    /// parameter-identity-routed construction of the inner-filter translator — declines or correctly routes any
+    /// cross-scope reference before a single-scope, element-typed child translator is ever built. At the
+    /// outermost level the only parameter in scope is the query parameter.
+    /// </para>
+    /// </remarks>
+    private bool TryBeginOwnedHopWalk(
+        Expression node,
+        int minimumHops,
+        [NotNullWhen(true)] out List<string>? names,
+        [NotNullWhen(true)] out IEntityType? scopeType,
+        out bool isOuter)
     {
-        property = null;
-        fieldPath = null;
+        names = null;
+        scopeType = null;
+        isOuter = false;
 
-        if (_outerParam is not null || _innerPrefix is not null)
-            return false; // two-scope mode: owned dotted paths are out of scope (declined, falls back)
+        // A chain reached from an INNER-prefixed scope (SelectMany's unwind prefix) declines: a dotted owned
+        // path reached from inside a SelectMany element, itself further correlated, is a different and still
+        // out-of-scope combination. Only the "root is the OUTER param" two-scope case is relativized.
+        if (_innerPrefix is not null)
+            return false;
 
-        // Collect hop names from the outer (leaf) hop inward; the root must be the query parameter.
-        var names = new List<string>();
+        // Collect hop names from the outer (leaf) hop inward; the root must be a parameter.
+        var hopNames = new List<string>();
         var current = node;
-        while (TryGetMemberOrEFProperty(current, out var inner, out var name))
+        while (current.TryGetMemberOrEFProperty(out var inner, out var name))
         {
-            names.Add(name);
+            hopNames.Add(name);
             current = inner;
         }
 
-        if (current is not ParameterExpression)
+        if (current is not ParameterExpression rootParam || hopNames.Count < minimumHops)
             return false;
 
-        // A single top-level member is handled by TryResolveMember's fast path, never here.
-        if (names.Count < 2)
-            return false;
+        isOuter = _outerParam is not null && ReferenceEquals(rootParam, _outerParam);
+        if (_outerParam is not null && !isOuter)
+            return false; // two-scope mode, rooted on neither known parameter — decline rather than guess
 
-        names.Reverse(); // now root-first: [firstNav, ..., leaf]
+        hopNames.Reverse(); // now root-first: [firstNav, ..., leaf]
 
-        var scopeType = _entityType;
-        var segments = new List<string>(names.Count);
-        for (var i = 0; i < names.Count - 1; i++)
+        names = hopNames;
+        scopeType = isOuter ? _outerEntityType! : _entityType;
+        return true;
+    }
+
+    /// <summary>
+    /// Walks the first <paramref name="hopCount"/> hop names as embedded single-reference navigations,
+    /// appending each one's containing element name to <paramref name="segments"/> and advancing
+    /// <paramref name="scopeType"/> to the last walked hop's target.
+    /// </summary>
+    /// <remarks>
+    /// Shared by all three resolvers for their INTERMEDIATE hops; each then applies its own rule to the final
+    /// hop (a scalar property, a single-reference navigation, or a collection navigation). Declining here is
+    /// what rejects a cross-collection or owned-collection intermediate: an array intermediate has no single
+    /// dotted path to address, so a leaf underneath one (<c>b.Posts[..].Title</c> as a predicate/sort/projection
+    /// leaf) has no native form at all. An <c>Any</c>/<c>All</c> quantifier over the same collection is
+    /// <see cref="TryResolveOwnedCollectionPath"/>'s business and does go native — this decline does not cover
+    /// quantifiers.
+    /// </remarks>
+    private static bool TryWalkEmbeddedReferenceHops(
+        List<string> names, int hopCount, ref IEntityType scopeType, List<string> segments)
+    {
+        for (var i = 0; i < hopCount; i++)
         {
             var navigation = scopeType.FindNavigation(names[i]);
             if (navigation is null || !navigation.IsEmbedded() || navigation.IsCollection)
-            {
-                // Cross-collection or owned-collection intermediate: fall back. An array intermediate has no
-                // single dotted path to address, so a leaf underneath one (e.g. b.Posts[..].Title as a
-                // predicate/sort/projection leaf) has no native form here at all. An Any/All quantifier over
-                // the same collection is a different resolver (TryResolveOwnedCollectionPath) and does go
-                // native — this decline does not cover quantifiers.
                 return false;
-            }
 
-            // The navigation's containing element name is the same source the shapers and pipeline use, so
-            // the emitted path matches stored layout (including HasElementName overrides and shared types),
-            // and — unlike GetDocumentPath() — is relative to _entityType rather than the true document root.
+            // The navigation's containing element name is the same source the shapers and pipeline use, so the
+            // emitted path matches stored layout (including HasElementName overrides and shared types).
             var elementName = navigation.TargetEntityType.GetContainingElementName();
             if (string.IsNullOrEmpty(elementName))
                 return false;
@@ -220,6 +291,23 @@ internal sealed partial class MongoExpressionTranslator
             segments.Add(elementName);
             scopeType = navigation.TargetEntityType;
         }
+
+        return true;
+    }
+
+    private bool TryResolveOwnedFieldPath(
+        Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath,
+        out bool isOuter)
+    {
+        property = null;
+        fieldPath = null;
+
+        if (!TryBeginOwnedHopWalk(node, minimumHops: 2, out var names, out var scopeType, out isOuter))
+            return false;
+
+        var segments = new List<string>(names.Count);
+        if (!TryWalkEmbeddedReferenceHops(names, names.Count - 1, ref scopeType, segments))
+            return false;
 
         var leaf = scopeType.FindProperty(names[^1]);
         if (leaf is null)
@@ -249,29 +337,95 @@ internal sealed partial class MongoExpressionTranslator
     private static bool IsCompositeKeyComponent(IProperty property)
         => property.IsPrimaryKey() && property.FindContainingPrimaryKey()!.Properties.Count > 1;
 
-    // A single access hop in either shape EF produces: a plain MemberExpression (scalar access) or an
-    // EF.Property(root, "Name") call (owned-nav expansion). Mirrors NativeSelectManyBinder.TryGetMemberAccess.
-    private static bool TryGetMemberOrEFProperty(Expression expression, out Expression inner, out string name)
+    /// <summary>
+    /// Resolves an ENTITY-TYPED comparison operand — the whole root entity (<c>c</c> in <c>c == null</c>) or an
+    /// owned/embedded single-reference navigation reached from it (<c>b.Address</c> in <c>b.Address == null</c>,
+    /// including a multi-hop chain like <c>b.Address.Recipient</c>) — to a <see cref="MongoElementRefExpression"/>
+    /// naming its document path. Used only by <see cref="TranslateComparison"/>'s entity-vs-null and
+    /// entity-vs-itself arms; NOT a general entity-operand resolver (no caller may compare the result against
+    /// anything other than a literal null, or against another identical entity-typed operand of the SAME
+    /// origin — see those callers' own remarks for why).
+    /// </summary>
+    private bool TryResolveEntityTypedOperand(Expression node, [NotNullWhen(true)] out MongoElementRefExpression? elementRef)
     {
-        switch (expression)
+        if (SelfParam is not null && ReferenceEquals(node, SelfParam))
         {
-            case MemberExpression { Expression: { } e } member:
-                inner = e;
-                name = member.Member.Name;
-                return true;
-
-            case MethodCallExpression call
-                when call.Method.IsEFPropertyMethod()
-                     && call.Arguments is [var root, ConstantExpression { Value: string propName }]:
-                inner = root;
-                name = propName;
-                return true;
-
-            default:
-                inner = null!;
-                name = null!;
-                return false;
+            elementRef = new MongoElementRefExpression(MongoElementRefExpression.WholeRootDocumentPath, _entityType.ClrType);
+            return true;
         }
+
+        if (TryResolveOwnedReferenceNavigationPath(node, out var navPath, out var navigation, out var navIsOuter))
+        {
+            // An OUTER-scoped owned-nav path must decline, not resolve. The path this resolver returns is
+            // relative to the OUTER entity's own document root, but MongoElementRefExpression renders
+            // element-relative when an elementVariable is in scope ("$$this." + Path) — unlike
+            // MongoOuterFieldExpression, which is root-anchored precisely for this reason but requires a
+            // backing IProperty a navigation path does not have. Emitting the element ref anyway addressed a
+            // field on the ELEMENT (e.g. "$$this.Address" on a Post, which has no Address at all), and the
+            // NullSafe $ifNull then read that missing element as null — so `b.Posts.Any(p => b.Address == null)`
+            // answered TRUE for every row regardless of the stored value. There is no root-anchored
+            // element-ref node to emit instead today, so this shape belongs to driver-LINQ.
+            if (navIsOuter)
+            {
+                elementRef = null;
+                return false;
+            }
+
+            // nullSafe: true — unlike WholeRootDocumentPath, a real element path CAN be entirely missing from
+            // the stored document (an unset owned single-reference nav), and $expr's $eq does not treat that
+            // the same as an explicit null the way the query dialect's {field: null} does. See
+            // MongoElementRefExpression.NullSafe's own remarks.
+            elementRef = new MongoElementRefExpression(navPath, navigation.TargetEntityType.ClrType, nullSafe: true);
+            return true;
+        }
+
+        elementRef = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves a nested member/navigation access chain whose LEAF hop is itself an owned/embedded
+    /// single-reference (OwnsOne) navigation — e.g. <c>b.Address</c> or <c>b.Address.Recipient</c> — to its own
+    /// dotted document path, mirroring <see cref="TryResolveOwnedFieldPath"/>'s walk but stopping ONE hop
+    /// earlier: every hop, INCLUDING the leaf, must resolve to an embedded single-reference navigation, since
+    /// the leaf here is the navigation itself, not a scalar property underneath it. Returns
+    /// <see langword="false"/> for a collection navigation, a reference (non-embedded) navigation, or a single
+    /// top-level hop off a non-parameter receiver.
+    /// </summary>
+    private bool TryResolveOwnedReferenceNavigationPath(
+        Expression node, [NotNullWhen(true)] out string? path, [NotNullWhen(true)] out INavigation? navigation,
+        out bool isOuter)
+    {
+        path = null;
+        navigation = null;
+
+        if (!TryBeginOwnedHopWalk(node, minimumHops: 1, out var names, out var scopeType, out isOuter))
+            return false;
+
+        // Unlike the two sibling resolvers, the LEAF here is itself a navigation, so EVERY hop — the last one
+        // included — must be an embedded single reference. Walk them all, tracking the final hop's own
+        // navigation, which is what this resolver reports.
+        var segments = new List<string>(names.Count);
+        INavigation? leafNavigation = null;
+        foreach (var name in names)
+        {
+            var hop = scopeType.FindNavigation(name);
+            if (hop is null || !hop.IsEmbedded() || hop.IsCollection)
+                return false;
+
+            var elementName = hop.TargetEntityType.GetContainingElementName();
+            if (string.IsNullOrEmpty(elementName))
+                return false;
+
+            segments.Add(elementName);
+            scopeType = hop.TargetEntityType;
+            leafNavigation = hop;
+        }
+
+        // minimumHops: 1 above guarantees the loop ran at least once, so leafNavigation is set.
+        navigation = leafNavigation!;
+        path = string.Join(".", segments);
+        return true;
     }
 
     /// <summary>
@@ -296,7 +450,13 @@ internal sealed partial class MongoExpressionTranslator
     /// array relative to the element, which is exactly what the enclosing <c>$elemMatch</c> expects.
     /// </para>
     /// <para>
-    /// Two-scope mode is still declined: a cross-scope quantifier is out of scope.
+    /// Two-scope mode (<c>_outerParam</c> set): a chain rooted on the OUTER param resolves against
+    /// <c>_outerEntityType</c> (EF-421), by the same root-identity check as
+    /// <see cref="TryResolveOwnedFieldPath"/>. The array itself being reached through the outer scope
+    /// (a quantifier over an outer sibling collection) is left to the caller to decide — see
+    /// <see cref="MongoExpressionTranslator"/>'s quantifier/<c>Count</c> arms, which decline that combination.
+    /// A chain reached from an <c>_innerPrefix</c>-set (SelectMany-unwind) scope, or rooted on neither known
+    /// parameter, is still declined outright.
     /// </para>
     /// <para>
     /// <b>Why accepting any <see cref="ParameterExpression"/> root is safe.</b> This walk does not check which
@@ -310,53 +470,35 @@ internal sealed partial class MongoExpressionTranslator
     private bool TryResolveOwnedCollectionPath(
         Expression source,
         [NotNullWhen(true)] out string? arrayPath,
-        [NotNullWhen(true)] out IEntityType? elementType)
+        [NotNullWhen(true)] out IEntityType? elementType,
+        out bool isOuter)
     {
         arrayPath = null;
         elementType = null;
 
-        if (_outerParam is not null || _innerPrefix is not null)
-            return false; // two-scope mode: cross-scope quantifiers are out of scope (declined, falls back)
-
-        // Collect hop names from the outer hop inward; the root must be the query parameter.
-        var names = new List<string>();
-        var current = source;
-        while (TryGetMemberOrEFProperty(current, out var inner, out var name))
-        {
-            names.Add(name);
-            current = inner;
-        }
-
-        if (current is not ParameterExpression || names.Count == 0)
+        if (!TryBeginOwnedHopWalk(source, minimumHops: 1, out var names, out var scopeType, out isOuter))
             return false;
 
-        names.Reverse(); // now root-first: [ownedRefNav, ..., collectionNav]
-
-        var scopeType = _entityType;
+        // Every hop but the last must be an embedded single reference; the FINAL hop is the quantifier's own
+        // source and must be an embedded COLLECTION navigation. That final-hop rule is the structural
+        // protection against a mapped scalar property sharing a navigation's name — a scalar's receiver is
+        // never a collection.
         var segments = new List<string>(names.Count);
-        for (var i = 0; i < names.Count; i++)
-        {
-            var navigation = scopeType.FindNavigation(names[i]);
-            if (navigation is null || !navigation.IsEmbedded())
-                return false; // a primitive collection property or a reference nav has no embedded path
+        if (!TryWalkEmbeddedReferenceHops(names, names.Count - 1, ref scopeType, segments))
+            return false;
 
-            // A collection is allowed only as the FINAL hop (it is the quantifier's source); every
-            // intermediate hop must be an owned single reference.
-            if (navigation.IsCollection != (i == names.Count - 1))
-                return false;
+        var collectionNavigation = scopeType.FindNavigation(names[^1]);
+        if (collectionNavigation is null || !collectionNavigation.IsEmbedded() || !collectionNavigation.IsCollection)
+            return false; // a primitive collection property, a reference nav, or a non-collection final hop
 
-            // The navigation's containing element name is the same source the shapers and pipeline use, so
-            // the emitted path matches stored layout (including HasElementName overrides and shared types).
-            var elementName = navigation.TargetEntityType.GetContainingElementName();
-            if (string.IsNullOrEmpty(elementName))
-                return false;
+        var collectionElementName = collectionNavigation.TargetEntityType.GetContainingElementName();
+        if (string.IsNullOrEmpty(collectionElementName))
+            return false;
 
-            segments.Add(elementName);
-            scopeType = navigation.TargetEntityType;
-        }
+        segments.Add(collectionElementName);
 
         arrayPath = string.Join(".", segments);
-        elementType = scopeType;
+        elementType = collectionNavigation.TargetEntityType;
         return true;
     }
 }

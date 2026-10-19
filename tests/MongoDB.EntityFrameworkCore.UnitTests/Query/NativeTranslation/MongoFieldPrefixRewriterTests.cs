@@ -41,10 +41,18 @@ public class MongoFieldPrefixRewriterTests
     private static MongoFieldExpression Field(string name)
         => new(GetProperty(name), name);
 
+    // MongoFieldPrefixRewriter's public entry point is TryRewrite (it DECLINES rather than throwing for a node
+    // kind with no prefixing rule). Every case below is a success case, so this asserts the success and unwraps.
+    private static MongoExpression Rewrite(MongoExpression expr, string prefix)
+    {
+        Assert.True(MongoFieldPrefixRewriter.TryRewrite(expr, prefix, out var rewritten));
+        return rewritten;
+    }
+
     [Fact]
     public void Rewrites_a_bare_field_element_name_with_the_prefix()
     {
-        var rewritten = (MongoFieldExpression)MongoFieldPrefixRewriter.Rewrite(Field("Total"), "_lookup_Refs");
+        var rewritten = (MongoFieldExpression)Rewrite(Field("Total"), "_lookup_Refs");
         Assert.Equal("_lookup_Refs.Total", rewritten.ElementName);
     }
 
@@ -59,7 +67,7 @@ public class MongoFieldPrefixRewriterTests
                 new MongoBinaryExpression(MongoBinaryOperator.Equal, Field("Name"),
                     new MongoConstantExpression("x", forSerialization: null))));
 
-        var rewritten = (MongoBinaryExpression)MongoFieldPrefixRewriter.Rewrite(expr, "_lookup_Refs");
+        var rewritten = (MongoBinaryExpression)Rewrite(expr, "_lookup_Refs");
         var left = (MongoBinaryExpression)rewritten.Left;
         var right = (MongoBinaryExpression)((MongoUnaryExpression)rewritten.Right).Operand;
         Assert.Equal("_lookup_Refs.Total", ((MongoFieldExpression)left.Left).ElementName);
@@ -69,7 +77,7 @@ public class MongoFieldPrefixRewriterTests
     [Fact]
     public void Prefixes_the_array_path_of_a_size_node()
     {
-        var rewritten = MongoFieldPrefixRewriter.Rewrite(
+        var rewritten = Rewrite(
             new MongoSizeExpression("Comments", typeof(int), nullSafe: true), "Posts");
 
         var size = Assert.IsType<MongoSizeExpression>(rewritten);
@@ -86,7 +94,7 @@ public class MongoFieldPrefixRewriterTests
             new MongoConstantExpression(2, null));
 
         var rewritten = Assert.IsType<MongoBinaryExpression>(
-            MongoFieldPrefixRewriter.Rewrite(comparison, "Posts"));
+            Rewrite(comparison, "Posts"));
 
         Assert.Equal("Posts.Comments", Assert.IsType<MongoSizeExpression>(rewritten.Left).FieldName);
     }
@@ -99,7 +107,7 @@ public class MongoFieldPrefixRewriterTests
             new MongoConstantExpression("x", forSerialization: null));
         var expr = new MongoElemMatchExpression("Posts", child, negated: false);
 
-        var rewritten = (MongoElemMatchExpression)MongoFieldPrefixRewriter.Rewrite(expr, "_lookup_Refs");
+        var rewritten = (MongoElemMatchExpression)Rewrite(expr, "_lookup_Refs");
 
         Assert.Equal("_lookup_Refs.Posts", rewritten.ArrayPath);
         // The child is element-relative and must be untouched — NOT "_lookup_Refs.Name".
@@ -119,7 +127,7 @@ public class MongoFieldPrefixRewriterTests
                 new MongoConstantExpression(0, forSerialization: null)),
             typeof(int));
 
-        var rewritten = Assert.IsType<MongoFilteredSizeExpression>(MongoFieldPrefixRewriter.Rewrite(node, "Posts"));
+        var rewritten = Assert.IsType<MongoFilteredSizeExpression>(Rewrite(node, "Posts"));
 
         Assert.Equal("Posts.Comments", rewritten.ArrayPath);
         Assert.Same(node.ElementPredicate, rewritten.ElementPredicate);
@@ -136,10 +144,54 @@ public class MongoFieldPrefixRewriterTests
         var expr = new MongoArrayContainsExpression(
             Field("Name"), new MongoConstantExpression("keep", forSerialization: null), negated: false);
 
-        var rewritten = (MongoArrayContainsExpression)MongoFieldPrefixRewriter.Rewrite(expr, "_lookup_Refs");
+        var rewritten = (MongoArrayContainsExpression)Rewrite(expr, "_lookup_Refs");
 
         Assert.Equal("_lookup_Refs.Name", rewritten.Field.ElementName);
         Assert.Equal("keep", Assert.IsType<MongoConstantExpression>(rewritten.Value).Value);
         Assert.False(rewritten.Negated);
+    }
+
+    // REGRESSION: this arm used to rebuild the node with the two-argument constructor, silently defaulting
+    // NullSafe back to false. NullSafe is what makes the aggregation renderer wrap the reference in $ifNull so a
+    // MISSING element compares equal to null the way $expr's own $eq does not — so dropping it turned an
+    // owned-nav null check inside a prefixed scope (`SelectMany(o => o.Details.Where(d => d.Ship == null), …)`)
+    // into one that matched only EXPLICIT nulls and quietly lost every row whose sub-document was absent.
+    [Fact]
+    public void Prefixes_an_element_ref_and_preserves_its_null_safety()
+    {
+        var rewritten = Assert.IsType<MongoElementRefExpression>(
+            Rewrite(new MongoElementRefExpression("Ship", typeof(object), nullSafe: true), "_lookup_Refs"));
+
+        Assert.Equal("_lookup_Refs.Ship", rewritten.Path);
+        Assert.True(rewritten.NullSafe);
+    }
+
+    // An outer-scoped field is root-anchored by definition (it renders with elementVariable: null regardless of
+    // any enclosing element scope), so it must pass through UNPREFIXED. Before this arm existed the node hit the
+    // exhaustive switch's throwing default, converting a clean driver-LINQ fallback into a hard failure in every
+    // MongoQueryMode.
+    [Fact]
+    public void Leaves_an_outer_scoped_field_unprefixed()
+    {
+        var outerField = new MongoOuterFieldExpression(Field("Name").Property, "Name");
+
+        var rewritten = Assert.IsType<MongoOuterFieldExpression>(Rewrite(outerField, "_lookup_Refs"));
+
+        Assert.Same(outerField, rewritten);
+        Assert.Equal("Name", rewritten.ElementName);
+    }
+
+    // The disposition for a node kind with no prefixing rule is a DECLINE, not a throw — the caller falls back
+    // to driver-LINQ. MongoExpressionNodeCoverageTests pins which kinds currently land here.
+    [Fact]
+    public void Declines_rather_than_throwing_for_a_node_kind_with_no_prefixing_rule()
+    {
+        var unprefixable = new MongoQuantifierExpression(
+            new MongoElementRefExpression("Posts", typeof(object)),
+            Field("Flag"),
+            MongoExpressionTranslator.MongoQuantifierKind.Any);
+
+        Assert.False(MongoFieldPrefixRewriter.TryRewrite(unprefixable, "_lookup_Refs", out var rewritten));
+        Assert.Null(rewritten);
     }
 }

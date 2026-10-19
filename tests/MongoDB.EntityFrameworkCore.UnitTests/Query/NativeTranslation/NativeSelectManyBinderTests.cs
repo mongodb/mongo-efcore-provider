@@ -229,7 +229,7 @@ public class NativeSelectManyBinderTests
         var bin = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
         Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
         Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);   // inner, prefixed
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);          // outer, root
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);     // outer, root
     }
 
     [Fact]
@@ -249,7 +249,7 @@ public class NativeSelectManyBinderTests
         // correlated conjunct: inner prefixed vs outer root
         var right = Assert.IsType<MongoBinaryExpression>(and.Right);
         Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(right.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(right.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(right.Right).ElementName);
     }
 
     [Fact]
@@ -299,7 +299,7 @@ public class NativeSelectManyBinderTests
         var bin = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
         Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
         Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     // ── TryBindTransparentIdentifierProjection: explicit-result-selector / query-syntax form ───────
@@ -728,8 +728,30 @@ public class NativeSelectManyBinderTests
     }
 
     [Fact]
-    public void TryBindTransparentIdentifierProjection_non_arithmetic_computed_leaf_returns_false()
+    public void TryBindTransparentIdentifierProjection_method_call_computed_leaf_returns_false()
     {
+        // A plain (non-Add) method call, e.g. .ToUpper(), has no MongoExpression translation at all —
+        // TranslateOperand's MethodCallExpression handling admits only Contains/Not, so this still declines.
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+
+        var (ti, _, inner) = TiScopes();
+        var toUpper = Expression.Call(
+            Expression.Property(inner, nameof(Item.Name)), typeof(string).GetMethod(nameof(string.ToUpper), [])!);
+        var body = Expression.MemberInit(Expression.New(typeof(OtherScopeProjected)),
+            Expression.Bind(typeof(OtherScopeProjected).GetProperty(nameof(OtherScopeProjected.X))!, toUpper));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
+        Assert.Empty(mongoQ.Select.Projection);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_cross_scope_string_concat_leaf_translates_to_concat()
+    {
+        // String concatenation (ExpressionType.Add, Type == string) now translates via MongoConcatExpression
+        // instead of declining — mirrors the arithmetic cross-scope leaf test above (bare_cross_scope_computed
+        // and root_scope_arithmetic_leaf), just for a string-typed leaf.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -742,8 +764,14 @@ public class NativeSelectManyBinderTests
             Expression.Bind(typeof(OtherScopeProjected).GetProperty(nameof(OtherScopeProjected.X))!, concat));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
-        Assert.Empty(mongoQ.Select.Projection);
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("X", projection.Alias);
+        var concatExpr = Assert.IsType<MongoConcatExpression>(projection.Expression);
+        Assert.Equal(2, concatExpr.Operands.Count);
+        Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(concatExpr.Operands[0]).ElementName);
+        Assert.Equal("x", Assert.IsType<MongoConstantExpression>(concatExpr.Operands[1]).Value);
     }
 
     [Fact]
@@ -1086,7 +1114,7 @@ public class NativeSelectManyBinderTests
         // Inner field prefixed with the lookup scope; outer field at document root — resolved by parameter
         // identity, so the shared-nothing scopes never conflate.
         Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     [Fact]
