@@ -143,6 +143,17 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
         ["first_bare"] = (q => One(q.OrderBy(x => x.Title).Select(x => x.Rank).First()), ["0", Throws, "1", "1", "0"]),
     };
 
+    // Conv is an int stored as a string, which the driver-LINQ bridge now reads through $convert (EF-337): a MISSING element converts to
+    // null, so an explicit DriverLinq query throws on it instead of reading default, and a missing and a null row share one group.
+    private static readonly Dictionary<string, string[]> DriverLinqConvertedOverrides = new()
+    {
+        ["distinct_conv"] = [Throws, Throws, Throws, Throws, Throws],
+        ["distinct_conv_count"] = ["1", "1", "3", "3", "1"],
+        ["distinct_conv_union"] = [Throws, Throws, Throws, Throws, Throws],
+        ["distinct_conv_concat"] = [Throws, Throws, Throws, Throws, Throws],
+        ["distinct_conv_union_distinct"] = [Throws, Throws, Throws, Throws, Throws]
+    };
+
     public static TheoryData<string> MainParityShapeNames => [.. MainParityShapes.Keys];
 
     [Theory]
@@ -154,8 +165,11 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
 
         foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
-            Assert.True(main.SequenceEqual(RunPerRowSet(collection, mode, run, main)),
-                $"{mode}: expected [{string.Join("; ", main)}], got [{string.Join("; ", RunPerRowSet(collection, mode, run, main))}]");
+            var expected = mode == MongoQueryMode.DriverLinq && DriverLinqConvertedOverrides.TryGetValue(shape, out var overridden)
+                ? overridden
+                : main;
+            Assert.True(expected.SequenceEqual(RunPerRowSet(collection, mode, run, expected)),
+                $"{mode}: expected [{string.Join("; ", expected)}], got [{string.Join("; ", RunPerRowSet(collection, mode, run, expected))}]");
         }
     }
 
@@ -220,14 +234,18 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
     {
         var collection = Seed(nameof(Distinct_over_a_converted_key_reads_a_missing_row_as_default));
 
-        Assert.Equal(
-            [0, 1, 2],
-            NativeModeAssert.NativeAndParity(mode =>
-            {
-                using var db = CreateContext(collection, mode);
-                return db.Entities.AsNoTracking().Where(x => x.Title != "d")
-                    .Select(x => x.Conv).Distinct().AsEnumerable().Order().ToList();
-            }));
+        List<int> Run(MongoQueryMode mode)
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().Where(x => x.Title != "d")
+                .Select(x => x.Conv).Distinct().AsEnumerable().Order().ToList();
+        }
+
+        Assert.Equal([0, 1, 2], Run(MongoQueryMode.NativeOnly));
+        Assert.Equal([0, 1, 2], Run(MongoQueryMode.Native));
+
+        // An explicit DriverLinq reads Conv through $convert (EF-337), which turns the missing element into null.
+        Assert.Throws<FormatException>(() => Run(MongoQueryMode.DriverLinq));
     }
 
     /// <summary>
