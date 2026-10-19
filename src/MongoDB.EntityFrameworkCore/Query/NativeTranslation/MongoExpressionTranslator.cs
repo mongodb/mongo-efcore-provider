@@ -112,6 +112,22 @@ internal sealed partial class MongoExpressionTranslator
     internal ParameterExpression? SelfParam { get; set; }
 
     /// <summary>
+    /// EF-322: when set, a single-hop member access on <see cref="SelfParam"/> resolves against THESE grouping
+    /// key parts — a projected <c>Distinct()</c>'s own flattened output schema — instead of against
+    /// <see cref="_entityType"/>. Set by <see cref="NativeSlotPopulator.PopulateNativeSlots"/>'s <c>Where</c>
+    /// arm only when <c>Select.IsDistinct &amp;&amp; !Select.IsGroupBy &amp;&amp; Select.Grouping != null</c> (a
+    /// pure projected-Distinct terminal, never a genuine <c>GroupBy</c>). Required because a Distinct's
+    /// anonymous/DTO member name is independent of, but can coincide with, a real entity property of the same
+    /// name (<c>Select(o => new { Country = o.City }).Distinct().Where(x => x.Country == "...")</c> names its
+    /// member "Country" while sourcing it from <c>City</c>) — resolving by entity-property name, this
+    /// translator's ordinary behavior, would silently filter on the WRONG (untouched) field. See
+    /// <see cref="MongoExpressionTranslator.TryResolveMember"/>'s use of this scope: a member name that does
+    /// NOT match one of these key parts declines outright rather than falling through to the entity, so a
+    /// computed/out-of-scope predicate still falls back to driver-LINQ instead of silently mistranslating.
+    /// </summary>
+    internal MongoGrouping? DistinctAliasScope { get; set; }
+
+    /// <summary>
     /// Attempts to translate an EF Core expression body into a <see cref="MongoExpression"/>.
     /// </summary>
     /// <param name="efBody">The expression body (from a predicate or key-selector lambda).</param>
@@ -300,6 +316,150 @@ internal sealed partial class MongoExpressionTranslator
         return false;
     }
 
+    /// <summary>
+    /// Resolves a <c>DateTime</c>/<c>DateTimeOffset</c> <c>.AddXxx(amount)</c> call
+    /// (<c>new DateTime(1900, 1, 1).AddMinutes(o.OrderID % 25)</c>) to a <see cref="MongoDateAddExpression"/>.
+    /// </summary>
+    /// <remarks>
+    /// Only the seven <c>AddXxx</c> overloads in <see cref="DateAddUnitsByMethodName"/> map 1:1 onto a
+    /// <c>$dateAdd</c> <c>unit</c> string; <c>AddTicks</c> and <c>Add(TimeSpan)</c> have none and are left
+    /// unmatched here, falling through to the driver-LINQ bridge. Both the receiver and the amount recurse
+    /// through <see cref="TranslateOperand"/> — the receiver so a chained <c>.AddDays(...).AddMinutes(...)</c>
+    /// or a plain field/constant/date-part-derived value all work, the amount so an arithmetic expression
+    /// (like the modulo in the motivating example) translates the same way any other numeric operand does.
+    /// </remarks>
+    private bool TryTranslateDateAdd(Expression node, bool allowNumericWidening, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        if (node is not MethodCallExpression { Object: { } receiver } call
+            || call.Arguments.Count != 1
+            || (call.Method.DeclaringType != typeof(DateTime) && call.Method.DeclaringType != typeof(DateTimeOffset))
+            || !DateAddUnitsByMethodName.TryGetValue(call.Method.Name, out var unit))
+        {
+            return false;
+        }
+
+        // The receiver is not always something TranslateOperand already resolves: `new DateTime(1900, 1, 1)`
+        // (a `NewExpression`, not a member/field/constant) reaches here UN-evaluated whenever EF's own
+        // parameter-extraction pass declined to fold it — which it does for exactly this shape, since the
+        // enclosing `.AddMinutes(o.OrderID % 25)` call as a WHOLE is not evaluatable (it depends on `o`), and
+        // EF's evaluatable-subtree search does not descend into a NOT-evaluatable node's children looking for a
+        // smaller evaluatable one. TryEvaluateClosedSubtree covers exactly this residual case.
+        var startDate = TranslateOperand(receiver, allowNumericWidening);
+        if (startDate is null && !TryEvaluateClosedSubtree(receiver, out startDate))
+            return false;
+
+        if (startDate is null)
+            return false;
+
+        var amount = TranslateOperand(call.Arguments[0], allowNumericWidening: true);
+        if (amount is null)
+            return false;
+
+        result = new MongoDateAddExpression(startDate, unit, amount);
+        return true;
+    }
+
+    /// <summary>
+    /// Evaluates a CLOSED subtree — one with no lambda parameter and no EF query-parameter node anywhere in
+    /// it — to a <see cref="MongoConstantExpression"/>. Exists for a shape EF's own parameter-extraction pass
+    /// leaves un-folded: a fully-literal sub-expression (<c>new DateTime(1900, 1, 1)</c>) nested inside a
+    /// LARGER expression that, as a whole, is not evaluatable (because a SIBLING operand references the query
+    /// source), so EF's evaluatable-subtree search — which only ever folds a MAXIMAL evaluatable node, never
+    /// descends into a non-evaluatable one looking for a smaller evaluatable child — never gets a chance to
+    /// fold this one either. Declines (rather than risking a wrong evaluation) for anything containing a
+    /// lambda parameter, an EF query parameter, or any other <see cref="ExpressionType.Extension"/> node — a
+    /// subtree containing any of those cannot be compiled and invoked in isolation.
+    /// </summary>
+    private static bool TryEvaluateClosedSubtree(Expression node, out MongoExpression? result)
+    {
+        result = null;
+
+        if (ContainsParameterOrExtensionNode(node))
+            return false;
+
+        object? value;
+        try
+        {
+            value = Expression.Lambda<Func<object>>(Expression.Convert(node, typeof(object))).Compile().Invoke();
+        }
+        catch
+        {
+            return false; // the subtree throws when evaluated (e.g. an invalid DateTime) — decline, don't crash translation
+        }
+
+        // A DateTime literal like `new DateTime(1900, 1, 1)` has Kind Unspecified, exactly like the value the
+        // in-memory LINQ comparison computes against (no conversion at all — .AddMinutes is pure tick
+        // arithmetic). BsonValue.Create(DateTime), reached with ForSerialization null below, calls the
+        // driver's BsonUtils.ToUniversalTime, which for a non-Utc Kind calls DateTime.ToUniversalTime() and
+        // therefore depends on the MACHINE'S LOCAL TIME ZONE — for a pre-1916 date on a host whose zone has a
+        // historical non-whole-minute LMT offset (e.g. Europe/Dublin's -00:25 before 1916), that silently skews
+        // the rendered $date by the offset (MEASURED: 1900-01-01 renders as 00:25 UTC, not 00:00, causing
+        // Add_minutes_on_constant_value to be off by exactly that skew). SpecifyKind (a relabel, not a
+        // conversion — the ticks are untouched) makes it Utc, which BsonUtils.ToUniversalTime treats as a
+        // no-op, so the rendered literal matches the tick value the in-memory comparison uses regardless of
+        // the host's time zone.
+        if (value is DateTime { Kind: not DateTimeKind.Utc } dateTimeValue)
+            value = DateTime.SpecifyKind(dateTimeValue, DateTimeKind.Utc);
+
+        result = new MongoConstantExpression(value, forSerialization: null);
+        return true;
+    }
+
+    private static bool ContainsParameterOrExtensionNode(Expression node)
+    {
+        var finder = new ParameterOrExtensionNodeFinder();
+        finder.Visit(node);
+        return finder.Found;
+    }
+
+    private sealed class ParameterOrExtensionNodeFinder : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        [return: NotNullIfNotNull(nameof(node))]
+        public override Expression? Visit(Expression? node)
+        {
+            if (node is null || Found)
+                return node;
+
+            if (node is ParameterExpression || node.NodeType == ExpressionType.Extension)
+            {
+                Found = true;
+                return node;
+            }
+
+            return base.Visit(node);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="call"/> is a <c>DateTime</c>/<c>DateTimeOffset</c> <c>.AddXxx(amount)</c> call
+    /// <see cref="TryTranslateDateAdd"/> can translate — exposed so
+    /// <see cref="Visitors.MongoProjectionBindingExpressionVisitor"/> can register the whole call as ONE
+    /// projection leaf using the SAME predicate this translator's own emit side gates on, rather than
+    /// restating the method-name set and risking the two drifting apart.
+    /// </summary>
+    public static bool IsDateAddMethod(MethodCallExpression call)
+        => (call.Method.DeclaringType == typeof(DateTime) || call.Method.DeclaringType == typeof(DateTimeOffset))
+            && call.Arguments.Count == 1
+            && DateAddUnitsByMethodName.ContainsKey(call.Method.Name);
+
+    // Exactly the AddXxx overloads that map 1:1 onto a $dateAdd unit string — see MongoDateAddUnit's own
+    // remarks for why AddTicks/Add(TimeSpan) are absent. Shared by DateTime and DateTimeOffset: both types
+    // declare identically-named/-shaped members.
+    private static readonly Dictionary<string, MongoDateAddUnit> DateAddUnitsByMethodName = new()
+    {
+        [nameof(DateTime.AddYears)] = MongoDateAddUnit.Year,
+        [nameof(DateTime.AddMonths)] = MongoDateAddUnit.Month,
+        [nameof(DateTime.AddDays)] = MongoDateAddUnit.Day,
+        [nameof(DateTime.AddHours)] = MongoDateAddUnit.Hour,
+        [nameof(DateTime.AddMinutes)] = MongoDateAddUnit.Minute,
+        [nameof(DateTime.AddSeconds)] = MongoDateAddUnit.Second,
+        [nameof(DateTime.AddMilliseconds)] = MongoDateAddUnit.Millisecond
+    };
+
     // Mirrors MongoEFToLinqTranslatingExpressionVisitor.DateTimeOffsetComponentMembers' member set, minus
     // TimeOfDay (see MongoDatePart's own remarks for why that one is excluded), and applies identically to a
     // plain DateTime receiver, which needs none of that visitor's offset-reconstruction dance.
@@ -463,6 +623,10 @@ internal sealed partial class MongoExpressionTranslator
             MongoConditionalExpression cond => AllFieldsDefaultSerialized(cond.Test)
                 && AllFieldsDefaultSerialized(cond.IfTrue)
                 && AllFieldsDefaultSerialized(cond.IfFalse),
+            // An $ifNull's operands can each independently reach a non-default-serialized field, same rule and
+            // same reason as MongoConditionalExpression's arm immediately above.
+            MongoCoalesceExpression coalesce
+                => AllFieldsDefaultSerialized(coalesce.Left) && AllFieldsDefaultSerialized(coalesce.Right),
             // A date-part extraction or DateTimeOffset local-time reconstruction renders a raw MQL date
             // operator directly against its operand's BSON representation — a non-default BsonRepresentation
             // or ValueConverter on the underlying field would make that operator run against a value that
@@ -471,6 +635,19 @@ internal sealed partial class MongoExpressionTranslator
             // way MongoConvertExpression's arm above does for an explicit cast.
             MongoDatePartExpression datePart => AllFieldsDefaultSerialized(datePart.Operand),
             MongoDateTimeOffsetLocalExpression local => AllFieldsDefaultSerialized(local.Operand),
+            // Same reasoning as MongoDatePartExpression above, over both operands: $dateAdd runs directly
+            // against StartDate's raw BSON representation, and Amount is a genuine numeric operand like any
+            // arithmetic operand elsewhere in this method.
+            MongoDateAddExpression dateAdd
+                => AllFieldsDefaultSerialized(dateAdd.StartDate) && AllFieldsDefaultSerialized(dateAdd.Amount),
+            // $indexOfCP runs directly against both operands' raw BSON representation, same reasoning as
+            // MongoDateAddExpression immediately above.
+            MongoStringIndexOfExpression indexOf
+                => AllFieldsDefaultSerialized(indexOf.Haystack) && AllFieldsDefaultSerialized(indexOf.Needle),
+            // A constructed-tuple operand's elements each render through the raw $expr field path exactly
+            // like an ordinary field-to-field/arithmetic operand — same reasoning as MongoBinaryExpression's
+            // arm above, recursed per element instead of per side.
+            MongoTupleExpression tuple => tuple.Elements.All(AllFieldsDefaultSerialized),
             // A MongoInExpression is deliberately NOT given its own arm — it is correct via the catch-all
             // below: RenderIn/RenderInValues serialize every candidate value through the field's own property
             // serializer (MongoConstantExpression.ForSerialization / the parameter's serializer), so a
@@ -494,7 +671,7 @@ internal sealed partial class MongoExpressionTranslator
     // copy of ExpressionExtensionMethods.RemoveConvert. The local name is kept because it is the vocabulary the
     // ~20 call sites in this file read in, and because the SIBLING peelers here are deliberately NOT the same
     // thing (see UnwrapOrderPreserving's remarks below for why they must not be collapsed into this one).
-    private static Expression Unwrap(Expression e)
+    internal static Expression Unwrap(Expression e)
         => e.RemoveConvert();
 
     /// <summary>
@@ -571,10 +748,35 @@ internal sealed partial class MongoExpressionTranslator
                 when TryTranslateEntityEquality(eq, out var entityEquality):
                 return entityEquality;
 
+            // A constructed-tuple comparison (`new Tuple<string>(c.City) == new Tuple<string>("London")`) —
+            // must run before the ordinary comparison dispatch below for the same reason as entity equality
+            // just above: neither side is a member access/simple value, so TranslateComparison has no
+            // coverage for it. See MongoExpressionTranslator.TupleEquality.cs.
+            case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } tupleEq
+                when TryTranslateTupleEquality(tupleEq, out var tupleEquality):
+                return tupleEquality;
+
+            // `root.GetType() == typeof(T)` / `!=` against a non-hierarchy root entity — collapses to a
+            // compile-time constant true/false. See MongoExpressionTranslator.EntityType.cs.
+            case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } getTypeEq
+                when TryTranslateGetTypeComparison(getTypeEq, out var getTypeComparison):
+                return getTypeComparison;
+
             // The `.Equals(...)` spelling of the same shape — the only spelling composite-key entity types
             // support, since C# doesn't synthesize a `==` operator for them. See TryTranslateEntityEqualityCall.
             case MethodCallExpression callEq when TryTranslateEntityEqualityCall(callEq, out var entityEqualityCall):
                 return entityEqualityCall;
+
+            // A two-valued predicate compared to a boolean literal (`c.CustomerID.EndsWith("KI") ==
+            // ((bool?)true)`) — the predicate side (a method call, ternary, quantifier, etc.) has no
+            // stored-member shape TranslateComparisonCore's query-native branches recognize (TryResolveMember
+            // only matches a bare member) and TranslateOperand's value-position path has no case for a
+            // predicate either, so this always declined to driver-LINQ. Must run BEFORE the ordinary
+            // comparison dispatch below for the same reason as entity/tuple equality above: TryResolveMember
+            // will never see a member here. See TryTranslateBooleanPredicateComparison.
+            case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } boolPredEq
+                when TryTranslateBooleanPredicateComparison(boolPredEq, out var boolPredicateComparison):
+                return boolPredicateComparison;
 
             case BinaryExpression be when IsComparison(be.NodeType):
                 return TranslateComparison(be);
@@ -588,17 +790,56 @@ internal sealed partial class MongoExpressionTranslator
             // type argument (e.g. ((int)21).Equals((object)(ulong)21), which plain C# evaluates false — Int32
             // .Equals(object) checks `obj is int` first) down to a raw constant and emit a native $eq that
             // MongoDB WOULD match (BSON compares numeric subtypes by value) — the OPPOSITE result. That
-            // mismatched-type shape has no native form yet and must keep falling back to the driver-LINQ
-            // bridge, which already special-cases it (see MongoEFToLinqTranslatingExpressionVisitor's
-            // IsAlwaysFalseAcrossTypeMismatch). Once the object-overload is excluded, the argument can only
-            // carry a genuine (non-boxing) implicit numeric widening — the same shape `==` already handles —
-            // so delegating straight to TranslateComparisonCore reuses that logic unchanged.
+            // mismatched-type shape is instead handled by the constant-false fold immediately below (mirrors
+            // the driver-LINQ bridge's own IsAlwaysFalseAcrossTypeMismatch). Once the object-overload is
+            // excluded here, the argument can only carry a genuine (non-boxing) implicit numeric widening —
+            // the same shape `==` already handles — so delegating straight to TranslateComparisonCore reuses
+            // that logic unchanged.
             case MethodCallExpression
                 {
                     Method.Name: nameof(object.Equals), Object: not null, Arguments.Count: 1
                 } equalsCall
                 when equalsCall.Method.GetParameters()[0].ParameterType != typeof(object):
                 return TranslateComparisonCore(equalsCall.Object!, equalsCall.Arguments[0], ExpressionType.Equal);
+
+            // --- Nullable-receiver Equals(object) call: e.g. `c.NullableAge.Equals(21)` ---
+            //
+            // Nullable<T> has no IEquatable<T>.Equals(T) of its own (only the inherited Equals(object)), so
+            // ANY call through a nullable receiver is compiled to the object overload above, regardless of
+            // whether the argument's underlying type actually matches the receiver's — the previous case's
+            // `!= typeof(object)` gate can't tell them apart. Mirror the static two-arg rule immediately below:
+            // peel exactly one boxing layer off the argument (RemoveObjectConvert) and require the UNBOXED,
+            // NULLABLE-STRIPPED types on both sides to match before treating it as an ordinary comparison. A
+            // mismatch (e.g. a genuinely different underlying type) falls through and stays declined, same as
+            // the object-overload case above.
+            case MethodCallExpression
+                {
+                    Method.Name: nameof(object.Equals), Object: not null, Arguments.Count: 1
+                } nullableEqualsCall
+                when (Nullable.GetUnderlyingType(nullableEqualsCall.Object!.Type) ?? nullableEqualsCall.Object.Type)
+                     == (Nullable.GetUnderlyingType(nullableEqualsCall.Arguments[0].RemoveObjectConvert().Type)
+                         ?? nullableEqualsCall.Arguments[0].RemoveObjectConvert().Type):
+                return TranslateComparisonCore(
+                    nullableEqualsCall.Object!, nullableEqualsCall.Arguments[0].RemoveObjectConvert(), ExpressionType.Equal);
+
+            // --- Nullable-receiver Equals(object) call across a genuinely mismatched underlying type: e.g.
+            // `nullableLongPrm.Equals(e.ReportsTo)` (ulong? vs int?) ---
+            //
+            // The case above admits a MATCHING underlying type; this one is the sibling for a mismatched one.
+            // Plain C# always returns false here (Nullable<T>.Equals(object) checks the argument's runtime type
+            // against T before comparing), so this is a compile-time-known constant, not a query — mirrors the
+            // driver-LINQ bridge's own fold for the identical shape (see
+            // ExpressionExtensionMethods.IsAlwaysFalseAcrossTypeMismatch). Scoped to
+            // ExactTypeEqualityTypes/AreMismatchedExactEqualityTypes, same as that bridge: an arbitrary type's
+            // Equals(object) override could legitimately compare across types, so only the known-exact-match
+            // primitives are safe to fold. Anything outside that set still falls through and stays declined.
+            case MethodCallExpression
+                {
+                    Method.Name: nameof(object.Equals), Object: not null, Arguments.Count: 1
+                } mismatchedEqualsCall
+                when ExpressionExtensionMethods.IsAlwaysFalseAcrossTypeMismatch(
+                    mismatchedEqualsCall.Object!, mismatchedEqualsCall.Arguments[0]):
+                return new MongoConstantExpression(false, forSerialization: null);
 
             // --- Static object.Equals(a, b) method call ---
             //
@@ -609,8 +850,11 @@ internal sealed partial class MongoExpressionTranslator
             // static-Equals case): peel exactly one boxing layer off each argument
             // (ExpressionExtensionMethods.RemoveObjectConvert — unlike Unwrap, this strips ONLY a single
             // Convert-to-object layer, leaving any numeric/widening conversion underneath intact) and require
-            // the UNBOXED types to match. A mismatch (e.g. object.Equals(intField, (long)21)) declines rather
-            // than mistranslate — same correctness reasoning as the instance-call case above.
+            // the UNBOXED types to match. A genuinely mismatched EXACT-equality-type pair (e.g.
+            // object.Equals(intField, (long)21)) folds to a compile-time-known `false` constant instead —
+            // same fold and same ExactTypeEqualityTypes scoping as the instance-call case above, mirroring
+            // MongoEFToLinqTranslatingExpressionVisitor's static-Equals case. Anything else (mismatched types
+            // outside that set) declines rather than mistranslate.
             case MethodCallExpression
                 {
                     Method.Name: nameof(object.Equals), Object: null, Arguments.Count: 2
@@ -619,7 +863,13 @@ internal sealed partial class MongoExpressionTranslator
                 var leftArg = staticEqualsCall.Arguments[0].RemoveObjectConvert();
                 var rightArg = staticEqualsCall.Arguments[1].RemoveObjectConvert();
                 if (leftArg.Type != rightArg.Type)
-                    return null;
+                {
+                    return ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(
+                        Nullable.GetUnderlyingType(leftArg.Type) ?? leftArg.Type,
+                        Nullable.GetUnderlyingType(rightArg.Type) ?? rightArg.Type)
+                        ? new MongoConstantExpression(false, forSerialization: null)
+                        : null;
+                }
 
                 return TranslateComparisonCore(leftArg, rightArg, ExpressionType.Equal);
             }
@@ -678,6 +928,41 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoUnaryExpression(MongoUnaryOperator.Not, operand);
             }
 
+            // --- Boolean-typed ternary used as a predicate: test ? ifTrue : ifFalse ---
+            //
+            // EF-322 (Where_ternary_boolean_condition_negated): TranslateOperand already translates a ternary
+            // as a VALUE (computed sort keys, projections, arithmetic operands); this admits the identical
+            // shape as a PREDICATE ROOT (Where's own body, an &&/|| operand, or — via the Not case above — the
+            // operand of a negation). Test is translated via TryTranslate, the same ordinary predicate
+            // translator TranslateOperand's own ternary arm uses for its Test. Both BRANCHES, unlike
+            // TranslateOperand's, recurse through THIS method rather than TranslateOperand: a boolean-typed
+            // branch here is itself a predicate (e.g. a nested comparison or another ternary), not a computed
+            // value. A branch that resolves to a bare non-default-serialized bool field is declined
+            // (IsUnsafeTruthinessRoot) — the built MongoConditionalExpression always renders through the
+            // aggregation-expression $cond, which evaluates by BSON truthiness, the same hazard RenderUnary's
+            // own Not-over-$expr fallback already guards against.
+            //
+            // MongoConditionalExpression has no query-dialect form (see its own remarks and
+            // IsQueryDialectRenderable's `MongoConditionalExpression => false` arm), so the result always
+            // renders through the $expr catch-all — safe at a top-level $match conjunct or as a Not operand,
+            // and IsQueryDialectRenderable's existing `false` answer already keeps it out of any $elemMatch,
+            // where $expr is a hard server error.
+            case ConditionalExpression conditional when conditional.Type == typeof(bool):
+            {
+                if (!TryTranslate(conditional.Test, out var test))
+                    return null;
+
+                var ifTrue = TranslateNode(Unwrap(conditional.IfTrue));
+                if (ifTrue is null || IsUnsafeTruthinessRoot(ifTrue, out _))
+                    return null;
+
+                var ifFalse = TranslateNode(Unwrap(conditional.IfFalse));
+                if (ifFalse is null || IsUnsafeTruthinessRoot(ifFalse, out _))
+                    return null;
+
+                return new MongoConditionalExpression(test, ifTrue, ifFalse);
+            }
+
             // --- Array field contains value: arrayField.Contains(constant) → { field: value } ---
             //
             // The mirror image of the $in arm immediately below: there the ITEM resolves to a field and the
@@ -709,6 +994,13 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoArrayContainsExpression(arrayFieldExpr, itemNode, negated: false);
             }
 
+            // --- Entity-list membership: customers.Contains(c) — the root entity itself is the item.
+            // Must run BEFORE the general collection-membership arm below: TryResolveMember(item) there
+            // requires a member-access item, which a bare whole-entity item never is, so it would decline.
+            // See MongoExpressionTranslator.EntityEquality.cs's TryTranslateEntityListContains.
+            case MethodCallExpression entityContainsCall when TryTranslateEntityListContains(entityContainsCall, out var entityListContains):
+                return entityListContains;
+
             // --- Collection membership: Enumerable.Contains / List<T>.Contains / ICollection<T>.Contains ---
 
             case MethodCallExpression call when TryMatchContainsMethod(call, out var collectionExpr, out var itemExpr):
@@ -727,18 +1019,24 @@ internal sealed partial class MongoExpressionTranslator
                 }
 
                 // The item isn't a bare field — try a COMPUTED needle (e.g. string concatenation of a
-                // column with a constant/other column: `data.Contains(c.CustomerID + "SomeConstant")`).
-                // A computed needle has no query-dialect form at all (only a bare field can key
-                // { field: { $in: [...] } }), so it can only be tested via $expr's array-form $in — hence
-                // MongoComputedInExpression, not MongoInExpression. Scoped to a STRING-typed needle (the
-                // only computed shape TranslateValue produces that TranslateInValuesRaw can serialize
-                // without a backing IProperty) and gated by CanRender so a needle shape the aggregation
-                // renderer can't express declines here rather than throwing at render time.
+                // column with a constant/other column: `data.Contains(c.CustomerID + "SomeConstant")`, a
+                // date-part chain: `dates.Contains(o.OrderDate!.Value.Date)`), or a composite-key-style
+                // anonymous-type tuple built from entity fields (`ids.Contains(new { Id1 = o.OrderID, Id2 =
+                // o.ProductID })`, EF's Northwind `Contains_with_local_anonymous_type_array_closure`) — the
+                // latter reaches here as a MongoDocumentConstructionExpression via TranslateOperand's own
+                // NewExpression/anonymous-type arm. A computed needle has no query-dialect form at all (only
+                // a bare field can key { field: { $in: [...] } }), so it can only be tested via $expr's
+                // array-form $in — hence MongoComputedInExpression, not MongoInExpression. Scoped to the
+                // shapes TranslateInValuesRaw can serialize without a backing IProperty (string, DateTime, or
+                // an anonymous-type tuple whose array element type matches the needle's own type) and gated
+                // by CanRender so a needle shape the aggregation renderer can't express declines here rather
+                // than throwing at render time.
                 if (TryTranslateValue(itemExpr, out var needleNode)
-                    && needleNode.Type == typeof(string)
+                    && (needleNode.Type == typeof(string) || needleNode.Type == typeof(DateTime)
+                        || needleNode is MongoDocumentConstructionExpression)
                     && MongoAggregationExpressionRenderer.CanRender(needleNode))
                 {
-                    var rawValuesNode = TranslateInValuesRaw(collectionExpr, typeof(string));
+                    var rawValuesNode = TranslateInValuesRaw(collectionExpr, needleNode.Type);
                     if (rawValuesNode is null)
                         return null;
 
@@ -752,31 +1050,71 @@ internal sealed partial class MongoExpressionTranslator
 
             case MethodCallExpression call when TryMatchRegexMethod(call, out var kind, out var receiver, out var termExpr):
             {
-                if (!TryResolveMember(Unwrap(receiver), out var property, out var fieldPath, out var receiverIsOuter))
-                    return null; // receiver must resolve to a bare string field
+                MongoExpression fieldNode;
+                IProperty? property = null;
+                var receiverIsOuter = false;
 
-                // An outer-scoped receiver reached from the NEW element-scope translators (Count(pred)/
-                // quantifier, both built with innerPrefix: null) is still out of EF-421's scope — MongoRegexExpression
-                // is strictly typed to MongoFieldExpression, and this shape would need MongoOuterFieldExpression's
-                // document-root-regardless-of-elementVariable rendering to be correct inside a $filter/$map.
-                // But an outer-scoped receiver reached from a PRE-EXISTING two-scope translator (NativeSelectManyBinder,
-                // NativeJoinScopeTranslator — both built with a real non-null innerPrefix) is NOT a new shape this
-                // plan needs to gate at all: TryResolveMember already resolves it to the correct, unprefixed
-                // OUTER-relative path, exactly as it did before this plan ever touched this method, so it renders
-                // correctly as a plain MongoFieldExpression (query-dialect $regularExpression, not $expr). Declining
-                // it here regressed x.Outer.Name.StartsWith(...) inside a join-scope Where predicate.
-                if (receiverIsOuter && _innerPrefix is null)
-                    return null;
+                if (TryResolveMember(Unwrap(receiver), out var receiverProperty, out var fieldPath, out receiverIsOuter))
+                {
+                    // An outer-scoped receiver reached from the NEW element-scope translators (Count(pred)/
+                    // quantifier, both built with innerPrefix: null) is still out of EF-421's scope — MongoRegexExpression
+                    // is strictly typed to MongoFieldExpression, and this shape would need MongoOuterFieldExpression's
+                    // document-root-regardless-of-elementVariable rendering to be correct inside a $filter/$map.
+                    // But an outer-scoped receiver reached from a PRE-EXISTING two-scope translator (NativeSelectManyBinder,
+                    // NativeJoinScopeTranslator — both built with a real non-null innerPrefix) is NOT a new shape this
+                    // plan needs to gate at all: TryResolveMember already resolves it to the correct, unprefixed
+                    // OUTER-relative path, exactly as it did before this plan ever touched this method, so it renders
+                    // correctly as a plain MongoFieldExpression (query-dialect $regularExpression, not $expr). Declining
+                    // it here regressed x.Outer.Name.StartsWith(...) inside a join-scope Where predicate.
+                    if (receiverIsOuter && _innerPrefix is null)
+                        return null;
 
-                if (property!.ClrType != typeof(string))
-                    return null;
+                    if (receiverProperty.ClrType != typeof(string))
+                        return null;
+
+                    property = receiverProperty;
+                    fieldNode = new MongoFieldExpression(receiverProperty, fieldPath!);
+                }
+                else if (TryResolveDistinctAliasComputedField(Unwrap(receiver), out var aliasFieldRef)
+                         && aliasFieldRef.Type == typeof(string))
+                {
+                    // EF-322 gap-2: the receiver is a Distinct alias whose flattened key part is a COMPUTED
+                    // expression (e.g. a string concatenation), so TryResolveMember above declined it (no
+                    // backing IProperty to hand back). RenderRegex only ever reads the field's document path,
+                    // never its property metadata, so the already-flattened alias reads back the same way any
+                    // other document field does. See TryResolveDistinctAliasComputedField's own remarks.
+                    fieldNode = aliasFieldRef;
+                }
+                else
+                {
+                    return null; // receiver must resolve to a bare string field or a computed Distinct alias
+                }
 
                 var termNode = TranslateValue(Unwrap(termExpr), property);
                 if (termNode is null)
-                    return null;
+                {
+                    // Field-to-field: the term is itself a column (e.g. `c.ContactName.StartsWith(c.ContactName)`,
+                    // the exact shape EF's `All(predicate)` produces for All_top_level_column). This has NO
+                    // query-dialect form at all — Mongo's $regularExpression pattern must be a literal, never
+                    // another field — so it is only representable via the aggregation-expression dialect
+                    // ($indexOfCP/$strLenCP). MongoRegexExpression's Term may hold a MongoFieldExpression for
+                    // exactly this shape: MongoQueryLanguageRenderer declines it for the query dialect (falling
+                    // through to $expr) and MongoAggregationExpressionRenderer renders it there. Scoped
+                    // conservatively to a NON-outer term at a NON-outer receiver scope — a cross-scope
+                    // field-to-field pair (e.g. one side reached through a join) is a separate, not-yet-supported
+                    // shape and declines here, same as an ordinary unsupported term shape would.
+                    if (property is null || receiverIsOuter
+                        || !TryResolveMember(Unwrap(termExpr), out var termProperty, out var termFieldPath, out var termIsOuter)
+                        || termIsOuter
+                        || termProperty.ClrType != typeof(string))
+                    {
+                        return null;
+                    }
 
-                var fieldExpr3 = new MongoFieldExpression(property, fieldPath!);
-                return new MongoRegexExpression(fieldExpr3, kind, termNode, negated: false);
+                    termNode = new MongoFieldExpression(termProperty, termFieldPath);
+                }
+
+                return new MongoRegexExpression(fieldNode, kind, termNode, negated: false);
             }
 
             // --- Quantifiers over an owned (embedded) collection: source.Any() / Any(pred) / All(pred) ---
@@ -872,8 +1210,14 @@ internal sealed partial class MongoExpressionTranslator
 
                 // $expr is not usable inside $elemMatch, and RenderNode's catch-all would silently wrap a
                 // non-query-dialect child in $expr. Decline here (translate time) so the query falls back to
-                // driver-LINQ instead. For All this is belt-and-braces — the negator gates on the same
-                // classifier — but it stays because it is the invariant the renderer's contract depends on.
+                // driver-LINQ instead. This check is LOAD-BEARING, not belt-and-braces: MongoExpressionNegator
+                // .TryNegate admits two shapes here WITHOUT gating on IsQueryDialectRenderable — a
+                // MongoQuantifierExpression and a field-to-field MongoRegexExpression (Term: MongoFieldExpression)
+                // — precisely because those are aggregation-expression-only and have no query-dialect complement
+                // to gate on. For the un-negated All(pred) arm above (`negated == false`), and for whichever of
+                // those two shapes TryNegate hands back when it IS invoked, this is the ONLY check standing
+                // between them and RenderElemMatch's $expr catch-all, which the server rejects unconditionally
+                // inside $elemMatch. Removing or weakening this would let either shape reach that hazard.
                 if (!MongoQueryLanguageRenderer.IsQueryDialectRenderable(child))
                     return null;
 
@@ -901,6 +1245,30 @@ internal sealed partial class MongoExpressionTranslator
                     new MongoFieldExpression(nullableProperty, nullablePath),
                     new MongoConstantExpression(null, nullableProperty));
             }
+
+            // --- Literal boolean predicate root (e.g. `x => true`, typically reached only after a
+            // constant-folded lambda body such as `All(x => true)`/`Where(_ => false)`) ---
+            //
+            // Renders through the generic MongoConstantExpression value path: with no query-dialect case of
+            // its own, RenderNode's catch-all wraps it as `{ $expr: true }`/`{ $expr: false }`, both of which
+            // are valid, unconditionally-true/false MQL filters. Must sit BEFORE the bare-boolean-member
+            // default below: a ConstantExpression is never a member access, so the default would reach
+            // TryResolveMember, fail to resolve a property from a constant node, and decline.
+            case ConstantExpression { Value: bool literalBool }:
+                return new MongoConstantExpression(literalBool, forSerialization: null);
+
+            // --- Bare boolean query-parameter predicate root (e.g. `data.Contains(p + "Const")` inside a
+            // `Where` whose lambda parameter it never references) ---
+            //
+            // EF Core's own parameter extraction hoists a predicate subtree that doesn't reference the query
+            // source out to a single query parameter BEFORE this translator ever sees it — so a predicate like
+            // `c => data.Contains(someVariable + "SomeConstant")` (no reference to `c`) arrives here as a bare
+            // bool-typed parameter node, not a MethodCallExpression. Must sit alongside the literal-bool case
+            // above rather than fall through to the bare-boolean-MEMBER default below (which only tries
+            // TryResolveMember and would decline a non-member node) — same query-dialect fate as a literal
+            // bool: RenderNode's catch-all wraps it as `{ $expr: <placeholder> }`.
+            case var parameterNode when node.Type == typeof(bool) && NativeQueryParameter.TryGetQueryParameterName(parameterNode, out var boolParamName):
+                return new MongoParameterExpression(boolParamName, forSerialization: null);
 
             // --- Bare boolean member access (c.Active) ---
 
@@ -949,11 +1317,13 @@ internal sealed partial class MongoExpressionTranslator
     /// A cast the query-native branch can't absorb (<see cref="HasNumericConvert"/>'s three-outcome
     /// classification: widening numeric / identity-like / decline) falls through to the <c>$expr</c> path
     /// rather than declining the whole comparison outright, where <see cref="MongoConvertExpression"/> renders
-    /// it as an explicit <c>$toX</c> over the field ref — gated by <see cref="CanFallThroughToExpr"/>, which
-    /// still declines a RELATIONAL comparison (<c>&lt; &lt;= &gt; &gt;=</c>) over a NULLABLE property: the
+    /// it as an explicit <c>$toX</c> over the field ref — gated by <see cref="CanFallThroughToExpr"/>. A
+    /// RELATIONAL comparison (<c>&lt; &lt;= &gt; &gt;=</c>) over a NULLABLE property additionally gets a
+    /// <see cref="MongoNumericTypeBracketExpression"/> conjunct (<see cref="NeedsNumericTypeBracket"/>): the
     /// query dialect type-brackets such an operator (matches neither a stored <c>null</c> nor a missing
-    /// element) while <c>$expr</c> does not, admitting extra rows. Equality always falls through in both
-    /// directions ($eq/$ne partition every BSON value including null and missing).
+    /// element) while a bare <c>$expr</c> does not, admitting extra rows — the conjunct closes exactly that
+    /// gap rather than declining the comparison. Equality never needs the conjunct ($eq/$ne partition every
+    /// BSON value including null and missing).
     /// </para>
     /// <para>
     /// This deliberately changes results for a narrowing cast against a constant: the driver's own LINQ
@@ -966,6 +1336,70 @@ internal sealed partial class MongoExpressionTranslator
     /// </remarks>
     private MongoBinaryExpression? TranslateComparison(BinaryExpression be)
         => TranslateComparisonCore(be.Left, be.Right, be.NodeType);
+
+    /// <summary>
+    /// Recognizes <c>predicate == literalBool</c> / <c>predicate != literalBool</c> (e.g.
+    /// <c>c.CustomerID.EndsWith("KI") == ((bool?)true)</c>), where <c>predicate</c> is a non-nullable
+    /// bool-typed expression with no stored-member shape of its own — a method call, ternary, quantifier,
+    /// etc., anything <see cref="TranslateComparisonCore"/>'s member/value branches can't resolve via
+    /// <see cref="TryResolveMember"/>. Comparing a two-valued predicate to a literal true/false is
+    /// semantically just the predicate itself (<c>Equal</c>+<see langword="true"/> /
+    /// <c>NotEqual</c>+<see langword="false"/>) or its negation (<c>Equal</c>+<see langword="false"/> /
+    /// <c>NotEqual</c>+<see langword="true"/>); this reuses <see cref="TryTranslate"/> — the ordinary
+    /// predicate path already used by <c>Where</c>/<c>&amp;&amp;</c>/<c>||</c> — plus
+    /// <see cref="MongoExpressionNegator"/>, instead of teaching <see cref="TranslateOperand"/>'s
+    /// value-position path to emit predicates as <c>$expr</c> booleans.
+    /// </summary>
+    /// <remarks>
+    /// Declines (returns <see langword="false"/>) whenever the non-literal side already resolves via
+    /// <see cref="TryResolveMember"/> — that shape belongs to <see cref="TranslateComparisonCore"/>'s own
+    /// query-native branch (indexable <c>$match</c>, not a predicate re-translation) and must keep owning it
+    /// unchanged. Confined to a non-nullable bool predicate side: a nullable-bool predicate has no
+    /// TryTranslate coverage that preserves three-valued semantics, so admitting it here would risk silently
+    /// answering the wrong tri-state comparison.
+    /// </remarks>
+    private bool TryTranslateBooleanPredicateComparison(BinaryExpression be, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        var left = Unwrap(be.Left);
+        var right = Unwrap(be.Right);
+
+        Expression predicateSide;
+        bool literalValue;
+        if (right is ConstantExpression { Value: bool rightBool })
+        {
+            literalValue = rightBool;
+            predicateSide = left;
+        }
+        else if (left is ConstantExpression { Value: bool leftBool })
+        {
+            literalValue = leftBool;
+            predicateSide = right;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (predicateSide.Type != typeof(bool) || predicateSide is ConstantExpression)
+            return false;
+
+        if (TryResolveMember(predicateSide, out _, out _, out _))
+            return false; // TranslateComparisonCore's own query-native branch owns this shape
+
+        if (!TryTranslate(predicateSide, out var predicate))
+            return false;
+
+        var negate = be.NodeType == ExpressionType.Equal ? !literalValue : literalValue;
+        if (!negate)
+        {
+            result = predicate;
+            return true;
+        }
+
+        return MongoExpressionNegator.TryNegate(predicate, out result);
+    }
 
     /// <summary>
     /// The shared core of <see cref="TranslateComparison"/>, taking the two operands and the comparison's
@@ -1025,7 +1459,44 @@ internal sealed partial class MongoExpressionTranslator
             return new MongoBinaryExpression(selfOp.Value, rootRef, rootRef);
         }
 
+        // --- Bare-accumulator-alias shape: a scalar aggregate's predicate/comparison (All/Any composed
+        // directly after GroupBy(key).Select(g => g.Sum(...)), or the analogous bare-scalar-Distinct-with-
+        // aggregate shape) whose SelfParam IS the Select's own flattened accumulator output, e.g.
+        // `.Select(g => g.Sum(o => o.OrderID)).All(v => v >= 0)`. Must be checked BEFORE the ordinary
+        // query-native member/value branch below: the GroupBy key may ALSO be a single field-backed part (the
+        // shape TryResolveMember's bare-Distinct-scalar carve-out matches), but a bare SelfParam here names the
+        // accumulator, never the key — that carve-out is scoped to zero accumulators for exactly this reason.
+        // Scoped to EXACTLY ONE accumulator: a composite/named projection has real members to access instead
+        // (handled by the ordinary DistinctAliasScope member branch), and more than one accumulator has no
+        // single implied target for a bare parameter.
+        if (SelfParam is not null && DistinctAliasScope is { Accumulators: [{ OutputField: var soleAccField }] }
+            && (ReferenceEquals(leftUnwrapped, SelfParam) || ReferenceEquals(rightUnwrapped, SelfParam)))
+        {
+            var selfOnLeft = ReferenceEquals(leftUnwrapped, SelfParam);
+            var valueSide = selfOnLeft ? rightUnwrapped : leftUnwrapped;
+            if (!IsSimpleValue(valueSide))
+                return null; // no other branch can resolve this SelfParam correctly — decline outright
+
+            var accOp = MapComparisonOperator(selfOnLeft ? nodeType : Mirror(nodeType));
+            if (accOp is null)
+                return null;
+
+            var accValue = TranslateValue(valueSide, forSerialization: null);
+            if (accValue is null)
+                return null;
+
+            var accFieldRef = new MongoElementRefExpression(soleAccField, (selfOnLeft ? leftUnwrapped : rightUnwrapped).Type);
+            return new MongoBinaryExpression(accOp.Value, accFieldRef, accValue);
+        }
+
         // --- Query-native shape: member on exactly one side, value on the other ---
+
+        // Set only when a numeric-cast relational comparison over a NULLABLE property falls through below —
+        // the field the final $expr comparison must be conjoined with a MongoNumericTypeBracketExpression for
+        // (see CanFallThroughToExpr's remarks). Confined to the non-outer case: an outer-scoped field's bracket
+        // would need MongoOuterFieldExpression's own root-anchored rendering, which this fall-through does not
+        // (yet) build — declining there (leftIsOuter/rightIsOuter true) is the pre-existing, safe behavior.
+        MongoFieldExpression? numericTypeBracket = null;
 
         if (TryResolveMember(leftUnwrapped, out var leftProperty, out var leftPath, out var leftIsOuter)
             && IsSimpleValue(rightUnwrapped))
@@ -1034,13 +1505,16 @@ internal sealed partial class MongoExpressionTranslator
             // is the stored field exactly as for a bare member); anything else still changes comparison
             // semantics, so it declines THIS BRANCH and falls through to the general $expr path below instead
             // of declining the whole comparison, where the cast renders as an explicit MongoConvertExpression
-            // ($toX). See HasNumericConvert for the three-outcome classification. CanFallThroughToExpr carries
-            // the fall-through's own two preconditions — default serialization, and NOT a relational operator
-            // over a nullable property (which would un-type-bracket the comparison and admit null/missing rows).
+            // ($toX). See HasNumericConvert for the three-outcome classification. CanFallThroughToExpr gates
+            // the fall-through on default serialization; NeedsNumericTypeBracket separately flags a RELATIONAL
+            // comparison over a NULLABLE property, which needs the extra conjunct below rather than a decline.
             if (HasNumericConvert(left, leftProperty!.ClrType, out var leftWideningTarget, out var leftIdentityLike))
             {
-                if (!CanFallThroughToExpr(leftProperty, nodeType))
+                if (!CanFallThroughToExpr(leftProperty))
                     return null;
+
+                if (!leftIsOuter && NeedsNumericTypeBracket(leftProperty, nodeType))
+                    numericTypeBracket = new MongoFieldExpression(leftProperty, leftPath!);
             }
             else
             {
@@ -1078,10 +1552,13 @@ internal sealed partial class MongoExpressionTranslator
         {
             if (HasNumericConvert(right, rightProperty!.ClrType, out var rightWideningTarget, out var rightIdentityLike))
             {
-                // nodeType, NOT the mirrored operator: the four relational operators are closed under
-                // Mirror, so which side the member sits on cannot change the guard's answer.
-                if (!CanFallThroughToExpr(rightProperty, nodeType))
+                if (!CanFallThroughToExpr(rightProperty))
                     return null;
+
+                // nodeType, NOT the mirrored operator: the four relational operators are closed under
+                // Mirror, so which side the member sits on cannot change NeedsNumericTypeBracket's answer.
+                if (!rightIsOuter && NeedsNumericTypeBracket(rightProperty, nodeType))
+                    numericTypeBracket = new MongoFieldExpression(rightProperty, rightPath!);
             }
             else
             {
@@ -1102,6 +1579,17 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoBinaryExpression(mongoOp.Value, rightField, valueExpr);
             }
         }
+
+        // A constructed anonymous-type/DTO comparison (`new { x = c.City } == new { x = "London" }`) declines
+        // outright for NotEqual: EF's own NotEqual lowering for this shape is a documented upstream bug
+        // (dotnet/efcore#36412) independent of any provider — the driver-LINQ fallback already reproduces it
+        // (executes and returns wrong data, asserted via the EqualException accepted in
+        // Where_compare_constructed_multi_value_not_equal). Admitting NotEqual here would let native reach the
+        // SAME wrong answer instead of the clean translate-time decline it previously gave under NativeOnly, so
+        // this stays declined regardless of member count — only Equal is in this ticket's scope.
+        if (nodeType == ExpressionType.NotEqual
+            && leftUnwrapped.TryGetProjectionMembers(out _) && rightUnwrapped.TryGetProjectionMembers(out _))
+            return null;
 
         // --- Field-to-field / arithmetic-operand shape: always routes to $expr ---
 
@@ -1142,7 +1630,15 @@ internal sealed partial class MongoExpressionTranslator
             return new MongoBinaryExpression(mirroredOp.Value, rightOperand, leftOperand);
         }
 
-        return new MongoBinaryExpression(generalOp.Value, leftOperand, rightOperand);
+        var comparisonResult = new MongoBinaryExpression(generalOp.Value, leftOperand, rightOperand);
+
+        // Conjoin the type bracket set by the query-native branch above, if any — see NeedsNumericTypeBracket
+        // and MongoNumericTypeBracketExpression's own remarks for why this makes the combined $and the exact
+        // complement of the type-bracketed query dialect rather than an approximation.
+        return numericTypeBracket is null
+            ? comparisonResult
+            : new MongoBinaryExpression(
+                MongoBinaryOperator.AndAlso, new MongoNumericTypeBracketExpression(numericTypeBracket), comparisonResult);
     }
 
     /// <summary>
@@ -1151,34 +1647,54 @@ internal sealed partial class MongoExpressionTranslator
     /// it must decline the whole comparison instead.
     /// </summary>
     /// <remarks>
-    /// Two conjuncts. (1) The operand's stored form must be default-serialized
+    /// The operand's stored form must be default-serialized
     /// (<see cref="NativeGroupByBinder.HasDefaultKeySerialization"/>) — kept as a cheap early-out that declines
     /// before translation runs, even though it is subsumed by <see cref="TranslateOperand"/>'s own
     /// <see cref="MongoConvertExpression"/> guard for every shape reachable here; remove it only if the
     /// duplication becomes a liability, not to "simplify."
-    /// (2) A RELATIONAL comparison (<c>&lt; &lt;= &gt; &gt;=</c>) over a NULLABLE property must not leave the
-    /// type-bracketed query dialect. <c>{UnitPrice: {$lt: 100}}</c> matches neither a stored BSON <c>null</c>
-    /// nor a missing element, because a relational operator only matches a comparable BSON type. The
-    /// corresponding <c>$expr</c> form, e.g. <c>{$expr: {$lt: [{$toDouble: "$UnitPrice"}, 100.0]}}</c>,
-    /// converts null and missing alike to <c>null</c> and compares by BSON total order, where <c>Null</c>
-    /// sorts below every number — so those rows wrongly match. This mirrors <see cref="MongoExpressionNegator"/>'s
-    /// invariant from the other direction: a relational operator is type-bracketed and admits neither missing
-    /// nor null. All four relational operators are declined together — not just <c>&lt;</c>/<c>&lt;=</c>, which
-    /// are the only ones that measurably differ, because <c>&gt;</c>/<c>&gt;=</c> happening to agree is an
-    /// accident of BSON collation order, not a property of the rendering; the exact-complement-or-decline rule
-    /// applies here too. Equality is unaffected either way and always falls through ($eq/$ne partition every
-    /// BSON value including null and missing). For a NON-nullable property a missing/null element is already a
-    /// schema violation the read path rejects, so nullability (not "every relational cast") is the correct key —
-    /// gating more broadly would revoke the deliberate CLR-correct divergence this fall-through exists for.
+    /// <para>
+    /// A RELATIONAL comparison (<c>&lt; &lt;= &gt; &gt;=</c>) over a NULLABLE property used to be declined here
+    /// outright, because leaving the type-bracketed query dialect for <c>$expr</c> would admit a missing/null
+    /// row a bare <c>{UnitPrice: {$lt: 100}}</c> excludes. It no longer is: see
+    /// <see cref="NeedsNumericTypeBracket"/>, which instead flags that case for a
+    /// <see cref="MongoNumericTypeBracketExpression"/> conjunct that reproduces the exact same exclusion. This
+    /// method now answers only the default-serialization question; nullability/operator no longer factor into
+    /// whether the comparison may fall through at all, only into what it must be conjoined with.
+    /// </para>
     /// A plain field-to-field/arithmetic comparison with no cast also reaches the general <c>$expr</c> path, but
     /// (EF-404) it is now guarded there directly — <see cref="TranslateComparison"/>'s general path applies
     /// <see cref="AllFieldsDefaultSerialized"/> to both fully-translated operands before emitting the <c>$expr</c>
     /// node, declining (falling back to driver-LINQ, which has no working oracle for this shape either and
     /// itself throws) rather than comparing raw stored values in the wrong representation.
     /// </remarks>
-    private static bool CanFallThroughToExpr(IProperty property, ExpressionType comparisonNodeType)
-        => NativeGroupByBinder.HasDefaultKeySerialization(property)
-           && !(property.IsNullable && IsRelationalComparison(comparisonNodeType));
+    private static bool CanFallThroughToExpr(IProperty property)
+        => NativeGroupByBinder.HasDefaultKeySerialization(property);
+
+    /// <summary>
+    /// <see langword="true"/> when the numeric-cast comparison's $expr fall-through must be conjoined with a
+    /// <see cref="MongoNumericTypeBracketExpression"/> over <paramref name="property"/> to stay an exact
+    /// complement of the type-bracketed query dialect.
+    /// </summary>
+    /// <remarks>
+    /// A RELATIONAL comparison (<c>&lt; &lt;= &gt; &gt;=</c>) over a NULLABLE property is the only case that
+    /// needs it. <c>{UnitPrice: {$lt: 100}}</c> matches neither a stored BSON <c>null</c> nor a missing
+    /// element, because a relational operator only matches within the same BSON comparison class as its
+    /// operand. The corresponding bare <c>$expr</c> form, e.g. <c>{$expr: {$lt: [{$toDouble: "$UnitPrice"},
+    /// 100.0]}}</c>, converts null and missing alike to <c>null</c> and compares by BSON total order, where
+    /// <c>Null</c> sorts below every number — so those rows would wrongly match without the bracket. This
+    /// mirrors <see cref="MongoExpressionNegator"/>'s invariant from the other direction: a relational operator
+    /// is type-bracketed and admits neither missing nor null. All four relational operators need the bracket
+    /// together — not just <c>&lt;</c>/<c>&lt;=</c>, which are the only ones that measurably differ without
+    /// it, because <c>&gt;</c>/<c>&gt;=</c> happening to agree is an accident of BSON collation order, not a
+    /// property of the rendering; applying the bracket uniformly is what makes the result an exact complement
+    /// rather than an approximation that happens to work for two of the four operators. Equality is unaffected
+    /// either way and never needs it ($eq/$ne partition every BSON value including null and missing). For a
+    /// NON-nullable property a missing/null element is already a schema violation the read path rejects, so
+    /// nullability (not "every relational cast") is the correct key — bracketing more broadly would cost every
+    /// relational cast an extra <c>$type</c> conjunct for no correctness benefit.
+    /// </remarks>
+    private static bool NeedsNumericTypeBracket(IProperty property, ExpressionType comparisonNodeType)
+        => property.IsNullable && IsRelationalComparison(comparisonNodeType);
 
     // The four TYPE-BRACKETED comparison operators. Equality is deliberately absent: $eq/$ne partition every
     // BSON value including null and missing, so moving one of those into $expr does not change which documents
@@ -1226,10 +1742,13 @@ internal sealed partial class MongoExpressionTranslator
                 ? null
                 : property;
 
-    // A "simple value" comparison operand — a bare constant or query parameter, not a member and not an
-    // arithmetic sub-expression. Used to detect the query-native (member vs. value) shape.
+    // A "simple value" comparison operand — a bare constant or query parameter (including an `args[0]`-shaped
+    // constant-index access into a query-parameter ARRAY — see TryGetParameterArrayElementIndex), not a member
+    // and not an arithmetic sub-expression. Used to detect the query-native (member vs. value) shape.
     private static bool IsSimpleValue(Expression node)
-        => node is ConstantExpression || NativeQueryParameter.TryGetQueryParameterName(node, out _);
+        => node is ConstantExpression
+           || NativeQueryParameter.TryGetQueryParameterName(node, out _)
+           || NativeQueryParameter.TryGetParameterArrayElementIndex(node, out _, out _);
 
     private static MongoBinaryOperator? MapComparisonOperator(ExpressionType nodeType)
         => nodeType switch
@@ -1259,9 +1778,9 @@ internal sealed partial class MongoExpressionTranslator
     internal static MongoBinaryOperator? MapArithmeticOperator(BinaryExpression node)
         => node.NodeType switch
         {
-            ExpressionType.Add => MongoBinaryOperator.Add,
-            ExpressionType.Subtract => MongoBinaryOperator.Subtract,
-            ExpressionType.Multiply => MongoBinaryOperator.Multiply,
+            ExpressionType.Add or ExpressionType.AddChecked => MongoBinaryOperator.Add,
+            ExpressionType.Subtract or ExpressionType.SubtractChecked => MongoBinaryOperator.Subtract,
+            ExpressionType.Multiply or ExpressionType.MultiplyChecked => MongoBinaryOperator.Multiply,
             ExpressionType.Divide => IsIntegerType(node.Type)
                 ? MongoBinaryOperator.IntegerDivide
                 : MongoBinaryOperator.Divide,
@@ -1294,7 +1813,13 @@ internal sealed partial class MongoExpressionTranslator
         {
             var fromType = Nullable.GetUnderlyingType(unary.Operand.Type) ?? unary.Operand.Type;
             var toType = Nullable.GetUnderlyingType(unary.Type) ?? unary.Type;
-            if (fromType != toType && !(allowNumericWidening && IsWideningNumericConvert(fromType, toType)))
+
+            // Boxing to object (e.g. `(object)i` over a captured int) never changes the underlying value —
+            // same accepted-benign-convert precedent as UnwrapOrderPreserving/TranslateConcatOperand — so it
+            // is unwrapped unconditionally rather than routed through the $toX branch below, which has no
+            // "convert to object" operator and would otherwise decline the whole operand.
+            if (fromType != toType && toType != typeof(object)
+                && !(allowNumericWidening && IsWideningNumericConvert(fromType, toType)))
             {
                 // A type-changing cast MQL can express becomes an explicit $toX over the translated operand,
                 // matching what the driver's own LINQ provider emits here. An unrenderable target still
@@ -1341,12 +1866,51 @@ internal sealed partial class MongoExpressionTranslator
             return new MongoConditionalExpression(test, ifTrue, ifFalse);
         }
 
+        // A null-coalescing operator (`left ?? right`), rendered as $ifNull. Both operands recurse through this
+        // SAME method — exactly like a conditional's branches above — so either side may itself be a cast,
+        // arithmetic, or (for the right operand, matching BinaryExpression's own left-associative Coalesce
+        // shape for a chained `a ?? b ?? c`) a nested Coalesce. Either operand declining declines the whole
+        // Coalesce — there is no partial/fallback rendering for one side of an $ifNull, same rule the
+        // conditional above follows for its branches.
+        if (node is BinaryExpression { NodeType: ExpressionType.Coalesce } coalesce)
+        {
+            var left = TranslateOperand(coalesce.Left, allowNumericWidening);
+            if (left is null)
+                return null;
+
+            var right = TranslateOperand(coalesce.Right, allowNumericWidening);
+            if (right is null)
+                return null;
+
+            return new MongoCoalesceExpression(left, right);
+        }
+
         // A DateTime/DateTimeOffset member-access or date-part chain (.Year, .Date, .DateTime, etc.). Must run
         // regardless of whether TryResolveMember below would also be tried — it never matches this shape
         // anyway (the member's OWN receiver is never the query parameter directly for a date-member chain),
         // but this is placed here to keep it visually adjacent to the ConditionalExpression case above.
         if (TryTranslateDateTimeMember(node, out var dateTimeMember))
             return dateTimeMember;
+
+        // A DateTime/DateTimeOffset .AddXxx(amount) call (`new DateTime(1900, 1, 1).AddMinutes(o.OrderID % 25)`).
+        // Placed here, alongside TryTranslateDateTimeMember above, for the same reason: neither shape is ever
+        // matched by TryResolveMember below (a MethodCallExpression is not a member-access chain).
+        if (TryTranslateDateAdd(node, allowNumericWidening, out var dateAdd))
+            return dateAdd;
+
+        // string.IndexOf(term) (`x.IndexOf(searchTerm)`). Placed here for the same reason as the two date
+        // arms above: a MethodCallExpression is never matched by TryResolveMember below. Both operands recurse
+        // through THIS method, so either may itself be a field, a constant/parameter, or another computed
+        // expression — same shape discipline as TryTranslateDateAdd's StartDate/Amount.
+        if (TryMatchIndexOfMethod(node, out var indexOfReceiver, out var indexOfTerm))
+        {
+            var haystack = TranslateOperand(indexOfReceiver, allowNumericWidening);
+            var needle = haystack is null ? null : TranslateOperand(indexOfTerm, allowNumericWidening);
+            if (haystack is not null && needle is not null)
+                return new MongoStringIndexOfExpression(haystack, needle);
+
+            return null;
+        }
 
         if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))
         {
@@ -1363,6 +1927,16 @@ internal sealed partial class MongoExpressionTranslator
                 ? new MongoOuterFieldExpression(property, fieldPath!)
                 : new MongoFieldExpression(property, fieldPath!);
         }
+
+        // EF-322: a member access naming a post-Distinct COMPUTED alias (no backing IProperty, so
+        // TryResolveMember above declines it) resolves to its flattened output path instead — the same
+        // primitive the StartsWith/EndsWith/Contains regex arm already uses (see
+        // TryResolveDistinctAliasComputedField's own remarks). This widens every operator that bottoms out in
+        // TranslateOperand — equality/relational comparisons via TranslateComparisonCore's general $expr
+        // fall-through, arithmetic, etc. — to accept a computed Distinct alias, not just the regex-only shape
+        // that previously special-cased it.
+        if (TryResolveDistinctAliasComputedField(node, out var aliasFieldRef))
+            return aliasFieldRef;
 
         // An OWNED-collection element count — b.Posts.Count / .Count() / .LongCount(). The renderer decides the
         // dialect: a comparison against an admissible integer constant becomes an array-index existence test,
@@ -1501,6 +2075,24 @@ internal sealed partial class MongoExpressionTranslator
             return new MongoBinaryExpression(arithOp, left, right);
         }
 
+        // EF-322: C#'s unary minus (`-x`) compiles to UnaryExpression(Negate), not a BinaryExpression, so it
+        // falls through the arithmetic branch above untouched. Rendered as $subtract:[0, x] — the same shape
+        // the driver's own LINQ provider emits for it — so an existing MQL baseline recorded against the
+        // fallback needs no change when a query using this shape starts going native. Recurses through THIS
+        // method exactly like the arithmetic operands above, so the operand may itself be a nested conditional,
+        // cast, or another arithmetic/negate expression. Scoped to numeric types the same way the arithmetic
+        // branch above is, so e.g. TimeSpan's own unary minus (which also compiles to Negate) still declines
+        // here rather than being (mis)rendered as a numeric subtraction.
+        if (node is UnaryExpression { NodeType: ExpressionType.Negate or ExpressionType.NegateChecked } negate
+            && IsNumericType(negate.Type))
+        {
+            var negatedOperand = TranslateOperand(negate.Operand, allowNumericWidening);
+            if (negatedOperand is null)
+                return null;
+
+            return new MongoBinaryExpression(MongoBinaryOperator.Subtract, new MongoConstantExpression(0, forSerialization: null), negatedOperand);
+        }
+
         // EF-413: a client-collection Contains (→ MongoInExpression) or a Not (→ MongoUnaryExpression) used as
         // a VALUE operand — e.g. a computed sort key (OrderBy(x => list.Contains(x.Field)) or
         // OrderBy(x => !x.Flag)). These are boolean-typed but neither a field/arithmetic operand nor a bare
@@ -1508,15 +2100,57 @@ internal sealed partial class MongoExpressionTranslator
         // TranslateNode already has the predicate-position translation for both (including Contains' negated-$in
         // collapse for !list.Contains(...) — see its Not case); hand off directly rather than duplicating it.
         // Deliberately narrow: only these two node shapes are routed here, not every predicate TranslateNode
-        // admits (a comparison, AndAlso/OrElse, ElemMatch, …) — that stays a decline in value position, since
-        // widening it further is outside this ticket's scope (EF-413 is scoped to A6/A13 only). Whether the
-        // result is actually renderable in aggregation-expression position is decided downstream by
+        // admits (AndAlso/OrElse, ElemMatch, …) — that stays a decline in value position, since widening it
+        // further is outside this ticket's scope (EF-413 is scoped to A6/A13 only; a comparison is separately
+        // admitted below, EF-322). Whether the result is actually renderable in aggregation-expression position
+        // is decided downstream by
         // MongoAggregationExpressionRenderer.CanRender, not here.
         if (node is MethodCallExpression containsCall && TryMatchContainsMethod(containsCall, out _, out _))
             return TranslateNode(node);
 
         if (node is UnaryExpression { NodeType: ExpressionType.Not })
             return TranslateNode(node);
+
+        // EF-322: a comparison (`==`/`!=`/relational) used as a VALUE operand — e.g. a boolean member compared
+        // against a nested comparison's result (`p.Discontinued == ((p.ProductID > 50) != prm)`). Boolean-typed
+        // but neither a field/arithmetic operand nor a bare constant/parameter, so without this it falls
+        // straight through to TranslateValue below and declines. TranslateNode already has the full
+        // predicate-position translation for a comparison (entity equality, GetType comparison, ordinary
+        // field/value or field-to-field); hand off directly rather than duplicating it. Whether the result is
+        // actually renderable in aggregation-expression position is decided downstream by
+        // MongoAggregationExpressionRenderer.CanRender, not here.
+        if (node is BinaryExpression comparisonOperand && IsComparison(comparisonOperand.NodeType))
+            return TranslateNode(node);
+
+        // A constructed anonymous-type/DTO VALUE operand (`new { x = c.City } == new { x = "London" }`,
+        // EF's structural-equality lowering for `new { ... } == new { ... }`). Each member recurses through
+        // this SAME method, so a member may itself be a field, constant, parameter, or computed value — a
+        // member that declines declines the whole construction, same discipline as every other multi-operand
+        // shape in this method (Coalesce, the conditional branches, arithmetic).
+        //
+        // Every admitted member is additionally required to be default-serialized
+        // (AllFieldsDefaultSerialized): NativeProjectionBinder.TryGetDocumentConstructionLeaf's
+        // MongoDocumentConstructionExpression instances already carry that invariant (each member there is
+        // pre-filtered to a default-serialized field), which is exactly why
+        // MongoExpressionTranslator.AllFieldsDefaultSerialized's own dispatcher answers unconditionally "true"
+        // for this node type via its catch-all rather than recursing into Members. Admitting a non-default-
+        // serialized member here without the same check would silently violate that invariant — the member
+        // would render as a raw, un-converted value inside $expr while every other call site assumes it never
+        // can.
+        if (node.TryGetProjectionMembers(out var constructionMembers))
+        {
+            var translatedMembers = new List<(string, MongoExpression)>();
+            foreach (var (memberName, memberValue) in constructionMembers)
+            {
+                var translated = TranslateOperand(memberValue, allowNumericWidening);
+                if (translated is null || !AllFieldsDefaultSerialized(translated))
+                    return null;
+
+                translatedMembers.Add((memberName, translated));
+            }
+
+            return new MongoDocumentConstructionExpression(node, translatedMembers);
+        }
 
         // A bare constant/parameter operand has no associated property for serialization context — these
         // are pure numeric $expr operands, not stored field values, so they serialize via BsonValue.Create.
@@ -1634,6 +2268,9 @@ internal sealed partial class MongoExpressionTranslator
 
         if (NativeQueryParameter.TryGetQueryParameterName(node, out var parameterName))
             return new MongoParameterExpression(parameterName, forSerialization);
+
+        if (NativeQueryParameter.TryGetParameterArrayElementIndex(node, out var arrayParameterName, out var index))
+            return new MongoParameterExpression(arrayParameterName, forSerialization, arrayElementIndex: index);
 
         return null; // any other node shape (method call, sub-expression, etc.) is not supported
     }

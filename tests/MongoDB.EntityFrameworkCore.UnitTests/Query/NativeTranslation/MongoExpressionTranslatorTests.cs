@@ -60,6 +60,7 @@ public class MongoExpressionTranslatorTests
         public int Score { get; set; }
         public double DoubleScore { get; set; }
         public string Name { get; set; } = "";
+        public string Nickname { get; set; } = "";
         public bool Active { get; set; }
         public Tier Level { get; set; }
         public ShortTier ShortLevel { get; set; }
@@ -366,6 +367,39 @@ public class MongoExpressionTranslatorTests
     }
 
     // ------------------------------------------------------------------
+    // Test 4b: bare boolean query PARAMETER predicate root → MongoParameterExpression
+    //
+    // EF Core's own parameter extraction hoists a WHOLE predicate subtree that never references the
+    // query source parameter into a single query parameter — e.g.
+    // `data.Contains(someVariable + "SomeConstant")` inside `c => ...` doesn't reference `c` at all, so by
+    // the time this translator sees it, the predicate body is just a bare bool-typed parameter reference
+    // (SQL Server renders this as `WHERE @Contains = CAST(1 AS bit)`). This must translate the same way a
+    // literal `true`/`false` predicate root does (the ConstantExpression{bool} case a few lines below) —
+    // not decline — so the query stays native instead of falling back to driver-LINQ.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Bare_boolean_query_parameter_predicate_root_translates_to_parameter_expression()
+    {
+        var entityType = GetEntityType<Customer>();
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "Contains_0";
+        Expression body = Expression.Parameter(typeof(bool), paramName);
+#else
+        const string paramName = "__Contains_0";
+        Expression body = new Microsoft.EntityFrameworkCore.Query.QueryParameterExpression(paramName, typeof(bool));
+#endif
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var mongoParam = Assert.IsType<MongoParameterExpression>(result);
+        Assert.Equal(paramName, mongoParam.Name);
+    }
+
+    // ------------------------------------------------------------------
     // Test 5: bare boolean field → MongoFieldExpression (bool)
     // ------------------------------------------------------------------
 
@@ -562,21 +596,61 @@ public class MongoExpressionTranslatorTests
     // The exact shape of Where_equals_using_object_overload_on_mismatched_types (EF spec suite): ulong has NO
     // implicit conversion to int, so the compiler can only satisfy the call via Equals(object), BOXING the
     // ulong argument. This is a genuinely different overload with different semantics — Int32.Equals(object)
-    // returns false whenever the boxed argument isn't itself a boxed int, regardless of numeric value — so it
-    // must NOT be admitted here: doing so would mean unwrapping the boxing Convert down to a raw ulong
-    // constant and emitting a native $eq that MongoDB WOULD match (BSON compares numeric subtypes by value),
-    // silently returning the OPPOSITE of what plain C# returns. This shape has no native form yet and must
-    // keep falling back to the driver-LINQ bridge, which already special-cases it correctly.
+    // returns false whenever the boxed argument isn't itself a boxed int, regardless of numeric value. Naively
+    // unwrapping the boxing Convert down to a raw ulong constant and emitting a native $eq would be WRONG
+    // (MongoDB compares numeric subtypes by value, so it WOULD match) — but folding straight to the
+    // compile-time-known `false` constant is correct and translatable, mirroring the driver-LINQ bridge's own
+    // fold for this exact shape (MongoEFToLinqTranslatingExpressionVisitor's instance-Equals case).
     [Fact]
-    public void Equals_method_call_using_object_overload_reports_not_translatable()
+    public void Equals_method_call_using_object_overload_on_mismatched_types_folds_to_false_constant()
     {
         var translator = NewTranslator(GetEntityType<Customer>());
         Expression<Func<Customer, bool>> predicate = c => c.Age.Equals((ulong)21);
 
         var translated = translator.TryTranslate(predicate.Body, out var result);
 
-        Assert.False(translated);
-        Assert.Null(result);
+        Assert.True(translated);
+        var constant = Assert.IsType<MongoConstantExpression>(result);
+        Assert.Equal(false, constant.Value);
+    }
+
+    // EF-322 follow-up: a NULLABLE receiver's Equals(...) call. Nullable<T> has no IEquatable<T>.Equals(T) of
+    // its own — only the inherited Equals(object) — so `c.NullableAge.Equals(21)` is ALWAYS routed through the
+    // object overload even though the argument's underlying type (int) matches the receiver's underlying type
+    // (int) exactly. Unlike Equals_method_call_using_object_overload_on_mismatched_types_folds_to_false_constant
+    // above, this is NOT a genuine type mismatch and must translate, not decline.
+    [Fact]
+    public void Equals_method_call_on_nullable_receiver_with_matching_underlying_type_translates_to_equal_binary()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => c.NullableAge.Equals(21);
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+        var field = Assert.IsType<MongoFieldExpression>(binary.Left);
+        Assert.Equal("NullableAge", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(binary.Right);
+        Assert.Equal(21, constant.Value);
+    }
+
+    // EF-322 follow-up: a NULLABLE receiver's Equals(...) call across a genuinely MISMATCHED underlying type
+    // (int vs long). Plain C# always returns false here (Nullable<T>.Equals(object) checks the argument's
+    // runtime type against T first), so unlike the matching-underlying-type case above, this must fold to a
+    // compile-time-known `false` constant rather than translate as an ordinary comparison or decline.
+    [Fact]
+    public void Equals_method_call_on_nullable_receiver_with_mismatched_underlying_type_folds_to_false_constant()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => c.NullableAge.Equals(21L);
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var constant = Assert.IsType<MongoConstantExpression>(result);
+        Assert.Equal(false, constant.Value);
     }
 
     // ------------------------------------------------------------------
@@ -607,18 +681,20 @@ public class MongoExpressionTranslatorTests
     }
 
     // The mismatched-type guard: c.Age is boxed from Int32, the second argument from Int64 — genuinely
-    // different unboxed types, exactly like Equals_method_call_using_object_overload_reports_not_translatable
-    // above but reached via the static two-arg overload instead of the instance one.
+    // different unboxed types, exactly like
+    // Equals_method_call_using_object_overload_on_mismatched_types_folds_to_false_constant above but reached
+    // via the static two-arg overload instead of the instance one. Folds to `false`, same reasoning.
     [Fact]
-    public void Static_object_equals_with_mismatched_types_reports_not_translatable()
+    public void Static_object_equals_with_mismatched_types_folds_to_false_constant()
     {
         var translator = NewTranslator(GetEntityType<Customer>());
         Expression<Func<Customer, bool>> predicate = c => object.Equals(c.Age, (long)21);
 
         var translated = translator.TryTranslate(predicate.Body, out var result);
 
-        Assert.False(translated);
-        Assert.Null(result);
+        Assert.True(translated);
+        var constant = Assert.IsType<MongoConstantExpression>(result);
+        Assert.Equal(false, constant.Value);
     }
 
     // ------------------------------------------------------------------
@@ -756,6 +832,108 @@ public class MongoExpressionTranslatorTests
     }
 
     // ------------------------------------------------------------------
+    // Test 16b: `args[i]`-shaped access into a query-parameter ARRAY (EF-322's Query_with_array_parameter
+    // gap) → MongoParameterExpression with ArrayElementIndex set. EF10 rewrites the C# indexer into an
+    // Enumerable.ElementAt(source, index) call (MEASURED against the real EF Core compiled-query pipeline,
+    // not assumed) rather than leaving a plain ArrayIndex node — both shapes are covered here since
+    // NativeQueryParameter.TryGetParameterArrayElementIndex recognizes both.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void ElementAt_over_query_parameter_array_translates_to_array_element_parameter()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var ageMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Age))!);
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "args_0";
+        Expression efParam = Expression.Parameter(typeof(int[]), paramName);
+#else
+        const string paramName = "__args_0";
+        Expression efParam = new QueryParameterExpression(paramName, typeof(int[]));
+#endif
+        var elementAtMethod = typeof(Enumerable).GetMethods()
+            .First(m => m.Name == nameof(Enumerable.ElementAt) && m.GetParameters().Length == 2
+                        && m.GetParameters()[1].ParameterType == typeof(int))
+            .MakeGenericMethod(typeof(int));
+        var elementAt = Expression.Call(elementAtMethod, efParam, Expression.Constant(0));
+        var body = Expression.Equal(ageMember, elementAt);
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
+        Assert.IsType<MongoFieldExpression>(bin.Left);
+        var parameter = Assert.IsType<MongoParameterExpression>(bin.Right);
+        Assert.Equal(paramName, parameter.Name);
+        Assert.Equal(0, parameter.ArrayElementIndex);
+    }
+
+    [Fact]
+    public void ArrayIndex_over_query_parameter_array_translates_to_array_element_parameter()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var ageMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Age))!);
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "args_0";
+        Expression efParam = Expression.Parameter(typeof(int[]), paramName);
+#else
+        const string paramName = "__args_0";
+        Expression efParam = new QueryParameterExpression(paramName, typeof(int[]));
+#endif
+        var arrayIndex = Expression.ArrayIndex(efParam, Expression.Constant(1));
+        var body = Expression.Equal(ageMember, arrayIndex);
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        var parameter = Assert.IsType<MongoParameterExpression>(bin.Right);
+        Assert.Equal(paramName, parameter.Name);
+        Assert.Equal(1, parameter.ArrayElementIndex);
+    }
+
+    [Fact]
+    public void ElementAt_over_query_parameter_array_on_the_left_side_still_translates()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var ageMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Age))!);
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "args_0";
+        Expression efParam = Expression.Parameter(typeof(int[]), paramName);
+#else
+        const string paramName = "__args_0";
+        Expression efParam = new QueryParameterExpression(paramName, typeof(int[]));
+#endif
+        var elementAtMethod = typeof(Enumerable).GetMethods()
+            .First(m => m.Name == nameof(Enumerable.ElementAt) && m.GetParameters().Length == 2
+                        && m.GetParameters()[1].ParameterType == typeof(int))
+            .MakeGenericMethod(typeof(int));
+        var elementAt = Expression.Call(elementAtMethod, efParam, Expression.Constant(0));
+        // The mirrored shape: value on the LEFT, member on the RIGHT.
+        var body = Expression.Equal(elementAt, ageMember);
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
+        Assert.IsType<MongoFieldExpression>(bin.Left);
+        var parameter = Assert.IsType<MongoParameterExpression>(bin.Right);
+        Assert.Equal(paramName, parameter.Name);
+        Assert.Equal(0, parameter.ArrayElementIndex);
+    }
+
+    // ------------------------------------------------------------------
     // Test 17: negated Contains → MongoInExpression with Negated == true ($nin)
     // ------------------------------------------------------------------
 
@@ -777,6 +955,65 @@ public class MongoExpressionTranslatorTests
         var inExpr = Assert.IsType<MongoInExpression>(result);
         Assert.True(inExpr.Negated);
         Assert.Equal("Age", inExpr.Field.ElementName);
+    }
+
+    // ------------------------------------------------------------------
+    // Test 17b: Contains over a query-parameter ENTITY list, item is the root entity itself
+    // (`customers.Contains(c)`) → MongoInExpression over the PRIMARY KEY, values extracted per-element
+    // from the runtime list via MongoParameterExpression.ExtractEntityKeyFromArrayElements.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Contains_over_entity_list_query_parameter_translates_to_key_in()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "customers_0";
+        Expression efParam = Expression.Parameter(typeof(List<Customer>), paramName);
+#else
+        const string paramName = "__customers_0";
+        Expression efParam = new QueryParameterExpression(paramName, typeof(List<Customer>));
+#endif
+        var containsMethod = typeof(List<Customer>).GetMethod(nameof(List<Customer>.Contains), [typeof(Customer)])!;
+        var body = Expression.Call(efParam, containsMethod, cParam);
+
+        var translator = NewTranslator(entityType);
+        translator.SelfParam = cParam;
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var inExpr = Assert.IsType<MongoInExpression>(result);
+        Assert.False(inExpr.Negated);
+        Assert.Equal("_id", inExpr.Field.ElementName);
+        var parameter = Assert.IsType<MongoParameterExpression>(inExpr.Values);
+        Assert.Equal(paramName, parameter.Name);
+        Assert.True(parameter.ExtractEntityKeyFromArrayElements);
+    }
+
+    [Fact]
+    public void Contains_over_entity_list_constant_translates_to_key_in_with_null_elements_preserved()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+
+        var other = new Customer { Id = ObjectId.GenerateNewId() };
+        var customers = new List<Customer?> { null, other };
+        var containsMethod = typeof(List<Customer?>).GetMethod(nameof(List<Customer?>.Contains), [typeof(Customer)])!;
+        var body = Expression.Call(Expression.Constant(customers), containsMethod, cParam);
+
+        var translator = NewTranslator(entityType);
+        translator.SelfParam = cParam;
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var inExpr = Assert.IsType<MongoInExpression>(result);
+        Assert.False(inExpr.Negated);
+        Assert.Equal("_id", inExpr.Field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(inExpr.Values);
+        var keys = Assert.IsType<List<object?>>(constant.Value);
+        Assert.Equal([null, other.Id], keys);
     }
 
     // ------------------------------------------------------------------
@@ -827,6 +1064,53 @@ public class MongoExpressionTranslatorTests
         var constant = Assert.IsType<MongoConstantExpression>(inExpr.Values);
         var values = Assert.IsType<int[]>(constant.Value);
         Assert.Equal([10, 30], values);
+    }
+
+    // ------------------------------------------------------------------
+    // Test 18f (EF-322): `new[] { prm1, prm2 }.Contains(c.CustomerID)` where prm1/prm2 are two
+    // SEPARATELY closure-captured locals (as opposed to one array-typed local/parameter — Test 16 covers
+    // that). EF does not hoist the whole array as one query parameter here; each element survives as its
+    // own independently-named query-parameter node inside a NewArrayInit. → MongoInExpression whose Values
+    // is a MongoValueListExpression of per-element MongoParameterExpressions.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Contains_over_new_array_init_of_separate_query_parameters_translates_to_value_list()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var ageMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Age))!);
+
+#if EF8 || EF9
+        const string paramName0 = QueryCompilationContext.QueryParameterPrefix + "prm1_0";
+        const string paramName1 = QueryCompilationContext.QueryParameterPrefix + "prm2_0";
+        Expression efParam0 = Expression.Parameter(typeof(int), paramName0);
+        Expression efParam1 = Expression.Parameter(typeof(int), paramName1);
+#else
+        const string paramName0 = "__prm1_0";
+        const string paramName1 = "__prm2_0";
+        Expression efParam0 = new QueryParameterExpression(paramName0, typeof(int));
+        Expression efParam1 = new QueryParameterExpression(paramName1, typeof(int));
+#endif
+        var arrayExpr = Expression.NewArrayInit(typeof(int), efParam0, efParam1);
+        var containsMethod = typeof(Enumerable).GetMethods()
+            .First(m => m.Name == nameof(Enumerable.Contains) && m.GetParameters().Length == 2)
+            .MakeGenericMethod(typeof(int));
+        var body = Expression.Call(containsMethod, arrayExpr, ageMember);
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var inExpr = Assert.IsType<MongoInExpression>(result);
+        Assert.False(inExpr.Negated);
+        Assert.Equal("Age", inExpr.Field.ElementName);
+        var list = Assert.IsType<MongoValueListExpression>(inExpr.Values);
+        Assert.Equal(2, list.Elements.Count);
+        var p0 = Assert.IsType<MongoParameterExpression>(list.Elements[0]);
+        var p1 = Assert.IsType<MongoParameterExpression>(list.Elements[1]);
+        Assert.Equal(paramName0, p0.Name);
+        Assert.Equal(paramName1, p1.Name);
     }
 
     // ------------------------------------------------------------------
@@ -981,7 +1265,8 @@ public class MongoExpressionTranslatorTests
 
         Assert.True(translator.TryTranslate(predicate.Body, out var result));
         var regex = Assert.IsType<MongoRegexExpression>(result);
-        Assert.Equal("Name", regex.Field.ElementName);
+        var field = Assert.IsType<MongoFieldExpression>(regex.Field);
+        Assert.Equal("Name", field.ElementName);
         Assert.Equal(MongoRegexKind.StartsWith, regex.Kind);
         Assert.False(regex.Negated);
         var constant = Assert.IsType<MongoConstantExpression>(regex.Term);
@@ -1053,6 +1338,76 @@ public class MongoExpressionTranslatorTests
         var regex = Assert.IsType<MongoRegexExpression>(result);
         var parameter = Assert.IsType<MongoParameterExpression>(regex.Term);
         Assert.Equal(paramName, parameter.Name);
+    }
+
+    [Fact]
+    public void StartsWith_with_column_term_translates_to_field_to_field_regex_expression()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith(c.Nickname);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        var field = Assert.IsType<MongoFieldExpression>(regex.Field);
+        Assert.Equal("Name", field.ElementName);
+        Assert.Equal(MongoRegexKind.StartsWith, regex.Kind);
+        Assert.False(regex.Negated);
+        var term = Assert.IsType<MongoFieldExpression>(regex.Term);
+        Assert.Equal("Nickname", term.ElementName);
+    }
+
+    [Fact]
+    public void StartsWith_with_same_column_on_both_sides_translates_to_field_to_field_regex_expression()
+    {
+        // The exact shape EF's `All(c => c.ContactName.StartsWith(c.ContactName))` produces (All_top_level_column).
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith(c.Name);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        var term = Assert.IsType<MongoFieldExpression>(regex.Term);
+        Assert.Equal("Name", term.ElementName);
+    }
+
+    [Fact]
+    public void Contains_with_column_term_translates_to_field_to_field_regex_expression()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.Contains(c.Nickname);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.Equal(MongoRegexKind.Contains, regex.Kind);
+        Assert.IsType<MongoFieldExpression>(regex.Term);
+    }
+
+    [Fact]
+    public void EndsWith_with_column_term_translates_to_field_to_field_regex_expression()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.EndsWith(c.Nickname);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.Equal(MongoRegexKind.EndsWith, regex.Kind);
+        Assert.IsType<MongoFieldExpression>(regex.Term);
+    }
+
+    [Fact]
+    public void Negated_starts_with_column_term_translates_to_negated_field_to_field_regex_expression()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => !c.Name.StartsWith(c.Nickname);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.True(regex.Negated);
+        Assert.IsType<MongoFieldExpression>(regex.Term);
     }
 
     [Fact]
@@ -2871,5 +3226,136 @@ public class MongoExpressionTranslatorTests
 
         Assert.True(translator.TryTranslateField(FieldBody<Customer>(c => (object)c.Age), out var boxed));
         Assert.Equal("Age", boxed!.ElementName);
+    }
+
+    // ------------------------------------------------------------------
+    // EF-322 follow-up: a constructed-tuple comparison (`new Tuple<string>(c.Name) == new Tuple<string>("A")`)
+    // — EF's NorthwindWhereQueryTestBase.Where_compare_tuple_constructed_equal shape. Neither side is a member
+    // access or a simple value, so this must be recognized before the general field-to-field/$expr path.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Single_value_tuple_equality_translates_to_binary_of_tuples()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => new Tuple<string>(c.Name) == new Tuple<string>("A");
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+
+        var left = Assert.IsType<MongoTupleExpression>(binary.Left);
+        var leftField = Assert.IsType<MongoFieldExpression>(Assert.Single(left.Elements));
+        Assert.Equal("Name", leftField.ElementName);
+
+        var right = Assert.IsType<MongoTupleExpression>(binary.Right);
+        var rightConstant = Assert.IsType<MongoConstantExpression>(Assert.Single(right.Elements));
+        Assert.Equal("A", rightConstant.Value);
+    }
+
+    [Fact]
+    public void Multi_value_tuple_inequality_translates_to_binary_of_tuples_per_element()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate =
+            c => new Tuple<string, string>(c.Name, c.Nickname) != new Tuple<string, string>("A", "B");
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.NotEqual, binary.Operator);
+
+        var left = Assert.IsType<MongoTupleExpression>(binary.Left);
+        Assert.Equal(2, left.Elements.Count);
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(left.Elements[0]).ElementName);
+        Assert.Equal("Nickname", Assert.IsType<MongoFieldExpression>(left.Elements[1]).ElementName);
+
+        var right = Assert.IsType<MongoTupleExpression>(binary.Right);
+        Assert.Equal(2, right.Elements.Count);
+        Assert.Equal("A", Assert.IsType<MongoConstantExpression>(right.Elements[0]).Value);
+        Assert.Equal("B", Assert.IsType<MongoConstantExpression>(right.Elements[1]).Value);
+    }
+
+    // ------------------------------------------------------------------
+    // EF-322 follow-up: the `Tuple.Create(...)` FACTORY-METHOD spelling of the same shape
+    // (`Where_compare_tuple_create_constructed_multi_value_equal`). `Tuple.Create(a, b)` compiles to a
+    // MethodCallExpression, never a NewExpression, so this must be recognized as its own arm alongside the
+    // NewExpression one above.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Tuple_create_multi_value_equality_translates_to_binary_of_tuples()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate =
+            c => Tuple.Create(c.Name, c.Nickname) == Tuple.Create("A", "B");
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+
+        var left = Assert.IsType<MongoTupleExpression>(binary.Left);
+        Assert.Equal(2, left.Elements.Count);
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(left.Elements[0]).ElementName);
+        Assert.Equal("Nickname", Assert.IsType<MongoFieldExpression>(left.Elements[1]).ElementName);
+
+        var right = Assert.IsType<MongoTupleExpression>(binary.Right);
+        Assert.Equal(2, right.Elements.Count);
+        Assert.Equal("A", Assert.IsType<MongoConstantExpression>(right.Elements[0]).Value);
+        Assert.Equal("B", Assert.IsType<MongoConstantExpression>(right.Elements[1]).Value);
+    }
+
+    // A `Tuple.Create(...)` on the value side whose arguments have no field reference gets funcletized by EF's
+    // own parameter-extraction pass into a SINGLE query parameter carrying the whole materialized Tuple
+    // instance, never surviving as a MethodCallExpression the translator can walk argument-by-argument — see
+    // MongoExpressionTranslator.TupleEquality.cs's remarks. This must decompose into one
+    // MongoParameterExpression per tuple element (same Name, ArrayElementIndex 0..n-1), mirroring the
+    // `args[i]`-shaped array-parameter decomposition just above.
+    [Fact]
+    public void Tuple_create_multi_value_equality_against_a_materialized_tuple_parameter_decomposes_per_element()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var nameMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Name))!);
+        var nicknameMember =
+            Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Nickname))!);
+
+        var tupleCreate = typeof(Tuple).GetMethods()
+            .First(m => m.Name == nameof(Tuple.Create) && m.GetGenericArguments().Length == 2)
+            .MakeGenericMethod(typeof(string), typeof(string));
+        var leftTuple = Expression.Call(tupleCreate, nameMember, nicknameMember);
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "tuple_0";
+        Expression efParam = Expression.Parameter(typeof(Tuple<string, string>), paramName);
+#else
+        const string paramName = "__tuple_0";
+        Expression efParam = new QueryParameterExpression(paramName, typeof(Tuple<string, string>));
+#endif
+
+        var body = Expression.Equal(leftTuple, efParam);
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+
+        var right = Assert.IsType<MongoTupleExpression>(binary.Right);
+        Assert.Equal(2, right.Elements.Count);
+
+        var firstElement = Assert.IsType<MongoParameterExpression>(right.Elements[0]);
+        Assert.Equal(paramName, firstElement.Name);
+        Assert.Equal(0, firstElement.ArrayElementIndex);
+
+        var secondElement = Assert.IsType<MongoParameterExpression>(right.Elements[1]);
+        Assert.Equal(paramName, secondElement.Name);
+        Assert.Equal(1, secondElement.ArrayElementIndex);
     }
 }

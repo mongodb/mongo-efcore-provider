@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -140,6 +140,37 @@ internal sealed class MongoPipelineFactory
         return new MongoPipelineFactory(template, placeholders);
     }
 
+    // Renders an operand sub-pipeline's stages. Mostly one document per stage, but a RIGHT-NESTED set-op
+    // operand (A.Concat(B.Union(C))) puts a MongoUnionWithStage INSIDE another one's operand stages, and
+    // that expands to two documents for a Union link ($unionWith + the dedup pair). RenderStage returns a
+    // single document and has no case for the set-op stages, so nested ones must be expanded here —
+    // routing them through RenderStage instead would hit its switch default. Everything else delegates
+    // unchanged, which keeps a deferred stage (only $vectorSearch, which a set-op operand can never carry)
+    // failing closed rather than being silently rendered without its placeholder.
+    private static IEnumerable<BsonDocument> RenderOperandStages(
+        IEnumerable<MongoPipelineStage> stages,
+        MongoQueryLanguageRenderer renderer,
+        PlaceholderTable placeholders)
+    {
+        foreach (var stage in stages)
+        {
+            if (stage is MongoUnionWithStage nestedUnion)
+            {
+                foreach (var rendered in RenderUnionWith(nestedUnion, renderer, placeholders))
+                    yield return rendered;
+            }
+            else if (stage is MongoSetDifferenceStage nestedSetDiff)
+            {
+                foreach (var rendered in RenderSetDifference(nestedSetDiff, renderer, placeholders))
+                    yield return rendered;
+            }
+            else
+            {
+                yield return RenderStage(stage, renderer, placeholders);
+            }
+        }
+    }
+
     private static BsonDocument RenderStage(
         MongoPipelineStage stage,
         MongoQueryLanguageRenderer renderer,
@@ -191,6 +222,15 @@ internal sealed class MongoPipelineFactory
                     new BsonDocument("$meta", "vectorSearchScore"))),
             MongoGroupAccumulatorStage group => RenderGroup(group, placeholders),
             MongoGroupStage keyedGroup => RenderKeyedGroup(keyedGroup, placeholders),
+            // EF-322: the first half of the whole-entity Distinct() dedup pattern — mirrors the literal BSON
+            // RenderUnionWith already emits for Union's own dedup, just via a dedicated marker stage instead
+            // of a MongoGrouping (which models a NAMED key plus accumulators, neither of which apply here).
+            MongoGroupByRootStage => new BsonDocument("$group", new BsonDocument("_id", "$$ROOT")),
+            // EF-322: the first half of the Last()/LastOrDefault()-with-no-explicit-order reducer pattern —
+            // mirrors the literal BSON MongoGroupByRootStage emits just above, just keying an accumulator
+            // field ("_last") off "$$ROOT" instead of grouping by it.
+            MongoLastRowStage => new BsonDocument("$group",
+                new BsonDocument { { "_id", BsonNull.Value }, { "_last", new BsonDocument("$last", "$$ROOT") } }),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoPipelineFactory does not support stage type '{stage.GetType().Name}'.")
         };
@@ -320,7 +360,19 @@ internal sealed class MongoPipelineFactory
         var body = new BsonDocument();
         foreach (var projection in stage.Projections)
         {
-            body.Add(projection.Alias, MongoAggregationExpressionRenderer.Render(projection.Expression, placeholders));
+            var rendered = MongoAggregationExpressionRenderer.Render(projection.Expression, placeholders);
+
+            // Unlike RenderAddFields, a bare constant/parameter CAN be this stage's whole projected value
+            // (a bare Select(x => 8), or one leaf of an anonymous projection admitted by
+            // NativeProjectionBinder's TryTranslateLeaf gate) — $project reads a bare value as an
+            // inclusion(1)/exclusion(0) flag rather than a literal, so it must be $literal-wrapped exactly
+            // like RenderAddFields already does, or a 0/false constant aborts the whole aggregate.
+            if (projection.Expression is MongoConstantExpression or MongoParameterExpression)
+            {
+                rendered = new BsonDocument("$literal", rendered);
+            }
+
+            body.Add(projection.Alias, rendered);
         }
 
         // Suppress the default _id unless the projection deliberately emits an "_id" output field.
@@ -340,9 +392,9 @@ internal sealed class MongoPipelineFactory
     // MongoAggregationExpressionRenderer.Render emits it unwrapped, and MongoDB reads an unwrapped string
     // value starting with '$' as a FIELD PATH rather than a literal — so OrderBy(x => "$Label") (or a
     // captured string parameter whose runtime value happens to start with '$') would otherwise silently sort
-    // by the named field instead of tying every row on the literal string. The wrap is scoped to
-    // RenderAddFields only: RenderProject and the predicate ($expr) path share the same renderer but a bare
-    // constant is never their whole body.
+    // by the named field instead of tying every row on the literal string. RenderProject wraps the same way
+    // for the same inclusion/exclusion-flag reason (see its own comment); the predicate ($expr) path shares
+    // this renderer too, but a bare constant is never a predicate's whole body.
     //
     // Substitution survives the wrap: SubstituteValue tests every BsonValue for a placeholder sentinel before
     // recursing into it as a document, so a parameter sentinel nested inside { "$literal": <sentinel> } is
@@ -395,9 +447,20 @@ internal sealed class MongoPipelineFactory
         var group = new BsonDocument { { "_id", id } };
         foreach (var acc in grouping.Accumulators)
         {
-            var operand = acc.Operand is null
-                ? (BsonValue)1
-                : MongoAggregationExpressionRenderer.Render(acc.Operand, placeholders);
+            BsonValue operand;
+            if (acc.Operand is null)
+            {
+                operand = 1;
+            }
+            else
+            {
+                operand = MongoAggregationExpressionRenderer.Render(acc.Operand, placeholders);
+                if (acc.Operand is MongoConstantExpression or MongoParameterExpression)
+                {
+                    operand = new BsonDocument("$literal", operand);
+                }
+            }
+
             group.Add(acc.OutputField, new BsonDocument(acc.Operator, operand));
         }
 
@@ -450,8 +513,8 @@ internal sealed class MongoPipelineFactory
         PlaceholderTable placeholders)
     {
         var innerPipeline = new BsonArray();
-        foreach (var operandStage in stage.OperandStages)
-            innerPipeline.Add(RenderStage(operandStage, renderer, placeholders));   // shared placeholders
+        foreach (var rendered in RenderOperandStages(stage.OperandStages, renderer, placeholders))
+            innerPipeline.Add(rendered);   // shared placeholders
 
         yield return new BsonDocument("$unionWith", new BsonDocument
         {
@@ -709,12 +772,39 @@ internal sealed class MongoPipelineFactory
         int index,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        var (name, serializer, isArray, regexKind, entityMemberProperty) = _placeholders.Entries[index];
+        var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex) = _placeholders.Entries[index];
 
         if (!parameterValues.TryGetValue(name, out var rawValue))
             throw new InvalidOperationException(
                 $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
                 + "is not present in parameterValues. This is a bug in the query compilation pipeline.");
+
+        // Entity-list-Contains rewrite (`customers.Contains(c)`): the raw parameter value is an ARRAY OF
+        // WHOLE ENTITY INSTANCES, not an array of the property's own values — extract the key member's own
+        // CLR value from EACH non-null element now, per execution, mirroring the single-entity extraction
+        // immediately below but per-element. A null element passes through as a BSON null rather than being
+        // extracted (GetGetter has nothing to read from a null instance) — see
+        // MongoExpressionTranslator.EntityEquality.cs's TryTranslateEntityListContains for why a null
+        // element is meaningful to keep rather than filter out. Checked BEFORE the single-entity branch
+        // immediately below, which would otherwise misinterpret this array as a single entity value.
+        if (entityMemberProperty is not null && isArray)
+        {
+            var getter = entityMemberProperty.GetGetter();
+            var array = new BsonArray();
+            foreach (var element in (System.Collections.IEnumerable)rawValue!)
+            {
+                if (element is null)
+                {
+                    array.Add(BsonNull.Value);
+                    continue;
+                }
+
+                var coerced = BsonValueSerializer.Coerce(serializer!.ValueType, getter.GetClrValue(element));
+                array.Add(BsonValueSerializer.SerializeThroughWriter(serializer, coerced));
+            }
+
+            return array;
+        }
 
         // Entity-equality rewrite (`c == local`): the raw parameter value is a WHOLE ENTITY instance, not
         // the value to compare — extract the key member's own CLR value from it now, per execution, mirroring
@@ -722,6 +812,24 @@ internal sealed class MongoPipelineFactory
         // branches so the extracted value flows through the ordinary serialization path unchanged.
         if (entityMemberProperty is not null && rawValue is not null)
             rawValue = entityMemberProperty.GetGetter().GetClrValue(rawValue);
+
+        // `args[0]`-shaped access into a query-parameter ARRAY (a compiled query's own array-typed lambda
+        // parameter, see NativeQueryParameter.TryGetParameterArrayElementIndex), OR a funcletized
+        // `Tuple.Create(...)` operand (see MongoExpressionTranslator.TupleEquality.cs's TryDecomposeTupleOperand):
+        // either way the raw parameter value is the WHOLE array/list or tuple, not the element to compare —
+        // extract that element now, per execution, since its value (and, for an array, even whether the index
+        // is in range) can't be known until the runtime value is known.
+        if (arrayElementIndex is int elementIndex)
+        {
+            rawValue = rawValue switch
+            {
+                System.Collections.IList list => list[elementIndex],
+                System.Runtime.CompilerServices.ITuple tuple => tuple[elementIndex],
+                _ => throw new InvalidOperationException(
+                    $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
+                    + $"was expected to be an array/list or tuple but was '{rawValue?.GetType().Name ?? "null"}'.")
+            };
+        }
 
         // A parameterized string.StartsWith/EndsWith/Contains term: the escape+anchor transform can only
         // run now, per execution, since render (compile) time had no value to escape. Mirrors

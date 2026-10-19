@@ -67,6 +67,10 @@ internal static class MongoAggregationExpressionRenderer
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
             MongoSizeExpression size => RenderSize(size, elementVariable),
+            // EF-322: $avg/$max/$min/$sum as an ARRAY-expression operator (over the $addToSet accumulator's
+            // own output field), not a $group accumulator — see the node's own remarks.
+            MongoArrayReduceExpression arrayReduce
+                => new BsonDocument(arrayReduce.OperatorName, FieldRef(arrayReduce.FieldName, elementVariable)),
             MongoFilteredSizeExpression filtered => RenderFilteredSize(filtered, placeholders, elementVariable),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders, elementVariable),
             MongoComputedInExpression computedIn => RenderComputedIn(computedIn, placeholders, elementVariable),
@@ -85,6 +89,12 @@ internal static class MongoAggregationExpressionRenderer
                     { "then", Render(conditional.IfTrue, placeholders, elementVariable) },
                     { "else", Render(conditional.IfFalse, placeholders, elementVariable) }
                 }),
+            MongoCoalesceExpression coalesce
+                => new BsonDocument("$ifNull", new BsonArray
+                {
+                    Render(coalesce.Left, placeholders, elementVariable),
+                    Render(coalesce.Right, placeholders, elementVariable)
+                }),
             MongoDateTimeOffsetLocalExpression local
                 => new BsonDocument("$dateAdd", new BsonDocument
                 {
@@ -93,6 +103,13 @@ internal static class MongoAggregationExpressionRenderer
                     { "amount", FieldRef(local.Operand.ElementName + ".Offset", elementVariable) }
                 }),
             MongoDatePartExpression datePart => RenderDatePart(datePart, placeholders, elementVariable),
+            MongoDateAddExpression dateAdd => RenderDateAdd(dateAdd, placeholders, elementVariable),
+            MongoStringIndexOfExpression indexOf
+                => new BsonDocument("$indexOfCP", new BsonArray
+                {
+                    Render(indexOf.Haystack, placeholders, elementVariable),
+                    Render(indexOf.Needle, placeholders, elementVariable)
+                }),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
             // A constructed nested sub-document leaf (EF-447, `new Book { Id = e.Id, Title = e.Title }`).
             // Each member renders through this SAME Render call, recursively, so a nested field ref renders as
@@ -104,6 +121,22 @@ internal static class MongoAggregationExpressionRenderer
             MongoConcatExpression concat
                 => new BsonDocument("$concat",
                     new BsonArray(concat.Operands.Select(o => Render(o, placeholders, elementVariable)))),
+            // EF-322 (Include_collection_with_conditional_order_by): admits ANY Term shape, not just a
+            // field-to-field one. Every CanRender caller (see its own remarks) is already inside an
+            // $expr/$addFields/$sort/quantifier scope with no $regularExpression alternative available — a
+            // top-level $match predicate never reaches this renderer at all, since a constant/parameter-term
+            // regex is handled entirely by the separate query-dialect path (MongoQueryLanguageRenderer) before
+            // it would. So there is no fallback disposition being preserved by declining a constant/parameter
+            // term here; it must render exactly like the field-to-field case.
+            MongoRegexExpression regex => RenderRegexAsExpr(regex, placeholders, elementVariable),
+            // A constructed-tuple comparison operand (EF-322 follow-up) — a literal MQL array of the tuple's
+            // per-member values, each rendered through this SAME Render call exactly like any other computed
+            // value (a field ref, a constant, a nested computation). Unlike MongoValueListExpression (which
+            // is deliberately NOT top-level-renderable — see its own remarks), this node exists ONLY as a
+            // top-level $eq/$ne operand, so it is wired into the ordinary dispatch rather than a dedicated
+            // $in-only helper.
+            MongoTupleExpression tuple
+                => new BsonArray(tuple.Elements.Select(e => Render(e, placeholders, elementVariable))),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };
@@ -171,10 +204,27 @@ internal static class MongoAggregationExpressionRenderer
                 => MongoConvertExpression.ToOperatorFor(convert.Type) is not null && CanRender(convert.Operand),
             MongoConditionalExpression conditional
                 => CanRender(conditional.Test) && CanRender(conditional.IfTrue) && CanRender(conditional.IfFalse),
+            MongoCoalesceExpression coalesce => CanRender(coalesce.Left) && CanRender(coalesce.Right),
             MongoDateTimeOffsetLocalExpression local => CanRender(local.Operand),
             MongoDatePartExpression datePart => CanRender(datePart.Operand),
+            MongoDateAddExpression dateAdd => CanRender(dateAdd.StartDate) && CanRender(dateAdd.Amount),
+            MongoStringIndexOfExpression indexOf => CanRender(indexOf.Haystack) && CanRender(indexOf.Needle),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
+            // Answers true unconditionally for any regex.Kind — this relies on RenderRegexAsExpr's switch over
+            // MongoRegexKind staying exhaustive (all 3 current members handled; its `_` arm throws and is
+            // presently unreachable). Adding a new MongoRegexKind member requires adding it to BOTH that switch
+            // and (implicitly) here at the same time, or this would wrongly admit a Kind that Render then throws
+            // on. Admits ANY Term shape (EF-322) — see the matching comment on Render's arm above for why a
+            // constant/parameter term has no fallback disposition to preserve at any of this method's call
+            // sites.
+            MongoRegexExpression regex => CanRender(regex.Field) && CanRender(regex.Term),
+            MongoTupleExpression tuple => tuple.Elements.All(CanRender),
+            // EF-322 follow-up: a constructed nested sub-document leaf (mirrors Render's own arm above).
+            // Previously missing — Render already had an arm for it, so this used to be a "renderer wider
+            // than classifier" gap; closing it lets a computed-needle Contains whose item is a composite
+            // anonymous-type tuple (`ids.Contains(new { Id1 = ..., Id2 = ... })`) go native.
+            MongoDocumentConstructionExpression construction => construction.Members.All(m => CanRender(m.Value)),
             _ => false
         };
 
@@ -198,7 +248,8 @@ internal static class MongoAggregationExpressionRenderer
         };
 
     private static bool CanRenderInValues(MongoExpression values)
-        => values is MongoConstantExpression { Value: System.Collections.IEnumerable } or MongoParameterExpression;
+        => values is MongoConstantExpression { Value: System.Collections.IEnumerable } or MongoParameterExpression
+            or MongoValueListExpression;
 
     // Exactly the operators RenderBinary's own switch maps below — every MongoBinaryOperator member, as it
     // happens (RenderBinary has no unmapped member today), but this must be re-checked against RenderBinary's
@@ -246,6 +297,27 @@ internal static class MongoAggregationExpressionRenderer
             _ => throw new NativeTranslationNotSupportedException($"Unhandled {nameof(MongoDatePart)} '{node.Part}'.")
         };
     }
+
+    private static BsonValue RenderDateAdd(MongoDateAddExpression node, PlaceholderTable placeholders, string? elementVariable)
+        => new BsonDocument("$dateAdd", new BsonDocument
+        {
+            { "startDate", Render(node.StartDate, placeholders, elementVariable) },
+            { "unit", UnitName(node.Unit) },
+            { "amount", Render(node.Amount, placeholders, elementVariable) }
+        });
+
+    private static string UnitName(MongoDateAddUnit unit)
+        => unit switch
+        {
+            MongoDateAddUnit.Year => "year",
+            MongoDateAddUnit.Month => "month",
+            MongoDateAddUnit.Day => "day",
+            MongoDateAddUnit.Hour => "hour",
+            MongoDateAddUnit.Minute => "minute",
+            MongoDateAddUnit.Second => "second",
+            MongoDateAddUnit.Millisecond => "millisecond",
+            _ => throw new NativeTranslationNotSupportedException($"Unhandled {nameof(MongoDateAddUnit)} '{unit}'.")
+        };
 
     // A missing or explicitly-null array makes $size a hard server error that aborts the whole aggregate, so an
     // EMBEDDED array path is wrapped in $ifNull (count 0 — what LINQ answers for a missing embedded array). A
@@ -321,6 +393,66 @@ internal static class MongoAggregationExpressionRenderer
         return new BsonDocument(op, map);
     }
 
+    // Mirrors the C# driver's own LINQ v3 aggregation-expression translation for string.StartsWith/Contains/
+    // EndsWith (StartsWithContainsOrEndsWithMethodToAggregationExpressionTranslator.CreateAst) exactly, so a
+    // field-to-field term (no query-dialect form — MongoDB's $regularExpression pattern must be a literal, not
+    // another field) renders byte-identically to the pre-existing driver-LINQ fallback for this shape. No
+    // $ifNull guarding: the driver's own translation has none either, so matching it is parity, not a new
+    // behavior — see this feature's own design notes. (This byte-identity claim is for the UN-negated test only:
+    // the negated case still diverges in SHAPE from the fallback — native emits `$expr:{"$not":[...]}}` where
+    // the old fallback emitted `$nor:[{"$expr":...}]` — logically identical but not byte-for-byte, which per this
+    // project's AGENTS.md is not a contract concern since MQL shape is not contract.)
+    private static BsonValue RenderRegexAsExpr(MongoRegexExpression regex, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var field = Render(regex.Field, placeholders, elementVariable);
+        var term = Render(regex.Term, placeholders, elementVariable);
+
+        BsonValue test = regex.Kind switch
+        {
+            MongoRegexKind.StartsWith
+                => new BsonDocument("$eq", new BsonArray { new BsonDocument("$indexOfCP", new BsonArray { field, term }), 0 }),
+            MongoRegexKind.Contains
+                => new BsonDocument("$gte", new BsonArray { new BsonDocument("$indexOfCP", new BsonArray { field, term }), 0 }),
+            MongoRegexKind.EndsWith => RenderEndsWithAsExpr(field, term),
+            _ => throw new NativeTranslationNotSupportedException($"Unsupported {nameof(MongoRegexKind)} '{regex.Kind}'.")
+        };
+
+        return regex.Negated ? new BsonDocument("$not", new BsonArray { test }) : test;
+    }
+
+    // start = strLenCP(field) - strLenCP(term); true iff start >= 0 AND indexOfCP(field, term, start) == start.
+    // Bound ONCE via $let (EF-322 Task 2 review fix — the driver's own CreateAst binds it via
+    // AstExpression.Let/UseVarIfNotSimple, not by re-rendering it twice), so this is byte-identical to the
+    // pre-existing driver-LINQ fallback's own MQL for this shape rather than merely logically equivalent to
+    // it. The driver's OUTER $let (which would bind the string/substring operands themselves) always collapses
+    // away for this call site specifically: UseVarIfNotSimple only introduces a variable for a NON-simple
+    // operand, and `field`/`term` here are always simple field paths — never a computed sub-expression — so
+    // only the inner "start" $let ever survives to be rendered.
+    private static BsonValue RenderEndsWithAsExpr(BsonValue field, BsonValue term)
+    {
+        var start = new BsonDocument("$subtract", new BsonArray
+        {
+            new BsonDocument("$strLenCP", field),
+            new BsonDocument("$strLenCP", term)
+        });
+
+        var test = new BsonDocument("$and", new BsonArray
+        {
+            new BsonDocument("$gte", new BsonArray { "$$start", 0 }),
+            new BsonDocument("$eq", new BsonArray
+            {
+                new BsonDocument("$indexOfCP", new BsonArray { field, term, "$$start" }),
+                "$$start"
+            })
+        });
+
+        return new BsonDocument("$let", new BsonDocument
+        {
+            { "vars", new BsonDocument("start", start) },
+            { "in", test }
+        });
+    }
+
     // Shared render-time guard for any position where MongoDB evaluates a WHOLE sub-expression's result by
     // TRUTHINESS (a $filter's own "cond", or a quantifier's $map "in") rather than via an operator that
     // produces a genuine computed boolean. Unlike CheckLogicalOperandSerialization (which the AndAlso/OrElse
@@ -378,14 +510,25 @@ internal static class MongoAggregationExpressionRenderer
             case MongoParameterExpression parameter:
             {
                 // A null ForSerialization means there is no backing IProperty — reached only via a
-                // COMPUTED needle's values (TranslateInValuesRaw), which today is scoped to a string-typed
-                // needle exclusively (MongoExpressionTranslator's collection-membership case), so a plain
-                // string element serializer is always correct here. An ordinary bare-field MongoInExpression
-                // never reaches this null branch — TranslateInValues always supplies a real property.
-                var elementSerializer = parameter.ForSerialization is null
-                    ? StringSerializer.Instance
-                    : BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization).Serializer;
-                return placeholders.CreateArrayPlaceholder(parameter.Name, elementSerializer);
+                // COMPUTED needle's values (TranslateInValuesRaw), so RawElementType carries the needle's CLR
+                // type instead; pick a default (representation-less) serializer for it. An ordinary bare-field
+                // MongoInExpression never reaches this null branch — TranslateInValues always supplies a real
+                // property.
+                var elementSerializer = parameter.ForSerialization is not null
+                    ? BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization).Serializer
+                    : parameter.RawElementType is not null
+                        ? BsonSerializerFactory.CreateTypeSerializer(parameter.RawElementType)
+                        : StringSerializer.Instance;
+                return parameter.ExtractEntityKeyFromArrayElements
+                    ? placeholders.CreateEntityKeyArrayPlaceholder(parameter.Name, parameter.ForSerialization!, elementSerializer)
+                    : placeholders.CreateArrayPlaceholder(parameter.Name, elementSerializer);
+            }
+            case MongoValueListExpression list:
+            {
+                var array = new BsonArray();
+                foreach (var element in list.Elements)
+                    array.Add(MongoValueRenderer.RenderValue(element, placeholders));
+                return array;
             }
             default:
                 throw new NativeTranslationNotSupportedException(

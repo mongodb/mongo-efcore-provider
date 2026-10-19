@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
@@ -78,4 +79,22 @@ internal sealed class MongoSetOperation
     /// or a trailing projection composed after a set op, where any <c>$project</c> is emitted AFTER the combine.
     /// </summary>
     public bool OperandsProjected { get; }
+
+    /// <summary>
+    /// The filter/sort/page ops recorded on the OUTER select AFTER the previous link was attached and BEFORE
+    /// this one — e.g. the <c>OrderBy</c>/<c>Take</c> in <c>A.Union(B).OrderBy(..).Take(1).Union(C)</c>. The
+    /// lowerer emits them immediately before this link's own stage, so they operate on the result combined
+    /// SO FAR rather than on the fully-combined result.
+    /// </summary>
+    /// <remarks>
+    /// Empty for the first link (nothing can be recorded after a set op before one exists) and for every
+    /// single-link set op. <see cref="MongoSelectDefinition.AppendSetOperation"/> is the sole writer: it
+    /// moves the outer select's accumulated <c>TrailingOps</c> here as each new link attaches, so
+    /// <c>TrailingOps</c> always means "after the LAST link" — which is what lets the lowerer emit it once,
+    /// at the end, exactly as it did when a select could hold only one set op.
+    /// </remarks>
+    public IReadOnlyList<MongoSelectOp> PrecedingOps { get; private set; } = [];
+
+    internal void SetPrecedingOps(IReadOnlyList<MongoSelectOp> precedingOps)
+        => PrecedingOps = precedingOps;
 }

@@ -230,6 +230,24 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 _projectionMapping[castProjectionMember] = castExpression;
                 return new ProjectionBindingExpression(_queryExpression, castProjectionMember, expression.Type);
 
+            // Native string-to-char-sequence projection leaf (`new { Property = e.City.AsEnumerable() }`, or
+            // the `.ToList()`/`.ToArray()` spellings): register the WHOLE MethodCallExpression as ONE
+            // projection member, exactly like the arithmetic/cast cases above. Without this the default
+            // recursive walk would visit only the call's Arguments[0] (the raw member access), dropping the
+            // AsEnumerable()/ToList()/ToArray() wrapper from _projectionMapping entirely — the read side
+            // (MongoProjectionBindingRemovingExpressionVisitor) would then have no way to know a char-sequence
+            // materialization was projected under this alias, and would hand the shaper a bare string where an
+            // IEnumerable<char>/List<char>/char[] was expected.
+            // The Route == Projection guard mirrors the cast/arithmetic cases: NativeProjectionBinder sets
+            // Route = Projection only when EVERY leaf (including this one) is natively representable, so a
+            // mixed/fallback shape still falls through to the ordinary default walk untouched.
+            case MethodCallExpression stringSequenceCall
+                when _queryExpression.Select.Route == NativeRoute.Projection
+                     && NativeProjectionBinder.IsStringSequenceMaterializationCall(stringSequenceCall):
+                var stringSequenceMember = GetCurrentProjectionMember();
+                _projectionMapping[stringSequenceMember] = stringSequenceCall;
+                return new ProjectionBindingExpression(_queryExpression, stringSequenceMember, expression.Type);
+
             // Native conditional projection leaf: register the WHOLE ConditionalExpression node as ONE
             // projection member, exactly like the arithmetic and cast cases above (NOT caught by the earlier
             // unconditional `case MemberExpression memberExpression:` -- a ConditionalExpression is not a
@@ -266,6 +284,25 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 _projectionMapping[reducerMember] = correlatedReducerCandidate;
 
                 return new ProjectionBindingExpression(_queryExpression, reducerMember, expression.Type);
+
+            // A DateTime/DateTimeOffset .AddXxx(amount) projection leaf (`new DateTime(1900, 1, 1).AddMinutes(
+            // o.OrderID % 25)`), NativeProjectionBinder having already translated it to a MongoDateAddExpression
+            // at emit time. Register the WHOLE call as ONE projection member, exactly like the arithmetic/cast/
+            // conditional leaves above: the default walk below would otherwise recurse into Object (the start
+            // date) and Arguments[0] (the amount) independently, both writing the SAME current ProjectionMember
+            // slot — the amount visited last would silently clobber the start-date binding, mapping this leaf's
+            // alias to the AMOUNT's type (e.g. double) instead of the call's own DateTime/DateTimeOffset result.
+            // MongoExpressionTranslator.IsDateAddMethod is the SAME predicate the emit side gates on, so this
+            // case only ever fires for a leaf NativeProjectionBinder already accepted.
+            // The Route == Projection guard mirrors the arithmetic/cast/conditional cases above, for the
+            // identical reason: confine this mapping to a projection accepted in full, so a mixed/fallback
+            // shape still falls through to the ordinary default walk.
+            case MethodCallExpression dateAddCandidate
+                when _queryExpression.Select.Route == NativeRoute.Projection
+                     && MongoExpressionTranslator.IsDateAddMethod(dateAddCandidate):
+                var dateAddMember = GetCurrentProjectionMember();
+                _projectionMapping[dateAddMember] = dateAddCandidate;
+                return new ProjectionBindingExpression(_queryExpression, dateAddMember, expression.Type);
 
             case MethodCallExpression methodCallExpression
                 when IsScalarMethodPropertyAccess(methodCallExpression):
@@ -319,35 +356,12 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     private bool TryGetNativeDocumentConstructionLeaf(
         Expression expression, out MongoDocumentConstructionExpression construction)
     {
-        construction = null;
-
-        if (_queryExpression.Select.Route != NativeRoute.Projection)
-        {
-            return false;
-        }
-
-        var memberName = GetCurrentProjectionMember().Last?.Name;
-        if (memberName is null)
-        {
-            return false;
-        }
-
-        var alias = _queryExpression.Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
-            ? overriddenAlias
-            : memberName;
-
-        foreach (var projection in _queryExpression.Select.Projection)
-        {
-            if (projection.Alias == alias
-                && projection.Expression is MongoDocumentConstructionExpression candidate
-                && candidate.OriginalExpression.Type == expression.Type)
-            {
-                construction = candidate;
-                return true;
-            }
-        }
-
-        return false;
+        // The lookup itself lives on MongoSelectDefinition so this and BindResultMember (the join-scope
+        // nested leaf's own bind site) cannot drift apart — see that method's remarks.
+        var found = _queryExpression.Select.TryGetDocumentConstructionProjection(
+            GetCurrentProjectionMember().Last?.Name, expression.Type, out var candidate);
+        construction = candidate!;
+        return found;
     }
 
     /// <summary>

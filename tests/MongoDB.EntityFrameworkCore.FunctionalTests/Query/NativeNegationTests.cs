@@ -121,6 +121,44 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal(2, result.Count);
     }
 
+    // EF-322 (Where_ternary_boolean_condition_negated): !(test ? false : true), a boolean-typed ternary used
+    // as a PREDICATE. MongoExpressionTranslator.TranslateNode (the predicate-position dispatcher Where uses)
+    // had no case for ConditionalExpression at all — only TranslateOperand (the VALUE-position ternary
+    // translator, for computed sort keys/projections) did — so this always declined to driver-LINQ, even
+    // though the render pipeline already supported it end to end (MongoAggregationExpressionRenderer's
+    // existing $cond support, and MongoQueryLanguageRenderer.RenderUnary's $expr fallback for a Not operand
+    // CanRender admits).
+    [Fact]
+    public void NativeOnly_not_over_boolean_ternary_succeeds_with_expected_mql()
+    {
+        var (collection, logs) = Seed(nameof(NativeOnly_not_over_boolean_ternary_succeeds_with_expected_mql));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        // !(A >= 2 ? false : true) == (A >= 2): only Row3 (A=3) satisfies A >= 2.
+        var result = db.Entities.AsNoTracking().Where(x => !(x.A >= 2 ? false : true)).ToList();
+
+        Assert.Single(result);
+
+        var mql = Mql(logs);
+        Assert.Contains("$expr", mql);
+        Assert.Contains("\"$cond\"", mql);
+    }
+
+    [Fact]
+    public void Not_over_boolean_ternary_matches_driver_linq_results()
+    {
+        var (collection, logs) = Seed(nameof(Not_over_boolean_ternary_matches_driver_linq_results));
+        using var native = CreateContext(collection, logs, MongoQueryMode.Native);
+        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+
+        var nativeIds = native.Entities.AsNoTracking().Where(x => !(x.A >= 2 ? false : true))
+            .Select(x => x.Id).OrderBy(id => id).ToList();
+        var driverIds = driver.Entities.AsNoTracking().Where(x => !(x.A >= 2 ? false : true))
+            .Select(x => x.Id).OrderBy(id => id).ToList();
+
+        Assert.Equal(driverIds, nativeIds);
+    }
+
     // ── Whole-branch-review fix (EF-396): Not over a conjunction/disjunction of BARE fields ──────────
     //
     // The reviewer reproduced a silent-wrong-data regression: RenderUnary's new fallback branch (above)

@@ -66,6 +66,23 @@ internal sealed partial class MongoQueryExpression : Expression
     public override ExpressionType NodeType
         => ExpressionType.Extension;
 
+    /// <summary>
+    /// EF-TBD: clears the read-side projection-index list (<see cref="AddToProjection"/>'s backing store)
+    /// when a <c>GroupBy(key).Select(aggregate)</c> composes directly on an already-finalized PRIOR grouping
+    /// stage (<c>MongoSelectDefinition.SnapshotPriorGroupingForNestedGroupBy</c>'s sibling call, made alongside
+    /// it from the same <c>TranslateGroupBy</c> call site). The prior stage's own <c>AddToProjection</c> calls
+    /// (e.g. registering "Key"/"Count" for its OWN flattened result) are entirely superseded once a further
+    /// GroupBy composes on top — a <c>GroupBy(key).Select(aggregate)</c> never materializes individual grouped
+    /// elements, so nothing downstream ever reads those indices again. Left uncleared, the SECOND stage's own
+    /// "Key"/accumulator aliases — routinely THE SAME names, since <c>g.Key</c> always names its member "Key"
+    /// regardless of stage — collide with the first stage's now-dead entries still occupying those names, and
+    /// <see cref="AddToProjection"/>'s de-dup silently renames the second stage's alias to "Key0" instead: a
+    /// name the actual <c>$group</c>/<c>$project</c> pipeline (built from <c>MongoSelectDefinition.Projection</c>,
+    /// a SEPARATE list, unaffected by this one) never emits, so the shaper reads a field that was never written.
+    /// </summary>
+    internal void ClearReadProjectionForNestedGroupBy()
+        => _projection.Clear();
+
     public int AddToProjection(Expression expression, string? alias = null)
     {
         var existingIndex = _projection.FindIndex(pe => pe.Expression.Equals(expression));

@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using System;
+using System.Linq.Expressions;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.UnitTests.TestUtilities;
@@ -102,6 +104,7 @@ public class MongoSelectDefinitionTests
 
         var op = Assert.IsType<MongoSortOp>(Assert.Single(s.PipelineOps));
         Assert.Equal(2, op.Orderings.Count);
+        Assert.True(s.HasOrdering);
     }
 
     [Fact]
@@ -116,6 +119,41 @@ public class MongoSelectDefinitionTests
             o => Assert.IsType<MongoSkipOp>(o));
         Assert.True(s.HasPaging);
         Assert.True(s.HasLimit);
+    }
+
+    // ── DeferPipelineOpsPastConfirmedJoin (native-post-join-paging plan, final-review fix, Minor 5) ──────
+
+    [Fact]
+    public void DeferPipelineOpsPastConfirmedJoin_moves_ops_in_order_and_clears_the_source_list()
+    {
+        var s = new MongoSelectDefinition();
+        s.StartOrReplaceSort(Asc());
+        s.AppendSkip(Const(5));
+        s.AppendLimit(Const(10));
+
+        s.DeferPipelineOpsPastConfirmedJoin();
+
+        Assert.Empty(s.PipelineOps);
+        Assert.Collection(s.PostLookupPagingOps,
+            o => Assert.IsType<MongoSortOp>(o),
+            o => Assert.IsType<MongoSkipOp>(o),
+            o => Assert.IsType<MongoLimitOp>(o));
+    }
+
+    [Fact]
+    public void DeferPipelineOpsPastConfirmedJoin_second_call_is_a_no_op_once_PipelineOps_is_empty()
+    {
+        var s = new MongoSelectDefinition();
+        s.AppendSkip(Const(5));
+
+        s.DeferPipelineOpsPastConfirmedJoin();
+        Assert.Single(s.PostLookupPagingOps);
+
+        // PipelineOps is already empty after the first call, so a second call adds nothing further and
+        // PostLookupPagingOps is unchanged.
+        s.DeferPipelineOpsPastConfirmedJoin();
+        Assert.Single(s.PostLookupPagingOps);
+        Assert.Empty(s.PipelineOps);
     }
 
     [Fact]
@@ -375,5 +413,29 @@ public class MongoSelectDefinitionTests
 
         Assert.True(select.HasUnconfirmedCandidateJoin);
         Assert.Equal(NativeRoute.Fallback, select.Route);
+    }
+
+    [Fact]
+    public void PendingGroupOrderings_and_GroupOrderOp_default_to_null()
+    {
+        var select = TestSelect();
+
+        Assert.Null(select.PendingGroupOrderings);
+        Assert.Null(select.GroupOrderOp);
+    }
+
+    [Fact]
+    public void PendingGroupOrderings_and_GroupOrderOp_are_settable()
+    {
+        var select = TestSelect();
+        Expression<Func<int, int>> keySelector = x => x;
+
+        select.PendingGroupOrderings = [(true, keySelector)];
+        select.GroupOrderOp = new MongoSortOp([new MongoOrdering(Const(1), Ascending: true)]);
+
+        Assert.Single(select.PendingGroupOrderings);
+        Assert.True(select.PendingGroupOrderings[0].Ascending);
+        Assert.Same(keySelector, select.PendingGroupOrderings[0].KeySelector);
+        Assert.NotNull(select.GroupOrderOp);
     }
 }

@@ -77,6 +77,20 @@ internal static class EnumerableMethods
             nameof(Enumerable.Any), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
 
+        // The three single-argument MATERIALIZATION overloads. Used by the string-to-char-sequence projection
+        // leaf (NativeProjectionBinder.IsStringSequenceMaterializationCall) so it matches a canonical MethodInfo
+        // rather than a method NAME — per Query/AGENTS.md, reference equality on MethodInfo requires canonical
+        // constants, and a name match would also claim an unrelated extension method called "ToList".
+        AsEnumerable = GetMethod(
+            nameof(Enumerable.AsEnumerable), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+        ToList = GetMethod(
+            nameof(Enumerable.ToList), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+        ToArray = GetMethod(
+            nameof(Enumerable.ToArray), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+
         // The fully-generic (TSource, TResult) selector overloads of Min/Max — used when the selected
         // type is not one of the fixed numeric overloads below.
         MaxWithSelector = GetMethod(
@@ -147,6 +161,10 @@ internal static class EnumerableMethods
     public static MethodInfo SingleWithoutPredicate { get; }
     public static MethodInfo SingleOrDefaultWithoutPredicate { get; }
     public static MethodInfo AnyWithoutPredicate { get; }
+
+    public static MethodInfo AsEnumerable { get; }
+    public static MethodInfo ToList { get; }
+    public static MethodInfo ToArray { get; }
 
     private static HashSet<MethodInfo> SumWithSelectorMethods { get; }
     private static HashSet<MethodInfo> AverageWithSelectorMethods { get; }

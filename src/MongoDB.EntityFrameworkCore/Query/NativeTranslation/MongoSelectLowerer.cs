@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -97,6 +97,21 @@ internal sealed class MongoSelectLowerer
         if (select.SetOperation == null)
         {
             AppendLookupStages(query, stages);
+
+            // 2b. A reference-Include null check (e.g. `Include(e => e.Manager).First(e => e.Manager ==
+            // null)`) confirmed this select's join from a bare Where, with no confirming Select reaching it —
+            // see MongoSelectDefinition.PostJoinOps's own remarks for why the $match (and, for a reducer, the
+            // trailing $limit) must land HERE, after the $lookup/$unwind, rather than in PipelineOps above.
+            // Empty (a no-op append) for every query that never took that path.
+            AppendSelectOpStages(select.PostJoinOps, stages, sortFields);
+            // Native-post-join-paging plan: Skip/Take (and anything hoisted alongside it) deferred past a
+            // confirmed join whose $unwind isn't guaranteed row-count-preserving — see
+            // MongoSelectDefinition.PostLookupPagingOps. Safe to emit unconditionally inside this
+            // `select.SetOperation == null` block: a confirmed join only ever reaches
+            // IsSingleEligibleNativeJoinScope (the sole writer of PostLookupPagingOps), and both
+            // IsPlainWholeEntitySelect and IsPlainProjectedSelect (the gates that admit a select as a set-op
+            // operand) exclude join queries — so a set op and a confirmed join can never co-occur here.
+            AppendSelectOpStages(select.PostLookupPagingOps, stages, sortFields);
         }
 
         // Set operation terminal ($unionWith [+ dedup] or a set-difference shape for Intersect/Except).
@@ -111,27 +126,29 @@ internal sealed class MongoSelectLowerer
             // documents (correct: dedup/compare the projected values). Contrast a trailing projection over
             // the combined result, where OperandsProjected is false and select.Projection is emitted after
             // the set-op stage by the fall-through Projection block below.
+            //
+            // EF-322: a PROJECTED-DISTINCT operand (IsPlainDistinctSelect) additionally carries its own
+            // $group (Grouping) ahead of its flattening $project — emitted here, immediately before that
+            // $project, on whichever side(s) are Distinct-shaped. A plain projected operand's Grouping is
+            // always null, so this is a no-op for it; the two operand kinds may be mixed freely (one
+            // Distinct-shaped, the other a plain projected Select).
             if (setOp.OperandsProjected)
             {
+                // source1 (query) may carry its OWN pending lookup here (an InjectAfterRoot projected
+                // collection-navigation Count — see IsPlainProjectedSelect/IsPlainDistinctSelect's
+                // allowPreCombineLookups). Unlike the hoisted-Include case below (EF-397's deferred
+                // AppendLookupStages call, which runs over the COMBINED result), this lookup is source1's
+                // alone: it must run before source1's OWN $project reads it via $size, and before the
+                // combine so it never applies to the other operand's rows. Emitted here instead of the
+                // deferred call at the bottom of this method, which is skipped for this branch.
+                AppendLookupStages(query, stages);
+
+                if (select.Grouping is { } outerGrouping)
+                    stages.Add(new MongoGroupStage(outerGrouping));
                 stages.Add(new MongoProjectStage(select.Projection));
             }
 
-            var operandStages = new List<MongoPipelineStage>();
-            AppendSelectOpStages(setOp.OperandSelect.PipelineOps, operandStages, sortFields);
-            if (setOp.OperandsProjected)
-            {
-                operandStages.Add(new MongoProjectStage(setOp.OperandSelect.Projection));
-            }
-
-            if (setOp.Kind is MongoSetOperationKind.Intersect or MongoSetOperationKind.Except)
-            {
-                stages.Add(new MongoSetDifferenceStage(setOp.Kind, operandStages, setOp.OperandCollectionName));
-            }
-            else
-            {
-                stages.Add(new MongoUnionWithStage(
-                    operandStages, setOp.OperandCollectionName, dedup: setOp.Kind == MongoSetOperationKind.Union));
-            }
+            AppendSetOpChainStages(select, stages, sortFields);
 
             // Post-set-op composition: trailing $match/$sort/$skip/$limit emit after the set-op stage (they
             // operate on the combined result), then fall through to the Projection block (a trailing
@@ -149,15 +166,18 @@ internal sealed class MongoSelectLowerer
             // also required for correctness of the SET operation itself: those compare whole documents by
             // value, so a joined array present at that point would join the comparison key and dedup by
             // "entity + its children" rather than by entity.
-            // FUTURE EDITORS: this deferred-emission mechanism ASSUMES a PROJECTED set-op operand never
-            // carries a $lookup of its own. If one ever did, the pre-combine $project emitted above (the
-            // OperandsProjected branch) would run BEFORE this block and read a joined field that does not
-            // exist yet — silently projecting a missing value, and dropping the lookup array from the
-            // combined stream. Currently unreachable: an operand only reaches here through
-            // MongoQueryableMethodTranslatingExpressionVisitor.IsPlainProjectedSelect, which requires
-            // Lookups.Count == 0 && !IsJoinQuery (and IsPlainWholeEntitySelect requires the same for the
-            // whole-entity form). Weaken either of those and this ordering must be revisited.
-            AppendLookupStages(query, stages);
+            // Skipped when OperandsProjected: source1's own lookup (if any) was already emitted ahead of
+            // its $project above, and re-running AppendLookupStages here would duplicate those stages.
+            // FUTURE EDITORS: source2 (setOp.OperandSelect) still has NO lookup plumbing at all — it is a
+            // bare MongoSelectDefinition, not a MongoQueryExpression — so a projected operand carrying its
+            // OWN lookup on the SECOND (right-hand) side remains unreachable/unsupported; only source1's
+            // (left-hand) lookup is handled. IsPlainWholeEntitySelect requires Lookups.Count == 0
+            // unconditionally, so a whole-entity operand carrying its own lookup still declines here too —
+            // untouched by this widening.
+            if (!setOp.OperandsProjected)
+            {
+                AppendLookupStages(query, stages);
+            }
             // NB: no early return — control continues to the Cardinality block.
         }
 
@@ -200,14 +220,44 @@ internal sealed class MongoSelectLowerer
             return stages;
         }
 
-        // 6b. Keyed $group terminal (GroupBy(key).Select(aggregate)). A GroupBy-route query has only
-        // $match + $group by construction — the binder rejects orderings/paging alongside a grouping —
-        // so no $sort/$skip/$limit precede it here. The $group is followed by a flattening $project
+        // EF-322/EF-TBD: a GroupBy(key).Select(aggregate) composed directly on an already-finalized prior
+        // grouping — a projected Distinct (EF-322) or an ordinary prior GroupBy(key).Select(aggregate)
+        // (EF-TBD) — snapshotted that PRIOR stage's OWN $group/flatten-$project aside into
+        // PriorGrouping/PriorGroupingProjection (MongoSelectDefinition.SnapshotPriorGroupingForNestedGroupBy)
+        // so it can emit here FIRST — the prior stage's own dedup/aggregation must apply before the outer
+        // GroupBy's own $group runs, or the two would collapse into one (silently counting pre-dedup/
+        // pre-aggregate rows). PostGroupOps (a Where/OrderBy/etc. composed BETWEEN the two GroupBys) lands here
+        // too, immediately after — nothing can route into PostGroupOps once IsGroupBy flips true, so this is
+        // the ONLY place it can belong for this shape. Null for every other query, including an ordinary
+        // (non-nested) GroupBy(key).Select(aggregate).
+        if (select.PriorGrouping is { } priorGrouping)
+        {
+            stages.Add(new MongoGroupStage(priorGrouping));
+            if (select.PriorGroupingProjection.Count > 0)
+                stages.Add(new MongoProjectStage(select.PriorGroupingProjection));
+            AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
+        }
+
+        // 6b. Keyed $group terminal (GroupBy(key).Select(aggregate)). PipelineOps may carry pre-group
+        // $match/$sort/$skip/$limit ops (recorded before the GroupBy call) — a pre-group $sort/$skip/$limit
+        // is correct there because a scalar aggregate is row-order-invariant and paging still defines the input
+        // row set correctly regardless of what happens after it. (See MongoSelectDefinition.HasOrdering for the
+        // full rationale.) GroupOrderOp, below, is an exception — it is emitted immediately AFTER the
+        // $group/PostGroupPredicate and before the flatten $project, i.e. on the OUTPUT of $group, not before it.
+        // The $group is followed by a flattening $project
         // (Select.Projection) that lifts the grouped output — the _id (scalar key), each _id.<Name>
         // composite sub-key, and each accumulator output field — up to top-level result aliases the DOM
         // shaper reads by name (see NativeGroupByBinder / MongoQueryLanguageRenderer). Returning here is
         // safe: no further stages follow a grouping.
-        if (select.Grouping is { } grouping)
+        //
+        // EF-322: SetOperation == null guards against DOUBLE-emitting a projected-Distinct-operand set op's
+        // own Grouping. That shape's Select.Grouping is STILL set here (TryTranslateSetOperation never
+        // clears it — it is source1's OWN Distinct, unrelated to the set-op machinery), and the SetOperation
+        // block above the UnwindSource check falls through to here rather than returning — it already
+        // emitted this exact $group + flattening $project itself, immediately before the set-op stage, once
+        // per the OperandsProjected branch. Re-emitting it here would produce a spurious SECOND $group over
+        // the already-combined/deduped result.
+        if (select.Grouping is { } grouping && select.SetOperation == null)
         {
             stages.Add(new MongoGroupStage(grouping));
 
@@ -225,10 +275,34 @@ internal sealed class MongoSelectLowerer
                 stages.Add(new MongoMatchStage(postGroupPredicate));
             }
 
+            // OrderBy/ThenBy composed directly on the ungrouped GroupBy result (before the terminal Select) —
+            // resolved by NativeGroupByBinder.TryBindGroupProjection into GroupOrderOp. Must run BEFORE the
+            // flatten $project below: an ordering aggregate the Select doesn't project (e.g. orders by
+            // Count() but projects Sum()) would no longer be readable once the flatten $project drops it.
+            if (select.GroupOrderOp is { } groupOrderOp)
+            {
+                AppendSortStages(groupOrderOp, stages, sortFields);
+            }
+
             if (select.Projection.Count > 0)
             {
                 stages.Add(new MongoProjectStage(select.Projection));
             }
+
+            // EF-322: a Where/OrderBy/ThenBy/Skip/Take composed after a projected Distinct (never a genuine
+            // GroupBy — NativeSlotPopulator's carve-out only routes here for IsDistinct) lands past the
+            // flatten $project, filtering/sorting/paging the Distinct's OWN output rather than the pre-group
+            // documents. Emitted UNCONDITIONALLY w.r.t. Cardinality (not only in the no-aggregate branch
+            // below): a trailing Count/LongCount/Any/All composed after those ops (NativeCardinalityBinder's
+            // own EF-322 carve-out) ALSO finalizes Cardinality and falls through past this block to the
+            // aggregate-terminal switch further down — PostGroupOps must still land before that terminal
+            // stage, or a preceding Where's $match would be silently dropped.
+            // Guarded on PriorGrouping == null: when a GroupBy nests on a projected Distinct, PostGroupOps
+            // belongs BETWEEN the Distinct's own $group (PriorGrouping, emitted above) and THIS $group — it
+            // was already emitted there, and nothing can route into PostGroupOps again once IsGroupBy is
+            // true, so emitting it here too would be a harmless-looking but WRONG double-emission.
+            if (select.PriorGrouping == null)
+                AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
 
             if (select.Cardinality?.Aggregate is null)
             {
@@ -274,16 +348,91 @@ internal sealed class MongoSelectLowerer
             });
         }
 
+        // EF-322: a Last()/LastOrDefault() reducer with no explicit prior sort (NativeCardinalityBinder set
+        // MongoCardinality.UnorderedLastRow instead of the ordinary sort-flip + $limit). Emitted HERE —
+        // after $lookup/$unwind and any $project above — rather than in PipelineOps like the ordinary
+        // $limit-based reducer: this pattern collapses the WHOLE input into one document via $group, so an
+        // Included collection (or a projected field) must already be present in the "$$ROOT"/document it
+        // captures, not joined/projected afterward.
+        if (cardinality?.Reducer is not null && cardinality.UnorderedLastRow)
+        {
+            stages.Add(new MongoLastRowStage());
+            stages.Add(new MongoReplaceRootStage("_last", mergeOwnerKeySentinels: false));
+        }
+
         return stages;
     }
 
     /// <summary>
-    /// Appends the ordered filter/sort/page stages ($match / $sort / $skip / $limit) for <paramref name="ops"/>
-    /// in their recorded order. Shared by the outer query's own <see cref="MongoSelectDefinition.PipelineOps"/>,
+    /// Appends the ordered filter/sort/page stages ($match / $sort / $skip / $limit) for <paramref name="select"/>'s
+    /// set operations in their recorded order. Shared by the outer query's own <see cref="MongoSelectDefinition.PipelineOps"/>,
     /// a set-operation operand's <see cref="MongoSelectDefinition.PipelineOps"/>
     /// (<see cref="MongoSetOperation.OperandSelect"/>, a plain whole-entity select), and the outer query's
     /// post-set-op <see cref="MongoSelectDefinition.TrailingOps"/>.
     /// </summary>
+    // One stage per set-op link, in LINQ source order. Ordinarily a single link; a LEFT-nested
+    // whole-entity chain (A.Concat(B).Concat(C)) has several. Each Union link renders its OWN dedup inline
+    // right after its own $unionWith, which is what keeps a MIXED chain correct — Concat(Union(A,B),C) must
+    // dedup A,B before C joins the stream, and hoisting the dedup to run once after the whole chain would
+    // silently drop a row. Mutually recursive with AppendSetOpOperandStages, which is how a RIGHT-nested
+    // operand (A.Concat(B.Union(C))) becomes a $unionWith nested inside the outer one's pipeline.
+    private static void AppendSetOpChainStages(
+        MongoSelectDefinition select,
+        List<MongoPipelineStage> stages,
+        SyntheticSortFieldAllocator sortFields)
+    {
+        foreach (var link in select.SetOperations)
+        {
+            // Ops recorded between the PREVIOUS link and this one (A.Union(B).OrderBy(..).Take(1).Union(C)).
+            // They operate on the result combined so far, so they emit BEFORE this link's stage. Empty for
+            // the first link and for every single-link set op.
+            AppendSelectOpStages(link.PrecedingOps, stages, sortFields);
+
+            var operandStages = AppendSetOpOperandStages(link, sortFields);
+
+            if (link.Kind is MongoSetOperationKind.Intersect or MongoSetOperationKind.Except)
+            {
+                stages.Add(new MongoSetDifferenceStage(link.Kind, operandStages, link.OperandCollectionName));
+            }
+            else
+            {
+                stages.Add(new MongoUnionWithStage(
+                    operandStages, link.OperandCollectionName, dedup: link.Kind == MongoSetOperationKind.Union));
+            }
+        }
+    }
+
+    // The operand's own self-contained sub-pipeline: its filter/sort/page ops, then EITHER its pre-combine
+    // $group/$project (a PROJECTED operand — always a single top-level link, never nested) OR its own set-op
+    // chain (a RIGHT-nested whole-entity operand). The two are mutually exclusive by construction: the QMTEV
+    // admits a nested operand only through IsWholeEntitySetOpOperandSelect, which requires Projection empty
+    // and every link !OperandsProjected. A plain operand has neither and lowers to its ops alone, exactly as
+    // before.
+    private static List<MongoPipelineStage> AppendSetOpOperandStages(
+        MongoSetOperation link,
+        SyntheticSortFieldAllocator sortFields)
+    {
+        var operandStages = new List<MongoPipelineStage>();
+        AppendSelectOpStages(link.OperandSelect.PipelineOps, operandStages, sortFields);
+
+        if (link.OperandsProjected)
+        {
+            if (link.OperandSelect.Grouping is { } operandGrouping)
+                operandStages.Add(new MongoGroupStage(operandGrouping));
+            operandStages.Add(new MongoProjectStage(link.OperandSelect.Projection));
+        }
+        else
+        {
+            AppendSetOpChainStages(link.OperandSelect, operandStages, sortFields);
+
+            // The operand's own post-combine ops (B.Union(C).Take(1) as an operand) close out ITS
+            // sub-pipeline, mirroring where the outer select's TrailingOps land in the outer pipeline.
+            AppendSelectOpStages(link.OperandSelect.TrailingOps, operandStages, sortFields);
+        }
+
+        return operandStages;
+    }
+
     private static void AppendSelectOpStages(
         IReadOnlyList<MongoSelectOp> ops,
         List<MongoPipelineStage> stages,
@@ -294,6 +443,16 @@ internal sealed class MongoSelectLowerer
             if (op is MongoSortOp sortOp)
             {
                 AppendSortStages(sortOp, stages, sortFields);
+                continue;
+            }
+
+            // EF-322: a whole-entity Distinct() lowers to TWO stages (the $group{_id:"$$ROOT"} dedup, then
+            // the $replaceRoot reading "$_id" back out to restore the plain document) — every other op in
+            // this list is exactly one stage, so this needs its own arm rather than a `switch` expression arm.
+            if (op is MongoDistinctOp)
+            {
+                stages.Add(new MongoGroupByRootStage());
+                stages.Add(new MongoReplaceRootStage("_id", mergeOwnerKeySentinels: false));
                 continue;
             }
 
@@ -309,9 +468,11 @@ internal sealed class MongoSelectLowerer
     }
 
     /// <summary>
-    /// Emits one <see cref="MongoSortOp"/>. A key that is already a field path is emitted as-is; a computed
-    /// key is materialized into a synthetic field by a preceding <c>$set</c> and removed again by a following
-    /// <c>$unset</c>, because MQL <c>$sort</c> accepts field paths only.
+    /// Emits one <see cref="MongoSortOp"/>. A key that is already a field path — a <see cref="MongoFieldExpression"/>
+    /// or a <see cref="MongoElementRefExpression"/>, both of which name an ALREADY-STORED document path rather
+    /// than compute a new value — is emitted as-is; a genuinely computed key is materialized into a synthetic
+    /// field by a preceding <c>$set</c> and removed again by a following <c>$unset</c>, because MQL <c>$sort</c>
+    /// accepts field paths only.
     /// </summary>
     /// <remarks>
     /// One <c>$set</c> and one <c>$unset</c> per sort stage, carrying every computed key of that stage — a
@@ -333,7 +494,7 @@ internal sealed class MongoSelectLowerer
 
         foreach (var ordering in sortOp.Orderings)
         {
-            if (ordering.KeySelector is MongoFieldExpression)
+            if (ordering.KeySelector is MongoFieldExpression or MongoElementRefExpression)
             {
                 orderings.Add(ordering);
                 continue;
@@ -397,39 +558,52 @@ internal sealed class MongoSelectLowerer
             }
             else if (lookup.IsNativeCollectionLookup
                      || (lookup.Navigation is { IsCollection: true } pipelinedNav
-                         && lookup.PipelineKind == LookupPipelineKind.NestedInclude
+                         && lookup.PipelineKind is LookupPipelineKind.NestedInclude or LookupPipelineKind.FilteredInclude
                          && !lookup.ForceUnwind
-                         && lookup.As == LookupExpression.GetLookupAlias(pipelinedNav)))
+                         && lookup.As == LookupExpression.GetLookupAlias(pipelinedNav))
+                     || lookup.IsTransitiveCollectionLookup)
             {
                 // Collection Include: keep the joined documents as an array under _lookup_<Nav>
                 // (no $unwind). The DOM collection materializer reads the array back and runs the
                 // IncludeCollection fixup, exactly as on the driver-LINQ path.
                 //
                 // The second disjunct widens this beyond IsNativeCollectionLookup's plain (no-pipeline)
-                // form to also admit a collection-then-collection/reference ThenInclude (EF-450): its
-                // nested $lookup(s) are staged into PipelineStages by
-                // MongoProjectionBindingExpressionVisitor's ExtractNestedIncludePipeline/
-                // ExtractThenIncludesFromSubquery/AddReferenceLookupStages — the SAME registration path the
-                // driver-LINQ fallback bridge already used — which also stamp PipelineKind.NestedInclude
+                // form to also admit a collection-then-collection/reference ThenInclude (EF-450) AND a
+                // filtered Include (OrderBy/Skip/Take on the Include target, EF-322/EF-440): their
+                // sub-pipelines are staged into PipelineStages by MongoProjectionBindingExpressionVisitor's
+                // ExtractNestedIncludePipeline/ExtractThenIncludesFromSubquery/AddReferenceLookupStages/
+                // ExtractFilteredIncludePipeline — the SAME registration path the driver-LINQ fallback
+                // bridge already used — which stamp PipelineKind.NestedInclude/FilteredInclude respectively
                 // (guarded: never overwriting an already-FallbackOnly kind, e.g. a TPH discriminator-narrowed
-                // target or a sibling filtered-Include stage — both stay fallback-only, unaffected).
-                // MongoLookupStage/RenderLookup render this via LookupExpression.ToLookupStageDocument()'s
-                // let+pipeline form, the SAME shape the fallback bridge already emitted for this kind — this
-                // check is keyed on PipelineKind rather than bare HasPipeline specifically so it does NOT
-                // also swallow a PipelineKind.CorrelatedReducer lookup (EF-449, also a collection nav): that
-                // kind needs its own dedicated branch below (a mandatory left-outer $unwind + a DIFFERENT
+                // target, which stays fallback-only, unaffected). MongoLookupStage/RenderLookup render this
+                // via LookupExpression.ToLookupStageDocument()'s let+pipeline form, the SAME shape the
+                // fallback bridge already emitted for this kind — this check is keyed on PipelineKind rather
+                // than bare HasPipeline specifically so it does NOT also swallow a
+                // PipelineKind.CorrelatedReducer lookup (EF-449, also a collection nav): that kind needs its
+                // own dedicated branch below (a mandatory left-outer $unwind + a DIFFERENT
                 // localField/foreignField+pipeline BSON shape), and would otherwise be silently
                 // mis-rendered here with no $unwind at all.
+                //
+                // The third disjunct (IsTransitiveCollectionLookup) admits a collection Include reached via
+                // a ThenInclude off a REFERENCE Include (Orders.Include(o => o.Customer.Orders)) — distinct
+                // from the second disjunct's collection-then-collection nesting, which carries its own
+                // sub-pipeline (HasPipeline). Here the collection lookup carries NO pipeline at all; it is
+                // still a plain localField/foreignField $lookup, just with LocalField/As PREFIXED by the
+                // already-confirmed reference lookup's own alias, so ToLookupStageDocument()'s bare (no
+                // "let"/"pipeline") form already renders correctly with no further change.
                 stages.Add(new MongoLookupStage(lookup));
             }
             else if (lookup.Navigation is { IsCollection: true } && lookup.ForceUnwind)
             {
-                // A cross-collection reference SelectMany flatten: $lookup the referenced collection, then
-                // $unwind to one row per child with inner-join semantics (preserve:false) — a principal with
-                // no children drops out. (Include's reference $unwind uses preserve:true / left-join; this
-                // is the opposite.)
+                // A collection-navigation Join/LeftJoin/GroupJoin, or a cross-collection reference SelectMany
+                // flatten: $lookup the referenced collection, then $unwind with the join-registration site's
+                // own PreserveNullAndEmptyArrays verdict — false (inner-join semantics; a principal with no
+                // children/matches drops out) for a plain Join or a SelectMany flatten, true (left-outer; the
+                // principal survives with a null/empty navigation) for a LeftJoin/GroupJoin. (Include's own
+                // reference $unwind, handled by the arm above, threads the same property for the identical
+                // reason.)
                 stages.Add(new MongoLookupStage(lookup));
-                stages.Add(new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: false));
+                stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays));
             }
             else if (lookup.PipelineKind == LookupPipelineKind.CorrelatedReducer)
             {
@@ -511,10 +685,21 @@ internal sealed class MongoSelectLowerer
         var names = new HashSet<string>(StringComparer.Ordinal);
         AddTopLevelElementNames(query.CollectionExpression.EntityType, names);
 
-        if (query.Select.SetOperation is { } setOp)
-            AddTopLevelElementNames(setOp.OperandEntityType, names);
+        AddSetOpOperandElementNames(query.Select, names);
 
         return names;
+    }
+
+    // Every set-op operand's entity type, walked RECURSIVELY: a right-nested operand carries its own chain,
+    // and each level's ops lower through the SAME synthetic-sort-field allocator into a more deeply nested
+    // $unionWith pipeline, so every level's element names must be reserved (EF-408 gap 1, one level down).
+    private static void AddSetOpOperandElementNames(MongoSelectDefinition select, HashSet<string> names)
+    {
+        foreach (var link in select.SetOperations)
+        {
+            AddTopLevelElementNames(link.OperandEntityType, names);
+            AddSetOpOperandElementNames(link.OperandSelect, names);
+        }
     }
 
     // Top-level element names of an entity type: every mapped property, plus the containing element name of
