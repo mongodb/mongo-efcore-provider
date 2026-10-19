@@ -45,6 +45,30 @@ internal static class NonDeterministicCalls
             && (method.Name == nameof(Guid.NewGuid) || method.Name == "CreateVersion7");
     }
 
+    /// <summary>Whether <paramref name="node"/> contains a call for which <see cref="IsNonDeterministic"/> holds.</summary>
+    public static bool ContainsNonDeterministicCall(Expression node)
+    {
+        var finder = new Finder();
+        finder.Visit(node);
+        return finder.Found;
+    }
+
+    private sealed class Finder : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (IsNonDeterministic(node))
+            {
+                Found = true;
+                return node;
+            }
+
+            return base.VisitMethodCall(node);
+        }
+    }
+
     public static void ThrowIfNonDeterministic(MethodCallExpression call)
     {
         if (IsNonDeterministic(call))

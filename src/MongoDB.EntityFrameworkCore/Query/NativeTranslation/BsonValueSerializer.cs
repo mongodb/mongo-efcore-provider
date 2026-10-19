@@ -76,4 +76,16 @@ internal static class BsonValueSerializer
 
         return doc[ScalarField];
     }
+
+    /// <summary>
+    /// <see cref="SerializeThroughWriter"/>, except a null value for a serializer of a non-nullable value type
+    /// (<c>int</c>, enum, <c>Guid</c>, ...) becomes <see cref="BsonNull"/> instead of an unboxing
+    /// <see cref="NullReferenceException"/>. A null reaches such a serializer when a null parameter or list element is
+    /// compared with a non-nullable property; BSON null matches driver-LINQ (<c>{field: null}</c> matches a
+    /// missing/null field). Callers must <see cref="Coerce"/> first.
+    /// </summary>
+    public static BsonValue SerializeNullAware(IBsonSerializer serializer, object? value)
+        => value is null && serializer.ValueType.IsValueType && Nullable.GetUnderlyingType(serializer.ValueType) is null
+            ? BsonNull.Value
+            : SerializeThroughWriter(serializer, value);
 }

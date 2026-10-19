@@ -203,9 +203,15 @@ NativeSlotPopulator.cs:594-598 records it into PostJoinOps because JoinInnerAcce
 Expected MQL (self-ref test): `Staff: [{$lookup mgr_id->_id as _lookup_Manager},{$unwind preserve:true},{$lookup localField:"_lookup_Manager.mgr_id" as _lookup_Manager1}...,
 {$unwind..},{$lookup ... _lookup_Manager2},{$unwind..}, {$match:{<MongoLookupNullCheck _lookup_Manager2 == null>}}, {$sort:{emp_name:1}}, {$project:{_v:"$emp_name",_id:0}}]`
 Ef369: `Orders: [{$lookup Customers}, {$unwind true},{$lookup Regions localField "_lookup_Customer.region_id"},{$unwind true},{$match:{"_lookup_Customer_Region.name":"West"}},{$project:{_v:"$desc"}}]`.
-Risk: a bare leaf resolving to an INNER level (idx>=1) of non-nullable CLR type over an unmatched left-outer level reads default (F3-like). The shared
-`ClassifyNonNullableValueRead` + `MongoProjection.ThrowsOnNull` machinery already covers Length/IndexOf only; add tests: chain `Select(ti.Inner.IntProp)` with an unmatched
-level (expect decline or throw-on-null, never 0). Also `OrderBy` key reading idx>=1 stays declined (:594 root-only) - correct.
+Risk (RULED, Phase 1 final review): a bare leaf resolving to an INNER level (idx>=1) of non-nullable CLR type over an unmatched left-outer
+level. **Ruling: it reads `default(T)`, as canonical main does (decision D-F10; `Orders.Select(o => o.Customer!.Rank)` with an unmatched
+optional Customer is `0` on main), and an explicit BSON null in a matched document throws (a `bool` reads false, as the driver's
+`BooleanSerializer` does).** Implemented for join-scope bare scalar leaves on the Projection route
+(`MongoAggregationExpressionRenderer.ReadsJoinScopeBareScalarThroughProperty`, read through the property by
+`MongoProjectionBindingRemovingExpressionVisitor.TryCreateJoinScopeBareScalarRead`; pinned by `NativeJoinScopeMissingScalarTests`).
+Computed leaves over the inner level keep `ClassifyNonNullableValueRead` + `MongoProjection.ThrowsOnNull` (Length/IndexOf, operators over a
+nullable field). Tests for a chain: `Select(ti.Inner.IntProp)` with an unmatched level expects `0` (main parity), not a decline or a throw. Also
+`OrderBy` key reading idx>=1 stays declined (:594 root-only) - correct.
 Tests: the 2 existing methods x 3 modes; NEW `Chained_bare_scalar_projection_over_ragged_chain_matches_in_memory_oracle` (rows with 0..3 managers; Select(s => s.Manager.Manager.Name), Select(s => s.Manager.Manager.Rank /*int*/)).
 
 ### 3.3 D3: EF.Property over a bare scope in a chained join  - effort S, risk L

@@ -269,10 +269,23 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             {
                 var cardinality = mongoQueryExpression.Select.Cardinality!;
 
-                // Min/Max return one of the stored values, so a Local-kind DateTime operand reads back with that kind.
-                var dateTimeKindSource =
+                // Min/Max return one of the stored values, so an operand that is a bare property reads back through that
+                // property's serializer (an enum, DateOnly, char or Local-kind DateTime is not the generic mapped BSON value).
+                // Otherwise a Local-kind DateTime operand reached through a ternary/coalesce reads back with that kind.
+                var minMaxOperand =
                     cardinality is { Aggregate: MongoAggregateOperator.Min or MongoAggregateOperator.Max, Selector: { } operand }
-                        ? NativeDateTimeKindReadBack.FindForAggregateOperand(mongoQueryExpression.Select, operand)
+                        ? operand
+                        : null;
+                var readProperty = minMaxOperand == null
+                    ? null
+                    : NativeAggregateReadBack.FindOperandProperty(mongoQueryExpression.Select, minMaxOperand);
+                var dateTimeKindSource = readProperty == null && minMaxOperand != null
+                    ? NativeDateTimeKindReadBack.FindForAggregateOperand(mongoQueryExpression.Select, minMaxOperand)
+                    : null;
+                var scalarSerializer = readProperty != null
+                    ? BsonSerializerFactory.CreateTypeSerializer(readProperty)
+                    : dateTimeKindSource != null
+                        ? BsonSerializerFactory.CreateTypeSerializer(cardinality.ResultType, dateTimeKindSource)
                         : null;
                 return Expression.Call(null,
                     ExecuteAggregateMethodInfo.MakeGenericMethod(rootEntityType.ClrType, cardinality.ResultType),
@@ -285,10 +298,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                     Expression.Constant(cardinality),
                     Expression.Constant(aggregateFactory),
                     Expression.Constant(
-                        dateTimeKindSource == null
-                            ? null
-                            : BsonSerializerFactory.CreateTypeSerializer(cardinality.ResultType, dateTimeKindSource),
-                        typeof(IBsonSerializer)));
+                        scalarSerializer,
+                    typeof(IBsonSerializer)));
             }
 
             // Fell back (Native only; NativeOnly already threw): the predicate/selector couldn't be lowered.
@@ -824,13 +835,28 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             {
                 var doc = rows.Current;
 
+                // A non-nullable Min/Max reduced {_v: operand} documents: a MISSING winner reads default and a null one
+                // throws, as on driver-LINQ; a value reads like a bare reduction's.
+                var wrapped = NativeAggregateReadBack.ReducesWrappedValue(cardinality);
+                var wrappedValue = wrapped ? NativeAggregateReadBack.ReadWrappedValue(doc[BsonValueSerializer.ScalarField], typeof(TResult)) : null;
+
                 // Any/All are presence-only: Any's $match holds the predicate; All's holds the negated predicate,
                 // so a surviving row means All is false.
-                value = cardinality.PresenceOnly
-                    ? (TResult)cardinality.PresentValue!
-                    : kindAwareScalarSerializer != null
-                        ? DeserializeKindAwareScalar<TResult>(doc, kindAwareScalarSerializer)
-                        : DeserializeScalar<TResult>(doc);
+                if (cardinality.PresenceOnly)
+                {
+                    value = (TResult)cardinality.PresentValue!;
+                }
+                else if (wrapped && wrappedValue is null)
+                {
+                    value = default!;
+                }
+                else
+                {
+                    var scalarDoc = wrapped ? new BsonDocument(BsonValueSerializer.ScalarField, wrappedValue) : doc;
+                    value = kindAwareScalarSerializer != null
+                        ? DeserializeKindAwareScalar<TResult>(scalarDoc, kindAwareScalarSerializer)
+                        : DeserializeScalar<TResult>(scalarDoc);
+                }
             }
             else
             {
@@ -871,18 +897,33 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
     // Reads a Min/Max "v" field holding a Local-kind DateTime property's stored value through the TResult serializer
     // with that property's kind (BsonTypeMapper would return Kind=Utc), built at compile time. BSON null is Min/Max over
-    // all-null values.
+    // all-null values (see ReadNullScalar).
     private static TResult DeserializeKindAwareScalar<TResult>(BsonDocument doc, IBsonSerializer serializer)
     {
         var bsonValue = doc[BsonValueSerializer.ScalarField];
         if (bsonValue.IsBsonNull)
         {
-            return default!;
+            return ReadNullScalar<TResult>();
         }
 
-        var serializationInfo = new BsonSerializationInfo(BsonValueSerializer.ScalarField, serializer, typeof(TResult));
-        return (TResult)serializationInfo.DeserializeValue(bsonValue);
+        var serializationInfo = new BsonSerializationInfo(BsonValueSerializer.ScalarField, serializer, serializer.ValueType);
+        var value = serializationInfo.DeserializeValue(bsonValue);
+
+        // The property's serializer yields its own CLR type (e.g. int? for a Max over an int? property); TResult may
+        // differ only by nullability.
+        return value is TResult typed
+            ? typed
+            : (TResult)Convert.ChangeType(value, Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult));
     }
+
+    // A non-empty aggregate's BSON null: null for a nullable or reference TResult. For a non-nullable value type it is an
+    // Average with no numeric row (every operand MISSING or null in a malformed document), which driver-LINQ's
+    // deserializer rejected (FormatException) and LINQ can't answer; throw EF's "Nullable object must have a value."
+    // rather than reading 0. (A non-nullable Min/Max reduces wrapped values and never reaches here with null.)
+    private static TResult ReadNullScalar<TResult>()
+        => typeof(TResult).IsValueType && Nullable.GetUnderlyingType(typeof(TResult)) is null
+            ? throw new InvalidOperationException("Nullable object must have a value.")
+            : default!;
 
     // Reads the terminal stage's "v" field and coerces it to TResult (e.g. long for LongCount, double for Average).
     private static TResult DeserializeScalar<TResult>(BsonDocument doc)
@@ -891,10 +932,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var mapped = BsonTypeMapper.MapToDotNetValue(bsonValue);
 
         // A non-empty aggregate can yield BSON null (e.g. Min over all-null values); Convert.ChangeType throws for
-        // null, so return null for a nullable TResult. Non-nullable TResult can't reach this.
+        // null, so return null for a nullable TResult (see ReadNullScalar).
         if (mapped is null)
         {
-            return default!;
+            return ReadNullScalar<TResult>();
         }
 
         var targetType = Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult);
@@ -903,14 +944,14 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         return (TResult)converted!;
     }
 
-    // $sum widens past int32/int64 server-side, and Convert.ChangeType's checked narrowing would throw. BCL Sum's
-    // per-element overflow semantics can't be reproduced anyway (accepted divergence), so narrow unchecked and
-    // return the wrapped/rounded value rather than throwing.
+    // $sum widens past int32/int64 server-side. LINQ's Sum is checked, so a total that doesn't fit the CLR result type
+    // throws OverflowException rather than wrapping. (A total that overflows only in an intermediate partial sum but
+    // fits in the end is the one divergence: BCL Sum would have thrown mid-sequence.)
     private static object ConvertNumericNarrowing(object mapped, Type targetType) => mapped switch
     {
-        long l when targetType == typeof(int) => unchecked((int)l),
-        double d when targetType == typeof(int) => unchecked((int)d),
-        double d when targetType == typeof(long) => unchecked((long)d),
+        long l when targetType == typeof(int) => checked((int)l),
+        double d when targetType == typeof(int) => checked((int)d),
+        double d when targetType == typeof(long) => checked((long)d),
         _ => Convert.ChangeType(mapped, targetType)
     };
 
