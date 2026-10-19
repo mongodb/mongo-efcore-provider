@@ -1291,6 +1291,85 @@ public class MongoAggregationExpressionRendererTests
         Assert.False(MongoAggregationExpressionRenderer.MayBeNull(new MongoSizeExpression("Posts", typeof(int))));
     }
 
+    // `o.OrderDate.Value.Year` over a null OrderDate: $year answers null, which a non-nullable read would take as 0.
+    [Fact]
+    public void ClassifyNonNullableValueRead_throws_on_null_for_a_date_part_over_a_nullable_date()
+    {
+        var nullableDate = new MongoElementRefExpression("D", typeof(DateTime?));
+
+        Assert.Equal(NonNullableValueRead.ThrowOnNull, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(int), new MongoDatePartExpression(nullableDate, MongoDatePart.Year)));
+        Assert.Equal(NonNullableValueRead.ThrowOnNull, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(TimeSpan), new MongoDatePartExpression(nullableDate, MongoDatePart.TimeOfDay)));
+        Assert.Equal(NonNullableValueRead.ThrowOnNull, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(int), new MongoBinaryExpression(MongoBinaryOperator.Add,
+                new MongoDatePartExpression(nullableDate, MongoDatePart.Month), new MongoConstantExpression(1, forSerialization: null))));
+        // A nullable read wants the null itself.
+        Assert.Equal(NonNullableValueRead.Plain, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(int?), new MongoDatePartExpression(nullableDate, MongoDatePart.Year)));
+    }
+
+    [Fact]
+    public void ClassifyNonNullableValueRead_throws_on_null_for_date_arithmetic_and_offset_local_over_a_nullable_date()
+    {
+        var nullableDate = new MongoElementRefExpression("D", typeof(DateTime?));
+        var one = new MongoConstantExpression(1, forSerialization: null);
+
+        // `o.D.Value.AddDays(1)` read as DateTime: $dateAdd answers null for a null start date.
+        Assert.Equal(NonNullableValueRead.ThrowOnNull, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(DateTime), new MongoDateAddExpression(nullableDate, MongoDateAddUnit.Day, one)));
+        // Non-nullable start date: plain.
+        Assert.Equal(NonNullableValueRead.Plain, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(DateTime), new MongoDateAddExpression(new MongoElementRefExpression("E", typeof(DateTime)), MongoDateAddUnit.Day, one)));
+        // Group keys / accumulators don't count date operators yet (EF-461).
+        Assert.False(MongoAggregationExpressionRenderer.MayBeNullBehindNonNullableType(
+            new MongoDateAddExpression(nullableDate, MongoDateAddUnit.Day, one)));
+    }
+
+    // `x.When.AddDays(days)`: a $dateAdd amount bound from a query parameter is judged by the parameter's CLR type.
+    [Fact]
+    public void ClassifyNonNullableValueRead_judges_a_parameter_date_add_amount_by_its_clr_type()
+    {
+        var date = new MongoElementRefExpression("E", typeof(DateTime));
+
+        // A captured non-nullable amount (int or the widened double AddDays takes) is never null: plain.
+        Assert.Equal(NonNullableValueRead.Plain, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(DateTime), new MongoDateAddExpression(date, MongoDateAddUnit.Day,
+                new MongoParameterExpression("__days_0", forSerialization: null, valueType: typeof(double)))));
+        Assert.Equal(NonNullableValueRead.Plain, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(DateTime), new MongoDateAddExpression(date, MongoDateAddUnit.Day,
+                new MongoParameterExpression("__days_0", forSerialization: null, valueType: typeof(int)))));
+        // A nullable-typed amount may be null, as before.
+        Assert.Equal(NonNullableValueRead.ThrowOnNull, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(DateTime), new MongoDateAddExpression(date, MongoDateAddUnit.Day,
+                new MongoParameterExpression("__days_0", forSerialization: null, valueType: typeof(int?)))));
+        // An untyped parameter keeps the conservative answer.
+        Assert.Equal(NonNullableValueRead.ThrowOnNull, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(DateTime), new MongoDateAddExpression(date, MongoDateAddUnit.Day,
+                new MongoParameterExpression("__days_0", forSerialization: null))));
+        // A possibly-null stored amount (`AddDays(x.N.Value)`) still throws on null.
+        Assert.Equal(NonNullableValueRead.ThrowOnNull, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(DateTime), new MongoDateAddExpression(date, MongoDateAddUnit.Day,
+                new MongoElementRefExpression("N", typeof(int?)))));
+    }
+
+    [Fact]
+    public void ClassifyNonNullableValueRead_is_plain_for_a_date_part_over_a_non_nullable_or_proven_date()
+    {
+        var date = new MongoElementRefExpression("D", typeof(DateTime));
+        var nullableDate = new MongoElementRefExpression("N", typeof(DateTime?));
+
+        Assert.Equal(NonNullableValueRead.Plain, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(int), new MongoDatePartExpression(date, MongoDatePart.Year)));
+        // `n == null ? 0 : n.Value.Year` reads Year only where n isn't null.
+        Assert.Equal(NonNullableValueRead.Plain, MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+            typeof(int),
+            new MongoConditionalExpression(
+                new MongoBinaryExpression(MongoBinaryOperator.Equal, nullableDate, new MongoConstantExpression(null, forSerialization: null)),
+                new MongoConstantExpression(0, forSerialization: null),
+                new MongoDatePartExpression(nullableDate, MongoDatePart.Year))));
+    }
+
     [Fact]
     public void MayBeNull_sees_null_guarded_string_operators()
     {

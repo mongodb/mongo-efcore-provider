@@ -39,6 +39,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 {
     private readonly Dictionary<ProjectionMember, Expression> _projectionMapping = new();
     private readonly Dictionary<ProjectionMember, Type> _aliasedConstructionMembers = new();
+    private readonly Dictionary<ProjectionMember, string> _explicitProjectionAliases = new();
     private readonly Stack<ProjectionMember> _projectionMembers = new();
     private readonly Dictionary<ParameterExpression, CollectionShaperExpression> _collectionShaperMapping = new();
     private readonly Stack<INavigation> _includedNavigations = new();
@@ -68,6 +69,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         _projectionMembers.Push(new ProjectionMember());
         _translatedRootExpression = expression;
         _aliasedConstructionMembers.Clear();
+        _explicitProjectionAliases.Clear();
 
         var result = Visit(expression);
 
@@ -75,6 +77,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         _projectionMapping.Clear();
         _queryExpression.ReplaceAliasedConstructionMembers(_aliasedConstructionMembers);
         _aliasedConstructionMembers.Clear();
+        _queryExpression.ReplaceExplicitProjectionAliases(_explicitProjectionAliases);
+        _explicitProjectionAliases.Clear();
         _queryExpression = null;
         _translatedRootExpression = null;
 
@@ -124,6 +128,16 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         {
             case null:
                 return null;
+
+            // A row-independent Convert or member-of-constant leaf that NativeProjectionBinder left on the shaper
+            // (HasClientEvaluatedProjectionLeaf; same predicate, IsRowIndependentLeaf). Nothing is projected for it, so
+            // the Convert/member arms below would bind it to an alias the $project never emits: evaluate it in place.
+            // Constants, parameters and constructions need no arm; the cases below already evaluate them in place.
+            case UnaryExpression or MemberExpression
+                when _queryExpression.Select.Route == NativeRoute.Projection
+                     && _queryExpression.Select.HasClientEvaluatedProjectionLeaf
+                     && NativeProjectionBinder.IsRowIndependentLeaf(expression, selectorParameter: null):
+                return base.Visit(expression);
 
             // A constructed sub-entity leaf (`new { Book = new Book { Id = e.Id, ... } }`) already translated to a
             // MongoDocumentConstructionExpression. Register the whole node as one member: recursing would map
@@ -187,6 +201,25 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                      && _queryExpression.Select.Route == NativeRoute.Projection:
                 return projectionBindingExpression;
 
+            // A member read inside a client-only body over the whole entity (`new Wrapper(x) { Name = x.name }`,
+            // NativeClientWholeEntityShape): nothing is projected, so a projection binding would be read by its
+            // ProjectionMember name off the raw document, which is not the element name (`Name` vs `name`) and reads
+            // null. Read it off the materialized entity instead (VisitMember's non-navigation arm), so it is the
+            // tracked instance's value. VisitMember null-guards the read as `T?` (a reference-typed receiver counts as
+            // nullable), so restore the member's own type for consumers that don't (a ConditionalExpression test).
+            case MemberExpression when _queryExpression.Select.Route == NativeRoute.WholeEntity
+                                       && _queryExpression.Select.HasClientWrappedWholeEntityShaper:
+                return MatchTypes(base.Visit(expression), expression.Type);
+
+            // Same route, a combinator over such member reads (the boxing Convert of `new object[] { x, x.I }`,
+            // `x.I + 1`, a ternary): walk it so each member is read off the materialized entity as above. The
+            // numeric-cast/arithmetic/client-computed arms below would instead register the whole node as a projection
+            // binding, read by its ProjectionMember name off the raw document, where nothing was projected: null.
+            case UnaryExpression or BinaryExpression or ConditionalExpression
+                when _queryExpression.Select.Route == NativeRoute.WholeEntity
+                     && _queryExpression.Select.HasClientWrappedWholeEntityShaper:
+                return base.Visit(expression);
+
             case MemberExpression memberExpression:
                 var currentProjectionMember = GetCurrentProjectionMember();
                 _projectionMapping[currentProjectionMember] = memberExpression;
@@ -227,6 +260,43 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 var stringSequenceMember = GetCurrentProjectionMember();
                 _projectionMapping[stringSequenceMember] = stringSequenceCall;
                 return new ProjectionBindingExpression(_queryExpression, stringSequenceMember, expression.Type);
+
+            // A ternary over client-only constructions (`c.City == "Seattle" ? new P { Id = "PAY" } : new P { ... }`)
+            // whose test NativeProjectionBinder staged as this member's bool leaf (TryCollectClientConditionalBranches;
+            // admitted through the staged test itself, IsClientConditionalLeaf). Evaluate the conditional here: the test
+            // binds as that leaf, the branches' row reads each under the member they are assigned to (the binder
+            // staged them under those names), and everything else is row-independent and evaluated in place. Read
+            // whole, the ternary would go through the constructed type's class map, which doesn't match what native
+            // emits (`Id` vs `_id`).
+            case ConditionalExpression clientConditional
+                when _queryExpression.Select.Route == NativeRoute.Projection
+                     && _queryExpression.Select.IsClientConditionalLeaf(
+                         GetCurrentProjectionMember().Last?.Name, clientConditional.Test):
+            {
+                var boundTest = MatchTypes(Visit(clientConditional.Test), typeof(bool));
+                var membersBefore = _projectionMapping.Keys.ToHashSet();
+                var boundIfTrue = MatchTypes(Visit(clientConditional.IfTrue), clientConditional.Type);
+                var boundIfFalse = MatchTypes(Visit(clientConditional.IfFalse), clientConditional.Type);
+
+                // Every member the branches registered is a row read the binder staged; take each one's alias from the
+                // staged read rather than re-deriving it from the member path. A registration the binder didn't
+                // stage means the two sides disagree about the shape: fail loudly instead of reading a missing field.
+                foreach (var (branchMember, branchRead) in _projectionMapping)
+                {
+                    if (membersBefore.Contains(branchMember))
+                    {
+                        continue;
+                    }
+
+                    _explicitProjectionAliases[branchMember] =
+                        _queryExpression.Select.TryGetClientConditionalReadAlias(branchRead, out var readAlias)
+                            ? readAlias
+                            : throw new InvalidOperationException(
+                                $"Client-evaluated ternary branch read '{branchRead.Print()}' was not staged by the native projection binder.");
+                }
+
+                return Expression.Condition(boundTest, boundIfTrue, boundIfFalse, clientConditional.Type);
+            }
 
             // Conditional leaf: register the whole ConditionalExpression as one member; the default walk would write
             // Test/IfTrue/IfFalse to the same member. Route == Projection as for arithmetic.
@@ -270,8 +340,16 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // every query mode, and wrap it so the native alias reader can instead read the computed value once
             // (see NativeComputedLeafExpression). Matched structurally against the leaf the emit side staged for
             // this member, so only the exact subtree the server computed is wrapped.
+            //
+            // Numeric Negate / widening-cast leaves (`-x.A`, `-(long)x.A`, `(long)-x.A`) join through the emit side's
+            // own predicate, NativeProjectionBinder.IsNumericComputedLeafShape: the default walk would bind the operand
+            // to the alias and re-apply Negate over the already-negated server value, answering +x.A. (With
+            // Route == Projection a top-level widening Convert is claimed by the numeric-cast case above, which also
+            // reads the alias whole.)
             case MethodCallExpression or UnaryExpression { NodeType: ExpressionType.Not } or BinaryExpression
                 when IsNativeComputedLeaf(expression):
+            case UnaryExpression
+                when NativeProjectionBinder.IsNumericComputedLeafShape(expression) && IsNativeComputedLeaf(expression):
                 var computedMember = GetCurrentProjectionMember();
                 Expression clientExpression;
                 if (IsClientComputedLeaf(expression))
@@ -1318,9 +1396,14 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         EntityProjectionExpression innerEntityProjection;
         switch (shaperExpression.ValueBufferExpression)
         {
-            // Same unconditional .Index.Value deref as in VisitMethodCall, but projection leaves (including Index:
-            // null whole-root leaves) never reach here: Visit's MemberExpression arm returns first, and the only
-            // base.Visit callers carry non-member nodes. Recheck if that arm ever lets a member access fall through.
+            // Same unconditional .Index.Value deref as in VisitMethodCall. Member accesses reach here on one route
+            // only: a client-only body over the whole entity (Route == WholeEntity with
+            // HasClientWrappedWholeEntityShaper), where Visit's arms hand `x.City` (directly or under a
+            // Unary/Binary/Conditional) to base.Visit so it is read off the materialized entity. Its receiver is the
+            // root shaper, which the StructuralTypeShaperExpression arm of VisitExtension has already bound with an
+            // Index (AddToProjection). Projection-route leaves (including Index: null whole-root leaves) still never
+            // reach here: Visit's plain MemberExpression arm returns first. Recheck if another route lets a member
+            // access fall through.
             case ProjectionBindingExpression innerProjectionBindingExpression:
                 innerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[
                     innerProjectionBindingExpression.Index.Value].Expression;

@@ -161,8 +161,9 @@ internal sealed class MongoGroupElementTranslator
     private static bool IsValue(MongoExpression node) => node is MongoConstantExpression or MongoParameterExpression;
 
     // Not Max/Min ($max/$min skip a missing operand, answering the other one) or Sign (its $switch orders a missing
-    // operand below 0, answering -1).
-    private static bool IsNullPropagatingMathFunction(MongoMathFunction function)
+    // operand below 0, answering -1). Also MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead's test for
+    // an operator that absorbs a null behind a non-nullable type.
+    internal static bool IsNullPropagatingMathFunction(MongoMathFunction function)
         => function is MongoMathFunction.Abs or MongoMathFunction.Ceiling or MongoMathFunction.Floor
             or MongoMathFunction.Exp or MongoMathFunction.Sqrt or MongoMathFunction.Truncate or MongoMathFunction.Round
             or MongoMathFunction.RoundDigits or MongoMathFunction.Ln or MongoMathFunction.Log10 or MongoMathFunction.Log2
