@@ -1,0 +1,266 @@
+// Task 0.4 scratch probes against upstream/main (driver-LINQ only). Not for commit.
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+
+namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
+
+[XUnitCollection("QueryTests")]
+public class ZzParityOracleTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
+{
+    private static readonly string OutFile = Environment.GetEnvironmentVariable("ZZ_PROBE_OUT") ?? "/tmp/zz-probes.txt";
+
+    private static void Record(string probe, Func<object?> run)
+    {
+        string outcome;
+        try
+        {
+            outcome = "OK " + ParityOracle.Format(run());
+        }
+        catch (Exception ex)
+        {
+            outcome = ParityOracle.Describe(ex);
+        }
+
+        lock (OutFile) File.AppendAllLines(OutFile, [$"### {probe}", $"  main => {outcome}"]);
+    }
+
+    // ── Model ──
+
+    public class Row
+    {
+        public ObjectId Id { get; set; }
+        public string Title { get; set; } = "";
+        public int Rank { get; set; }
+    }
+
+    public class Big
+    {
+        public int Id { get; set; }
+        public long Value { get; set; }
+    }
+
+    public class Customer
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public int Code { get; set; }
+        public List<Order> Orders { get; set; } = [];
+    }
+
+    public class Order
+    {
+        public int Id { get; set; }
+        public int CustomerId { get; set; }
+        public int Total { get; set; }
+        public Customer? Customer { get; set; }
+    }
+
+    private sealed class ProbeContext(DbContextOptions options, string prefix) : DbContext(options)
+    {
+        public DbSet<Row> Rows => Set<Row>();
+        public DbSet<Big> Bigs => Set<Big>();
+        public DbSet<Customer> Customers => Set<Customer>();
+        public DbSet<Order> Orders => Set<Order>();
+        public string Prefix { get; } = prefix;
+
+        protected override void OnModelCreating(ModelBuilder mb)
+        {
+            mb.Entity<Row>().ToCollection(Prefix + "Rows");
+            mb.Entity<Big>(b =>
+            {
+                b.ToCollection(Prefix + "Bigs");
+                b.Property(x => x.Value).HasConversion<int>();
+            });
+            mb.Entity<Customer>(b =>
+            {
+                b.ToCollection(Prefix + "Customers");
+                b.HasMany(c => c.Orders).WithOne(o => o.Customer).HasForeignKey(o => o.CustomerId);
+            });
+            mb.Entity<Order>().ToCollection(Prefix + "Orders");
+        }
+    }
+
+    private sealed class PrefixCacheKeyFactory : IModelCacheKeyFactory
+    {
+        public object Create(DbContext context, bool designTime) => ((ProbeContext)context).Prefix;
+    }
+
+    private ProbeContext Ctx(string prefix)
+    {
+        var b = new DbContextOptionsBuilder<ProbeContext>()
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+            .ReplaceService<IModelCacheKeyFactory, PrefixCacheKeyFactory>()
+            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+        return new ProbeContext(b.Options, prefix);
+    }
+
+    private IMongoCollection<BsonDocument> Raw(string prefix, string name)
+        => database.MongoDatabase.GetCollection<BsonDocument>(prefix + name);
+
+    private static string NewPrefix() => "Z" + Guid.NewGuid().ToString("N")[..8];
+
+    private string SeedCustomersAndOrders()
+    {
+        var p = NewPrefix();
+        Raw(p, "Customers").InsertMany(
+        [
+            new BsonDocument { { "_id", 1 }, { "Name", "Ana" }, { "Code", 2 } },
+            new BsonDocument { { "_id", 2 }, { "Name", "Ben" }, { "Code", 1 } },
+        ]);
+        Raw(p, "Orders").InsertMany(
+        [
+            new BsonDocument { { "_id", 10400 }, { "CustomerId", 1 }, { "Total", 30 } },
+            new BsonDocument { { "_id", 10450 }, { "CustomerId", 1 }, { "Total", 10 } },
+            new BsonDocument { { "_id", 10600 }, { "CustomerId", 1 }, { "Total", 20 } },
+            new BsonDocument { { "_id", 10700 }, { "CustomerId", 2 }, { "Total", 5 } },
+        ]);
+        return p;
+    }
+
+    [Fact]
+    public void Probe_DF10_missing_Rank()
+    {
+        var p = NewPrefix();
+        Raw(p, "Rows").InsertMany(
+        [
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", "a" }, { "Rank", 1 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", "b" }, { "Rank", 2 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Title", "c" } },
+        ]);
+        Record("DF10 bare Select(x => x.Rank), c missing Rank", () =>
+        {
+            using var db = Ctx(p);
+            return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => x.Rank).ToList();
+        });
+        Record("DF10 anon Select(x => new { x.Rank }), c missing Rank", () =>
+        {
+            using var db = Ctx(p);
+            return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => new { x.Rank }).ToList().Select(a => a.Rank).ToList();
+        });
+        Record("DF10 anon Select(x => new { x.Title, x.Rank }), c missing Rank", () =>
+        {
+            using var db = Ctx(p);
+            return db.Rows.AsNoTracking().OrderBy(x => x.Title).Select(x => new { x.Title, x.Rank }).ToList().Select(a => $"{a.Title}={a.Rank}").ToList();
+        });
+        Record("DF10 entity read, c missing Rank", () =>
+        {
+            using var db = Ctx(p);
+            return db.Rows.AsNoTracking().OrderBy(x => x.Title).ToList().Select(a => $"{a.Title}={a.Rank}").ToList();
+        });
+    }
+
+    [Fact]
+    public void Probe_M25_narrowing_converter_equality()
+    {
+        var p = NewPrefix();
+        Raw(p, "Bigs").InsertMany(
+        [
+            new BsonDocument { { "_id", 1 }, { "Value", -1294967296 } },
+            new BsonDocument { { "_id", 2 }, { "Value", 5 } },
+        ]);
+        Record("M25 Where(e => e.Value == 3_000_000_000L) [stored ints -1294967296, 5]", () =>
+        {
+            using var db = Ctx(p);
+            return db.Bigs.AsNoTracking().Where(e => e.Value == 3_000_000_000L).Select(e => e.Id).ToList();
+        });
+        var big = 3_000_000_000L;
+        Record("M25 parameterised Where(e => e.Value == big)", () =>
+        {
+            using var db = Ctx(p);
+            return db.Bigs.AsNoTracking().Where(e => e.Value == big).Select(e => e.Id).ToList();
+        });
+        Record("M25 materialised Values", () =>
+        {
+            using var db = Ctx(p);
+            return db.Bigs.AsNoTracking().OrderBy(e => e.Id).Select(e => e.Value).ToList();
+        });
+    }
+
+    [Fact]
+    public void Probe_M11_filtered_include_parameterised_take()
+    {
+        var p = SeedCustomersAndOrders();
+        var n = 1;
+        Record("M11 Include(c => c.Orders.OrderBy(o => o.Total).Take(n)) n=1", () =>
+        {
+            using var db = Ctx(p);
+            return db.Customers.AsNoTracking().OrderBy(c => c.Id)
+                .Include(c => c.Orders.OrderBy(o => o.Total).Take(n)).ToList()
+                .Select(c => $"{c.Id}:[{string.Join(",", c.Orders.Select(o => o.Id))}]").ToList();
+        });
+        Record("M11 Include(c => c.Orders.OrderBy(o => o.Total).Take(1)) constant", () =>
+        {
+            using var db = Ctx(p);
+            return db.Customers.AsNoTracking().OrderBy(c => c.Id)
+                .Include(c => c.Orders.OrderBy(o => o.Total).Take(1)).ToList()
+                .Select(c => $"{c.Id}:[{string.Join(",", c.Orders.Select(o => o.Id))}]").ToList();
+        });
+        var s = 1;
+        Record("M11 Include(c => c.Orders.OrderBy(o => o.Total).Skip(s)) s=1", () =>
+        {
+            using var db = Ctx(p);
+            return db.Customers.AsNoTracking().OrderBy(c => c.Id)
+                .Include(c => c.Orders.OrderBy(o => o.Total).Skip(s)).ToList()
+                .Select(c => $"{c.Id}:[{string.Join(",", c.Orders.Select(o => o.Id))}]").ToList();
+        });
+    }
+
+    [Fact]
+    public void Probe_M12_correlated_count_non_key_outer_member()
+    {
+        var p = SeedCustomersAndOrders();
+        Record("M12 Customers.Select(c => new { c.Id, N = Orders.Count(o => o.CustomerId == c.Code) }) [Ana Code=2, Ben Code=1]", () =>
+        {
+            using var db = Ctx(p);
+            return db.Customers.AsNoTracking().OrderBy(c => c.Id)
+                .Select(c => new { c.Id, N = db.Orders.Count(o => o.CustomerId == c.Code) }).ToList()
+                .Select(r => $"{r.Id}:{r.N}").ToList();
+        });
+        Record("M12 control: key-correlated Orders.Count(o => o.CustomerId == c.Id)", () =>
+        {
+            using var db = Ctx(p);
+            return db.Customers.AsNoTracking().OrderBy(c => c.Id)
+                .Select(c => new { c.Id, N = db.Orders.Count(o => o.CustomerId == c.Id) }).ToList()
+                .Select(r => $"{r.Id}:{r.N}").ToList();
+        });
+    }
+
+    [Fact]
+    public void Probe_M22_filtered_join_inner_with_include()
+    {
+        var p = SeedCustomersAndOrders();
+        Record("M22 join Customers.Where(Name starts A) with Orders.Where(Id < 10500).Include(Customer) (tracking)", () =>
+        {
+            using var db = Ctx(p);
+            return (from c in db.Customers.Where(c => c.Name.StartsWith("A"))
+                    join o in db.Orders.Where(o => o.Id < 10500).Include(o => o.Customer) on c.Id equals o.CustomerId
+                    select new { c, o }).ToList()
+                .Select(x => x.o.Id).OrderBy(i => i).ToList();
+        });
+        Record("M22 same, AsNoTracking", () =>
+        {
+            using var db = Ctx(p);
+            return (from c in db.Customers.AsNoTracking().Where(c => c.Name.StartsWith("A"))
+                    join o in db.Orders.AsNoTracking().Where(o => o.Id < 10500).Include(o => o.Customer) on c.Id equals o.CustomerId
+                    select new { c, o }).ToList()
+                .Select(x => x.o.Id).OrderBy(i => i).ToList();
+        });
+        Record("M22 control without Include", () =>
+        {
+            using var db = Ctx(p);
+            return (from c in db.Customers.Where(c => c.Name.StartsWith("A"))
+                    join o in db.Orders.Where(o => o.Id < 10500) on c.Id equals o.CustomerId
+                    select new { c, o }).ToList()
+                .Select(x => x.o.Id).OrderBy(i => i).ToList();
+        });
+    }
+}

@@ -43,6 +43,12 @@ public class TestMqlLoggerFactory : ListLoggerFactory
 
     public void AssertBaseline(string[] expected, bool assertOrder = true)
     {
+        // Differential parity runs only: MQL legitimately differs between the native and driver-LINQ paths.
+        if (Environment.GetEnvironmentVariable("MONGODB_EF_SKIP_MQL_ASSERTIONS") == "1")
+        {
+            return;
+        }
+
         try
         {
             if (assertOrder)
