@@ -28,11 +28,8 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-322: an unfiltered reference-collection-navigation Count/LongCount, compared against a value inside a
-/// Where predicate, translates natively via a $lookup + $size — the same machinery
-/// NativeProjectionBinder.TryTranslateProjectedCollectionCount already proved correct for the Select-leaf case,
-/// reused here from the Where-predicate call site. See
-/// docs/superpowers/specs/2026-09-27-native-reference-collection-count-predicate-design.md.
+/// An unfiltered reference-collection-navigation Count/LongCount compared inside a Where predicate translates
+/// natively via $lookup + $size, reusing the machinery of NativeProjectionBinder.TryTranslateProjectedCollectionCount.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixture database)
@@ -88,14 +85,9 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         Assert.Equal("Carol", result[0].Name);
     }
 
-    // A genuinely user-filtered `Where(pred).Count()` — as opposed to every other test in this file, which
-    // is the bare FK-correlation shape (`o.Orders.Where(ord => ord.OwnerId == o.Id).Count()`, i.e. what
-    // `o.Orders.Count` desugars to) — must still decline cleanly, not be silently matched by the bare-count
-    // binder. This shape IS routed through NativeCorrelationMatcher.TryMatchReferenceCollectionCountNavigation,
-    // but declines inside it: EF's nav-expansion produces the FK-correlation conjunct ANDed with the user's
-    // real filter (`ord.OwnerId == o.Id && ord.Total > 15m`), and TryMatchCorrelatedCollection's call to
-    // TryGetCorrelationEqualitySides rejects that AndAlso shape — it only recognizes the bare FK-equality
-    // correlation on its own, not one combined with an extra conjunct.
+    // A genuinely user-filtered `Where(pred).Count()` must decline, not be matched as a bare count. Nav-expansion
+    // ANDs the FK correlation with the user's filter, and TryGetCorrelationEqualitySides only recognizes the bare
+    // FK equality.
     [Fact]
     public void Genuinely_filtered_Where_Count_still_declines_cleanly_under_NativeOnly()
     {
@@ -107,10 +99,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
             () => db.Owners.Where(o => o.Orders.Where(ord => ord.Total > 15m).Count() > 0).ToList());
     }
 
-    // Simple baseline differential: native result vs. an in-memory/driver-LINQ oracle across a spread of
-    // related-row counts (zero, one, many) — deliberately NOT combined with any other operator (Union,
-    // Distinct, Join, Include, …), unlike the elaborate differential tests below which each pin a specific
-    // composition bug.
+    // Baseline differential across zero/one/many related rows, with no other operator composed.
     [Fact]
     public void Differential_native_result_matches_in_memory_oracle_across_related_row_counts()
     {
@@ -130,16 +119,12 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         Assert.Equal(oracleNames, nativeNames);
     }
 
-    // ── EF-322 final review (Critical 1/2): regression coverage for the retroactive Route decline ──
+    // ── Retroactive Route decline ────────────────────────────────────────────────────────────────────
     //
-    // The Where(Count>N) predicate binder registers its own $lookup eagerly, before it's known whether a
-    // LATER set operation (Union/Concat), a projected Distinct, or a genuine Join will also attach to this
-    // select. Each of those is lowered by a MongoSelectLowerer branch that does not flush PostJoinOps at the
-    // point this predicate's $match needs it, so composing this predicate with any of them must NOT go native
-    // — MongoSelectDefinition.Route retroactively declines the whole combination once the shape is fully
-    // known, falling back to driver-LINQ (which already supports this predicate, just not natively) under the
-    // default MongoQueryMode.Native, and throwing (a clean decline, not silently wrong data) under NativeOnly.
-    // Every test below asserts against an in-memory LINQ oracle, not just "NativeOnly succeeds/throws".
+    // The predicate binder registers its $lookup eagerly, before a later Union/Concat, projected Distinct or Join is
+    // known. Those MongoSelectLowerer branches don't flush PostJoinOps where this $match needs it, so
+    // MongoSelectDefinition.Route declines the combination: driver-LINQ fallback under Native, a clean throw under
+    // NativeOnly. Each test checks against an in-memory oracle.
     [Fact]
     public void Union_after_count_predicate_falls_back_to_correct_data_under_Native()
     {
@@ -278,28 +263,18 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Count_predicate_before_a_later_Join_declines_cleanly_under_NativeOnly));
 
-        // The exact exception type/message is not contract (Query/AGENTS.md) — what matters is that this
-        // combination is declined cleanly (and therefore never silently returns wrong data), not which
-        // specific exception surfaces. AssertDeclinesCleanly asserts an exception is thrown AND that it is
-        // not one of the deserializer-crash types (InvalidCastException/FormatException/OverflowException).
+        // The exception type isn't contract; AssertDeclinesCleanly checks it isn't a deserializer crash.
         AssertDeclinesCleanly(() =>
             db.Owners.Where(o => o.Orders.Count > 1).OrderBy(o => o.Name).Take(1)
                 .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o.Name, r.Total })
                 .ToList());
     }
 
-    // ── EF-322 final review (round 2): two more bugs found in the ORIGINAL Task 2 commit (014b8da3), not
-    // introduced by round 1's fix, and not caught by round 1's own review — both closed here.
+    // ── Count predicate on a join's inner side ──────────────────────────────────────────────────────
     //
-    // NEW Critical: the predicate on a JOIN'S INNER side. NativeCorrelationMatcher's binder records its
-    // predicate into MongoSelectDefinition.PostJoinOps on the INNER MongoQueryExpression (the one representing
-    // `Owners.Where(o => o.Orders.Count > 1)` used as `Join`'s second argument) — but
-    // MongoSelectDefinition.IsBareCollectionScan, the signal TranslateJoinCore uses to decide whether an inner
-    // side is "the whole target collection and nothing else", never checked PostJoinOps. So the inner read as
-    // bare, its predicate silently discarded, in EVERY MongoQueryMode — including an explicit DriverLinq,
-    // because IsBareCollectionScan also decides whether MarkSawNonBareJoinInner fires, which is what routes a
-    // genuinely filtered inner join to the SAME clean, universal decline a plain (non-count) filtered inner
-    // already gets. Fixed by adding `_postJoinOps.Count == 0` to IsBareCollectionScan.
+    // The predicate lives in the inner MongoSelectDefinition.PostJoinOps, so IsBareCollectionScan must check
+    // PostJoinOps; otherwise the inner reads as bare and the filter is silently dropped in every mode (including
+    // DriverLinq, since IsBareCollectionScan also gates MarkSawNonBareJoinInner).
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.NativeOnly)]
@@ -310,9 +285,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         using var db = CreateContext(seed, mode,
             nameof(Count_predicate_on_join_inner_side_declines_cleanly_in_every_mode) + mode);
 
-        // Must decline (never silently drop the filter) in every mode, exactly like the pre-existing
-        // non-count-predicate control case (`o.Name != "Carol"`) already does — proving this isn't a
-        // native-only concern, but a shape that was never safe to admit as a join's bare inner side.
+        // Must decline in every mode, like the non-count control case (`o.Name != "Carol"`).
         AssertDeclinesCleanly(() =>
             db.Orders.Join(
                     db.Owners.Where(o => o.Orders.Count > 1),
@@ -320,14 +293,9 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
                 .ToList());
     }
 
-    // NEW Important: a correlated SelectMany composed after the count predicate. Before this fix, the
-    // predicate's own $lookup could land on the same document path as the SelectMany's own $lookup/$unwind
-    // field, corrupting the read side with a BSON-type mismatch (InvalidCastException/FormatException) instead
-    // of declining cleanly — this shape was already unsupported in every mode before Task 2 (Query/AGENTS.md's
-    // "No driver-LINQ oracle for some shapes: SelectMany over a reference collection ... hard-fail in every
-    // MongoQueryMode"), so the fix only needed to restore that existing clean decline, not invent new support.
-    // Fixed by adding `_unwindSources.Count > 0` as a fourth disqualifying condition in Route's retroactive
-    // decline, alongside SetOperation/Grouping/JoinScope from round 1.
+    // Correlated SelectMany after the count predicate: the predicate's $lookup could share a document path with
+    // the SelectMany's $lookup/$unwind, corrupting reads with a BSON type mismatch. This shape is unsupported in
+    // every mode, so Route declines when `_unwindSources.Count > 0`.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.NativeOnly)]
@@ -338,12 +306,8 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         using var db = CreateContext(seed, mode,
             nameof(Count_predicate_before_correlated_SelectMany_declines_cleanly_in_every_mode) + mode);
 
-        // A bare Assert.ThrowsAny<Exception> is NOT enough here: the bug this guards is that the query used to
-        // throw a BSON-deserialize CRASH (InvalidCastException: BsonDecimal128 -> BsonInt32, or a FormatException
-        // from a scalar/ObjectId serializer reading an array) instead of the clean
-        // InvalidOperationException/NativeTranslationNotSupportedException decline it threw before Task 2 — and
-        // ThrowsAny is satisfied by either. AssertDeclinesCleanly asserts an exception is thrown AND that it is
-        // not one of the deserializer-crash types.
+        // ThrowsAny isn't enough: the hazard is a BSON-deserialize crash (InvalidCastException / FormatException)
+        // instead of a clean decline, and ThrowsAny accepts either.
         AssertDeclinesCleanly(() =>
             (from o in db.Owners.Where(o => o.Orders.Count > 1)
              from r in db.Orders.Where(r => r.OwnerId == o.Id)
@@ -351,29 +315,14 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
             .ToList());
     }
 
-    // ── EF-322 final review (round 3): a paged/filtered Include on the SAME navigation the count predicate
-    // targets used to corrupt the predicate's own count, in EVERY mode including explicit DriverLinq.
+    // ── Paged Include on the same navigation as the count predicate ───────────────────────────────────
     //
-    // NEW Critical mechanism (structurally different from rounds 1-2, which were both fixable by adding a
-    // condition to the retroactive Route-fallback check): this predicate's binder registers a BARE
-    // (whole-array) `_lookup_<Nav>` lookup at Where-translation time via
-    // NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup. The Include for the SAME navigation is
-    // bound LATER, in a completely different visitor pass (MongoProjectionBindingExpressionVisitor), and
-    // registers its OWN lookup for the SAME alias, carrying a paged sub-pipeline (the OrderBy/Skip/Take).
-    // MongoQueryExpression.AddLookup's existing, general-purpose bare-then-pipelined merge (used by many other
-    // features — Include, ThenInclude, joins — NOT changed by this fix) then merges the Include's pipeline
-    // INTO the predicate's own bare entry, so the predicate's own $size ends up reading the PAGED array, not
-    // the true unfiltered count. This happens at registration/merge time, before MongoQueryMode is ever
-    // consulted — so an explicit DriverLinq query was ALSO wrong, not just Native/NativeOnly, and NativeOnly
-    // did not even throw (the corrupted pipeline "succeeded", just with wrong data). Fixed by flagging the
-    // predicate's own bare lookup (LookupExpression.IsBareCountSizeSource) and widening the EXISTING
-    // Include-vs-join alias-collision check in MongoProjectionBindingExpressionVisitor's IncludeExpression
-    // case to also reroute a PAGED Include away from a flagged bare count-size source at the same alias
-    // (leaving the predicate's own alias, and AddLookup's general merge behavior, untouched) — see
-    // NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup's and
-    // LookupExpression.IsBareCountSizeSource's own remarks. (An earlier attempt gave the predicate's own
-    // lookup a private alias instead; that was reverted after it broke an existing invariant — see the task
-    // report's round-3 section.)
+    // The predicate registers a bare `_lookup_<Nav>` (NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup);
+    // the Include later registers a paged lookup for the same alias. MongoQueryExpression.AddLookup's bare-then-
+    // pipelined merge would fold the paging into the predicate's lookup, so $size reads the paged array — silently
+    // wrong in every mode, since the merge happens before MongoQueryMode is consulted. The predicate's lookup is
+    // flagged LookupExpression.IsBareCountSizeSource and MongoProjectionBindingExpressionVisitor reroutes a paged
+    // Include away from it.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.NativeOnly)]
@@ -389,11 +338,8 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
             .Where(o => o.Orders.Count > 1)
             .ToList();
 
-        // Oracle: only owners whose TRUE (unfiltered) order count exceeds 1 survive the predicate — Alice (2)
-        // and Carol (3), never Bob (1) or Dave (0) — each carrying only the ONE cheapest order the Include
-        // itself asked for. Before this fix, the predicate's own $size read the ALREADY-Take(1)'d array, so
-        // EVERY owner with at least one order (wrongly) satisfied `Count > 1` as `1 > 1` = false for all of
-        // them, silently returning zero rows in every mode.
+        // Only owners whose unfiltered count exceeds 1 survive (Alice 2, Carol 3), each with just the one cheapest
+        // order the Include asked for. A $size over the Take(1)'d array would return zero rows.
         AssertOwnersWithLoadedOrders(
             result,
             ("Alice", new[] { 10m }),
@@ -453,9 +399,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
             Assert.Equal(expectedByName[name], actualByName[name]);
     }
 
-    // The self-referencing-entity equivalent of the same collision: the navigation and the entity it's
-    // included/counted on are the SAME type (Node.Children : List<Node>), proving the fix isn't accidentally
-    // relying on Owner/Order being two distinct entity types.
+    // Self-referencing variant (Node.Children : List<Node>): the fix mustn't rely on distinct entity types.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.NativeOnly)]
@@ -481,10 +425,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
             .Where(n => n.Children.Count > 1)
             .ToList();
 
-        // Only rootA has more than one child (2); rootB has exactly one (never satisfies Count > 1), and the
-        // children themselves have none. rootA's Include should load only its cheapest-ordered child (childA2,
-        // Order == 1) — before the fix, the predicate's own $size read the already-Take(1)'d array, so no root
-        // ever satisfied `Count > 1` and this returned zero rows in every mode.
+        // Only rootA has more than one child; its Include should load only childA2 (Order == 1).
         var root = Assert.Single(result);
         Assert.Equal(rootA.Id, root.Id);
         var loadedChild = Assert.Single(root.Children);
@@ -539,11 +480,9 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     }
 
     /// <summary>
-    /// Asserts <paramref name="query"/> throws — but not one of the BSON-deserializer-crash exception types
-    /// (<see cref="InvalidCastException"/>/<see cref="FormatException"/>/<see cref="OverflowException"/>) that
-    /// signal a native/fallback pipeline was silently built wrong (a document-path collision) rather than the
-    /// query being cleanly declined. The exact exception TYPE among the "clean decline" family is not contract
-    /// (Query/AGENTS.md) — only that it isn't one of these.
+    /// Asserts <paramref name="query"/> throws, but not a BSON-deserializer crash type
+    /// (<see cref="InvalidCastException"/>/<see cref="FormatException"/>/<see cref="OverflowException"/>), which
+    /// signals a wrongly built pipeline rather than a clean decline. The exact decline type isn't contract.
     /// </summary>
     private static void AssertDeclinesCleanly(Action query)
     {
@@ -587,9 +526,8 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         return new Seed([ownerA, ownerB], orders);
     }
 
-    // Alice (2 orders) and Carol (3 orders) both have Orders.Count > 1; Bob (1 order) does not — gives the
-    // set-op/Distinct/Join regression tests more than one matching row to actually exercise ordering/dedup
-    // against, unlike the two-owner seed above (where only one row ever satisfies the predicate).
+    // Alice (2) and Carol (3) satisfy Orders.Count > 1, Bob (1) doesn't: more than one matching row to exercise
+    // ordering/dedup.
     private static Seed SeedThreeOwnersAndOrders()
     {
         var ownerA = new Owner { Id = ObjectId.GenerateNewId(), Name = "Alice" };
@@ -609,9 +547,8 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         return new Seed([ownerA, ownerB, ownerC], orders);
     }
 
-    // Alice=2 orders, Bob=1, Carol=3, Dave=0 — matches the reviewer's round-3 repro data exactly, and gives
-    // the Include+Count-predicate collision tests two owners that should survive `Count > 1` (Alice, Carol),
-    // each with more than one order so a `.Take(1)`/`.Skip(1)` Include actually narrows what gets loaded.
+    // Alice=2, Bob=1, Carol=3, Dave=0: two survivors of `Count > 1`, each with enough orders that a
+    // `.Take(1)`/`.Skip(1)` Include actually narrows what's loaded.
     private static Seed SeedFourOwnersAndOrders()
     {
         var ownerA = new Owner { Id = ObjectId.GenerateNewId(), Name = "Alice" };

@@ -76,8 +76,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
         var collection = SeedCustomers(nameof(Select_with_whole_entity_ctor_only_dto_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the whole-entity ctor-only DTO went native (via NativeRoute.WholeEntity — no $project).
+        // Succeeding under NativeOnly proves it went native (NativeRoute.WholeEntity, no $project).
         var results = db.Entities.Select(x => new CustomerDtoWithEntityInCtor(x)).ToList();
 
         Assert.Equal(2, results.Count);
@@ -92,8 +91,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
             nameof(Select_with_whole_entity_ctor_only_dto_still_works_under_explicit_driver_linq_mode));
         using var db = CreateContext(collection, MongoQueryMode.DriverLinq);
 
-        // This ticket adds a native path alongside the existing driver-LINQ fallback; it must not change the
-        // fallback path's own behavior. Forcing DriverLinq here proves the pre-existing path still works.
+        // The driver-LINQ path must still work for this shape.
         var results = db.Entities.Select(x => new CustomerDtoWithEntityInCtor(x)).ToList();
 
         Assert.Equal(2, results.Count);
@@ -107,10 +105,8 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
         var collection = SeedCustomers(nameof(Select_with_whole_entity_ctor_only_dto_composed_with_take_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // Guards finding #1 of the post-review fix wave: VisitProjectedQuery's WholeEntity branch must stay
-        // self-limiting even when a terminal operator (here Take, a $limit stage) is composed after the
-        // ctor-wrap Select — success under NativeOnly proves the composed query still goes native rather than
-        // silently mis-shaping or crashing.
+        // VisitProjectedQuery's WholeEntity branch must stay correct with a composed terminal ($limit) after the
+        // ctor-wrap Select.
         var results = db.Entities.Select(x => new CustomerDtoWithEntityInCtor(x)).Take(1).ToList();
 
         var dto = Assert.Single(results);
@@ -175,12 +171,9 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
         return database.MongoDatabase.GetCollection<Blog>(coll.CollectionNamespace.CollectionName);
     }
 
-    // Owned single-reference nav-entity ctor argument (`new AddressDto(b.Address)`) is a deliberate decline,
-    // not a regression: the new switch arm's sub-case 2 path calls TryBindAsBareProjection with a placeholder
-    // alias, which never matches the pre-existing owned-nav-entity-leaf arm's `alias == ownedNavElementName`
-    // gate (that gate exists to catch a renamed member in the WRAPPED case and is out of scope to rework here
-    // — see the EF-441 WRAPPED-path feature). So this shape falls through to Route == Fallback, exactly as it
-    // did before this ticket: it throws under NativeOnly and falls back correctly under the default Native mode.
+    // Deliberate decline: the sub-case 2 path calls TryBindAsBareProjection with a placeholder alias, which never
+    // passes the owned-nav-entity-leaf arm's `alias == ownedNavElementName` gate. Falls back under Native; throws
+    // under NativeOnly.
     [Fact]
     public void Select_with_owned_nav_entity_ctor_only_dto_still_declines_under_native_only()
     {
@@ -199,8 +192,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
             nameof(Select_with_owned_nav_entity_ctor_only_dto_still_works_under_default_native_mode_via_fallback));
         using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
 
-        // AsNoTracking: projecting an owned entity via the DTO ctor exposes its shape without the owner
-        // entity, which a tracking query rejects (EF's own constraint, unrelated to native vs. fallback).
+        // AsNoTracking: a tracking query rejects projecting an owned entity without its owner (EF constraint).
         var results = db.Entities.AsNoTracking().Select(b => new AddressDto(b.Address)).ToList();
 
         var dto = Assert.Single(results);
@@ -208,14 +200,10 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Sub-case 3: two-argument ctor-only DTO — multi-argument positional-ctor-DTO projection ticket
+    //  Sub-case 3: two-argument ctor-only DTO
     //
-    //  Previously declined unconditionally (the single-argument-cap comment on
-    //  NativeProjectionBinder.TryPopulateNativeProjection explains why). NativeProjectionBinder now has a
-    //  dedicated arm for a Members-null NewExpression with 2+ arguments, whose shaper is built by INDEX
-    //  (MongoQueryableMethodTranslatingExpressionVisitor.BuildPositionalCtorProjectionShaper) — see
-    //  MongoSelectDefinition.HasPositionalCtorProjectionShaper's remarks for why the generic
-    //  ProjectionMember/MemberInfo-keyed fold cannot be reused for more than one constructor argument.
+    //  Bound by NativeProjectionBinder's Members-null, 2+-argument NewExpression arm; the shaper reads by index
+    //  (see MongoSelectDefinition.HasPositionalCtorProjectionShaper).
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class TwoArgDto
@@ -231,8 +219,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
         var collection = SeedCustomers(nameof(Select_with_two_argument_ctor_only_dto_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the 2-argument ctor-only DTO Select went native.
+        // Succeeding under NativeOnly proves it went native.
         var results = db.Entities.Select(x => new TwoArgDto(x.CustomerID, x.CustomerID)).ToList();
 
         Assert.Equal(2, results.Count);
@@ -248,8 +235,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
             nameof(Select_with_two_argument_ctor_only_dto_still_works_under_explicit_driver_linq_mode));
         using var db = CreateContext(collection, MongoQueryMode.DriverLinq);
 
-        // This ticket adds a native path alongside the existing driver-LINQ fallback; it must not change the
-        // fallback path's own behavior. Forcing DriverLinq here proves the pre-existing path still works.
+        // The driver-LINQ path must still work for this shape.
         var results = db.Entities.Select(x => new TwoArgDto(x.CustomerID, x.CustomerID)).ToList();
 
         Assert.Equal(2, results.Count);

@@ -23,19 +23,10 @@ using Xunit;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
-// Follow NativeSelectManyBinderTests.cs's ModelBuilder/OnModelCreating pattern (same directory) to get real
-// IEntityType instances for "Outer"/"Inner"-shaped test entities — do not hand-mock IEntityType, since
-// MongoExpressionTranslator reads real IProperty/IEntityType metadata.
-//
-// The parameter TYPE for every test in this file is built via the REAL
-// Microsoft.EntityFrameworkCore.Query.TransparentIdentifierFactory.Create(...) — the exact type EF Core's
-// nav-expansion generates for a join, NOT a hand-written class. This matters: that real type exposes
-// "Outer"/"Inner" as public FIELDS, not properties (verified empirically against EF8 and EF10) — an earlier
-// version of this file used a hand-written class with auto-PROPERTIES named Outer/Inner, which is why a
-// field-vs-property bug in NativeJoinScopeTranslator's type-shape guard (it called Type.GetProperty, which
-// always returns null for a real join parameter) passed every test here while declining 100% of real
-// queries. `Expression.PropertyOrField` is used throughout so the same test code works regardless of which
-// kind the member turns out to be.
+// Uses real IEntityType metadata (ModelBuilder pattern from NativeSelectManyBinderTests) and a real
+// TransparentIdentifierFactory.Create(...) parameter type. The real type exposes Outer/Inner as fields, not
+// properties; a hand-written property-based fixture would mask a GetProperty-only guard that declines every real
+// query. `Expression.PropertyOrField` is used so tests don't depend on which kind the member is.
 public class NativeJoinScopeTranslatorTests
 {
     private class OuterEntity
@@ -87,12 +78,8 @@ public class NativeJoinScopeTranslatorTests
         var translated = NativeJoinScopeTranslator.TryTranslateValue(scope, x, body, out var result);
 
         Assert.True(translated);
-        // MongoOuterFieldExpression, not MongoFieldExpression: the two-scope translator resolves an
-        // Outer-rooted member via TryResolveMember's isOuter branch, which this operand path (TranslateOperand)
-        // does not confine to the new element-scope (Count(pred)/quantifier) translators — see
-        // MongoExpressionTranslator.cs's own remarks at that call site. It renders identically to
-        // MongoFieldExpression outside any $filter/$map element-variable scope, matching
-        // NativeSelectManyBinderTests' established convention for this same node.
+        // MongoOuterFieldExpression: TranslateOperand resolves Outer-rooted members via TryResolveMember's isOuter
+        // branch. Renders identically to MongoFieldExpression outside a $filter/$map element scope.
         var field = Assert.IsType<MongoOuterFieldExpression>(result);
         Assert.Equal("Name", field.ElementName);
     }
@@ -114,8 +101,7 @@ public class NativeJoinScopeTranslatorTests
     [Fact]
     public void Translates_mixed_scope_equality_predicate()
     {
-        // Two DIFFERENT members sharing a name across scopes — proves resolution is by parameter identity
-        // via the rewrite, never by member name.
+        // Same member name on both scopes: resolution is by parameter identity, not name.
         var scope = NewScope();
         var x = NewRootParam();
         Expression body = Expression.Equal(
@@ -137,8 +123,7 @@ public class NativeJoinScopeTranslatorTests
     [Fact]
     public void Declines_a_shape_the_underlying_translator_cannot_handle()
     {
-        // x.Outer.Name.ToUpper() — ToUpper has no query-dialect equivalent (mirrors
-        // MongoExpressionTranslatorTests.Unsupported_method_call_reports_not_translatable).
+        // x.Outer.Name.ToUpper(): no query-dialect equivalent.
         var scope = NewScope();
         var x = NewRootParam();
         var name = Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Name");
@@ -152,11 +137,8 @@ public class NativeJoinScopeTranslatorTests
     }
 
     // ── Guard: real (field-based) TransparentIdentifier shape actually reaches the translator ──────────
-    // Pins the exact defect the review round found: a hand-written property-based Ti fixture masked a
-    // Type.GetProperty-only guard that always returns null (declines) for a real, field-based
-    // TransparentIdentifier<TOuter,TInner> parameter. This test constructs the parameter type via the SAME
-    // TransparentIdentifierFactory.Create EF Core itself uses, so it fails if the guard regresses back to a
-    // property-only lookup.
+    // Builds the parameter type via EF's own TransparentIdentifierFactory.Create, so it fails if the type-shape
+    // guard regresses to a property-only lookup (the real type uses fields).
 
     [Fact]
     public void Real_EF_generated_TransparentIdentifier_type_exposes_Outer_and_Inner_as_fields()
@@ -172,9 +154,7 @@ public class NativeJoinScopeTranslatorTests
     [Fact]
     public void Translates_against_the_real_field_based_TransparentIdentifier_shape()
     {
-        // Would have passed even with the field-vs-property bug: TryTranslateValue doesn't touch the guard.
-        // Guarded belt-and-braces by Real_EF_generated_TransparentIdentifier_type_exposes_Outer_and_Inner_as_fields
-        // above, which pins that Outer/Inner really are fields on this type.
+        // TryTranslateValue doesn't touch the guard; the fields test above pins the shape.
         var scope = NewScope();
         var x = NewRootParam();
         Expression body = Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Name");
@@ -187,10 +167,8 @@ public class NativeJoinScopeTranslatorTests
     [Fact]
     public void Declines_when_body_also_accesses_root_param_outside_Outer_or_Inner()
     {
-        // Not a realistic EF-generated shape (a flat TransparentIdentifier only ever exposes Outer/Inner),
-        // but exercises the SawUnscopedRootAccess guard directly: some OTHER access to rootParam (here, a
-        // bare-parameter ToString() call, rather than a member access rooted on it) alongside a genuine
-        // x.Outer.Name access must still decline the WHOLE body, not partially translate it.
+        // Not a realistic EF shape, but exercises SawUnscopedRootAccess directly: any other use of rootParam (here
+        // a bare ToString()) alongside x.Outer.Name must decline the whole body, not partially translate it.
         var scope = NewScope();
         var x = NewRootParam();
         var outerName = Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Name");
@@ -211,12 +189,9 @@ public class NativeJoinScopeTranslatorTests
     [Fact]
     public void Declines_a_nested_chained_TransparentIdentifier_shape()
     {
-        // The actual regression shape: a SECOND join chained onto the same select recycles the FIRST join's
-        // JoinScope (Outer=OuterEntity, Inner=InnerEntity), but the parameter it's evaluated against is the
-        // doubly-nested TransparentIdentifier<TransparentIdentifier<OuterEntity,InnerEntity>, OtherEntity>
-        // the chained join actually produces. The recorded scope's "Inner" (InnerEntity) does NOT match this
-        // parameter's own top-level "Inner" (OtherEntity), so the guard must decline structurally rather than
-        // let ScopeSplittingVisitor rewrite the wrong level.
+        // A second chained join recycles the first join's JoinScope, but the parameter is the nested
+        // TransparentIdentifier<TransparentIdentifier<OuterEntity,InnerEntity>, OtherEntity>. The recorded Inner
+        // doesn't match the parameter's Inner, so the guard must decline rather than rewrite the wrong level.
         var scope = NewScope();
         var firstJoinType = TransparentIdentifierFactory.Create(typeof(OuterEntity), typeof(InnerEntity));
         var nestedType = TransparentIdentifierFactory.Create(firstJoinType, typeof(OtherEntity));
@@ -232,11 +207,9 @@ public class NativeJoinScopeTranslatorTests
     [Fact]
     public void Declines_a_nested_chained_TransparentIdentifier_shape_even_when_types_coincidentally_match()
     {
-        // Sharper version of the case above: the chained join's top-level Inner is InnerEntity too (e.g. two
-        // joins onto the same target entity type — SameTargetTypeJoinTests' actual regression shape), so the
-        // CLR type comparison alone would pass. The guard must still decline: rootParam.Type itself is the
-        // NESTED shape, and its "Outer" member (the whole first-join TransparentIdentifier) does not equal
-        // scope.OuterEntityType.ClrType (OuterEntity) — that's what actually catches this.
+        // Both joins target InnerEntity (SameTargetTypeJoinTests' shape), so the Inner type check passes; the
+        // guard still declines because the parameter's Outer (the first-join TransparentIdentifier) isn't
+        // scope.OuterEntityType.ClrType.
         var scope = NewScope();
         var firstJoinType = TransparentIdentifierFactory.Create(typeof(OuterEntity), typeof(InnerEntity));
         var nestedType = TransparentIdentifierFactory.Create(firstJoinType, typeof(InnerEntity));
@@ -283,10 +256,8 @@ public class NativeJoinScopeTranslatorTests
     }
 
     // ── TryTranslateRootScopeOnly: chained (2-level) join scope ──────────────────────────────────────────
-    // The chained shape is TransparentIdentifier<TransparentIdentifier<OuterEntity, InnerEntity>, OtherEntity>
-    // — i.e. the FIRST join's flat TransparentIdentifier becomes the SECOND join's own "Outer". A two-level
-    // MongoJoinScope describes this: Levels[0] is the first join (InnerEntity), Levels[1] is the second
-    // (OtherEntity).
+    // TransparentIdentifier<TransparentIdentifier<OuterEntity, InnerEntity>, OtherEntity>: Levels[0] is the first
+    // join (InnerEntity), Levels[1] the second (OtherEntity).
 
     private static MongoJoinScope NewTwoLevelScope()
     {
@@ -352,8 +323,7 @@ public class NativeJoinScopeTranslatorTests
         var scope = NewTwoLevelScope();
         var x = NewChainedRootParam();
 
-        // x => x.Inner.Label == "foo" — touches the SECOND (outermost) join's Inner side; must decline too,
-        // not just the first level's.
+        // x => x.Inner.Label == "foo" — the second (outermost) join's Inner side; must also decline.
         Expression body = Expression.Equal(
             Expression.PropertyOrField(Expression.PropertyOrField(x, "Inner"), "Label"),
             Expression.Constant("foo"));
@@ -472,9 +442,8 @@ public class NativeJoinScopeTranslatorTests
         var scope = NewTwoLevelScope();
         var x = NewChainedRootParam();
 
-        // x => x.Outer.Outer.Name.Length + x.Inner.Label.Length — spans scope 0 AND scope 2. Use string.Length
-        // (an int-returning member, not a method call) so this is purely an arithmetic-over-two-scopes shape,
-        // not confounded by a separate "method calls aren't translatable" decline reason.
+        // x => x.Outer.Outer.Name.Length + x.Inner.Label.Length — spans scopes 0 and 2. Length (a member, not a
+        // method) keeps this purely a cross-scope decline.
         Expression body = Expression.Add(
             Expression.PropertyOrField(
                 Expression.PropertyOrField(Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Outer"), "Name"),
@@ -494,8 +463,7 @@ public class NativeJoinScopeTranslatorTests
         var scope = NewTwoLevelScope();
         var x = NewChainedRootParam();
 
-        // x => x.Inner.Label.ToUpper() — resolves to a single scope (2), but ToUpper() has no query-dialect
-        // equivalent (mirrors NativeJoinScopeTranslatorTests.Declines_a_shape_the_underlying_translator_cannot_handle).
+        // x => x.Inner.Label.ToUpper() — single scope (2), but ToUpper() has no query-dialect equivalent.
         var label = Expression.PropertyOrField(Expression.PropertyOrField(x, "Inner"), "Label");
         var toUpper = typeof(string).GetMethod(nameof(string.ToUpper), System.Type.EmptyTypes)!;
         Expression body = Expression.Call(label, toUpper);
@@ -541,8 +509,7 @@ public class NativeJoinScopeTranslatorTests
     [Fact]
     public void Declines_null_check_against_the_root_scope()
     {
-        // rootParam.Outer == null is never a meaningful join-scope null check — only an Inner side (index > 0)
-        // can be absent after a left-outer $lookup+$unwind.
+        // Only an Inner side (index > 0) can be absent after a left-outer $lookup+$unwind.
         var scope = NewScope(isLeftOuter: true);
         var x = NewRootParam();
         Expression test = Expression.Equal(
@@ -556,8 +523,8 @@ public class NativeJoinScopeTranslatorTests
     [Fact]
     public void Declines_a_member_access_beyond_the_bare_scope_leaf()
     {
-        // ti.Inner.Name != null is a null-check on a FIELD of the joined entity, not on the join itself — the
-        // matcher must require the OPERAND to be the bare synthetic scope parameter, no further member access.
+        // A null check on a field of the joined entity, not the join itself: the operand must be the bare scope
+        // parameter.
         var scope = NewScope(isLeftOuter: true);
         var x = NewRootParam();
         Expression test = Expression.NotEqual(

@@ -134,9 +134,6 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$min" : "$_id" } } }, { "
 
     public override async Task GroupBy_Property_Select_Sum(bool async)
     {
-        // EF-322 SP1: the EF-149 gap this was pinning was the GroupBy key itself (EF.Property(...)), which
-        // NativeGroupByBinder.TryBindGroupKey now translates via TryTranslateValue — this now succeeds in
-        // both modes instead of hard-failing in every mode.
         await base.GroupBy_Property_Select_Sum(async);
 
         AssertMql(
@@ -250,7 +247,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : "$_id" }, "Min" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "Name" : { "$literal" : "CustomerID" }, "Value" : "$CustomerID" }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "Name" : { "$literal" : "CustomerID" }, "Value" : { "$ifNull" : ["$CustomerID", null] } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
     }
 
@@ -278,7 +275,7 @@ Orders.{ "$group" : { "_id" : { "Name" : { "$literal" : "CustomerID" }, "Value" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$OrderDate", "Sum" : { "$sum" : "$_id" } } }, { "$project" : { "Key" : { "$cond" : { "if" : { "$eq" : ["$_id", null] }, "then" : { "$literal" : "is null" }, "else" : { "$literal" : "is not null" } } }, "Sum" : "$Sum", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : "$OrderDate", "Sum" : { "$sum" : "$_id" } } }, { "$project" : { "Key" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_id", null] }, null] }, "then" : { "$literal" : "is null" }, "else" : { "$literal" : "is not null" } } }, "Sum" : "$Sum", "_id" : 0 } }
 """);
     }
 
@@ -288,7 +285,7 @@ Orders.{ "$group" : { "_id" : "$OrderDate", "Sum" : { "$sum" : "$_id" } } }, { "
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -298,7 +295,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$avg" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -308,7 +305,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -318,7 +315,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$max" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "_v" : { "$max" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -328,7 +325,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$max" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$min" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "_v" : { "$min" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -338,7 +335,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$min" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -348,7 +345,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" 
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
             """);
     }
 
@@ -358,7 +355,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" 
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "Id" : "$CustomerID" }, "Sum" : { "$sum" : "$_id" } } }, { "$project" : { "Key" : "$_id.Id", "Sum" : "$Sum", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "Id" : { "$ifNull" : ["$CustomerID", null] } }, "Sum" : { "$sum" : "$_id" } } }, { "$project" : { "Key" : "$_id.Id", "Sum" : "$Sum", "_id" : 0 } }
             """);
     }
 
@@ -368,7 +365,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -378,7 +375,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -388,7 +385,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -398,7 +395,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$max" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "_v" : { "$max" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -408,7 +405,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$min" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "_v" : { "$min" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -418,7 +415,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -428,7 +425,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
             """);
     }
 
@@ -438,7 +435,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Average" : { "$avg" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Average" : "$Average", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Average" : { "$avg" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Average" : "$Average", "_id" : 0 } }
             """);
     }
 
@@ -448,7 +445,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
             """);
     }
 
@@ -458,7 +455,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "LongCount" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "LongCount" : "$LongCount", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "LongCount" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "LongCount" : "$LongCount", "_id" : 0 } }
             """);
     }
 
@@ -468,7 +465,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Max" : { "$max" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Max" : "$Max", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Max" : { "$max" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Max" : "$Max", "_id" : 0 } }
             """);
     }
 
@@ -478,7 +475,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Min" : { "$min" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Min" : "$Min", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Min" : { "$min" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Min" : "$Min", "_id" : 0 } }
             """);
     }
 
@@ -488,7 +485,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Sum" : { "$sum" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Sum" : { "$sum" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "_id" : 0 } }
             """);
     }
 
@@ -498,7 +495,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "Min" : "$Min", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "Min" : "$Min", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
             """);
     }
 
@@ -508,7 +505,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "Key" : "$_id", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "Key" : "$_id", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
             """);
     }
 
@@ -518,7 +515,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "CustomerID" : "$_id.CustomerID", "EmployeeID" : "$_id.EmployeeID", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "CustomerID" : "$_id.CustomerID", "EmployeeID" : "$_id.EmployeeID", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
             """);
     }
 
@@ -528,7 +525,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$E
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Sum" : { "$sum" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Key" : "$_id", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Sum" : { "$sum" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Key" : "$_id", "_id" : 0 } }
 """);
     }
 
@@ -548,7 +545,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : "$EmployeeID" } 
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "CustomerId" : "$_id.CustomerID", "EmployeeId" : "$_id.EmployeeID", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "CustomerId" : "$_id.CustomerID", "EmployeeId" : "$_id.EmployeeID", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
             """);
     }
 
@@ -558,7 +555,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : "$EmployeeID" } 
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "CustomerID" : "$_id.CustomerID", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } }, "Sum" : { "$sum" : "$_id" }, "Min" : { "$min" : "$_id" }, "Max" : { "$max" : "$_id" }, "Avg" : { "$avg" : "$_id" } } }, { "$project" : { "Sum" : "$Sum", "Min" : "$Min", "CustomerID" : "$_id.CustomerID", "Max" : "$Max", "Avg" : "$Avg", "_id" : 0 } }
             """);
     }
 
@@ -688,7 +685,7 @@ Orders.{ "$group" : { "_id" : { "$literal" : 2 }, "Sum" : { "$sum" : "$_id" } } 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "I0" : { "$year" : "$OrderDate" } }, "I0" : { "$sum" : 1 } } }, { "$sort" : { "_id.I0" : 1 } }, { "$project" : { "I0" : "$I0", "I1" : "$_id.I0", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "I0" : { "$ifNull" : [{ "$year" : "$OrderDate" }, null] } }, "I0" : { "$sum" : 1 } } }, { "$sort" : { "_id.I0" : 1 } }, { "$project" : { "I0" : "$I0", "I1" : "$_id.I0", "_id" : 0 } }
 """);
     }
 
@@ -878,7 +875,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "OrderID" : "$_id" }, "Aggregate" : { "$sum" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", "ALFKI"] }, "then" : { "$cond" : { "if" : { "$gt" : ["$_id", 1000] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "else" : { "$subtract" : [0, { "$cond" : { "if" : { "$gt" : ["$_id", 1000] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }] } } } } } }, { "$project" : { "OrderID" : "$_id.OrderID", "Aggregate" : "$Aggregate", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "OrderID" : "$_id" }, "Aggregate" : { "$sum" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", { "$literal" : "ALFKI" }] }, "then" : { "$cond" : { "if" : { "$gt" : ["$_id", 1000] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "else" : { "$subtract" : [0, { "$cond" : { "if" : { "$gt" : ["$_id", 1000] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }] } } } } } }, { "$project" : { "OrderID" : "$_id.OrderID", "Aggregate" : "$Aggregate", "_id" : 0 } }
             """);
     }
 
@@ -968,7 +965,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "OrderID" : "$_id", "EmployeeID" : "$EmployeeID" } } }, { "$project" : { "OrderID" : "$_id.OrderID", "EmployeeID" : "$_id.EmployeeID", "_id" : 0 } }, { "$group" : { "_id" : "$EmployeeID", "c" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "OrderID" : "$_id", "EmployeeID" : { "$ifNull" : ["$EmployeeID", null] } } } }, { "$project" : { "OrderID" : "$_id.OrderID", "EmployeeID" : "$_id.EmployeeID", "_id" : 0 } }, { "$group" : { "_id" : "$EmployeeID", "c" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
             """);
     }
 
@@ -987,8 +984,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : "$Inner._id", "__agg0" : { "$avg" : "$Outer._id" } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "_id" : 0 } }
-            """);
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$avg" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_required_navigation_member_Aggregate(bool async)
@@ -997,17 +994,15 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
         AssertMql(
             """
-            OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : "$Inner.CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "CustomerId" : "$_id", "Count" : "$__agg0", "_id" : 0 } }
-            """);
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : "$_lookup_Order.CustomerID", "Count" : { "$sum" : 1 } } }, { "$project" : { "CustomerId" : "$_id", "Count" : "$Count", "_id" : 0 } }
+""");
     }
 
     public override async Task Join_complex_GroupBy_Aggregate(bool async)
     {
-        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The join's inner is
-        // `Customers.Where(…).OrderBy(City).Skip(10).Take(50)` — a filtered+sorted+paged sub-query. Driver 3.11
-        // rejects it outright ("expression must be a MongoDB IQueryable against a collection") rather than
-        // folding it into the correlated $lookup sub-pipeline the way 3.10 silently did (3.10 returned 0 rows
-        // instead of 29). Failing loudly is the documented boundary; see docs/failing-spec-tests.md § EF-X022.
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The inner
+        // (`Customers.Where(…).OrderBy(City).Skip(10).Take(50)`) is rejected by the driver rather than mis-folded
+        // into the correlated $lookup (which returned wrong rows on 3.10). See docs/failing-spec-tests.md.
         // The rejection happens after the outer collection is logged, so a partial pipeline is captured.
         await AssertTranslationFailed(() => base.Join_complex_GroupBy_Aggregate(async));
 
@@ -1035,56 +1030,59 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
     public override async Task GroupJoin_GroupBy_Aggregate_2(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupJoin_GroupBy_Aggregate_2(async));
+        await base.GroupJoin_GroupBy_Aggregate_2(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_id", "Max" : { "$max" : "$City" } } }, { "$project" : { "Key" : "$_id", "Max" : "$Max", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupJoin_GroupBy_Aggregate_3(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupJoin_GroupBy_Aggregate_3(async));
+        await base.GroupJoin_GroupBy_Aggregate_3(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$CustomerID", "Average" : { "$avg" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Average" : "$Average", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupJoin_GroupBy_Aggregate_4(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupJoin_GroupBy_Aggregate_4(async));
+        await base.GroupJoin_GroupBy_Aggregate_4(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_id", "Max" : { "$max" : "$City" } } }, { "$project" : { "Value" : "$_id", "Max" : "$Max", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupJoin_GroupBy_Aggregate_5(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupJoin_GroupBy_Aggregate_5(async));
+        await base.GroupJoin_GroupBy_Aggregate_5(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_id", "Average" : { "$avg" : "$_id" } } }, { "$project" : { "Value" : "$_id", "Average" : "$Average", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_optional_navigation_member_Aggregate(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_optional_navigation_member_Aggregate(async));
+        await base.GroupBy_optional_navigation_member_Aggregate(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer.Country", "Count" : { "$sum" : 1 } } }, { "$project" : { "Country" : "$_id", "Count" : "$Count", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupJoin_complex_GroupBy_Aggregate(bool async)
     {
-        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The join's inner is
-        // `Orders.Where(< 10400).OrderBy(OrderDate).Take(100)` — a filtered+sorted+paged sub-query. Driver 3.11
-        // rejects it outright ("expression must be a MongoDB IQueryable against a collection") rather than
-        // folding it into the correlated $lookup sub-pipeline the way 3.10 silently did (3.10 returned 27 rows
-        // instead of 20). Failing loudly is the documented boundary; see docs/failing-spec-tests.md § EF-X022.
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The inner
+        // (`Orders.Where(< 10400).OrderBy(OrderDate).Take(100)`) is rejected by the driver rather than mis-folded
+        // into the correlated $lookup (which returned wrong rows on 3.10). See docs/failing-spec-tests.md.
         // The rejection happens after the outer collection is logged, so a partial pipeline is captured.
         await AssertTranslationFailed(() => base.GroupJoin_complex_GroupBy_Aggregate(async));
 
@@ -1107,8 +1105,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10400 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : "$Outer.CustomerID", "__agg0" : { "$avg" : "$Inner._id" } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "_id" : { "$lt" : 10400 } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : "$CustomerID", "Count" : { "$avg" : "$_lookup_Order._id" } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_multi_navigation_members_Aggregate(bool async)
@@ -1117,8 +1115,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
         AssertMql(
             """
-            OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Products", "localField" : "_outer.Outer._id.ProductID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : { "CustomerID" : "$Outer.Inner.CustomerID", "ProductName" : "$Inner.ProductName" }, "__agg0" : { "$sum" : 1 } } }, { "$project" : { "CompositeKey" : "$_id", "Count" : "$__agg0", "_id" : 0 } }
-            """);
+OrderDetails.{ "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$unwind" : { "path" : "$_lookup_Product", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_lookup_Order.CustomerID", null] }, "ProductName" : { "$ifNull" : ["$_lookup_Product.ProductName", null] } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "CompositeKey" : "$_id", "Count" : "$Count", "_id" : 0 } }
+""");
     }
 
     public override async Task Union_simple_groupby(bool async)
@@ -1143,11 +1141,12 @@ Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$unionWith" : { "coll"
 
     public override async Task GroupBy_principal_key_property_optimization(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_principal_key_property_optimization(async));
+        await base.GroupBy_principal_key_property_optimization(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_after_anonymous_projection_and_distinct_followed_by_another_anonymous_projection(bool async)
@@ -1156,17 +1155,18 @@ Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$unionWith" : { "coll"
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "OrderID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "OrderID" : "$_id.OrderID", "_id" : 0 } }, { "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id.CustomerID", "Count" : "$Count", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "OrderID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "OrderID" : "$_id.OrderID", "_id" : 0 } }, { "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id.CustomerID", "Count" : "$Count", "_id" : 0 } }
             """);
     }
 
     public override async Task GroupBy_complex_key_aggregate(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_complex_key_aggregate(async));
+        await base.GroupBy_complex_key_aggregate(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_lookup_Customer._id", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$_lookup_Customer._id", 0, 1] } } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_complex_key_aggregate_2(bool async)
@@ -1248,18 +1248,21 @@ Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$unionWith" : { "coll"
 
     public override async Task GroupBy_aggregate_using_grouping_key_Pushdown(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_aggregate_using_grouping_key_Pushdown(async));
-
         if (MongoSpecTestHelpers.IsNativeOnly)
         {
+            // Fails: GroupBy issue EF-149
+            await AssertTranslationFailed(() => base.GroupBy_aggregate_using_grouping_key_Pushdown(async));
+
             AssertMql();
         }
         else
         {
+            // Max(e => g.Key) inside the accumulator reads the per-document key field (EF-457).
+            await base.GroupBy_aggregate_using_grouping_key_Pushdown(async);
+
             AssertMql(
     """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 }, "__agg1" : { "$max" : "$_id" } } }, { "$match" : { "$expr" : { "$gt" : ["$__agg0", 10] } } }, { "$project" : { "Key" : "$_id", "Max" : "$__agg1", "_id" : 0 } }, { "$sort" : { "Key" : 1 } }, { "$limit" : 20 }, { "$skip" : 4 }
+            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 }, "__agg1" : { "$max" : "$CustomerID" } } }, { "$match" : { "$expr" : { "$gt" : ["$__agg0", 10] } } }, { "$project" : { "Key" : "$_id", "Max" : "$__agg1", "_id" : 0 } }, { "$sort" : { "Key" : 1 } }, { "$limit" : 20 }, { "$skip" : 4 }
             """);
         }
     }
@@ -1288,7 +1291,7 @@ Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$unionWith" : { "coll"
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "c" : { "$sum" : 1 } } }, { "$match" : { "$expr" : { "$eq" : ["$_id", "ALFKI"] } } }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : "$CustomerID", "c" : { "$sum" : 1 } } }, { "$match" : { "$expr" : { "$eq" : ["$_id", { "$literal" : "ALFKI" }] } } }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
 """);
     }
 
@@ -1308,8 +1311,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 }, "Count" 
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "Order", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Name" : "$_id", "Count" : "$__agg0", "_id" : 0 } }, { "$match" : { "Count" : { "$gt" : 0 } } }
-            """);
+Orders.{ "$group" : { "_id" : { "$literal" : "Order" }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Name" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$match" : { "$expr" : { "$gt" : ["$Count", 0] } } }
+""");
     }
 
     public override async Task GroupBy_filter_count_OrderBy_count_Select_sum(bool async)
@@ -1396,11 +1399,9 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_orderAgg0" : { "$sum" : 1 }, "__a
 
     public override async Task Join_GroupBy_Aggregate_in_subquery(bool async)
     {
-        // Declines: the join's inner is a SUBQUERY that itself joins a grouped source, so the wrong-data verdict
-        // is reached on the intermediate query expression and propagated to the outer one
-        // (MongoSelectDefinition.PropagateFallbackWrongDataFrom). Without that propagation the driver-LINQ
-        // fallback executed and returned 0 rows instead of 133. This is the provider's own permanent,
-        // driver-independent GroupBy+Join wrong-data hard-decline (EF-344), not a driver-rejection boundary.
+        // Declines: the inner subquery joins a grouped source; the wrong-data verdict is propagated from the
+        // intermediate query (MongoSelectDefinition.PropagateFallbackWrongDataFrom). Without it the driver-LINQ
+        // fallback returns 0 rows instead of 133.
         await AssertTranslationFailed(() => base.Join_GroupBy_Aggregate_in_subquery(async));
 
         AssertMql();
@@ -1488,7 +1489,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$literal" : 1 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$match" : { "$expr" : { "$ne" : ["$_id", "ALFKI"] } } }, { "$limit" : 1 }
+Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$match" : { "$expr" : { "$ne" : ["$_id", { "$literal" : "ALFKI" }] } } }, { "$limit" : 1 }
 """);
     }
 
@@ -1507,7 +1508,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$match" : { "$expr" : { "$ne
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 10300] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "_v" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 10300] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -1517,7 +1518,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 10300] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "_v" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 10300] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -1590,7 +1591,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "All" : { "$sum" : 1 }, "TenK" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 11000] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } }, "EleventK" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 12000] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "Key" : "$_id", "All" : "$All", "TenK" : "$TenK", "EleventK" : "$EleventK", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "All" : { "$sum" : 1 }, "TenK" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 11000] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } }, "EleventK" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 12000] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "Key" : "$_id", "All" : "$All", "TenK" : "$TenK", "EleventK" : "$EleventK", "_id" : 0 } }
 """);
     }
 
@@ -1600,7 +1601,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "All" : { "$sum"
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "TenK" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 11000] }, "then" : "$_id", "else" : { "$literal" : 0 } } } }, "EleventK" : { "$sum" : { "$cond" : { "if" : { "$gte" : ["$_id", 11000] }, "then" : "$_id", "else" : { "$literal" : 0 } } } } } }, { "$project" : { "Key" : "$_id", "TenK" : "$TenK", "EleventK" : "$EleventK", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "TenK" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 11000] }, "then" : "$_id", "else" : { "$literal" : 0 } } } }, "EleventK" : { "$sum" : { "$cond" : { "if" : { "$gte" : ["$_id", 11000] }, "then" : "$_id", "else" : { "$literal" : 0 } } } } } }, { "$project" : { "Key" : "$_id", "TenK" : "$TenK", "EleventK" : "$EleventK", "_id" : 0 } }
 """);
     }
 
@@ -1610,7 +1611,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "TenK" : { "$sum
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "TenK" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 11000] }, "then" : "$_id", "else" : { "$literal" : 0 } } } }, "EleventK" : { "$sum" : { "$cond" : { "if" : { "$gte" : ["$_id", 11000] }, "then" : "$_id", "else" : { "$literal" : 0 } } } } } }, { "$project" : { "Key" : "$_id", "TenK" : "$TenK", "EleventK" : "$EleventK", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "TenK" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 11000] }, "then" : "$_id", "else" : { "$literal" : 0 } } } }, "EleventK" : { "$sum" : { "$cond" : { "if" : { "$gte" : ["$_id", 11000] }, "then" : "$_id", "else" : { "$literal" : 0 } } } } } }, { "$project" : { "Key" : "$_id", "TenK" : "$TenK", "EleventK" : "$EleventK", "_id" : 0 } }
 """);
     }
 
@@ -1630,7 +1631,7 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "TenK" : { "$sum
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "OrderID" : "$_id", "CustomerID" : "$CustomerID" }, "Avg" : { "$avg" : "$_id" }, "Max" : { "$max" : "$OrderDate" } } }, { "$project" : { "Key" : "$_id", "Avg" : "$Avg", "Max" : "$Max", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "OrderID" : "$_id", "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "Avg" : { "$avg" : "$_id" }, "Max" : { "$max" : "$OrderDate" } } }, { "$project" : { "Key" : "$_id", "Avg" : "$Avg", "Max" : "$Max", "_id" : 0 } }
             """);
     }
 
@@ -1795,7 +1796,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 10300] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$count" : "v" }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } }, "_v" : { "$sum" : { "$cond" : { "if" : { "$lt" : ["$_id", 10300] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$count" : "v" }
 """);
     }
 
@@ -1825,7 +1826,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Max" : { "$addToSet" : "$OrderDate
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "Max" : { "$addToSet" : { "$cond" : { "if" : { "$ne" : ["$OrderDate", null] }, "then" : "$OrderDate", "else" : "$$REMOVE" } } } } }, { "$project" : { "Key" : "$_id", "Max" : { "$max" : "$Max" }, "_id" : 0 } }
+Orders.{ "$group" : { "_id" : "$CustomerID", "Max" : { "$addToSet" : { "$cond" : { "if" : { "$ne" : [{ "$ifNull" : ["$OrderDate", null] }, null] }, "then" : "$OrderDate", "else" : "$$REMOVE" } } } } }, { "$project" : { "Key" : "$_id", "Max" : { "$max" : "$Max" }, "_id" : 0 } }
 """);
     }
 
@@ -1978,7 +1979,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : 
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Renamed" : "$City" }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+            Customers.{ "$group" : { "_id" : { "Renamed" : { "$ifNull" : ["$City", null] } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
             """);
     }
 
@@ -1988,7 +1989,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : 
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Renamed" : "$City", "CustomerID" : "$_id" } } }, { "$project" : { "Renamed" : "$_id.Renamed", "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$group" : { "_id" : "$Renamed", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+            Customers.{ "$group" : { "_id" : { "Renamed" : { "$ifNull" : ["$City", null] }, "CustomerID" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "Renamed" : "$_id.Renamed", "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$group" : { "_id" : "$Renamed", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
             """);
     }
 
@@ -1998,8 +1999,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : 
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : { "CustomerID" : "$Outer._id", "OrderDate" : "$Inner.OrderDate" } } }, { "$sort" : { "_id.OrderDate" : 1 } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "OrderDate" : "$_id.OrderDate", "_id" : 0 } }
-            """);
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_id", null] }, "OrderDate" : { "$ifNull" : ["$_lookup_Orders.OrderDate", null] } } } }, { "$sort" : { "_id.OrderDate" : 1 } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "OrderDate" : "$_id.OrderDate", "_id" : 0 } }
+""");
     }
 
     public override async Task Odata_groupby_empty_key(bool async)
@@ -2018,20 +2019,18 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : 
 
         AssertMql(
             """
-            OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : "$Inner.CustomerID", "__agg0" : { "$sum" : "$Outer._id.OrderID" } } }, { "$project" : { "Key" : "$_id", "Aggregate" : "$__agg0", "_id" : 0 } }
-            """);
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$group" : { "_id" : "$_lookup_Order.CustomerID", "Aggregate" : { "$sum" : "$_id.OrderID" } } }, { "$project" : { "Key" : "$_id", "Aggregate" : "$Aggregate", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_with_group_key_access_thru_nested_navigation(bool async)
     {
-        // Fails: GroupBy issue EF-149. This override briefly carried an `#if EF8 || EF9` split whose EF10 arm
-        // asserted SUCCESS plus a driver-LINQ pipeline baseline, on the strength of driver 3.10 translating
-        // the two-hop join. That is no longer true and the split is gone: the chain now declines at
-        // GuardAgainstUnstrippableMultiJoin, before any pipeline runs, uniformly on all three EF majors -
-        // which is also what the main-bound line asserts. Hence one un-`#if`'d arm and an empty AssertMql().
-        await AssertTranslationFailed(() => base.GroupBy_with_group_key_access_thru_nested_navigation(async));
+        await base.GroupBy_with_group_key_access_thru_nested_navigation(async);
 
-        AssertMql();
+        AssertMql(
+            """
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer.Country", "Aggregate" : { "$sum" : "$_id.OrderID" } } }, { "$project" : { "Key" : "$_id", "Aggregate" : "$Aggregate", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_with_group_key_being_navigation(bool async)
@@ -2054,12 +2053,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : 
 
     public override async Task GroupBy_with_group_key_being_nested_navigation(bool async)
     {
-        // Fails: GroupBy issue EF-149. The EF10 arm used to record a real driver-LINQ pipeline here, because
-        // under driver 3.10 this shape got as far as EXECUTING one and only then failed to deserialize the
-        // $group key (the key is the whole nested Customer entity, which the driver decodes with
-        // BsonClassMapSerializer<Customer> rather than the registered entity serializer). It no longer reaches
-        // execution: the two-hop join chain declines during translation, so nothing is logged and the baseline
-        // is empty on every EF major - matching the main-bound line. Hence no `#if` here either.
+        // Fails: GroupBy issue EF-149. The two-hop join chain declines during translation, so nothing is logged
+        // on any EF version.
         await AssertTranslationFailed(() => base.GroupBy_with_group_key_being_nested_navigation(async));
 
         AssertMql();
@@ -2093,9 +2088,6 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : 
 
     public override async Task GroupBy_Property_Select_Count_with_predicate(bool async)
     {
-        // EF-322 SP3: the EF-149 gap this was pinning was the predicated Count itself
-        // (g.Count(o => ...)), which NativeGroupByBinder.TryBindAccumulator now translates via
-        // TryTranslateAccumulatorCondition — this now succeeds in both modes instead of hard-failing.
         await base.GroupBy_Property_Select_Count_with_predicate(async);
 
         AssertMql(
@@ -2106,9 +2098,6 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$cond" : { "if
 
     public override async Task GroupBy_Property_Select_LongCount_with_predicate(bool async)
     {
-        // EF-322 SP3: the EF-149 gap this was pinning was the predicated Count itself
-        // (g.LongCount(o => ...)), which NativeGroupByBinder.TryBindAccumulator now translates via
-        // TryTranslateAccumulatorCondition — this now succeeds in both modes instead of hard-failing.
         await base.GroupBy_Property_Select_LongCount_with_predicate(async);
 
         AssertMql(
@@ -2136,20 +2125,26 @@ Customers.{ "$group" : { "_id" : "$City", "_orderAgg0" : { "$sum" : 1 }, "Count"
 
     public override async Task GroupBy_Min_Where_optional_relationship(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Min_Where_optional_relationship(async));
+        // Post-group Where over a keyed GroupBy's projected Count alias: the confirmed-join GroupBy runs the same way
+        // in every mode and EF version, so this asserts data and MQL directly.
+        await base.GroupBy_Min_Where_optional_relationship(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$match" : { "$expr" : { "$ne" : ["$Count", 2] } } }
+""");
     }
 
     public override async Task GroupBy_Min_Where_optional_relationship_2(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Min_Where_optional_relationship_2(async));
+        // Post-group Where over a keyed GroupBy's projected Count alias: the confirmed-join GroupBy runs the same way
+        // in every mode and EF version, so this asserts data and MQL directly.
+        await base.GroupBy_Min_Where_optional_relationship_2(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$match" : { "$or" : [{ "$expr" : { "$lt" : ["$Count", 2] } }, { "$expr" : { "$gt" : ["$Count", 2] } }] } }
+""");
     }
 
     public override async Task GroupBy_aggregate_over_a_subquery(bool async)
@@ -2223,7 +2218,7 @@ Orders.{ "$match" : { "_id" : { "$gt" : 10500 } } }, { "$group" : { "_id" : "$Cu
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "Year" : { "$year" : "$OrderDate" } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "Year" : "$_id.Year", "_id" : 0 } }, { "$group" : { "_id" : "$CustomerID", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "Year" : { "$ifNull" : [{ "$year" : "$OrderDate" }, null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "Year" : "$_id.Year", "_id" : 0 } }, { "$group" : { "_id" : "$CustomerID", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
     }
 
@@ -2251,8 +2246,8 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "Year" : { "$year"
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$push" : "$CustomerID" } } }, { "$project" : { "Key" : "$_id", "Data" : "$__agg0", "_id" : 0 } }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID", "Data" : { "$push" : { "$ifNull" : ["$CustomerID", null] } } } }, { "$project" : { "Key" : "$_id", "Data" : "$Data", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_with_grouping_key_using_Like(bool async)
@@ -2336,20 +2331,14 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Count" : { "$sum" : 1 }, "Sum" : {
 
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$group" : { "_id" : "$CustomerID", "Sum1" : { "$sum" : { "$cond" : { "if" : { "$lte" : [{ "$subtract" : [2020, { "$year" : "$OrderDate" }] }, 30] }, "then" : "$_id", "else" : { "$literal" : 0 } } } }, "Sum2" : { "$sum" : { "$cond" : { "if" : { "$and" : [{ "$gt" : [{ "$subtract" : [2020, { "$year" : "$OrderDate" }] }, 30] }, { "$lte" : [{ "$subtract" : [2020, { "$year" : "$OrderDate" }] }, 60] }] }, "then" : "$_id", "else" : { "$literal" : 0 } } } } } }, { "$project" : { "Key" : "$_id", "Sum1" : "$Sum1", "Sum2" : "$Sum2", "_id" : 0 } }
+Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$group" : { "_id" : "$CustomerID", "Sum1" : { "$sum" : { "$cond" : { "if" : { "$and" : [{ "$gt" : [{ "$subtract" : [2020, { "$year" : "$OrderDate" }] }, null] }, { "$lte" : [{ "$subtract" : [2020, { "$year" : "$OrderDate" }] }, 30] }] }, "then" : "$_id", "else" : { "$literal" : 0 } } } }, "Sum2" : { "$sum" : { "$cond" : { "if" : { "$and" : [{ "$gt" : [{ "$subtract" : [2020, { "$year" : "$OrderDate" }] }, 30] }, { "$and" : [{ "$gt" : [{ "$subtract" : [2020, { "$year" : "$OrderDate" }] }, null] }, { "$lte" : [{ "$subtract" : [2020, { "$year" : "$OrderDate" }] }, 60] }] }] }, "then" : "$_id", "else" : { "$literal" : 0 } } } } } }, { "$project" : { "Key" : "$_id", "Sum1" : "$Sum1", "Sum2" : "$Sum2", "_id" : 0 } }
 """);
     }
 
     public override async Task Group_by_column_project_constant(bool async)
     {
-        // EF-322 SP4: the EF-149 gap this was pinning was the zero-accumulator "bare body" decline, which
-        // covered ANY bare Select body (including a plain constant like `e => 42`), not just a bare g.Key
-        // read. SP4 narrowed that decline to bare KEY members only (isBareBodyKeyMember), so a bare constant
-        // projection is no longer declined at that gate — but reaching a decline-free gate is not enough on
-        // its own: the bare constant still needs a translator that will actually accept it. That is SP4's
-        // NEW TryTranslateGroupProjectionExpression, whose fallthrough to translator.TryTranslateValue is what
-        // accepts the bare constant `42` once the narrowed gate lets the bare body through. Both causes are
-        // necessary; either alone still declines. This test now succeeds as a side effect of the two together.
+        // Native via two pieces: the bare-body decline applies only to bare key members (isBareBodyKeyMember),
+        // and TryTranslateGroupProjectionExpression falls through to TryTranslateValue to accept the constant.
         await base.Group_by_column_project_constant(async);
 
         AssertMql(
@@ -2373,7 +2362,7 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A"
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_id", { "$strLenCP" : "$CustomerID" }] } } } }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_id", { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$CustomerID", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$CustomerID" } } }] } } } }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "_id" : 0 } }
 """);
     }
 
@@ -2487,16 +2476,10 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_i
     //AssertMql(" ");
     public override async Task Complex_query_with_group_by_in_subquery5(bool async)
     {
-        // Fails: GroupBy issue EF-149. The accepted-type list stays widened at THIS call site (the file-wide
-        // shadow remains strict elsewhere): for this unsupported shape the driver's
-        // ConstantExpressionToAggregationExpressionTranslator tries to BSON-serialize the un-inlined
-        // MongoQuery<Customer,Customer> subquery constant and dies inside BsonClassMap.Freeze(), so a
-        // TRANSLATION error surfaces as a SERIALIZATION one. Per AGENTS.md the exception type of an
-        // unsupported operation is not part of the contract, so this is accepted rather than chased.
-        //
-        // What DID change: the EF10 arm used to record one logged statement ("OrderDetails.") because the
-        // outer collection was reached before the failure. It no longer is, so the baseline is empty on every
-        // EF major and the `#if` is gone - matching the main-bound line.
+        // Fails: GroupBy issue EF-149. The accepted types stay widened here: the driver tries to BSON-serialize
+        // the un-inlined MongoQuery<Customer,Customer> subquery constant and fails in BsonClassMap.Freeze(), so
+        // a translation error surfaces as a serialization one. The exception type of an unsupported shape isn't
+        // contract.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Complex_query_with_group_by_in_subquery5(async),
             typeof(ArgumentException), typeof(FormatException), typeof(BsonSerializationException));
@@ -2696,23 +2679,13 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_i
     private static async Task AssertGroupByUnsupported(Func<Task> query)
         => await AssertTranslationFailed(query);
 
-    // Shadows the base helper: a GroupBy shape the native translator does not support must fail as a
-    // *translation* failure, but the exact exception depends on the query mode and how far the driver-LINQ
-    // fallback gets. Under MongoQueryMode.NativeOnly the provider throws NativeTranslationNotSupportedException;
-    // under the default Native mode it falls back to driver-LINQ, which surfaces an EF InvalidOperationException
-    // (CoreStrings.TranslationFailed or an internal "VisitChildren" guard) or a driver translation exception
-    // (ExpressionNotSupportedException / ArgumentException / FormatException). All of these are accepted here.
-    // Data-assertion failures (Xunit assertion exceptions) are deliberately NOT accepted, so a future
-    // wrong-data regression in the fallback path still turns the test red rather than being masked.
-    // ArgumentException (incl. its ArgumentOutOfRangeException subtype) and FormatException are required, not
-    // speculative: e.g. GroupJoin_GroupBy_Aggregate* and Key_plus_key_in_projection genuinely throw
-    // ArgumentException ("Property ... is not defined for type IGrouping<...>") from the driver-LINQ
-    // fallback; GroupBy_skip_0_take_0_aggregate throws ArgumentOutOfRangeException ('limit'); and
-    // GroupBy_select_grouping_list/_array/_composed_list*, GroupBy_complex_key_aggregate,
-    // GroupBy_aggregate_projecting_conditional_expression, GroupBy_with_group_key_being_navigation, and
-    // several other GroupBy_* shapes throw FormatException while deserializing the fallback's driver-LINQ
-    // result. Verified empirically (EF-344 follow-up): narrowing this set to the three "clean" types turns
-    // 21 currently-green tests red, so the breadth stays.
+    // Shadows the base helper: an unsupported GroupBy shape must fail as a translation failure.
+    // NativeOnly throws NativeTranslationNotSupportedException; under Native the driver-LINQ fallback throws an
+    // EF InvalidOperationException or a driver ExpressionNotSupportedException / ArgumentException /
+    // FormatException. ArgumentException (e.g. GroupJoin_GroupBy_Aggregate*, GroupBy_skip_0_take_0_aggregate)
+    // and FormatException (fallback deserialization in several GroupBy_* shapes) are needed — narrowing the set
+    // fails ~21 tests. Xunit assertion exceptions are not accepted, so a fallback wrong-data regression still
+    // fails.
     protected new static Task AssertTranslationFailed(Func<Task> query)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             query, typeof(ArgumentException), typeof(FormatException));

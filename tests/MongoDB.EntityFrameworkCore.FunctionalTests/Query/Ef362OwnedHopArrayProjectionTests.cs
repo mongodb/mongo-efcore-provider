@@ -28,32 +28,23 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-362: an owned entity-COLLECTION leaf reached through an <c>OwnsOne</c> hop —
-/// <c>Select(b =&gt; new { b.Title, b.Home.Notes })</c> — now goes native, emitting
-/// <c>{"Home.Notes": "$Home.Notes"}</c> and reading it back by walking that same dotted path.
+/// An owned entity-collection leaf reached through an <c>OwnsOne</c> hop
+/// (<c>Select(b =&gt; new { b.Title, b.Home.Notes })</c>) goes native, emitting
+/// <c>{"Home.Notes": "$Home.Notes"}</c> and reading it back by walking that dotted path.
 /// <para>
-/// <b>Every failure mode in this file is SILENT.</b> A missed alias read yields <see langword="null"/>, and the
-/// EF-358 coalesce turns a missed ARRAY read into an EMPTY collection with no exception anywhere — so a test
-/// that asserted "does not throw", or a count, or <c>!= null</c>, would have stayed green through the exact
-/// defect this feature had while it was being built. Every assertion below is on VALUES.
+/// Every failure mode here is silent: a missed alias read yields <see langword="null"/>, and a missed array read
+/// is coalesced to an empty collection. So every assertion is on values, not counts or <c>!= null</c>.
 /// </para>
 /// <para>
-/// <b>The parameterized-<c>Where</c> legs are not decoration.</b> A captured local in a
-/// <c>string.StartsWith</c> proves the array leaf stays correct with a genuine query parameter, not just a
-/// baked-in literal. A parameterized regex term is natively representable (it defers its escape/anchor to a
-/// placeholder sentinel resolved at Build time), so this now executes natively under every
-/// <see cref="MongoQueryMode"/>, including <see cref="MongoQueryMode.NativeOnly"/>; it previously exercised a
-/// LATE native-factory decline (translate-time routed native, then the renderer declined the parameterized
-/// regex at render time, so the driver-LINQ bridge executed the captured chain under the DEFAULT
-/// <c>Native</c> mode) before that gap was closed.
+/// The parameterized-<c>Where</c> legs prove the array leaf stays correct with a genuine query parameter (a
+/// parameterized regex term renders via a placeholder sentinel resolved at Build time).
 /// </para>
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // No `= []` on Notes, deliberately: a field initializer masks a null-vs-empty read-back, which is exactly
-    // the class of defect this feature can have. Same reason NativeArrayProjectionTests omits it.
+    // No `= []` on Notes: an initializer masks a null-vs-empty read-back (as in NativeArrayProjectionTests).
     public class NestedOwnerBlog
     {
         public ObjectId Id { get; set; }
@@ -78,9 +69,8 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
     private static readonly Action<ModelBuilder> KeyedModel = mb =>
         mb.Entity<NestedOwnerBlog>().OwnsOne(b => b.Home, h => h.OwnsMany(x => x.Notes, n => n.HasKey(x => x.NoteId)));
 
-    // No HasKey: EF builds a SHADOW composite key and the element shaper reads the ROOT's _id out of the row it
-    // is handed. That is the model almost every real user has, and it is what makes the owner-key emission
-    // (`_id : "$_id"`) load-bearing for a hop leaf just as it is for a root-declared one.
+    // No HasKey: EF builds a shadow composite key and the element shaper reads the root's _id from the row, so
+    // the owner-key emission (`_id : "$_id"`) is load-bearing for a hop leaf too.
     private static readonly Action<ModelBuilder> ShadowKeyModel = mb =>
         mb.Entity<NestedOwnerBlog>().OwnsOne(b => b.Home, h => h.OwnsMany(x => x.Notes));
 
@@ -111,14 +101,14 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
             Assert.Equal(new[] {"n1", "n2"}, rows[0].Notes.Select(n => n.Text));
             Assert.Equal(new[] {1, 2}, rows[0].Notes.Select(n => n.NoteId));
 
-            // EF-358: a missing or explicitly-null stored array materializes EMPTY, never null.
+            // A missing or explicitly-null stored array materializes empty, never null.
             Assert.Empty(rows[1].Notes);
             Assert.Empty(rows[2].Notes);
             Assert.Empty(rows[3].Notes);
         }
     }
 
-    // ── 2. The late-fallback route — the leg that was silently empty ──────────────
+    // ── 2. Parameterized Where ────────────────────────────────────────────────────
 
     [Theory]
     [InlineData(false)]
@@ -128,11 +118,7 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         var collection = Seed(nameof(Owned_hop_array_leaf_behind_a_parameterized_where_reads_correct_values) + shadowKey);
         var model = shadowKey ? ShadowKeyModel : KeyedModel;
 
-        // A captured local, not a constant — a genuine query parameter. This used to be the trigger for a
-        // LATE native-factory decline (the native renderer declined a parameterized regex term at render
-        // time, after the alias-addressed shaper had already been built, so the driver-LINQ bridge ran the
-        // captured chain instead under the DEFAULT Native mode). A parameterized StartsWith term is now
-        // natively representable, so all three modes — including NativeOnly — execute natively and agree.
+        // A captured local, not a constant, so it's a genuine query parameter; all three modes execute natively.
         var prefix = "a_";
 
         foreach (var mode in AllModes)
@@ -161,10 +147,9 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
 
-        // NOT a routing proof — the driver-LINQ bridge can emit a structurally similar $project. Test 1's
-        // NativeOnly leg is the routing proof. What this pins is the ALIAS: a DOTTED key, which is the whole
-        // mechanism, and which MongoDB renders as NESTED output (measured) so the shaper's segment walk
-        // resolves it identically against a projected document and a whole one.
+        // Not a routing proof (driver LINQ can emit a similar $project); test 1's NativeOnly leg is. This pins the
+        // dotted alias, which MongoDB renders as nested output, so the shaper's segment walk resolves it identically
+        // against a projected document and a whole one.
         Assert.Contains("\"Home.Notes\" : \"$Home.Notes\"", mql);
         // The owner key rides along for any array leaf, which also suppresses RenderProject's default `_id : 0`.
         Assert.Contains("\"_id\" : \"$_id\"", mql);
@@ -176,13 +161,9 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
     [Fact]
     public void Renamed_owned_hop_array_alias_is_still_declined_and_returns_correct_data()
     {
-        // The renamed-alias narrowing is orthogonal to the hop and must not be widened by accident.
-        // DeriveWrappedLeafAlias only ever replaces a member name that ALREADY agreed with the navigation's own
-        // containing element name, so `N = b.Home.Notes` keeps the alias `N`, which is not the document path,
-        // and IsNativeArrayProjectionLeaf declines the whole projection.
-        //
-        // MUTATION: drop DeriveWrappedLeafAlias's `memberName == GetContainingElementName()` conjunct and the
-        // NativeOnly leg here stops throwing.
+        // The renamed-alias narrowing is orthogonal to the hop: `N = b.Home.Notes` keeps alias `N`, which isn't the
+        // document path, so IsNativeArrayProjectionLeaf declines the whole projection. Dropping
+        // DeriveWrappedLeafAlias's `memberName == GetContainingElementName()` conjunct makes the NativeOnly leg pass.
         var collection = Seed(nameof(Renamed_owned_hop_array_alias_is_still_declined_and_returns_correct_data));
 
         static List<string> Run(SingleEntityDbContext<NestedOwnerBlog> db)
@@ -207,23 +188,9 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
     [Fact]
     public void Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_correctly()
     {
-        // The sibling-readability rule is unchanged by EF-362, and this pins that: a DOTTED SCALAR
-        // (`b.Home.City`) resolves to a MongoFieldExpression whose ElementName is "Home.City" while its alias
-        // is the member name "City", so IsWholeDocumentReadableLeaf declines it — and, because an array leaf is
-        // present, declines the WHOLE projection. The NativeOnly leg below is that decline.
-        //
-        // THIS TEST WAS FLIPPED, NOT RE-BASELINED. It used to pin a silent-wrong-data shape: the fallback's
-        // shaper derived the element name for a dotted owned scalar from the projection MEMBER ("City") and
-        // read it at the top level of a whole document, where nothing is stored, so `City` came back NULL
-        // under the default Native mode and under explicit DriverLinq alike, while the array leaf beside it
-        // was correct. That was tracked as EF-390 and is now FIXED on the main-bound line - the read half of
-        // BsonBinding.GetPropertyValueAtElement walks a dotted owned scalar's path instead of treating it as
-        // a literal key - so the assertion below is the SEEDED TRUTH rather than a measured wrong answer.
-        //
-        // What this test still pins is the DECLINE, which is unchanged: the dotted scalar's alias ("City")
-        // differs from its element name ("Home.City"), so IsWholeDocumentReadableLeaf rejects it and - because
-        // an array leaf is present - declines the WHOLE projection. The NativeOnly leg at the end is that
-        // decline; the two fallback-capable modes now return correct values through it.
+        // A dotted scalar (`b.Home.City`) has ElementName "Home.City" but alias "City", so
+        // IsWholeDocumentReadableLeaf declines it and, with an array leaf present, the whole projection (the NativeOnly
+        // leg). The fallback modes must still read City from its dotted path, not the top level.
         var collection = Seed(nameof(Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_correctly));
 
         static List<string> Run(SingleEntityDbContext<NestedOwnerBlog> db)
@@ -233,7 +200,7 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
                 .Select(r => $"{r.City ?? "<null>"}=[{string.Join("|", r.Notes.Select(n => n.Text))}]")
                 .ToList();
 
-        // The seeded truth, which both fallback-capable modes now return.
+        // The seeded values, which both fallback-capable modes return.
         var expected = new[] {"NYC=[n1|n2]", "LA=[]", "SF=[]", "DC=[]"};
 
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
@@ -274,9 +241,8 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(
             TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8]);
 
-        // Home itself is present on every row: it is a REQUIRED owned reference, so a document missing it fails
-        // materialization for reasons unrelated to the array leaf under test. The four states below are the
-        // states of the ARRAY: populated, empty, field missing, field explicitly BSON null.
+        // Home is a required owned reference, so it's present on every row. The four states are the array's:
+        // populated, empty, field missing, field explicitly BSON null.
         coll.InsertMany(
         [
             Row("a_populated", "NYC", new BsonArray([NoteDoc(1, "n1"), NoteDoc(2, "n2")])),

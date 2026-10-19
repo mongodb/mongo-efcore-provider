@@ -18,18 +18,14 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Thrown by the native MQL translator when it encounters a query shape it does not yet support.
-/// Under <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native"/> the compile-time
-/// gate catches this and falls back to the driver-LINQ path; under
-/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly"/> it propagates,
-/// surfacing the unsupported query shape to the caller.
+/// Thrown by the native translator for an unsupported query shape. Under
+/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native"/> the compile-time gate catches it
+/// and falls back to driver-LINQ; under
+/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly"/> it propagates to the caller.
 /// </summary>
 /// <remarks>
-/// This type is intentionally <c>internal</c> even though, under
-/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly"/>, it is the exception a
-/// caller sees and might want to catch by type. Per the exception-type rule in the top-level AGENTS.md
-/// versioning rubric, the exception type thrown for an unsupported shape is not part of the public contract,
-/// so making this public is a deliberate public-API decision, not something to change incidentally here.
+/// Intentionally <c>internal</c>: the exception type for an unsupported shape isn't public contract, so making it
+/// public is a deliberate API decision.
 /// </remarks>
 internal sealed class NativeTranslationNotSupportedException : Exception
 {

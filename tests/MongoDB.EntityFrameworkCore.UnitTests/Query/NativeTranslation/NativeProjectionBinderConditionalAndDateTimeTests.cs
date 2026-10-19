@@ -95,10 +95,8 @@ public class NativeProjectionBinderConditionalAndDateTimeTests
     [Fact]
     public void UtcDateTime_wrapped_projection_leaf_is_admitted()
     {
-        // Coverage gap: .UtcDateTime as a wrapped (`new {}`) projection leaf translates to a raw
-        // MongoElementRefExpression (MongoExpressionTranslator addresses the stored subdocument's own
-        // ".DateTime" sub-field directly, no $dateAdd reconstruction needed — that's only required for the
-        // local-time variants), which was previously untested for this admission path.
+        // .UtcDateTime as a wrapped leaf translates to a MongoElementRefExpression over the stored ".DateTime"
+        // sub-field (no $dateAdd reconstruction; that's only for local-time variants).
         var mongoQ = TestQuery();
         Expression<Func<Row, RowDto>> selector = r => new RowDto
         {
@@ -119,12 +117,9 @@ public class NativeProjectionBinderConditionalAndDateTimeTests
         var mongoQ = TestQueryWithOwnedCollection();
         Expression<Func<Row, int>> selector = x => x.Flag ? x.Items.Count : 0;
 
-        // THE CASE THE TOP-NODE GATE ALONE LETS THROUGH: the top node here is a MongoConditionalExpression, so
-        // the new gate 1c admits it on node kind alone unless the subtree check also runs. Its IfTrue branch is
-        // a MongoSizeExpression, so an un-stripped driver-fallback push-down would render a bare `$size` that
-        // aborts on a missing or explicitly-null array — the exact hazard IsArrayFreeComputedSubtree exists to
-        // guard against for the pre-existing arithmetic/cast arm (gate 1b). This proves the new conditional arm
-        // (gate 1c) actually calls IsArrayFreeComputedSubtree rather than admitting the node kind unconditionally.
+        // A conditional top node passes the node-kind gate, but its IfTrue is a MongoSizeExpression; a fallback
+        // push-down would render a bare $size that errors on a missing/null array. Proves the conditional arm runs
+        // IsArrayFreeComputedSubtree.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
         Assert.False(mongoQ.Select.IsBareProjection);

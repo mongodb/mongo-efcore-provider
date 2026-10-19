@@ -41,8 +41,7 @@ public class MongoFieldPrefixRewriterTests
     private static MongoFieldExpression Field(string name)
         => new(GetProperty(name), name);
 
-    // MongoFieldPrefixRewriter's public entry point is TryRewrite (it DECLINES rather than throwing for a node
-    // kind with no prefixing rule). Every case below is a success case, so this asserts the success and unwraps.
+    // TryRewrite declines rather than throws for kinds with no prefixing rule; every case below expects success.
     private static MongoExpression Rewrite(MongoExpression expr, string prefix)
     {
         Assert.True(MongoFieldPrefixRewriter.TryRewrite(expr, prefix, out var rewritten));
@@ -110,7 +109,7 @@ public class MongoFieldPrefixRewriterTests
         var rewritten = (MongoElemMatchExpression)Rewrite(expr, "_lookup_Refs");
 
         Assert.Equal("_lookup_Refs.Posts", rewritten.ArrayPath);
-        // The child is element-relative and must be untouched — NOT "_lookup_Refs.Name".
+        // The child is element-relative and must be untouched, not "_lookup_Refs.Name".
         var childField = (MongoFieldExpression)((MongoBinaryExpression)rewritten.ElementPredicate!).Left;
         Assert.Equal("Name", childField.ElementName);
         Assert.False(rewritten.Negated);
@@ -133,11 +132,8 @@ public class MongoFieldPrefixRewriterTests
         Assert.Same(node.ElementPredicate, rewritten.ElementPredicate);
     }
 
-    // EF-382: MongoArrayContainsExpression must be rewritable — reachable when an owned/reference SelectMany's
-    // inner filter contains an arrayField.Contains(constant) predicate; without this arm, Rewrite's exhaustive
-    // switch would hit its catch-all throw for a shape that now translates successfully upstream (a
-    // translate-time success turning into an unexpected later throw, rather than either working end-to-end or
-    // declining up front).
+    // MongoArrayContainsExpression is reachable from an owned/reference SelectMany inner filter
+    // (arrayField.Contains(constant)), so it must be rewritable rather than fail after a successful translation.
     [Fact]
     public void Prefixes_the_array_contains_field_and_leaves_the_value_alone()
     {
@@ -151,10 +147,8 @@ public class MongoFieldPrefixRewriterTests
         Assert.False(rewritten.Negated);
     }
 
-    // EF-322: MongoInExpression over a MongoValueListExpression (per-element independently-parameterized
-    // $in values, e.g. `new[] { prm1, prm2 }.Contains(...)`) must rewrite its field like any other
-    // MongoInExpression, leaving the value-list elements alone (they pass through Rewrite's own
-    // MongoParameterExpression arm unchanged).
+    // MongoInExpression over a MongoValueListExpression (`new[] { prm1, prm2 }.Contains(...)`) rewrites its
+    // field and leaves the parameter elements alone.
     [Fact]
     public void Prefixes_the_in_field_and_leaves_value_list_elements_alone()
     {
@@ -177,11 +171,9 @@ public class MongoFieldPrefixRewriterTests
         Assert.False(rewritten.Negated);
     }
 
-    // REGRESSION: this arm used to rebuild the node with the two-argument constructor, silently defaulting
-    // NullSafe back to false. NullSafe is what makes the aggregation renderer wrap the reference in $ifNull so a
-    // MISSING element compares equal to null the way $expr's own $eq does not — so dropping it turned an
-    // owned-nav null check inside a prefixed scope (`SelectMany(o => o.Details.Where(d => d.Ship == null), …)`)
-    // into one that matched only EXPLICIT nulls and quietly lost every row whose sub-document was absent.
+    // NullSafe must survive the rewrite: it makes the renderer wrap the reference in $ifNull so a missing element
+    // compares equal to null. Dropping it made a prefixed owned-nav null check
+    // (`SelectMany(o => o.Details.Where(d => d.Ship == null), …)`) silently lose rows with an absent sub-document.
     [Fact]
     public void Prefixes_an_element_ref_and_preserves_its_null_safety()
     {
@@ -192,10 +184,8 @@ public class MongoFieldPrefixRewriterTests
         Assert.True(rewritten.NullSafe);
     }
 
-    // An outer-scoped field is root-anchored by definition (it renders with elementVariable: null regardless of
-    // any enclosing element scope), so it must pass through UNPREFIXED. Before this arm existed the node hit the
-    // exhaustive switch's throwing default, converting a clean driver-LINQ fallback into a hard failure in every
-    // MongoQueryMode.
+    // An outer-scoped field is root-anchored (renders with elementVariable: null), so it passes through
+    // unprefixed rather than failing the rewrite.
     [Fact]
     public void Leaves_an_outer_scoped_field_unprefixed()
     {
@@ -207,8 +197,8 @@ public class MongoFieldPrefixRewriterTests
         Assert.Equal("Name", rewritten.ElementName);
     }
 
-    // The disposition for a node kind with no prefixing rule is a DECLINE, not a throw — the caller falls back
-    // to driver-LINQ. MongoExpressionNodeCoverageTests pins which kinds currently land here.
+    // A node kind with no prefixing rule declines (driver-LINQ fallback) rather than throwing.
+    // MongoExpressionNodeCoverageTests pins which kinds land here.
     [Fact]
     public void Declines_rather_than_throwing_for_a_node_kind_with_no_prefixing_rule()
     {
