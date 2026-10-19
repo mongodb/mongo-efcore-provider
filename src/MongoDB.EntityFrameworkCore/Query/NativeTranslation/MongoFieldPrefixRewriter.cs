@@ -66,8 +66,10 @@ internal static class MongoFieldPrefixRewriter
             // Field is a document path like MongoInExpression.Field; Value recursion is for consistency.
             MongoArrayContainsExpression ac => new MongoArrayContainsExpression(
                 (MongoFieldExpression)Rewrite(ac.Field, prefix), Rewrite(ac.Value, prefix), ac.Negated),
+            // Field recurses rather than being cast: it may be an element ref or a computed receiver
+            // ((c.A + "").Contains("1")), which the $expr rendering reads whole.
             MongoRegexExpression r => new MongoRegexExpression(
-                (MongoFieldExpression)Rewrite(r.Field, prefix), r.Kind, Rewrite(r.Term, prefix), r.Negated, r.CaseInsensitive,
+                Rewrite(r.Field, prefix), r.Kind, Rewrite(r.Term, prefix), r.Negated, r.CaseInsensitive,
                 r.PatternOptions),
             // Prefix the array path only: the element predicate is element-relative, as $elemMatch requires.
             MongoElemMatchExpression e => new MongoElemMatchExpression(
@@ -107,7 +109,7 @@ internal static class MongoFieldPrefixRewriter
             // Carry NullSafe: dropping it removes the $ifNull, so a missing element stops comparing equal to null
             // and `d.Ship == null` in a prefixed scope loses rows.
             MongoElementRefExpression er => new MongoElementRefExpression(
-                prefix + "." + er.Path, er.Type, er.NullSafe, er.ValueProperty),
+                prefix + "." + er.Path, er.Type, er.NullSafe, er.ValueProperty, er.ThrowsOnNull),
             // Root-anchored by definition, so prefixing would be wrong.
             MongoOuterFieldExpression => expr,
             MongoConcatExpression concat => new MongoConcatExpression(

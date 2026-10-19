@@ -159,23 +159,25 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     public void Conditional_over_Substring_projection_reads_the_server_value()
         => AssertProjection(x => x.S == null ? "none" : x.S.Substring(0, 1), ["none", "none", "A"]);
 
-    // A non-nullable Length/IndexOf read of a possibly-null string would silently answer 0 for a null/missing row
-    // (EF throws), so it declines; the nullable-cast spelling stays native (see Nullable_Length_of_null_or_missing_is_null).
+    // A non-nullable Length/IndexOf projection of a possibly-null string is read as T?: a null/missing row throws EF's
+    // "Nullable object must have a value." (never a silent 0), and the value row reads its exact value. The
+    // nullable-cast spelling reads the null (see Nullable_Length_of_null_or_missing_is_null). Group keys and
+    // accumulators still decline (below).
     [Fact]
-    public void Non_nullable_Length_projection_declines()
-        => AssertDeclines(db => db.Entities.Select(x => x.S!.Length).ToList());
+    public void Non_nullable_Length_projection_throws_on_null_or_missing()
+        => AssertThrowsOnNullOrMissing(q => q.Select(x => x.S!.Length).ToList(), [3]);
 
     [Fact]
-    public void Non_nullable_Length_member_projection_declines()
-        => AssertDeclines(db => db.Entities.Select(x => new { L = x.S!.Length }).ToList());
+    public void Non_nullable_Length_member_projection_throws_on_null_or_missing()
+        => AssertThrowsOnNullOrMissing(q => q.Select(x => new { L = x.S!.Length }).ToList().Select(x => x.L).ToList(), [3]);
 
     [Fact]
-    public void Non_nullable_IndexOf_projection_declines()
-        => AssertDeclines(db => db.Entities.Select(x => x.S!.IndexOf("b")).ToList());
+    public void Non_nullable_IndexOf_projection_throws_on_null_or_missing()
+        => AssertThrowsOnNullOrMissing(q => q.Select(x => x.S!.IndexOf("b")).ToList(), [1]);
 
     [Fact]
-    public void Non_nullable_arithmetic_over_Length_projection_declines()
-        => AssertDeclines(db => db.Entities.Select(x => x.S!.Length + 1).ToList());
+    public void Non_nullable_arithmetic_over_Length_projection_throws_on_null_or_missing()
+        => AssertThrowsOnNullOrMissing(q => q.Select(x => x.S!.Length + 1).ToList(), [4]);
 
     [Fact]
     public void Non_nullable_Length_group_key_declines()
@@ -218,12 +220,13 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Non_nullable_conditional_Length_projection_declines()
-        => AssertDeclines(db => db.Entities.Select(x => x.Label != "" ? x.S!.Length : -1).ToList());
+    public void Non_nullable_conditional_Length_projection_throws_on_null_or_missing()
+        => AssertThrowsOnNullOrMissing(q => q.Select(x => x.Label != "" ? x.S!.Length : -1).ToList(), [3]);
 
     [Fact]
-    public void Non_nullable_conditional_Length_member_projection_declines()
-        => AssertDeclines(db => db.Entities.Select(x => new { L = x.Label != "" ? x.S!.Length : -1 }).ToList());
+    public void Non_nullable_conditional_Length_member_projection_throws_on_null_or_missing()
+        => AssertThrowsOnNullOrMissing(
+            q => q.Select(x => new { L = x.Label != "" ? x.S!.Length : -1 }).ToList().Select(x => x.L).ToList(), [3]);
 
     [Fact]
     public void Non_nullable_conditional_Length_group_key_declines()
@@ -263,8 +266,8 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     public void Length_ToString_of_null_or_missing_is_null()
         => AssertProjection(x => x.S!.Length.ToString(), [null, null, "3"]);
 
-    // The standard null-guard idiom: the Length branch never sees a null, so the non-nullable read stays native. The
-    // guard must test the same stored value (structurally), or the read still declines.
+    // The standard null-guard idiom: the Length branch never sees a null, so the non-nullable read needs no null check.
+    // The guard must test the same stored value (structurally), or the read throws on an unguarded null (below).
     [Fact]
     public void Null_guarded_Length_projection_stays_native()
         => AssertProjection(x => x.S == null ? -1 : x.S.Length, [-1, -1, 3]);
@@ -396,19 +399,17 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
                 .Select(x => x.E.Label + ":" + x.L).ToList());
     }
 
+    // A guard on a different field proves nothing about S, so the Length arm is read as int? and the sNull row (S null,
+    // T set) throws EF's exception. Over the plain seed every null-S row takes the -1 arm, so it reads exact values.
     [Fact]
-    public void Length_guarded_by_a_different_field_declines()
-        => AssertDeclines(db => db.Entities.Select(x => x.T == null ? -1 : x.S!.Length).ToList());
+    public void Length_guarded_by_a_different_field_throws_on_an_unguarded_null()
+        => AssertGuardedLengthThrowsOnUnguardedNull(q => q.Select(x => x.T == null ? -1 : x.S!.Length).ToList(), [-1, -1, 3]);
 
     // A true `a && b` proves both; a false one proves neither, so the Length arm may see a null S (the sNull row).
     [Fact]
-    public void Length_guarded_by_a_conjunction_declines()
-    {
-        using var db = CreateContext(
-            SeedWithIndependentNulls(nameof(Length_guarded_by_a_conjunction_declines)), MongoQueryMode.NativeOnly);
-        Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
-            () => db.Entities.Select(x => x.S == null && x.T == null ? -1 : x.S!.Length).ToList());
-    }
+    public void Length_guarded_by_a_conjunction_throws_on_an_unguarded_null()
+        => AssertGuardedLengthThrowsOnUnguardedNull(
+            q => q.Select(x => x.S == null && x.T == null ? -1 : x.S!.Length).ToList(), [-1, -1, 3]);
 
     [Theory]
     [InlineData(nameof(MongoQueryMode.DriverLinq))]
@@ -441,6 +442,43 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
             ["missing:0", "null:0", "value:3"],
             db.Entities.GroupBy(x => x.Label).Select(g => new { g.Key, T = g.Sum(x => x.S!.Length) }).AsEnumerable()
                 .Select(x => x.Key + ":" + x.T).OrderBy(x => x, StringComparer.Ordinal).ToList());
+    }
+
+    // NativeOnly and Native both run the native pipeline. Over the seed's null and missing rows the value is read as
+    // T? and throws EF's own exception; over the value row alone it reads exactly `valueRow`. No driver-LINQ oracle:
+    // its unguarded $strLenCP/$indexOfCP fails server-side on the null row.
+    private void AssertThrowsOnNullOrMissing<T>(
+        Func<IQueryable<Row>, List<T>> query, T[] valueRow, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
+    {
+        var collection = Seed(name);
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        {
+            using var db = CreateContext(collection, mode);
+            foreach (var label in new[] { "null", "missing" })
+            {
+                var exception = Assert.Throws<InvalidOperationException>(() => query(db.Entities.Where(x => x.Label == label)));
+                Assert.Equal("Nullable object must have a value.", exception.Message);
+            }
+
+            Assert.Equal(valueRow, query(db.Entities.Where(x => x.Label == "value")));
+        }
+    }
+
+    // A conditional whose guard doesn't prove S non-null: exact values over the plain seed (in Label order), EF's
+    // exception once the unguarded sNull row is present.
+    private void AssertGuardedLengthThrowsOnUnguardedNull(
+        Func<IQueryable<Row>, List<int>> query, int[] plainSeed, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
+    {
+        using (var db = CreateContext(Seed(name), MongoQueryMode.NativeOnly))
+        {
+            Assert.Equal(plainSeed, query(db.Entities.OrderBy(x => x.Label)));
+        }
+
+        using (var db = CreateContext(SeedWithIndependentNulls(name + "I"), MongoQueryMode.NativeOnly))
+        {
+            var exception = Assert.Throws<InvalidOperationException>(() => query(db.Entities.OrderBy(x => x.Label)));
+            Assert.Equal("Nullable object must have a value.", exception.Message);
+        }
     }
 
     private void AssertDeclines<T>(Func<SingleEntityDbContext<Row>, T> query, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
