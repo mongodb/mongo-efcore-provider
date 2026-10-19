@@ -46,6 +46,29 @@ internal static class NativeSlotPopulator
         var mongoQ = (MongoQueryExpression)shapedQuery.QueryExpression;
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
 
+        // EF-449: a Where composed DIRECTLY on a BARE GroupBy(key) result (no intervening Select) is, in
+        // every reachable case, EF Core's own normalization of Any(pred)/Count(pred)/LongCount(pred) into
+        // Where(pred).Any()/.Count()/.LongCount() — Where's lambda parameter is typed IGrouping<TKey,
+        // TElement>, not the root entity, so the general Where arm below (which resolves member access
+        // against the ENTITY type) must not even attempt it. Stash the recognized group-level predicate
+        // (NativeGroupByBinder.TryBindGroupWherePredicate) on MongoSelectDefinition.PendingGroupPredicate for
+        // the terminal Count/LongCount/Any to pick up (NativeGroupByBinder.TryBindGroupTerminalAggregate) —
+        // deliberately BEFORE the general post-terminal guard immediately below, which would otherwise always
+        // mark this non-native (bare GroupBy already sets IsGroupBy unconditionally). An out-of-scope
+        // predicate shape (TryBindGroupWherePredicate returns false) still marks non-native, same as today.
+        if (methodDefinition == QueryableMethods.Where
+            && mongoQ.Select.PendingGroupKey != null && mongoQ.Select.Grouping == null)
+        {
+            // A SECOND Where reaching here (mongoQ.Select.PendingGroupPredicate already set by a prior one)
+            // is out of scope — TryBindGroupWherePredicate has nowhere to put more than one stashed
+            // comparison, and overwriting it would silently drop the first Where's filter entirely.
+            var wherePredicate = call.Arguments[1].UnwrapLambdaFromQuote();
+            if (mongoQ.Select.PendingGroupPredicate != null
+                || !NativeGroupByBinder.TryBindGroupWherePredicate(mongoQ, wherePredicate))
+                mongoQ.Select.MarkNotNativelyRepresentable();
+            return;
+        }
+
         // Post-group slot-operator guard. Once a GroupBy or projected Distinct has been seen on this query
         // (IsGroupBy / IsDistinct — both bind the same degenerate-$group machinery), a slot operator applied
         // after it — a Where (HAVING) / OrderBy / ThenBy / Skip / Take — operates over the grouped result,
@@ -63,7 +86,49 @@ internal static class NativeSlotPopulator
         // SetOperation is attached), filtering/sorting/paging the combined result and emitting after the
         // set-op stage. A GroupBy/Distinct/SelectMany terminal (or a mixed one) still trips this guard.
         if (mongoQ.Select.HasTerminalOperator && !mongoQ.Select.IsSetOpTerminalOnly
-            && IsPostGroupSlotOperator(methodDefinition))
+            && IsSevenSlotOperator(methodDefinition))
+        {
+            mongoQ.Select.MarkNotNativelyRepresentable();
+            return;
+        }
+
+        // Post-CONFIRMED-JOIN slot-operator guard (EF-392). Structurally the same hazard as the post-group one
+        // above, at a different point in the pipeline: once a Select-side arm has confirmed a genuine two-sided
+        // join and registered its $lookup, Route is no longer Fallback and HasUnsupportedOperator is false, so
+        // a slot operator composed AFTER that Select would record into PipelineOps — which MongoSelectLowerer
+        // emits BEFORE the $lookup/$unwind. Over a 1:N collection-navigation $unwind that pages/filters the
+        // UN-joined outer rows (Join(...).Take(5) limits to five OWNERS, then expands them into N joined rows),
+        // and after the bare whole-entity-leaf arm it also resolves member names against the stale OUTER
+        // CollectionExpression.EntityType used to build `translator` above. Decline so the query falls back to
+        // driver-LINQ (throwing only under NativeOnly) instead of returning silently wrong rows.
+        //
+        // Deliberately NOT folded into HasTerminalOperator: that is evaluated at join-RECORDING time too,
+        // where it gates TryConfirmReferenceIncludeChain's own precondition and would break native
+        // reference-Include confirmation (tried and reverted earlier in EF-392, commit 4c7b852). This flag is
+        // set only at CONFIRMATION, which the Include path never reaches.
+        //
+        // DEFENCE-IN-DEPTH, NOT A LIVE GUARD — measured, and stated here so nobody re-derives it as load-
+        // bearing: EF Core's nav-expansion applies a join's result selector LAST (pending selector) and hoists
+        // a trailing Where ahead of it, so a slot operator normally reaches this method BEFORE the confirming
+        // Select. Instrumenting this exact branch across the whole functional suite (3018 tests) and the spec
+        // suite in both query modes (4613 × 2) produced ZERO hits; the sibling gate in
+        // NativeCardinalityBinder.TryBindReducer DID fire (twice). The forward ordering — the one that actually
+        // happens — is closed by the HasPaging/Cardinality conjuncts in
+        // MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope. Keep this branch
+        // anyway: it costs one predicate, and it is what stops the hazard the moment the ordering changes
+        // (a confirming arm that runs earlier, or an EF normalization change).
+        //
+        // Scoped to the seven slot operators, matching the guard above. Reverse needs no arm here: any sort
+        // recorded before a confirmed join is safe to flip regardless — an OrderBy over a join scope only ever
+        // translates against the ROOT scope (NativeJoinScopeTranslator.TryTranslateRootScopeOnly for a chain,
+        // depth 1's TryTranslateValue guarded by !ReferencesInnerScope otherwise; see the
+        // native-chained-join-scope plan), so it commutes with the join the same way an outer-side $match does
+        // — this is NOT rejected by HasUnsupportedOperator, unlike what an earlier version of this comment
+        // claimed (see JoinScopeWhereSlotPopulationTests / Chained_join_Where_OrderBy_Any_goes_native_under_NativeOnly
+        // for the pinned proof that a recorded sort reaches confirmation and still confirms correctly). The
+        // reducer arm's own gate lives in NativeCardinalityBinder.TryBindReducer; scalar AGGREGATES are
+        // deliberately not gated, because their $count/$group stage is emitted AFTER the lookup block.
+        if (mongoQ.Select.HasConfirmedJoinLookup && IsSevenSlotOperator(methodDefinition))
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;
@@ -75,50 +140,66 @@ internal static class NativeSlotPopulator
             // recorded after it too, and the lowerer emits ops in that same order — correct by MongoDB's
             // sequential pipeline semantics. No canonical-order guard.
             var predicate = call.Arguments[1].UnwrapLambdaFromQuote();
+            // EF-421: SelfParam identifies THIS predicate's own root parameter, so a nested correlated
+            // element predicate (Count(pred)/Any/All) whose free parameter is identical to it can be built
+            // as a two-scope translator instead of declining outright — see MongoExpressionTranslator.SelfParam.
+            translator.SelfParam = predicate.Parameters[0];
             if (translator.TryTranslate(predicate.Body, out var predicateNode))
                 mongoQ.Select.AddPredicateConjunct(predicateNode);
+            // Outer-side-only: PipelineOps ($match) always lower BEFORE the $lookup stage that materializes
+            // the join's Inner side, so a Where reaching Inner would filter on a not-yet-joined field —
+            // NativeJoinScopeTranslator.ReferencesInnerScope declines that here, deferring Inner access to
+            // the Select-side binder (Task 5). See NativeJoinScopeTranslator.ReferencesInnerScope's remarks.
+            //
+            // WHY THIS GATE HAS FEWER CONJUNCTS THAN THE SELECT ARMS' SHARED ONE
+            // (MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope, which adds
+            // Joins.Count == 1, the key-selector/left-outer/collection-nav checks and !HasUnsupportedOperator):
+            // those conjuncts all protect the act of REGISTERING the join's $lookup, and this arm registers
+            // nothing — it only records a $match conjunct into PipelineOps. If the join is never confirmed the
+            // query routes to Fallback and that conjunct is discarded unused; if it IS confirmed, it was
+            // confirmed through the shared gate, so every one of those conjuncts held. The asymmetry is
+            // therefore deliberate: do NOT copy this shorter set to a registering call site, and do not weaken
+            // the Select arms' gate to match it.
+            else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } singleLevelScope
+                     && !NativeJoinScopeTranslator.ReferencesInnerScope(predicate.Parameters[0], predicate.Body)
+                     && NativeJoinScopeTranslator.TryTranslatePredicate(
+                         singleLevelScope, predicate.Parameters[0], predicate.Body, out var joinPredicateNode))
+                mongoQ.Select.AddPredicateConjunct(joinPredicateNode);
+            // Chained (depth >= 2) join scope: only the root/outermost scope is resolvable here — any access
+            // to an Inner side at any depth defers to the Select-side binder, same rationale as the depth-1
+            // ReferencesInnerScope check above. TryTranslateRootScopeOnly enforces this by construction.
+            else if (mongoQ.Select.JoinScope is { Levels.Count: > 1 } chainedScope
+                     && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
+                         chainedScope, predicate.Parameters[0], predicate.Body, valueMode: false, out var chainedPredicateNode))
+                mongoQ.Select.AddPredicateConjunct(chainedPredicateNode);
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }
         else if (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending)
         {
-            var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
-            var ascending = methodDefinition == QueryableMethods.OrderBy;
-            if (translator.TryTranslateField(keySelector.Body, out var keyNode))
-                mongoQ.Select.StartOrReplaceSort(new MongoOrdering(keyNode, ascending));
-            else if (TryTranslateComputedSortKey(translator, keySelector.Body, out var computedKey))
-                mongoQ.Select.StartOrReplaceSort(new MongoOrdering(computedKey, ascending));
-            else
-                mongoQ.Select.MarkNotNativelyRepresentable();
+            // OrderBy STARTS a sort (replacing any existing one); ThenBy APPENDS to it. That is the only
+            // difference between this arm and the next, so both share PopulateSortSlot.
+            PopulateSortSlot(
+                mongoQ, translator, call,
+                ascending: methodDefinition == QueryableMethods.OrderBy,
+                record: mongoQ.Select.StartOrReplaceSort);
         }
         else if (methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending)
         {
-            var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
-            var ascending = methodDefinition == QueryableMethods.ThenBy;
-            if (translator.TryTranslateField(keySelector.Body, out var keyNode))
-                mongoQ.Select.AppendThenBy(new MongoOrdering(keyNode, ascending));
-            else if (TryTranslateComputedSortKey(translator, keySelector.Body, out var computedKey))
-                mongoQ.Select.AppendThenBy(new MongoOrdering(computedKey, ascending));
-            else
-                mongoQ.Select.MarkNotNativelyRepresentable();
+            PopulateSortSlot(
+                mongoQ, translator, call,
+                ascending: methodDefinition == QueryableMethods.ThenBy,
+                record: mongoQ.Select.AppendThenBy);
         }
         else if (methodDefinition == QueryableMethods.Skip)
         {
             // Repeated / non-canonical-order paging is natively representable: each Skip appends a $skip op
             // at its arrival position, and the lowerer emits ops verbatim.
-            var count = TranslateCountExpression(call.Arguments[1]);
-            if (count is null)
-                mongoQ.Select.MarkNotNativelyRepresentable();
-            else
-                mongoQ.Select.AppendSkip(count);
+            PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendSkip);
         }
         else if (methodDefinition == QueryableMethods.Take)
         {
-            var count = TranslateCountExpression(call.Arguments[1]);
-            if (count is null)
-                mongoQ.Select.MarkNotNativelyRepresentable();
-            else
-                mongoQ.Select.AppendLimit(count);
+            PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendLimit);
         }
         else if (methodDefinition == QueryableMethods.Reverse)
         {
@@ -183,10 +264,60 @@ internal static class NativeSlotPopulator
     }
 
     // The seven slot operators whose native lowering (a $match / $sort / $skip / $limit) would be emitted
-    // BEFORE a $group when applied after a GroupBy — so they must force fallback on a grouped query (see the
-    // post-group guard in PopulateNativeSlots). Deliberately excludes Select / OfType / GroupBy and the
-    // reducer / scalar-aggregate operators so the supported grouped Select is not marked non-native.
-    private static bool IsPostGroupSlotOperator(MethodInfo methodDefinition)
+    // BEFORE a stage they must run after — a $group when applied after a GroupBy, or the $lookup/$unwind when
+    // applied after a CONFIRMED genuine join. Both post-terminal guards in PopulateNativeSlots key off this
+    // same list. Deliberately excludes Select / OfType / GroupBy and the reducer / scalar-aggregate operators
+    // so the supported grouped Select is not marked non-native.
+    /// <summary>
+    /// Records an <c>OrderBy</c>/<c>OrderByDescending</c>/<c>ThenBy</c>/<c>ThenByDescending</c> key as a sort
+    /// ordering via <paramref name="record"/>, trying in turn a plain field key, a computed key, a
+    /// single-level join-scope key, and a chained join-scope root-scope key, and marking the query non-native
+    /// if none translates. The four operators differ only in <paramref name="ascending"/> and in whether they
+    /// start or extend the sort, both of which are the caller's to supply — so all four candidate translations
+    /// live here once rather than being restated per operator.
+    /// </summary>
+    private static void PopulateSortSlot(
+        MongoQueryExpression mongoQ,
+        MongoExpressionTranslator translator,
+        MethodCallExpression call,
+        bool ascending,
+        Action<MongoOrdering> record)
+    {
+        var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
+        translator.SelfParam = keySelector.Parameters[0];
+
+        if (translator.TryTranslateField(keySelector.Body, out var keyNode))
+            record(new MongoOrdering(keyNode, ascending));
+        else if (TryTranslateComputedSortKey(translator, keySelector.Body, out var computedKey))
+            record(new MongoOrdering(computedKey, ascending));
+        else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } singleLevelScope
+                 && !NativeJoinScopeTranslator.ReferencesInnerScope(keySelector.Parameters[0], keySelector.Body)
+                 && NativeJoinScopeTranslator.TryTranslateValue(
+                     singleLevelScope, keySelector.Parameters[0], keySelector.Body, out var joinSortKey))
+            record(new MongoOrdering(joinSortKey, ascending));
+        else if (mongoQ.Select.JoinScope is { Levels.Count: > 1 } chainedScope
+                 && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
+                     chainedScope, keySelector.Parameters[0], keySelector.Body, valueMode: true, out var chainedSortKey))
+            record(new MongoOrdering(chainedSortKey, ascending));
+        else
+            mongoQ.Select.MarkNotNativelyRepresentable();
+    }
+
+    /// <summary>
+    /// Records a <c>Skip</c>/<c>Take</c> count via <paramref name="record"/>, marking the query non-native if
+    /// the count expression does not translate. The two operators differ only in which op they append.
+    /// </summary>
+    private static void PopulatePagingSlot(
+        MongoQueryExpression mongoQ, MethodCallExpression call, Action<MongoExpression> record)
+    {
+        var count = TranslateCountExpression(call.Arguments[1]);
+        if (count is null)
+            mongoQ.Select.MarkNotNativelyRepresentable();
+        else
+            record(count);
+    }
+
+    private static bool IsSevenSlotOperator(MethodInfo methodDefinition)
         => methodDefinition == QueryableMethods.Where
            || methodDefinition == QueryableMethods.OrderBy
            || methodDefinition == QueryableMethods.OrderByDescending
@@ -202,14 +333,11 @@ internal static class NativeSlotPopulator
     // QueryableMethods constant to compare against — it is recognized via the internal IsVectorSearch()
     // extension instead, whose explicit branch above runs before the catch-all, so this whitelist never needs
     // to hold it.
+    // The seven slot operators are a PREFIX of this list, by construction — expressed as a call rather than
+    // restated, so the two can no longer disagree. Keeping them as two independent copies was the "miss either
+    // half and the operator is silently dropped" trap the Query area AGENTS.md documents.
     internal static bool IsNativeRepresentableSlotOperator(MethodInfo methodDefinition)
-        => methodDefinition == QueryableMethods.Where
-           || methodDefinition == QueryableMethods.OrderBy
-           || methodDefinition == QueryableMethods.OrderByDescending
-           || methodDefinition == QueryableMethods.ThenBy
-           || methodDefinition == QueryableMethods.ThenByDescending
-           || methodDefinition == QueryableMethods.Skip
-           || methodDefinition == QueryableMethods.Take
+        => IsSevenSlotOperator(methodDefinition)
            || methodDefinition == QueryableMethods.Select
            || methodDefinition == QueryableMethods.OfType
            || methodDefinition == QueryableMethods.Distinct

@@ -428,17 +428,16 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             () => nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label.ToUpper()).ToList());
     }
 
-    // ── 13. Parameterized Where leg alongside a computed sort — the mandatory late-decline case ────
+    // ── 13. Parameterized Where leg alongside a computed sort ─────────────────────────────────────
 
     [Fact]
     public void Parameterized_where_leg()
     {
         var collection = Seed(nameof(Parameterized_where_leg));
 
-        // A captured local inside string.StartsWith has no native regex rendering (the renderer refuses a
-        // parameterized regex term), so the native factory declines LATE and the WHOLE query — including the
-        // computed OrderBy — falls back to driver-LINQ. Run under the DEFAULT Native mode, deliberately: this
-        // route does not exist under NativeOnly (which throws on the decline).
+        // A captured local inside string.StartsWith is natively representable (it defers its escape/anchor
+        // to a placeholder sentinel resolved at Build time), so this — including the computed OrderBy — goes
+        // fully native under the DEFAULT Native mode.
         var prefix = "p";
         using var db = CreateContext(collection, MongoQueryMode.Native);
 

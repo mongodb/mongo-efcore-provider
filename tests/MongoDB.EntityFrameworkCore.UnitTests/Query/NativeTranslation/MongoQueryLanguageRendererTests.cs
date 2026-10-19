@@ -36,12 +36,24 @@ public class MongoQueryLanguageRendererTests
         public bool Active { get; set; }
         public int Score { get; set; }
         public string Name { get; set; } = null!;
+
+        // Final-review fix 3 (EF-421 round 2): a value-converted (non-default-serialized) bool, so a bare
+        // outer-scoped reference to it under Not can exercise RenderUnary's fall-to-$expr branch's own
+        // truthiness guard (see Not_over_a_bare_outer_field_with_non_default_serialization_declines... below).
+        public bool ConvertedActive { get; set; }
     }
 
     private static IProperty GetProperty<T>(string propertyName) where T : class
     {
         using var db = SingleEntityDbContext.Create<T>();
         return db.Model.FindEntityType(typeof(T))!.FindProperty(propertyName)!;
+    }
+
+    private static IProperty GetConvertedActiveProperty()
+    {
+        using var db = SingleEntityDbContext.Create<Customer>(
+            mb => mb.Entity<Customer>().Property(c => c.ConvertedActive).HasConversion<string>());
+        return db.Model.FindEntityType(typeof(Customer))!.FindProperty(nameof(Customer.ConvertedActive))!;
     }
 
     private class Blog
@@ -487,14 +499,35 @@ public class MongoQueryLanguageRendererTests
     }
 
     [Fact]
-    public void Regex_with_parameterized_term_throws_not_supported()
+    public void Renders_parameterized_regex_term_as_a_placeholder_sentinel()
     {
+        // A parameterized term can't be escaped/anchored at render time (the value isn't known yet) — it
+        // must defer to a placeholder sentinel that MongoPipelineFactory.Build resolves per execution
+        // (see MongoPipelineFactoryTests for the end-to-end escape+anchor behavior at Build time).
         var name = GetProperty<Customer>("Name");
+        var placeholders = new PlaceholderTable();
         var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
             MongoRegexKind.Contains, new MongoParameterExpression("term", name), negated: false);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable()));
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, placeholders);
+
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(rendered["Name"], out var index));
+        Assert.Equal(0, index);
+    }
+
+    [Fact]
+    public void Renders_negated_parameterized_regex_term_wraps_sentinel_in_not()
+    {
+        var name = GetProperty<Customer>("Name");
+        var placeholders = new PlaceholderTable();
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.StartsWith, new MongoParameterExpression("term", name), negated: true);
+
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, placeholders);
+
+        Assert.True(
+            PlaceholderTable.TryGetPlaceholderIndex(rendered["Name"].AsBsonDocument["$not"], out var index));
+        Assert.Equal(0, index);
     }
 
     // ------------------------------------------------------------------
@@ -719,6 +752,42 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(
             BsonDocument.Parse("{ $expr: { $not: [ { $gt: [\"$Rank\", \"$Other\"] } ] } }"),
             rendered);
+    }
+
+    [Fact]
+    public void Not_over_a_bare_outer_field_with_non_default_serialization_declines_instead_of_expr_truthiness()
+    {
+        // Final-review fix 3 (EF-421 round 2): RenderUnary's fall-to-$expr branch (the one exercised by the
+        // test immediately above, for a field-to-field comparison operand) calls
+        // MongoAggregationExpressionRenderer.CanRender(unary.Operand) directly on the OPERAND — NOT re-entering
+        // CanRender's own MongoUnaryExpression{Not} arm, which already carries the AllFieldsDefaultSerialized
+        // truthiness guard. A bare MongoOuterFieldExpression operand instead hits CanRender's unconditional top
+        // arm (`MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression => true`), so
+        // without this call site repeating the guard itself, a value-converted (non-default-serialized) outer
+        // bool under Not would render as { $expr: { $not: ["$ConvertedActive"] } } — raw truthiness on the
+        // STORED string ("True"/"False", both non-empty and therefore truthy) — instead of correctly declining.
+        // The render-time NativeTranslationNotSupportedException is caught by TryBuildPipeline as a graceful
+        // driver-LINQ fallback, matching every other truthiness guard in this file's disposition.
+        var convertedActive = GetConvertedActiveProperty();
+        var pred = new MongoUnaryExpression(
+            MongoUnaryOperator.Not, new MongoOuterFieldExpression(convertedActive, "ConvertedActive"));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable()));
+    }
+
+    [Fact]
+    public void Not_over_a_bare_outer_field_with_default_serialization_still_renders_via_expr()
+    {
+        // Control for the test above: an OUTER bool field with ORDINARY (default) serialization must keep
+        // rendering successfully via $expr — the new guard must not over-decline a genuinely renderable outer
+        // bool under Not, only a non-default-serialized one.
+        var active = GetProperty<Customer>("Active");
+        var pred = new MongoUnaryExpression(MongoUnaryOperator.Not, new MongoOuterFieldExpression(active, "Active"));
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ $expr: { $not: [ \"$Active\" ] } }"), rendered);
     }
 
     [Fact]
@@ -979,5 +1048,25 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(
             BsonDocument.Parse("{ Posts: { $elemMatch: { 'Comments.1': { $exists: true } } } }"),
             rendered);
+    }
+
+    [Fact]
+    public void IsQueryDialectRenderable_rejects_a_conditional_expression()
+    {
+        var conditional = new MongoConditionalExpression(
+            new MongoConstantExpression(true, forSerialization: null),
+            new MongoConstantExpression(1, forSerialization: null),
+            new MongoConstantExpression(2, forSerialization: null));
+
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(conditional));
+    }
+
+    [Fact]
+    public void IsQueryDialectRenderable_rejects_a_date_part_expression()
+    {
+        var datePart = new MongoDatePartExpression(
+            new MongoConstantExpression(DateTime.UtcNow, forSerialization: null), MongoDatePart.Year);
+
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(datePart));
     }
 }

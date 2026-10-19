@@ -831,6 +831,151 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         Assert.NotNull(Run(driverDb));   // DriverLinq throws the same way — no Native-vs-DriverLinq divergence
     }
 
+    // ---------------------------------------------------------------------------------------------------
+    // EF-449: GroupBy(key).{Count()|LongCount()|Any()|Any(pred)|All(pred)|Count(pred)|LongCount(pred)} with
+    // NO intervening Select — the EF Core spec suite's "GroupBy_without_aggregate" family
+    // (NorthwindGroupByQueryTestBase). Previously an unimplemented native shape (bare GroupBy sets
+    // IsGroupBy unconditionally, so NativeCardinalityBinder.TryBindAggregate's post-terminal guard always
+    // declined it) that silently fell back to driver-LINQ under Native. Succeeding under NativeOnly with
+    // correct data is the "went native" proof for each shape.
+    // ---------------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void GroupBy_then_bare_Count_goes_native()
+    {
+        // Number of distinct groups (US, UK, FR) => 3.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_bare_Count_goes_native));
+
+        var result = db.Entities.GroupBy(o => o.Country).Count();
+
+        Assert.Equal(3, result);
+    }
+
+    [Fact]
+    public void GroupBy_then_bare_LongCount_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_bare_LongCount_goes_native));
+
+        var result = db.Entities.GroupBy(o => o.Country).LongCount();
+
+        Assert.Equal(3L, result);
+    }
+
+    [Fact]
+    public void GroupBy_then_bare_Any_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_bare_Any_goes_native));
+
+        Assert.True(db.Entities.GroupBy(o => o.Country).Any());
+    }
+
+    [Fact]
+    public void GroupBy_then_bare_Any_over_empty_source_goes_native()
+    {
+        using var db = CreateContext([], MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_bare_Any_over_empty_source_goes_native));
+
+        Assert.False(db.Entities.GroupBy(o => o.Country).Any());
+    }
+
+    [Fact]
+    public void GroupBy_then_Any_with_count_predicate_goes_native()
+    {
+        // Groups with more than one order: US (2), UK (2). FR has only 1.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_Any_with_count_predicate_goes_native));
+
+        Assert.True(db.Entities.GroupBy(o => o.Country).Any(g => g.Count() > 1));
+    }
+
+    [Fact]
+    public void GroupBy_then_Any_with_count_predicate_matching_nothing_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_Any_with_count_predicate_matching_nothing_goes_native));
+
+        Assert.False(db.Entities.GroupBy(o => o.Country).Any(g => g.Count() > 10));
+    }
+
+    [Fact]
+    public void GroupBy_then_All_with_count_predicate_goes_native()
+    {
+        // FR has only 1 order, so not every group has more than one.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_All_with_count_predicate_goes_native));
+
+        Assert.False(db.Entities.GroupBy(o => o.Country).All(g => g.Count() > 1));
+    }
+
+    [Fact]
+    public void GroupBy_then_All_with_count_predicate_matching_every_group_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_All_with_count_predicate_matching_every_group_goes_native));
+
+        Assert.True(db.Entities.GroupBy(o => o.Country).All(g => g.Count() >= 1));
+    }
+
+    [Fact]
+    public void GroupBy_then_Count_with_count_predicate_goes_native()
+    {
+        // Two groups (US, UK) have more than one order.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_Count_with_count_predicate_goes_native));
+
+        Assert.Equal(2, db.Entities.GroupBy(o => o.Country).Count(g => g.Count() > 1));
+    }
+
+    [Fact]
+    public void GroupBy_then_LongCount_with_count_predicate_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_LongCount_with_count_predicate_goes_native));
+
+        Assert.Equal(2L, db.Entities.GroupBy(o => o.Country).LongCount(g => g.Count() > 1));
+    }
+
+    [Fact]
+    public void GroupBy_then_bare_Count_matches_driver_linq()
+    {
+        var seed = SeedOrders();
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native, nameof(GroupBy_then_bare_Count_matches_driver_linq) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq, nameof(GroupBy_then_bare_Count_matches_driver_linq) + "D");
+
+        int Run(SingleEntityDbContext<Order> db) => db.Entities.GroupBy(o => o.Country).Count();
+
+        var native = Run(nativeDb);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void GroupBy_then_All_with_count_predicate_matches_driver_linq()
+    {
+        var seed = SeedOrders();
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native, nameof(GroupBy_then_All_with_count_predicate_matches_driver_linq) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq, nameof(GroupBy_then_All_with_count_predicate_matches_driver_linq) + "D");
+
+        bool Run(SingleEntityDbContext<Order> db) => db.Entities.GroupBy(o => o.Country).All(g => g.Count() > 1);
+
+        var native = Run(nativeDb);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void GroupBy_then_Any_with_compound_predicate_falls_back_under_native_only()
+    {
+        // Out of EF-449's scope: a compound (&&) predicate over more than one group-level aggregate. Must
+        // fall back cleanly (throws under NativeOnly), not be mistranslated.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_then_Any_with_compound_predicate_falls_back_under_native_only));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            db.Entities.GroupBy(o => o.Country).Any(g => g.Count() > 1 && g.Count() < 10));
+    }
+
     [Fact]
     public void GroupBy_aggregate_projection_with_count_still_goes_native_after_guard()
     {

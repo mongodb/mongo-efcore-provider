@@ -39,12 +39,13 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// </para>
 /// <para>
 /// <b>The parameterized-<c>Where</c> legs are not decoration.</b> A captured local in a
-/// <c>string.StartsWith</c> is the measured trigger for a LATE native-factory decline: the query is routed
-/// native at translation time, the renderer then declines the parameterized regex, and the driver-LINQ bridge
-/// executes the captured chain — <c>$project</c> and all — under the DEFAULT <c>Native</c> mode. That route
-/// keys the projection by MEMBER name while the shaper reads by document PATH, and it returned empty
-/// collections until the late-fallback strip was widened to fire on any document-path alias override. A
-/// constant-only <c>Where</c> never reaches it and would leave this file falsely green.
+/// <c>string.StartsWith</c> proves the array leaf stays correct with a genuine query parameter, not just a
+/// baked-in literal. A parameterized regex term is natively representable (it defers its escape/anchor to a
+/// placeholder sentinel resolved at Build time), so this now executes natively under every
+/// <see cref="MongoQueryMode"/>, including <see cref="MongoQueryMode.NativeOnly"/>; it previously exercised a
+/// LATE native-factory decline (translate-time routed native, then the renderer declined the parameterized
+/// regex at render time, so the driver-LINQ bridge executed the captured chain under the DEFAULT
+/// <c>Native</c> mode) before that gap was closed.
 /// </para>
 /// </summary>
 [XUnitCollection("QueryTests")]
@@ -127,13 +128,14 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         var collection = Seed(nameof(Owned_hop_array_leaf_behind_a_parameterized_where_reads_correct_values) + shadowKey);
         var model = shadowKey ? ShadowKeyModel : KeyedModel;
 
-        // A CAPTURED LOCAL, not a constant. The native renderer declines a parameterized regex term, so
-        // TryBuildNativeFactory returns null AFTER the alias-addressed shaper has been built, and the
-        // driver-LINQ bridge runs the captured chain instead — under the DEFAULT Native mode.
+        // A captured local, not a constant — a genuine query parameter. This used to be the trigger for a
+        // LATE native-factory decline (the native renderer declined a parameterized regex term at render
+        // time, after the alias-addressed shaper had already been built, so the driver-LINQ bridge ran the
+        // captured chain instead under the DEFAULT Native mode). A parameterized StartsWith term is now
+        // natively representable, so all three modes — including NativeOnly — execute natively and agree.
         var prefix = "a_";
 
-        // Native and DriverLinq both execute; NativeOnly must decline at the gate rather than answer.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in AllModes)
         {
             using var db = CreateContext(collection, model, mode);
 
@@ -145,11 +147,6 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
             Assert.Equal("a_populated", row.Title);
             Assert.Equal(new[] {"n1", "n2"}, row.Notes.Select(n => n.Text));
         }
-
-        using var nativeOnly = CreateContext(collection, model, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => nativeOnly.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix))
-                .Select(b => new {b.Title, b.Home.Notes}).ToList());
     }
 
     // ── 3. The emitted alias ──────────────────────────────────────────────────────

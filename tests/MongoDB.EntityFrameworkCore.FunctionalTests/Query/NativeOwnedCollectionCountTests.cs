@@ -76,9 +76,6 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     // Full-message equality would also have to match the "Executed MQL query\n<namespace>.aggregate([...])"
     // wrapper NativeSelectManyTests.cs's idiom leaves out — Assert.Contains against the captured pipeline
     // fragment (the actual idiom that file uses) pins the pipeline shape without coupling to that wrapper.
-    private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
-        => Assert.Contains(expected, spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
-
     /// <summary>
     /// Describes the emitted <c>$project</c> stage by which of the two aliases under test appear in it AS FIELD
     /// NAMES — <c>"N"</c>, a member-name alias, and <c>"_v"</c>, the reserved <c>ProjectionAliasTier</c>
@@ -320,24 +317,18 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
     // Runs the query under NativeOnly (routing proof) and under DriverLinq (value oracle), asserts the two
     // agree on the matched set, and returns the matched titles.
+    // Runs `query` in one mode and reduces it to the comparable Title list every assertion below compares on.
+    // The MODE ORCHESTRATION lives in NativeModeAssert; this is just this class's own plumbing.
+    private List<string> RunTitles(
+        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryMode mode)
+    {
+        using var db = CreateContext(collection, mode, BlogModel);
+        return query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
+    }
+
     private List<string> AssertNativeAndParity(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
-    {
-        List<string> nativeOnly;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
-        {
-            nativeOnly = query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
-        }
-
-        List<string> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
-        {
-            driver = query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
-        }
-
-        Assert.Equal(driver, nativeOnly);
-        return nativeOnly;
-    }
+        => NativeModeAssert.NativeAndParity(mode => RunTitles(collection, query, mode));
 
     // Asserts a shape is NOT native: it throws NativeTranslationNotSupportedException under NativeOnly
     // (a clean decline, not a crash), AND that the fallback it relies on actually delivers correct,
@@ -345,37 +336,14 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     // against a hand-verified expected value.
     private List<string> AssertDeclinesCleanly(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
-    {
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => query(db.Entities.AsNoTracking()).ToList());
-        }
-
-        List<string> native;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
-        {
-            native = query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
-        }
-
-        List<string> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
-        {
-            driver = query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
-        }
-
-        Assert.Equal(driver, native);
-        return native;
-    }
+        => NativeModeAssert.DeclinesCleanly(mode => RunTitles(collection, query, mode));
 
     // Proves a shape goes native (NativeOnly succeeds) without a driver-LINQ oracle leg — used for the
     // full-matrix seed, whose missing/null Posts rows abort the driver's own translation.
+    // NativeOnly forbids the fallback, so a result here is proof the shape went native.
     private List<string> AssertNativeOnlyMatches(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
-    {
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
-        return query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
-    }
+        => RunTitles(collection, query, MongoQueryMode.NativeOnly);
 
     // NOTE: `threshold` is a [Theory] parameter captured into the lambda, so EF parameterizes it and every row
     // here routes to the $expr tier, NOT the array-index constant form. That is the same trap the matrix comment
@@ -947,7 +915,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         };
         query.ToList();
 
-        AssertMql(spy, expectedMatch);
+        spy.AssertExecutedMqlContains(expectedMatch);
     }
 
     [Fact]
@@ -958,7 +926,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
         db.Entities.AsNoTracking().Where(b => b.Posts.Count == 2).ToList();
 
-        AssertMql(spy, "{ \"Posts.1\" : { \"$exists\" : true }, \"Posts.2\" : { \"$exists\" : false } }");
+        spy.AssertExecutedMqlContains("{ \"Posts.1\" : { \"$exists\" : true }, \"Posts.2\" : { \"$exists\" : false } }");
     }
 
     [Fact]
@@ -973,8 +941,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         // A single pinned fragment, not three independent Assert.Contains checks — three separate substring
         // assertions ($ifNull, $size, $expr) would all still pass even if $ifNull/$size were nested in the
         // wrong order, since Assert.Contains says nothing about their relative position or nesting.
-        AssertMql(spy,
-            "{ \"$expr\" : { \"$gt\" : [{ \"$size\" : { \"$ifNull\" : [\"$Posts\", []] } }, 1] } }");
+        spy.AssertExecutedMqlContains("{ \"$expr\" : { \"$gt\" : [{ \"$size\" : { \"$ifNull\" : [\"$Posts\", []] } }, 1] } }");
     }
 
     [Fact]
@@ -986,7 +953,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
         db.Entities.AsNoTracking().Where(b => b.Posts.Any()).ToList();
 
-        AssertMql(spy, "{ \"Posts.0\" : { \"$exists\" : true } }");
+        spy.AssertExecutedMqlContains("{ \"Posts.0\" : { \"$exists\" : true } }");
     }
 
     [Fact]
@@ -997,7 +964,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
         db.Entities.AsNoTracking().Where(b => !b.Posts.Any()).ToList();
 
-        AssertMql(spy, "{ \"Posts.0\" : { \"$exists\" : false } }");
+        spy.AssertExecutedMqlContains("{ \"Posts.0\" : { \"$exists\" : false } }");
     }
 
     [Fact]

@@ -62,7 +62,11 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="MongoQueryMode"/> — so <c>NativeOnly</c> gets the identical
 /// <see cref="InvalidOperationException"/>, NOT a <see cref="NativeTranslationNotSupportedException"/>. The
 /// same reasoning is recorded on <c>NativeOwnedCollectionFilteredCountTests</c>'s
-/// <c>Bare_correlated_element_predicate_still_hard_fails_in_every_mode</c>.
+/// <c>Primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode</c> (EF-421 Task 7
+/// re-baselined the sibling correlated-predicate row this comment used to cite — SelfParam now reaches
+/// NativeProjectionBinder, so that shape goes native instead of hitting this crash route at all — but the
+/// remaining Primitive/Where(pred).Count() rows in that same test still exercise the identical
+/// mode-independent <see cref="InvalidOperationException"/> disposition).
 /// </para>
 /// </remarks>
 [XUnitCollection("QueryTests")]
