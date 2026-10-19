@@ -429,6 +429,26 @@ These throw `NotSupportedException` naming both properties. Operands stored alik
 
 Store both operands the same way (sharing one converter instance), or compare on the client after `AsEnumerable()`. Operands that happened to encode alike but are configured differently, such as an enum stored as its name against a plain string property, are refused too.
 
+### A case mapping under a retained projection now throws; owned references and scalars beside it read correctly
+
+#### Old behavior
+
+When `Distinct` or a set operation composes over a `Select` that mixes an owned reference with other leaves, the server returns the projected documents and the reader mis-read them:
+
+```c#
+context.Rows.Select(x => new { R = x.O }).Distinct();                      // R.W read null for every row
+context.Rows.Select(x => new { R = x.O, V = x.S }).Distinct();             // V read null for every row
+context.Rows.Select(x => new { R = x.O, V = x.S.ToUpper() }).Distinct();   // V read "" for a null S
+```
+
+#### New behavior
+
+The owned reference and the plain scalar are read from the projected document under their member names and return the right values. The case mapping (`ToUpper`, `ToLower`) in the last query now throws `InvalidOperationException` for every row, including when no `S` is null (non-null values read correctly before): the server's `$toUpper` answers an empty string for a null source where .NET answers null, and the projected document no longer holds the raw value to apply it to. The guard matches a projected member that is directly a `ToUpper/ToLower` call, by member name in the query's `Select`s; `ToUpper().Length` and similar are not detected. It applies only when an entity reference (such as an owned reference) is in the projection, so the projection takes the mixed reader.
+
+#### Mitigations
+
+Apply the case mapping after `AsEnumerable()`, and deduplicate again if rows that differ only by case should merge: `context.Rows.Select(x => new { R = x.O, x.S }).Distinct().AsEnumerable().Select(a => new { a.R, V = a.S?.ToUpper() }).Distinct()`.
+
 ### `Random` and `Guid.NewGuid`/`Guid.CreateVersion7` calls inside a query now throw
 
 #### Old behavior
