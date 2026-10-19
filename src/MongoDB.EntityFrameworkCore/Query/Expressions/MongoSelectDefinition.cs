@@ -151,6 +151,44 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal void MarkJoinInnerAccessConfirmed() => _joinInnerAccessConfirmed = true;
 
+    private bool _referenceCollectionCountPredicateConfirmed;
+
+    /// <summary>
+    /// <see langword="true"/> once <see cref="NativeTranslation.NativeReferenceCollectionCountPredicateBinder"/>
+    /// recognized an unfiltered reference-collection-nav <c>Count</c>/<c>LongCount</c> comparison in a
+    /// <c>Where</c> predicate and registered its own <c>$lookup</c>. Deliberately a SEPARATE flag from
+    /// <see cref="JoinInnerAccessConfirmed"/>, even though <see cref="ActiveOps"/> routes both the same way
+    /// (post-lookup placement is correct for both, for the reason <see cref="PostJoinOps"/> documents): this
+    /// flag additionally feeds <see cref="Route"/>'s retroactive decline below, which must be able to ask
+    /// "did OUR shape confirm" without also firing for a genuine join-scope confirmation, and vice versa
+    /// (<c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope</c>'s own
+    /// <see cref="JoinInnerAccessConfirmed"/> check must not be tripped by a query that never had a join at
+    /// all).
+    /// </summary>
+    /// <remarks>
+    /// EF-322 final review (Critical 1/2): this predicate's own <c>$lookup</c> is registered eagerly, at
+    /// translation time, before it is known whether a LATER set operation (<c>Union</c>/<c>Concat</c>), a
+    /// projected <c>Distinct</c>/keyed <c>GroupBy</c>, or a genuine cross-collection <c>Join</c> will also
+    /// attach to this same select — each of those is lowered by a DIFFERENT
+    /// <see cref="NativeTranslation.MongoSelectLowerer"/> branch that does not know to flush
+    /// <see cref="PostJoinOps"/> at the point our <c>$match</c> needs it
+    /// (the set-op <c>OperandsProjected</c>/trailing-ops branches never emit <see cref="PostJoinOps"/> at all;
+    /// a later <c>Join</c> can even flip <see cref="JoinInnerAccessConfirmed"/>-driven paging eligibility in
+    /// ways that were never exercised by this predicate). Rather than teach every such branch a new emission
+    /// point (a wide, easy-to-miss-a-branch change), <see cref="Route"/> retroactively declines the WHOLE
+    /// combination once the full query shape is known — this predicate simply does not go native when
+    /// composed with a set operation, a projected <c>Distinct</c>/keyed <c>GroupBy</c>, or any <c>Join</c>,
+    /// falling back to driver-LINQ (which the shared <c>InjectAfterRoot</c> lookup registration already
+    /// supports) exactly as it did before this predicate existed.
+    /// </remarks>
+    internal bool ReferenceCollectionCountPredicateConfirmed => _referenceCollectionCountPredicateConfirmed;
+
+    /// <summary>
+    /// Records that <see cref="NativeTranslation.NativeReferenceCollectionCountPredicateBinder"/> recognized
+    /// and registered this predicate's <c>$lookup</c>. See <see cref="ReferenceCollectionCountPredicateConfirmed"/>.
+    /// </summary>
+    internal void MarkReferenceCollectionCountPredicateConfirmed() => _referenceCollectionCountPredicateConfirmed = true;
+
     /// <summary>
     /// Relocates a trailing <see cref="MongoSortOp"/> already recorded in <see cref="PipelineOps"/> (from
     /// earlier Outer-only keys in the SAME <c>OrderBy</c>/<c>ThenBy</c> chain) into <see cref="PostJoinOps"/>,
@@ -201,9 +239,17 @@ internal sealed class MongoSelectDefinition
     /// $group and the outer GroupBy's) is decided once, structurally, by <c>MongoSelectLowerer</c>, not by this
     /// property.
     /// </summary>
+    /// <remarks>
+    /// EF-322 final review: <see cref="ReferenceCollectionCountPredicateConfirmed"/> shares the
+    /// <see cref="JoinInnerAccessConfirmed"/> branch's target (post-lookup placement is correct for both), but
+    /// is checked as a separate flag — see that flag's own remarks for why. A query that later turns out
+    /// incompatible with this predicate (a set op or Distinct/GroupBy attaches, or a genuine Join is added)
+    /// still routes ops here at RECORDING time; it is <see cref="Route"/>, not this routing, that retroactively
+    /// declines the whole select once that incompatibility is known.
+    /// </remarks>
     private List<MongoSelectOp> ActiveOps
         => SetOperation != null ? _trailingOps
-            : _joinInnerAccessConfirmed ? _postJoinOps
+            : _joinInnerAccessConfirmed || _referenceCollectionCountPredicateConfirmed ? _postJoinOps
             : IsDistinct && !IsGroupBy && Grouping != null ? _postGroupOps
             : IsGroupBy && !IsDistinct && Grouping != null ? _postGroupOps
             : _pipelineOps;
@@ -454,23 +500,33 @@ internal sealed class MongoSelectDefinition
     /// <param name="construction">The staged node, when one is found.</param>
     /// <remarks>
     /// <para>
-    /// ONE lookup for BOTH bind-side consumers — <c>MongoProjectionBindingExpressionVisitor
-    /// .TryGetNativeDocumentConstructionLeaf</c> (the plain-root EF-447 leaf) and
-    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.BindResultMember</c> (the join-scope nested leaf).
-    /// They were two near-identical alias scans with DIFFERENT admission rules — the second omitted the
+    /// ONE lookup for THREE bind-side consumers — <c>MongoProjectionBindingExpressionVisitor
+    /// .TryGetNativeDocumentConstructionLeaf</c> (the plain-root EF-447 leaf),
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.BindResultMember</c> (the join-scope nested leaf),
+    /// and <c>BindGroupMember</c> (the GroupBy-projection nested-construction leaf, EF-322). They were two
+    /// near-identical alias scans with DIFFERENT admission rules — the second omitted the
     /// <see cref="NativeRoute.Projection"/> check, the CLR-type check, and the alias-override mapping — which
     /// is precisely the shape a future silent-wrong-data bug takes: the looser scan matching a staged node the
     /// stricter one would have refused, and reading it back under a member it does not describe. Unified here
     /// (final-review Finding 3) on the STRICTER rule set; the join-scope caller is only ever reached after
     /// <c>NativeJoinScopeProjectionBinder.TryBindProjection</c> has returned true, which sets
     /// <see cref="Route"/> to <see cref="NativeRoute.Projection"/> and stages the node under the member's own
-    /// name, so tightening it is behavior-preserving there.
+    /// name, so tightening it is behavior-preserving there. The route check also admits
+    /// <see cref="NativeRoute.GroupBy"/>: a nested-construction GroupBy projection member is staged into this
+    /// SAME <see cref="Projection"/> list by <c>NativeGroupByBinder.TryBindGroupProjection</c>'s flatten
+    /// (exactly like the join-scope leaf's own staging), but <see cref="Route"/> resolves to
+    /// <see cref="NativeRoute.GroupBy"/> rather than <see cref="NativeRoute.Projection"/> for a
+    /// <see cref="Grouping"/>-bearing select (see <see cref="Route"/>'s own ternary, which checks
+    /// <see cref="Grouping"/> before <c>_projections.Count</c>) — so admitting only
+    /// <see cref="NativeRoute.Projection"/> would silently refuse the GroupBy caller's otherwise-identical
+    /// lookup.
     /// </para>
     /// <para>
     /// Deliberately looks the answer up in <see cref="Projection"/> (the emit side's own committed result)
     /// rather than re-deriving admissibility, so the bind side can never admit a shape the emit side declined.
-    /// The recognition predicates themselves live in <c>NativeProjectionBinder.TryGetDocumentConstructionLeaf</c>
-    /// and <c>NativeJoinScopeProjectionBinder</c>'s nested arm.
+    /// The recognition predicates themselves live in <c>NativeProjectionBinder.TryGetDocumentConstructionLeaf</c>,
+    /// <c>NativeJoinScopeProjectionBinder</c>'s nested arm, and <c>NativeGroupByBinder
+    /// .TryBindNestedGroupProjectionConstruction</c>.
     /// </para>
     /// </remarks>
     internal bool TryGetDocumentConstructionProjection(
@@ -478,7 +534,7 @@ internal sealed class MongoSelectDefinition
     {
         construction = null;
 
-        if (Route != NativeRoute.Projection || memberName is null)
+        if (Route is not (NativeRoute.Projection or NativeRoute.GroupBy) || memberName is null)
         {
             return false;
         }
@@ -634,19 +690,37 @@ internal sealed class MongoSelectDefinition
     internal IReadOnlyList<MongoProjection> PriorGroupingProjection { get; private set; } = [];
 
     /// <summary>
-    /// Moves the prior stage's own <see cref="Grouping"/>/<see cref="Projection"/> aside into
-    /// <see cref="PriorGrouping"/>/<see cref="PriorGroupingProjection"/> so a <c>GroupBy(key).Select(aggregate)</c>
-    /// composing directly on top of it (a projected Distinct, EF-322; or an ordinary prior GroupBy, EF-TBD) can
-    /// bind a SECOND, genuinely independent grouping into <see cref="Grouping"/>/<see cref="Projection"/>
-    /// without silently overwriting (and thereby dropping) the prior stage's own dedup/aggregation. Called by
-    /// the QMTEV's <c>TranslateGroupBy</c> exactly once, before <c>NativeGroupByBinder.TryBindGroupKey</c> runs,
-    /// and only when the post-terminal guard there has confirmed a finalized <see cref="Grouping"/> is already
-    /// sitting there (a pure projected-Distinct terminal, or an ordinary prior GroupBy(key).Select(aggregate)).
+    /// The prior stage's OWN <see cref="GroupHavingPredicate"/> (a HAVING <c>Where</c> composed between the
+    /// FIRST <c>GroupBy(key)</c> and ITS OWN terminal <c>Select</c> — e.g. <c>GroupBy(a).Where(g =&gt;
+    /// g.Count() &gt; 1).Select(...).GroupBy(...).Select(...)</c>), snapshotted alongside
+    /// <see cref="PriorGrouping"/>/<see cref="PriorGroupingProjection"/>. Without this, the OUTER
+    /// <c>GroupBy</c>'s own (usually absent) HAVING would unconditionally overwrite
+    /// <see cref="GroupHavingPredicate"/> back to <see langword="null"/>, silently DROPPING the first
+    /// grouping's filter and returning every one of its (unfiltered) groups instead. Emitted by
+    /// <c>MongoSelectLowerer</c> immediately after <see cref="PriorGrouping"/>'s own <c>$group</c> and BEFORE
+    /// <see cref="PriorGroupingProjection"/>'s flattening <c>$project</c> — same ordering rule
+    /// <see cref="GroupHavingPredicate"/> itself follows for the outer grouping.
+    /// </summary>
+    internal MongoExpression? PriorGroupHavingPredicate { get; private set; }
+
+    /// <summary>
+    /// Moves the prior stage's own <see cref="Grouping"/>/<see cref="Projection"/>/<see cref="GroupHavingPredicate"/>
+    /// aside into <see cref="PriorGrouping"/>/<see cref="PriorGroupingProjection"/>/
+    /// <see cref="PriorGroupHavingPredicate"/> so a <c>GroupBy(key).Select(aggregate)</c> composing directly on
+    /// top of it (a projected Distinct, EF-322; or an ordinary prior GroupBy, EF-TBD) can bind a SECOND,
+    /// genuinely independent grouping into <see cref="Grouping"/>/<see cref="Projection"/>/
+    /// <see cref="GroupHavingPredicate"/> without silently overwriting (and thereby dropping) the prior
+    /// stage's own dedup/aggregation/HAVING filter. Called by the QMTEV's <c>TranslateGroupBy</c> exactly
+    /// once, before <c>NativeGroupByBinder.TryBindGroupKey</c> runs, and only when the post-terminal guard
+    /// there has confirmed a finalized <see cref="Grouping"/> is already sitting there (a pure
+    /// projected-Distinct terminal, or an ordinary prior GroupBy(key).Select(aggregate)).
     /// </summary>
     internal void SnapshotPriorGroupingForNestedGroupBy()
     {
         PriorGrouping = _grouping;
         PriorGroupingProjection = [.. _projections];
+        PriorGroupHavingPredicate = GroupHavingPredicate;
+        GroupHavingPredicate = null;
         ClearProjections();
     }
 
@@ -679,7 +753,7 @@ internal sealed class MongoSelectDefinition
     /// <c>Any</c> arrives with <see langword="null"/> own predicate (already consumed by the preceding Where).
     /// Mirrors <see cref="PendingGroupKey"/>'s pattern: not itself part of <see cref="Route"/>.
     /// </summary>
-    internal (MongoGroupAccumulator Accumulator, MongoExpression Comparison)? PendingGroupPredicate { get; set; }
+    internal (MongoGroupAccumulator? Accumulator, MongoExpression Comparison)? PendingGroupPredicate { get; set; }
 
     /// <summary>
     /// Raw, unresolved <c>OrderBy</c>/<c>ThenBy</c> key selectors composed directly on the still-ungrouped
@@ -707,6 +781,49 @@ internal sealed class MongoSelectDefinition
     /// <see langword="null"/> for every query that never took this path.
     /// </summary>
     internal MongoSortOp? GroupOrderOp { get; set; }
+
+    /// <summary>
+    /// Raw, already-translated <c>Skip</c>/<c>Take</c> ops (<see cref="MongoSkipOp"/>/<see cref="MongoLimitOp"/>)
+    /// composed directly on the still-ungrouped <c>GroupBy(key)</c> result (before the terminal <c>Select</c>
+    /// that finalizes <see cref="Grouping"/>) — e.g. <c>GroupBy(o =&gt; o.CustomerID).Skip(0).Take(0)</c>.
+    /// Recorded by <c>NativeSlotPopulator.PopulateNativeSlots</c>'s pending-paging carve-out, in arrival order
+    /// (mirrors the ordinary, non-GroupBy <see cref="PipelineOps"/> paging's own "repeated paging is natively
+    /// representable" behavior). Unlike <see cref="PendingGroupOrderings"/>, a paging count needs NO deferred
+    /// resolution — it never references a not-yet-existent <c>$group</c> accumulator — so each entry here is
+    /// already a fully-formed <see cref="MongoSelectOp"/> by the time it lands here; the "pending" naming is
+    /// only about WHEN it may be committed (only once the terminal Select actually finalizes the grouping),
+    /// not about needing further translation. Consumed and cleared by
+    /// <c>NativeGroupByBinder.TryBindGroupProjection</c>, which moves it verbatim into
+    /// <see cref="GroupPagingOps"/>. <see langword="null"/> for every query that never took this path.
+    /// </summary>
+    internal List<MongoSelectOp>? PendingGroupPaging { get; set; }
+
+    private List<MongoSelectOp> _groupPagingOps = [];
+
+    /// <summary>
+    /// The <c>$skip</c>/<c>$limit</c> ops to run immediately AFTER <see cref="GroupOrderOp"/>'s sort (ORDER BY
+    /// orders the groups; SKIP/TAKE then pages the ordered result) and BEFORE the flattening <c>$project</c> —
+    /// resolved from <see cref="PendingGroupPaging"/> by <c>NativeGroupByBinder.TryBindGroupProjection</c>.
+    /// Empty for every query that never took this path.
+    /// </summary>
+    public IReadOnlyList<MongoSelectOp> GroupPagingOps
+    {
+        get => _groupPagingOps;
+        internal set => _groupPagingOps = [.. value];
+    }
+
+    /// <summary>
+    /// A <c>$match</c> predicate to emit immediately after the <c>$group</c> stage and before its flattening
+    /// <c>$project</c> — the ordinary "HAVING" case: a <c>Where</c> composed between <c>GroupBy(key)</c> and
+    /// the terminal <c>Select</c> (e.g. <c>GroupBy(key).Where(o =&gt; o.Count() &gt; 4).Select(g =&gt; new
+    /// { g.Key, Count = g.Count() })</c>). Resolved from <see cref="PendingGroupPredicate"/> by
+    /// <c>NativeGroupByBinder.TryBindGroupProjection</c>. Deliberately separate from
+    /// <see cref="PostGroupPredicate"/> (the EF-449 bare-<c>GroupBy</c>-terminal-aggregate's own post-group
+    /// filter — a query with NO <c>Select</c> at all) and from <see cref="PostGroupOps"/> (ops composed AFTER
+    /// the flattening <c>$project</c>, filtering the grouped OUTPUT rows, not group internals).
+    /// <see langword="null"/> for every query that never took this path.
+    /// </summary>
+    internal MongoExpression? GroupHavingPredicate { get; set; }
 
     // ── GroupBy provenance / fallback safety ──────────────────────────────────────
 
@@ -904,6 +1021,27 @@ internal sealed class MongoSelectDefinition
     /// wrap arm existed.
     /// </remarks>
     internal bool HasClientWrappedWholeEntityShaper { get; set; }
+
+    /// <summary>
+    /// <see langword="true"/> when <c>NativeProjectionBinder.TryPopulateNativeProjection</c> committed a
+    /// MULTI-ARGUMENT positional-ctor DTO projection (<c>x =&gt; new CustomerListItem(x.CustomerID, x.City)</c>
+    /// — a <see cref="System.Linq.Expressions.NewExpression"/> whose <c>Members</c> is <see langword="null"/>
+    /// and whose <c>Arguments.Count</c> is 2 or more).
+    /// </summary>
+    /// <remarks>
+    /// Read by <c>MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect</c> to divert this Select's
+    /// result shaper away from the generic <c>_projectionBindingExpressionVisitor.Translate</c> fold and into
+    /// an INDEX-based shaper built the same way <c>NativeGroupByBinder</c>'s/<c>NativeSelectManyBinder</c>'s own
+    /// ctor-DTO result selectors already are (<c>TryBuildGroupResultShaper</c>/<c>BindGroupMember</c>,
+    /// <c>BuildSelectManyResultShaper</c>/<c>BindResultMember</c>). That diversion is necessary, not cosmetic:
+    /// the generic fold's <c>MongoProjectionBindingExpressionVisitor.VisitNew</c> only calls
+    /// <c>EnterProjectionMember</c>/<c>ExitProjectionMember</c> when <c>NewExpression.Members</c> is non-null —
+    /// for a <c>Members</c>-null body every constructor argument is visited under the SAME ambient
+    /// <c>ProjectionMember</c>, with no way to tell a 2nd/3rd argument apart. Binding by index instead (this
+    /// flag's whole purpose) sidesteps that scoping gap entirely, exactly as the two existing ctor-DTO result
+    /// selectors already do for their own shapes.
+    /// </remarks>
+    internal bool HasPositionalCtorProjectionShaper { get; set; }
 
     /// <summary>The native join scope chain recorded by <c>TranslateJoinCore</c>, or <see
     /// langword="null"/> if this select has no eligible native join.</summary>
@@ -1217,10 +1355,25 @@ internal sealed class MongoSelectDefinition
     /// Deliberately includes <c>_hasUnsupportedOperator</c>: an inner operator that was declined rather than
     /// lowered records no op at all, yet is exactly as disqualifying as one that did.
     /// </summary>
+    /// <remarks>
+    /// EF-322 final review (round 2, NEW Critical): <see cref="_postJoinOps"/> must be checked too, not just
+    /// <see cref="_pipelineOps"/>. A <c>NativeReferenceCollectionCountPredicateBinder</c>-confirmed <c>Where</c>
+    /// (<see cref="ReferenceCollectionCountPredicateConfirmed"/>) records its <c>$match</c> into
+    /// <see cref="_postJoinOps"/>, not <see cref="_pipelineOps"/> — omitting it here let a query like
+    /// <c>Orders.Join(Owners.Where(o =&gt; o.Orders.Count &gt; 1), ...)</c> read as a bare scan of the WHOLE
+    /// Owners collection, silently discarding the predicate (and the confirming caller never learning the
+    /// inner wasn't bare) in every <see cref="Infrastructure.MongoQueryMode"/>, including an explicit
+    /// <see cref="Infrastructure.MongoQueryMode.DriverLinq"/> — since <see cref="MarkSawNonBareJoinInner"/> is what routes a
+    /// filtered-inner join to a clean, universal decline (see that method's remarks), never reaching this
+    /// predicate's own machinery at all. <see cref="_postLookupPagingOps"/>/<see cref="_postGroupOps"/> need no
+    /// matching conjunct: both are populated only once <see cref="Grouping"/> or an existing
+    /// <see cref="JoinScope"/> is already present, each of which independently fails an EARLIER conjunct here.
+    /// </remarks>
     internal bool IsBareCollectionScan
         => !_hasUnsupportedOperator
            && _pipelineOps.Count == 0
            && _trailingOps.Count == 0
+           && _postJoinOps.Count == 0
            && _projections.Count == 0
            && Cardinality == null
            && Grouping == null
@@ -1249,10 +1402,21 @@ internal sealed class MongoSelectDefinition
     /// <see cref="MongoSelectDefinition"/>) and the GroupBy+Join hard-decline
     /// (<see cref="IsGroupByFallbackUnsafe"/>) onto this route. <c>$lookup</c> streamability is a separate
     /// axis (streaming-vs-DOM), not an is-native signal. An unconfirmed reference-Include candidate join
-    /// also forces Fallback — see <see cref="HasUnconfirmedCandidateJoin"/>.
+    /// also forces Fallback — see <see cref="HasUnconfirmedCandidateJoin"/>. A confirmed reference-collection
+    /// Count predicate (<see cref="ReferenceCollectionCountPredicateConfirmed"/>) additionally forces Fallback
+    /// once ANY of a set operation, a projected Distinct/keyed GroupBy (<see cref="Grouping"/>), a genuine Join
+    /// (<see cref="JoinScope"/>), or a correlated <c>SelectMany</c> (<see cref="UnwindSources"/>) is also
+    /// present on this select — see that flag's own remarks for why this predicate cannot go native in
+    /// combination with any of those, regardless of composition order. (EF-322 final review, round 2, NEW
+    /// Important: the <c>SelectMany</c>'s own <c>$lookup</c>/<c>$unwind</c> can land on the same document path
+    /// as this predicate's <c>$lookup</c>, corrupting the read side with a BSON-type mismatch rather than
+    /// merely misordering a stage — declining here fails CLOSED with a clean exception instead.)
     /// </summary>
     internal NativeRoute Route
-        => _hasUnsupportedOperator || HasUnconfirmedCandidateJoin ? NativeRoute.Fallback
+        => _hasUnsupportedOperator || HasUnconfirmedCandidateJoin
+            || (_referenceCollectionCountPredicateConfirmed
+                && (SetOperation != null || Grouping != null || JoinScope != null || _unwindSources.Count > 0))
+            ? NativeRoute.Fallback
             // A GroupBy key was bound but no aggregate Select finalized the grouping (e.g. a bare GroupBy(key)
             // that terminates on the IGrouping sequence, or a group followed by an unsupported operator): the
             // native path cannot represent this, so fall back rather than silently emit an ungrouped scan.

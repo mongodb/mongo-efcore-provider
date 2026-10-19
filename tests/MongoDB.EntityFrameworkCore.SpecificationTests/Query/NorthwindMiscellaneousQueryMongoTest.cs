@@ -158,8 +158,8 @@ Employees.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : [{ 
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : ["$Region", "no region specified"] }, "_id" : 0 } }
-            """);
+Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : ["$Region", { "$literal" : "no region specified" }] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Any_on_distinct(bool async)
@@ -2106,7 +2106,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }
 """);
     }
 
@@ -2116,7 +2116,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", "ZZ"] }, "_id" : 0 } }
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] }, "_id" : 0 } }
 """);
     }
 
@@ -2131,8 +2131,8 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$set" : { "__sort0" : { "$cond" : { "if" : { "$eq" : ["$Region", null] }, "then" : "ZZ", "else" : "$Region" } } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$cond" : { "if" : { "$eq" : ["$Region", null] }, "then" : { "$literal" : "ZZ" }, "else" : "$Region" } } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }
+""");
     }
 
     public override async Task Null_Coalesce_Short_Circuit(bool async)
@@ -2181,8 +2181,8 @@ Customers.{ "$project" : { "Result" : { "$literal" : false }, "_id" : 0 } }
 
         AssertMql(
             """
-            Customers.{ "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", "ZZ"] }, "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Filter_coalesce_operator(bool async)
@@ -2208,7 +2208,7 @@ Customers.{ "$project" : { "Result" : { "$literal" : false }, "_id" : 0 } }
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
 """);
     }
 
@@ -2218,7 +2218,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", "ZZ"] }, "_id" : 0 } }
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] }, "_id" : 0 } }
 """);
     }
 
@@ -2234,7 +2234,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", "ZZ"] }, "_id" : 0 } }
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] }, "_id" : 0 } }
 """);
     }
 
@@ -2244,7 +2244,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : "$Region", "_id" : 0 } }
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : "$Region", "_id" : 0 } }
 """);
     }
 
@@ -2254,7 +2254,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }
 """);
     }
 
@@ -2264,7 +2264,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
 """);
     }
 
@@ -2371,7 +2371,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
         await base.String_concat_with_navigation1(async);
         AssertMql(
             """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : { "$concat" : ["$_v._outer.CustomerID", " ", "$_v._inner.City"] }, "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$concat" : ["$CustomerID", " ", "$_lookup_Customer.City"] }, "_id" : 0 } }
 """);
     }
 
@@ -2380,7 +2380,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
         await base.String_concat_with_navigation2(async);
         AssertMql(
             """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : { "$concat" : ["$_v._inner.City", " ", "$_v._inner.City"] }, "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$concat" : ["$_lookup_Customer.City", " ", "$_lookup_Customer.City"] }, "_id" : 0 } }
 """);
     }
 
@@ -2871,7 +2871,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
 
         AssertMql(
             """
-Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
 """);
     }
 
@@ -2881,7 +2881,7 @@ Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal
 
         AssertMql(
             """
-Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 5 }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 5 }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
 """);
     }
 
@@ -2891,7 +2891,7 @@ Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal
 
         AssertMql(
             """
-Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 5 }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$limit" : 5 }
+Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 5 }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$limit" : 5 }
 """);
     }
 
@@ -3662,7 +3662,7 @@ Customers.{ "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", []] }] } } }, 
         await base.Manual_expression_tree_typed_null_equality(async);
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner.City", "_id" : 0 } }
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
     }
 
@@ -3744,15 +3744,9 @@ Orders.
     {
         await base.OrderBy_object_type_server_evals(async);
         AssertMql(
-#if EF8 || EF9
-            """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : "$_outer.OrderDate" } }, { "$sort" : { "_document._outer._id" : 1, "_key1" : 1, "_document._inner._id" : 1, "_document._inner.City" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$skip" : 0 }, { "$limit" : 20 }
-""");
-#else
             """
 Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "__sort0" : "$_id", "__sort1" : "$OrderDate" } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1, "_lookup_Customer._id" : 1, "_lookup_Customer.City" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$skip" : 0 }, { "$limit" : 20 }
 """);
-#endif
     }
 
     public override async Task AsQueryable_in_query_server_evals(bool async)
@@ -3793,53 +3787,29 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
     public override async Task Projection_skip_projection(bool async)
     {
-#if EF8 || EF9
-        await base.Projection_skip_projection(async);
-        AssertMql(
-            """
-Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City" : "$_v._inner.City", "_id" : 0 } }
-""");
-    #else
         await base.Projection_skip_projection(async);
         AssertMql(
             """
 Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "City" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Projection_take_projection(bool async)
     {
-#if EF8 || EF9
-        await base.Projection_take_projection(async);
-        AssertMql(
-            """
-Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City" : "$_v._inner.City", "_id" : 0 } }
-""");
-    #else
         await base.Projection_take_projection(async);
         AssertMql(
             """
 Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "City" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Projection_skip_take_projection(bool async)
     {
-#if EF8 || EF9
-        await base.Projection_skip_take_projection(async);
-        AssertMql(
-            """
-Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$limit" : 10 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City" : "$_v._inner.City", "_id" : 0 } }
-""");
-    #else
         await base.Projection_skip_take_projection(async);
         AssertMql(
             """
 Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$limit" : 10 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "City" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Collection_projection_skip(bool async)
@@ -5305,23 +5275,12 @@ Customers.
 
     public override async Task Contains_over_concatenated_columns_both_fixed_length(bool async)
     {
-#if EF8 || EF9
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
-        await base.Contains_over_concatenated_columns_both_fixed_length(async);
-
-        AssertMql(
-            """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$_outer.CustomerID", "$_inner._id"] }, ["ALFKIALFKI", "ALFKI", "ANATRAna Trujillo Emparedados y helados", "ANATRANATR"]] } } }
-""");
-    #else
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Contains_over_concatenated_columns_both_fixed_length(async);
 
         AssertMql(
             """
 Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$CustomerID", "$_lookup_Customer._id"] }, ["ALFKIALFKI", "ALFKI", "ANATRAna Trujillo Emparedados y helados", "ANATRANATR"]] } } }
 """);
-#endif
     }
 
     public override async Task Contains_over_concatenated_column_and_parameter(bool async)

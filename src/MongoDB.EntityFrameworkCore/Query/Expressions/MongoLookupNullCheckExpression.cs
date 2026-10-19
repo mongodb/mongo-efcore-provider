@@ -27,10 +27,12 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// names a SYNTHETIC top-level field (<c>_lookup_&lt;Navigation&gt;</c>) that a <c>$lookup</c>+<c>$unwind</c>
 /// (with <c>preserveNullAndEmptyArrays: true</c>) materializes as an entire joined sub-document or an explicit
 /// <see langword="null"/> when no match existed, never a stored scalar property with a getter/value-converter
-/// of its own. Query-dialect only (<c>{ alias: null }</c> / <c>{ alias: { $ne: null } }</c>) — there is no
-/// aggregation-expression form because there is nothing else this node needs to express.
+/// of its own. Has both a query-dialect form (<c>RenderLookupNullCheck</c>, for the <c>Where</c>-position
+/// shape) and an aggregation-expression form (<c>MongoAggregationExpressionRenderer</c>, for the Select-side
+/// conditional-Test shape).
 /// <para>
-/// Produced only by <c>NativeJoinScopeTranslator.TryTranslateReferenceIncludeNullCheck</c>, recognizing the
+/// Produced by <c>NativeJoinScopeTranslator.TryMatchInnerNullCheck</c> (the flat, depth-1, Where-only shape)
+/// and <c>TryMatchScopeNullCheck</c> (the depth-agnostic, Select-side shape), recognizing the
 /// EXACT shape <c>ti.Inner == null</c>/<c>!= null</c> (<c>ti</c> the join's own TransparentIdentifier
 /// parameter) at the top of a <c>Where</c> predicate — never nested under a <c>Not</c>, quantifier, or
 /// <c>$elemMatch</c>, so neither <see cref="Microsoft.EntityFrameworkCore.Metadata"/>-adjacent negation

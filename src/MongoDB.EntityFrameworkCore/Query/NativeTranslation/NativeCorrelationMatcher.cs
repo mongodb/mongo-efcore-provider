@@ -13,11 +13,15 @@
  * limitations under the License.
  */
 
+using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -160,6 +164,113 @@ internal static class NativeCorrelationMatcher
                 left = right = null!;
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Recognizes the <c>Queryable.Where(root, correlationPredicate)</c> shape EF Core's nav-expansion always
+    /// wraps a reference-collection-navigation <c>Count</c>/<c>LongCount</c> in (see
+    /// <see cref="MongoExpressionTranslator.TryMatchCountExpression"/>'s own remarks — the <c>Where</c> here is
+    /// EF's own FK-correlation plumbing, present for both a bare <c>c.Orders.Count</c> and a user-filtered
+    /// <c>c.Orders.Where(pred).Count()</c> alike), then resolves the single matching collection navigation via
+    /// <see cref="TryMatchCorrelatedCollection"/>. Shared by <see cref="NativeProjectionBinder"/>'s
+    /// projected-<c>Count</c> leaf and <see cref="NativeReferenceCollectionCountPredicateBinder"/>'s predicate
+    /// comparison — both need the identical "which navigation does this whereArg correlate to" answer.
+    /// </summary>
+    internal static bool TryMatchReferenceCollectionCountNavigation(
+        MongoQueryExpression mongoQ,
+        ParameterExpression outerParameter,
+        Expression whereArg,
+        [NotNullWhen(true)] out INavigation? navigation)
+    {
+        navigation = null;
+
+        if (whereArg is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
+                Arguments: [Microsoft.EntityFrameworkCore.Query.EntityQueryRootExpression rootExpression, var predicateArg]
+            }
+            || whereDeclaring != typeof(Queryable))
+        {
+            return false;
+        }
+
+        var predicate = predicateArg.UnwrapLambdaFromQuote();
+        if (predicate.Parameters.Count != 1)
+            return false;
+
+        var outerEntityType = mongoQ.CollectionExpression.EntityType;
+        var targetEntityType = rootExpression.EntityType;
+
+        return TryMatchCorrelatedCollection(
+            predicate.Body, outerEntityType, outerParameter, targetEntityType, requireEmbedded: false, out navigation!);
+    }
+
+    /// <summary>
+    /// Builds (or reuses, via the same cross-leaf alias-collision dedupe rule
+    /// <see cref="NativeProjectionBinder.TryTranslateProjectedCollectionCount"/> has always applied) the
+    /// <c>$lookup</c> a reference-collection <c>Count</c> needs, and stages it into <paramref name="pendingLookups"/>
+    /// for the caller to commit. Two leaves in one query can both want the same <c>_lookup_&lt;Nav&gt;</c> alias;
+    /// that is only safe when they are INTERCHANGEABLE — a same-kind lookup (another count over the same nav, or
+    /// an already-pending collection-Include lookup for it) is reused, but colliding with a
+    /// <see cref="LookupPipelineKind.CorrelatedReducer"/> lookup (which unwinds to a single document, not an
+    /// array) is not, and declines instead of risking a <c>$size</c> over the wrong shape.
+    /// </summary>
+    /// <remarks>
+    /// EF-322 final review (round 3, NEW Critical): whichever bare <see cref="LookupExpression"/> ends up
+    /// backing this alias — freshly registered here, or an already-pending one this call reuses — must
+    /// eventually be stamped <see cref="LookupExpression.IsBareCountSizeSource"/>. That flag is what lets
+    /// <c>MongoProjectionBindingExpressionVisitor</c>'s Include-registration collision check (which already
+    /// reroutes an incoming lookup away from an incompatible, $unwind-ed join lookup at the same alias — see
+    /// <see cref="LookupExpression.RenamedToAvoidJoinCollision"/>) ALSO reroute a LATER, paged Include for this
+    /// same navigation away from this bare entry, instead of letting <see cref="MongoQueryExpression.AddLookup"/>
+    /// silently merge the Include's pipeline into it. See <see cref="LookupExpression.IsBareCountSizeSource"/>'s
+    /// own remarks for the full mechanism and why the fix lives at that OTHER call site rather than here or in
+    /// <c>AddLookup</c> itself.
+    /// </remarks>
+    /// <remarks>
+    /// EF-322 final cleanup (round 4, Minor): this method does NOT stamp <see cref="LookupExpression.IsBareCountSizeSource"/>
+    /// itself — per Query/AGENTS.md's "a recognizer must not mutate then decline" invariant, doing so here would
+    /// mutate an already-registered <paramref name="pendingLookups"/>/<c>mongoQ</c> entry (or, for the fresh case,
+    /// set a field on an object about to be staged) BEFORE the caller's own remaining gates (e.g. the predicate
+    /// binder's <c>TryTranslateValue</c> on the comparison's other operand) have run — any of which can still
+    /// decline the whole leaf after this method returns <see langword="true"/>. Instead, the lookup that needs the
+    /// stamp is handed back via <paramref name="lookupToStamp"/>; the CALLER applies
+    /// <see cref="LookupExpression.IsBareCountSizeSource"/> = <see langword="true"/> only at its own commit point,
+    /// once every other gate has passed.
+    /// </remarks>
+    internal static bool TryBuildReferenceCollectionCountLookup(
+        MongoQueryExpression mongoQ,
+        INavigation navigation,
+        List<LookupExpression> pendingLookups,
+        Type resultType,
+        out LookupExpression? lookupToStamp,
+        [NotNullWhen(true)] out MongoSizeExpression? result)
+    {
+        result = null;
+        lookupToStamp = null;
+
+        var lookup = new LookupExpression(navigation) { InjectAfterRoot = true };
+        if (!lookup.IsNativeCollectionLookup)
+            return false;
+
+        var collidingLookup = pendingLookups.FirstOrDefault(l => l.As == lookup.As)
+            ?? mongoQ.GetPendingLookups().FirstOrDefault(l => l.As == lookup.As);
+        if (collidingLookup is null)
+        {
+            pendingLookups.Add(lookup);
+            lookupToStamp = lookup;
+        }
+        else if (collidingLookup.PipelineKind != lookup.PipelineKind)
+        {
+            return false;
+        }
+        else
+        {
+            lookupToStamp = collidingLookup;
+        }
+
+        result = new MongoSizeExpression(LookupExpression.GetLookupAlias(navigation), resultType);
+        return true;
     }
 
     private static bool IsNullGuard(Expression node)

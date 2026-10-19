@@ -176,6 +176,8 @@ public class MongoExpressionNodeCoverageTests
             new MongoDateTimeOffsetLocalExpression(new MongoFieldExpression(stamp, "Stamp")),
             new MongoConcatExpression([headingField, new MongoConstantExpression("x", heading)]),
             new MongoStringIndexOfExpression(headingField, new MongoConstantExpression("x", heading)),
+            new MongoStringLengthExpression(headingField),
+            new MongoMathExpression(MongoMathFunction.Abs, [rankField], typeof(int)),
             new MongoDocumentConstructionExpression(
                 Expression.New(typeof(object)), [(nameof(Post.Rank), rankField)]),
             new MongoTupleExpression([rankField, rankConstant])
@@ -595,12 +597,12 @@ public class MongoExpressionNodeCoverageTests
         ["MongoInExpression|QL.IsQueryDialectRenderable"] = "true",
         ["MongoInExpression|QL.Render"] = "rendered",
 
-        // Query-dialect-only by design (see the node's own remarks): it is produced only for the exact
-        // `ti.Inner == null`/`!= null` top-level Where shape, never nested under Not/a quantifier/$elemMatch,
-        // so none of the other six dispatchers need an arm for it — each fails closed/open exactly the way an
-        // unrecognized node already does, safely, because this recognizer never hands them one.
-        ["MongoLookupNullCheckExpression|Agg.CanRender"] = "false",
-        ["MongoLookupNullCheckExpression|Agg.Render"] = "declined",
+        // EF-322: now has BOTH a query-dialect form (Where-position, produced by TryMatchInnerNullCheck) and an
+        // aggregation-expression form (Select-position conditional Test, produced by TryMatchScopeNullCheck) — see
+        // the node's own remarks. Still never nested under Not/a quantifier/$elemMatch (the shapes that produce it
+        // never place it there), so the remaining four dispatchers are unaffected.
+        ["MongoLookupNullCheckExpression|Agg.CanRender"] = "true",
+        ["MongoLookupNullCheckExpression|Agg.Render"] = "rendered",
         ["MongoLookupNullCheckExpression|AllFieldsDefaultSerialized"] = "true",
         ["MongoLookupNullCheckExpression|AllFieldsDefaultSerialized(converted)"] = "true",
         ["MongoLookupNullCheckExpression|Negator.TryNegate"] = "false",
@@ -682,6 +684,29 @@ public class MongoExpressionNodeCoverageTests
         ["MongoStringIndexOfExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoStringIndexOfExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoStringIndexOfExpression|QL.Render"] = "rendered",
+
+        // Same treatment as MongoStringIndexOfExpression immediately above throughout: $strLenCP runs directly
+        // against its operand's raw BSON representation, has no query-dialect form, and needs no negator arm.
+        ["MongoStringLengthExpression|Agg.CanRender"] = "true",
+        ["MongoStringLengthExpression|Agg.Render"] = "rendered",
+        ["MongoStringLengthExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoStringLengthExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoStringLengthExpression|Negator.TryNegate"] = "false",
+        ["MongoStringLengthExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoStringLengthExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoStringLengthExpression|QL.Render"] = "rendered",
+
+        // Same treatment throughout: a Math/MathF function runs its MQL operator directly against each
+        // operand's raw BSON representation, has no query-dialect form (QL.Render's default arm delegates to
+        // $expr instead of a dedicated case, so it still renders successfully), and needs no negator arm.
+        ["MongoMathExpression|Agg.CanRender"] = "true",
+        ["MongoMathExpression|Agg.Render"] = "rendered",
+        ["MongoMathExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoMathExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoMathExpression|Negator.TryNegate"] = "false",
+        ["MongoMathExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoMathExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoMathExpression|QL.Render"] = "rendered",
 
         ["MongoUnaryExpression|Agg.CanRender"] = "true",
         ["MongoUnaryExpression|Agg.Render"] = "rendered",

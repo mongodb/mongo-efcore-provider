@@ -46,7 +46,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : false, "else" : true } }] } } }
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : { "$literal" : false }, "else" : { "$literal" : true } } }] } } }
 """);
     }
 
@@ -1078,21 +1078,11 @@ Customers.{ "$match" : { } }
 
     public override async Task Where_expression_invoke_2(bool async)
     {
-#if EF8 || EF9
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
-        await base.Where_expression_invoke_2(async);
-        AssertMql(
-            """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner._id" : "ALFKI" } }
-""");
-    #else
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Where_expression_invoke_2(async);
         AssertMql(
             """
 Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer._id" : "ALFKI" } }
 """);
-#endif
     }
 
     public override async Task Where_expression_invoke_3(bool async)
@@ -1162,7 +1152,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : false, "else" : true } }] } } }
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : { "$literal" : false }, "else" : { "$literal" : true } } }] } } }
 """);
     }
 #endif
@@ -1173,7 +1163,7 @@ Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "x" : "$City" }, { "x" : "London" }] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "x" : "$City" }, { "x" : { "$literal" : "London" } }] } } }
             """);
     }
 
@@ -1183,7 +1173,7 @@ Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "x" : "$City", "y" : "$Country" }, { "x" : "London", "y" : "UK" }] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "x" : "$City", "y" : "$Country" }, { "x" : { "$literal" : "London" }, "y" : { "$literal" : "UK" } }] } } }
             """);
     }
 
@@ -1283,7 +1273,7 @@ Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { } }
             """);
     }
 
@@ -1381,8 +1371,8 @@ Products.{ "$match" : { "$and" : [{ "UnitPrice" : { "$type" : "number" } }, { "$
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$type" : -1 } } }
-            """);
+Products.{ "$match" : { "$expr" : { "$cond" : { "if" : true, "then" : { "$literal" : false }, "else" : { "$literal" : true } } } } }
+""");
     }
 
     public override async Task Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(bool async)
@@ -1722,8 +1712,8 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 10 
         await base.Case_block_simplification_works_correctly(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : ["$Region", null] }, "then" : "OR", "else" : "$Region" } }, "OR"] } } }
-            """);
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : ["$Region", null] }, "then" : { "$literal" : "OR" }, "else" : "$Region" } }, "OR"] } } }
+""");
     }
 
     public override async Task Where_compare_null_with_cast_to_object(bool async)
@@ -2259,10 +2249,19 @@ Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : ["ALF", "KI"
     {
         await base.Where_string_length(async);
 
+#if EF8 || EF9
+        // EF8/EF9: .Length in a Where predicate now goes native (MongoStringLengthExpression / $strLenCP)
+        // instead of falling back to driver-LINQ's regex-length trick — different MQL, same results.
+        AssertMql(
+            """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$strLenCP" : "$City" }, 6] } } }
+            """);
+#else
         AssertMql(
             """
             Customers.{ "$match" : { "City" : { "$regularExpression" : { "pattern" : "^.{6}$", "options" : "s" } } } }
             """);
+#endif
     }
 
     public override async Task Where_string_indexof(bool async)
@@ -2580,25 +2579,21 @@ Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : ["ALF", "KI"
 
     public override async Task Where_Like_and_comparison(bool async)
     {
-        // Fails: translation of Like issue EF-222
-        await AssertTranslationFailed(() =>
-            base.Where_Like_and_comparison(async));
+        await base.Where_Like_and_comparison(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F.*$", "options" : "is" } }, "City" : "Seattle" } }
             """);
     }
 
     public override async Task Where_Like_or_comparison(bool async)
     {
-        // Fails: translation of Like issue EF-222
-        await AssertTranslationFailed(() =>
-            base.Where_Like_or_comparison(async));
+        await base.Where_Like_or_comparison(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$or" : [{ "_id" : { "$regularExpression" : { "pattern" : "^F.*$", "options" : "is" } } }, { "City" : "Seattle" }] } }
             """);
     }
 

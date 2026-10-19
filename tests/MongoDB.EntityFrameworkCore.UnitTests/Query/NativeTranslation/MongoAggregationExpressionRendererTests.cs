@@ -529,6 +529,47 @@ public class MongoAggregationExpressionRendererTests
     }
 
     [Fact]
+    public void Renders_not_equal_null_lookup_check_as_ne_against_the_alias_field()
+    {
+        var node = new MongoLookupNullCheckExpression("_lookup_Manager", isNotNull: true);
+        var placeholders = new PlaceholderTable();
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
+
+        // Wrapped in $ifNull (not a bare field ref) — see the render site's own remarks: after
+        // $lookup+$unwind(preserveNullAndEmptyArrays: true), an unmatched row's alias field is genuinely
+        // MISSING, and the aggregation-expression dialect's $ne does NOT treat missing and null alike the
+        // way the query dialect does, so a bare comparison would wrongly answer "not null" for an unmatched
+        // row. MEASURED against a real server (not merely asserted here).
+        Assert.Equal(
+            new BsonDocument("$ne",
+                new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$_lookup_Manager", BsonNull.Value }), BsonNull.Value }),
+            rendered);
+    }
+
+    [Fact]
+    public void Renders_equal_null_lookup_check_as_eq_against_the_alias_field()
+    {
+        var node = new MongoLookupNullCheckExpression("_lookup_Manager", isNotNull: false);
+        var placeholders = new PlaceholderTable();
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
+
+        // Same $ifNull-wrapping as the $ne case above, and for the same reason.
+        Assert.Equal(
+            new BsonDocument("$eq",
+                new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$_lookup_Manager", BsonNull.Value }), BsonNull.Value }),
+            rendered);
+    }
+
+    [Fact]
+    public void CanRender_reports_true_for_a_lookup_null_check()
+    {
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(
+            new MongoLookupNullCheckExpression("_lookup_Manager", isNotNull: true)));
+    }
+
+    [Fact]
     public void MongoQuantifierExpression_Any_renders_as_anyElementTrue_over_map()
     {
         var elementPredicate = new MongoBinaryExpression(
@@ -658,6 +699,55 @@ public class MongoAggregationExpressionRendererTests
 
         Assert.Equal(
             """{ "$eq" : [{ "$indexOfCP" : ["$Status", "S"] }, 0] }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Remove_sentinel_renders_as_the_REMOVE_system_variable()
+    {
+        var node = new MongoElementRefExpression(MongoElementRefExpression.RemoveSentinelPath, typeof(object));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable());
+
+        Assert.Equal("$$REMOVE", rendered.AsString);
+    }
+
+    // ------------------------------------------------------------------
+    // SP4 final-review fix: a "$"-prefixed constant used as a $ifNull/$cond BRANCH must be $literal-wrapped,
+    // the same way RenderProject/RenderAddFields already wrap a bare TOP-LEVEL constant/parameter — otherwise
+    // MongoDB reads the unwrapped string as a field-path reference instead of the literal value it is.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Coalesce_right_branch_dollar_prefixed_constant_is_literal_wrapped()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoCoalesceExpression(
+            new MongoFieldExpression(status, "Status"),
+            new MongoConstantExpression("$Year", forSerialization: null));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$ifNull" : ["$Status", { "$literal" : "$Year" }] }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Conditional_else_branch_dollar_prefixed_constant_is_literal_wrapped()
+    {
+        var status = GetProperty<Customer>("Status");
+        var nickname = GetProperty<Customer>("Nickname");
+        var expr = new MongoConditionalExpression(
+            new MongoBinaryExpression(
+                MongoBinaryOperator.Equal, new MongoFieldExpression(status, "Status"), new MongoFieldExpression(nickname, "Nickname")),
+            new MongoConstantExpression("match", forSerialization: null),
+            new MongoConstantExpression("$Year", forSerialization: null));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$cond" : { "if" : { "$eq" : ["$Status", "$Nickname"] }, "then" : { "$literal" : "match" }, "else" : { "$literal" : "$Year" } } }""",
             result.ToJson());
     }
 

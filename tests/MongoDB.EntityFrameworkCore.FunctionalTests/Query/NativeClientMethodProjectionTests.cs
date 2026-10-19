@@ -153,6 +153,26 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
         Assert.Equal(2, results.Count);
     }
 
+    // The opaque client call need not be the entire selector body — it can be embedded inside a larger
+    // client-only expression (a conditional, a string concatenation) as long as every entity reference
+    // anywhere in that expression is still the whole entity itself (never a member extracted for separate
+    // server-side computation). This is the shape EF-322's
+    // Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression exercises.
+    [Fact]
+    public void Select_with_client_method_embedded_in_conditional_expression_goes_native()
+    {
+        var collection = SeedCustomers(nameof(Select_with_client_method_embedded_in_conditional_expression_goes_native));
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+
+        var results = db.Entities
+            .Select(c => c.IsLondon ? "London: " + ClientMethod(c) : "Other")
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Contains("Other", results);
+        Assert.Contains("London: False", results);
+    }
+
     // A client-method-wrapped Select composed with a subsequent Union must NOT combine via a native
     // $unionWith: the per-row RESULT differs from the raw entity, so comparing/deduping documents at the
     // pipeline level would be wrong. HasClientWrappedWholeEntityShaper routes this through the pre-existing

@@ -45,6 +45,18 @@ internal sealed class MongoElementRefExpression(string path, Type clrType, bool 
     /// </remarks>
     internal const string WholeRootDocumentPath = "$ROOT";
 
+    /// <summary>
+    /// The <see cref="Path"/> spelling that means "treat this element's contribution as though it were
+    /// entirely absent", i.e. the aggregation system variable <c>$$REMOVE</c> — rendered as <c>"$" +
+    /// "$REMOVE"</c> by the ordinary <c>"$" + Path</c> rule, exactly like <see cref="WholeRootDocumentPath"/>
+    /// above. Verified directly against a real server (not assumed from documentation): inside a $group
+    /// accumulator's own input expression, `{"$cond": [pred, value, "$$REMOVE"]}` makes Min/Max/Sum/Average/
+    /// $push/$addToSet skip that element entirely — critically different from a null/0 sentinel, which would
+    /// corrupt Min/Max (BSON comparison order places null below every number/date, so a null "else" would
+    /// silently become the reported minimum whenever any element failed the predicate).
+    /// </summary>
+    internal const string RemoveSentinelPath = "$REMOVE";
+
     /// <summary>The (possibly dotted) element path, e.g. <c>_id</c>, <c>_id.Country</c>, or <c>Total</c>.</summary>
     public string Path { get; } = path;
 
