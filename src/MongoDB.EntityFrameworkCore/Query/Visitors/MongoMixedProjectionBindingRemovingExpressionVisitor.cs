@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -21,6 +22,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Storage;
 
@@ -106,6 +108,14 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 if (TryBindNavigationMemberAccess(sourceExpression, projectionBindingExpression.Type, out var navMemberRead))
                 {
                     return navMemberRead;
+                }
+
+                // An unfiltered embedded-collection Count/LongCount (e.g. select new { b, N = b.Posts.Count })
+                // mixed alongside a whole entity reference: the driver-LINQ Select was stripped, so count the
+                // stored array client-side from the materialized document.
+                if (TryBindEmbeddedCollectionCountLeaf(sourceExpression, projectionBindingExpression.Type, out var countRead))
+                {
+                    return countRead;
                 }
 
                 // A computed-arithmetic leaf (e.g. select new { c, Total = c.Age * c.Score }) mixed alongside
@@ -213,6 +223,43 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
 
         var innerDoc = CreateGetValueExpression(_docParameter, "_inner", false, typeof(BsonDocument));
         result = CreateGetValueExpression(innerDoc, property, resultType);
+        return true;
+    }
+
+    /// <summary>
+    /// Binds an unfiltered embedded (owned) collection <c>Count</c>/<c>LongCount</c> projection leaf (e.g.
+    /// <c>select new { b, N = b.Posts.Count }</c>). <see cref="MongoProjectionBindingExpressionVisitor"/> maps
+    /// such a leaf as <c>source == null ? default : Count(AsQueryable(EF.Property(shaper, nav)))</c>; here the
+    /// stored array is read from the materialized document and its length taken, treating a missing or null
+    /// array as empty. Returns <see langword="false"/> for any other shape (including a filtered count).
+    /// </summary>
+    private bool TryBindEmbeddedCollectionCountLeaf(Expression? mappedExpression, Type resultType, out Expression result)
+    {
+        result = null!;
+
+        if (mappedExpression is not ConditionalExpression
+            {
+                IfFalse: MethodCallExpression
+                {
+                    Method.Name: nameof(Queryable.Count) or nameof(Queryable.LongCount),
+                    Arguments: [MethodCallExpression { Method.Name: nameof(Queryable.AsQueryable), Arguments: [var source] }]
+                }
+            }
+            || source is not MethodCallExpression efPropertyCall
+            || !efPropertyCall.Method.IsEFPropertyMethod()
+            || efPropertyCall.Arguments[1] is not ConstantExpression { Value: string navigationName }
+            || efPropertyCall.Arguments[0] is not StructuralTypeShaperExpression { StructuralType: IEntityType owner }
+            || owner != _rootEntityType
+            || owner.FindNavigation(navigationName) is not { } navigation
+            || !navigation.IsEmbedded())
+        {
+            return false;
+        }
+
+        var array = BsonBinding.CreateGetBsonArray(_docParameter, navigation.TargetEntityType.GetContainingElementName()!);
+        Expression count = Expression.Property(
+            Expression.Coalesce(array, Expression.New(typeof(BsonArray))), nameof(BsonArray.Count));
+        result = count.Type == resultType ? count : Expression.Convert(count, resultType);
         return true;
     }
 
