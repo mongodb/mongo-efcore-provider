@@ -21,7 +21,7 @@ public enum MongoQueryMode
     /// <summary>Native translation when representable; driver-LINQ fallback otherwise. (Default.)</summary>
     Native,
 
-    /// <summary>Always use the driver's LINQ provider (the pre-rebuild behavior).</summary>
+    /// <summary>Always use the driver's LINQ provider.</summary>
     DriverLinq,
 
     /// <summary>Native translation only; throw at compile time on an un-representable query (diagnostic).</summary>

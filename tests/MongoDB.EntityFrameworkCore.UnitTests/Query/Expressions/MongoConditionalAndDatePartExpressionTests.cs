@@ -39,10 +39,8 @@ public class MongoConditionalAndDatePartExpressionTests
     [Fact]
     public void MongoConditionalExpression_type_prefers_IfFalse_type_when_IfTrue_is_a_null_constant()
     {
-        // A null MongoConstantExpression's own .Type falls back to typeof(object) (it carries no other type
-        // information), so the conditional's overall Type must not simply mirror IfTrue in that case — it
-        // should report the meaningful type from IfFalse instead. Live path: MongoSelectLowerer reads a
-        // computed sort key's KeySelector.Type, and a conditional can be a computed sort key.
+        // A null constant's Type is object, so the conditional must take IfFalse's type. MongoSelectLowerer
+        // reads a computed sort key's Type, and a conditional can be one.
         var test = new MongoConstantExpression(true, forSerialization: null);
         var ifTrue = new MongoConstantExpression(null, forSerialization: null);
         var ifFalse = new MongoConstantExpression(DateTime.UtcNow, forSerialization: null);
@@ -52,10 +50,7 @@ public class MongoConditionalAndDatePartExpressionTests
         Assert.Equal(typeof(DateTime), conditional.Type);
     }
 
-    // NOTE ON TEST SHAPE: MongoDatePart is internal, and a public [Theory] method cannot expose an internal
-    // type in its signature (CS0051) while the test class stays public (required for xUnit discovery).
-    // The [MemberData] rows are boxed as `object` here and cast back to `MongoDatePart` inside the method,
-    // which keeps the [Theory]/[MemberData] shape intact.
+    // `part` is object because MongoDatePart is internal and can't appear in a public test signature (CS0051).
     [Theory]
     [MemberData(nameof(DatePartTestData))]
     public void MongoDatePartExpression_type_matches_the_part(object part, Type expectedType)

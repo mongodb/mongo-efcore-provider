@@ -67,15 +67,18 @@ public class AggregateStageRenderingTests
         var grouping = new MongoGrouping(
             new[]
             {
-                new MongoGroupingKeyPart("Country", new MongoFieldExpression(property: null!, elementName: "country")),
-                new MongoGroupingKeyPart("Year", new MongoFieldExpression(property: null!, elementName: "year")),
+                new MongoGroupingKeyPart("Country", new MongoElementRefExpression("country", typeof(string))),
+                new MongoGroupingKeyPart("Year", new MongoElementRefExpression("year", typeof(int))),
             },
             new[] { new MongoGroupAccumulator("Count", "$sum", null) });
 
         var result = Render(new MongoGroupStage(grouping));
 
+        // A part that may be null is $ifNull-normalized (a composite _id omits a missing sub-key); a non-nullable
+        // part is not.
         Assert.Equal(
-            BsonDocument.Parse("{ $group: { _id: { Country: '$country', Year: '$year' }, Count: { $sum: 1 } } }"),
+            BsonDocument.Parse(
+                "{ $group: { _id: { Country: { $ifNull: ['$country', null] }, Year: '$year' }, Count: { $sum: 1 } } }"),
             result[0]);
     }
 }

@@ -31,10 +31,9 @@ public class MongoQueryCompilationContextFactory : IQueryCompilationContextFacto
     /// Create a <see cref="MongoQueryCompilationContextFactory"/> using the default <see cref="MongoQueryMode.Native"/> query mode.
     /// </summary>
     /// <remarks>
-    /// Retained for binary/source compatibility with v10.0.2, which shipped this single-argument public
-    /// constructor. DI does not select it (the two-argument overload is greedier), but a consumer that does
-    /// <c>ReplaceService&lt;IQueryCompilationContextFactory&gt;</c> and subclasses this type binds to it, so
-    /// removing it is a breaking change. Do not delete — this is intentionally not "dead code".
+    /// Shipped in v10.0.2; kept for binary/source compatibility. DI picks the two-argument overload, but a subclass
+    /// registered via <c>ReplaceService&lt;IQueryCompilationContextFactory&gt;</c> may bind to this one, so removing
+    /// it is a breaking change.
     /// </remarks>
     /// <param name="dependencies">The <see cref="QueryCompilationContextDependencies"/> passed to each created <see cref="MongoQueryCompilationContext" /> instance.</param>
     public MongoQueryCompilationContextFactory(QueryCompilationContextDependencies dependencies)
@@ -61,9 +60,7 @@ public class MongoQueryCompilationContextFactory : IQueryCompilationContextFacto
     /// </summary>
     protected virtual QueryCompilationContextDependencies Dependencies { get; }
 
-    /// <summary>
-    /// Create a new <see cref="MongoQueryCompilationContext"/> with the necessary dependencies.
-    /// </summary>
+    /// <summary>Creates a <see cref="MongoQueryCompilationContext"/>.</summary>
     /// <param name="async"><see langword="true"/> if the query to process is asynchronous, <see langword="false"/> if it is synchronous.</param>
     /// <returns>The newly created <see cref="MongoQueryCompilationContext"/>.</returns>
     public virtual QueryCompilationContext Create(bool async)

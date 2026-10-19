@@ -29,25 +29,19 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-322 stream 1, slice A5 (EF-400) — <c>Nullable&lt;T&gt;.Value</c> peels to the underlying field and
-/// <c>Nullable&lt;T&gt;.HasValue</c> becomes the node an explicit <c>!= null</c> already produced, in predicate,
-/// sort-key and projection position. Routing is proven by <see cref="MongoQueryMode.NativeOnly"/>, never by MQL
-/// shape.
+/// <c>Nullable&lt;T&gt;.Value</c> (peeled to the underlying field) and <c>Nullable&lt;T&gt;.HasValue</c> (same as
+/// <c>!= null</c>) in predicate, sort-key and projection position. Routing is proven by
+/// <see cref="MongoQueryMode.NativeOnly"/>, not MQL shape.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Unlike slice A2, this slice CAN change results, so the governing oracle is <c>Native == DriverLinq</c>,
-/// not in-memory LINQ.</b> In-memory LINQ throws <c>InvalidOperationException("Nullable object must have a
-/// value")</c> for <c>x.Score.Value</c> the moment <c>Score</c> is null; a server-side <c>$match</c>/<c>$sort</c>
-/// over a null or missing element does not, and never did — the driver-LINQ path this slice replaces answered
-/// the same way. That divergence is DOCUMENTED, not fixed (precedent: the EF-359 owner ruling in
-/// <c>Query/AGENTS.md</c>). <see cref="Parity_with_driver_linq_over_the_ragged_fixture"/> is the slice's real
-/// gate.
+/// The oracle is <c>Native == DriverLinq</c>, not in-memory LINQ: in-memory LINQ throws for <c>x.Score.Value</c>
+/// when <c>Score</c> is null, but a server-side <c>$match</c>/<c>$sort</c> doesn't (a documented divergence; see
+/// <c>Query/AGENTS.md</c>). <see cref="Parity_with_driver_linq_over_the_ragged_fixture"/> is the main gate.
 /// </para>
 /// <para>
-/// <b>The fixture is ragged and un-masked</b>: every nullable property carries three states — a value, an
-/// explicit BSON <c>null</c>, and a MISSING element (raw-inserted). "Missing" and "present but null" are
-/// otherwise indistinguishable from results alone, and <c>!HasValue</c> has to select BOTH.
+/// Every nullable property has three states — a value, explicit BSON <c>null</c>, and a missing element — and
+/// <c>!HasValue</c> must select both absent states.
 /// </para>
 /// </remarks>
 [XUnitCollection("QueryTests")]
@@ -63,9 +57,8 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     }
 
     /// <summary>
-    /// A SEPARATE entity, deliberately not folded into <see cref="Item"/>: the whole point of this fixture is a
-    /// property carrying a VALUE-TRANSFORMING converter, and adding one to <see cref="Item"/> would change the
-    /// model every other test in this class runs against.
+    /// Separate from <see cref="Item"/> so its value-transforming converter doesn't change the model the other
+    /// tests use.
     /// </summary>
     public class ConvertedItem
     {
@@ -83,17 +76,15 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // A relational comparison is TYPE-BRACKETED server-side: neither a stored null nor a missing element
-        // matches $gt, so the ragged rows are simply absent — the same answer driver-LINQ gives (Step 1 probe),
-        // and NOT the InvalidOperationException in-memory LINQ raises for the same lambda.
+        // Relational comparisons are type-bracketed server-side: null and missing never match $gt, so the ragged
+        // rows are absent (as with driver-LINQ), rather than the in-memory InvalidOperationException.
         Assert.Equal(
             ["r1_ten"],
             db.Entities.AsNoTracking().Where(x => x.Score!.Value > 5).OrderBy(x => x.Title)
                 .Select(x => x.Title).ToList());
 
-        // The opposite direction is bracketed too, so the ragged rows are absent from BOTH — which is exactly
-        // why { $gt: 5 } and { $lte: 5 } do not partition, and why MongoExpressionNegator $not-WRAPS a
-        // relational comparison instead of inverting it.
+        // Also bracketed, so { $gt: 5 } and { $lte: 5 } don't partition; hence MongoExpressionNegator wraps a
+        // relational comparison in $not instead of inverting it.
         Assert.Equal(
             ["r4_three"],
             db.Entities.AsNoTracking().Where(x => x.Score!.Value < 5).OrderBy(x => x.Title)
@@ -121,7 +112,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             db.Entities.AsNoTracking().Where(x => !x.Score.HasValue || x.Score!.Value > 5).OrderBy(x => x.Title)
                 .Select(x => x.Title).ToList());
 
-        // A WHOLE-ENTITY result, so routing is proven without the bare-projection leg confounding it.
+        // Whole-entity result, so routing isn't confounded by the bare-projection path.
         Assert.Equal(
             ["r1_ten"],
             db.Entities.AsNoTracking().Where(x => x.Score!.Value > 5).OrderBy(x => x.Title)
@@ -137,8 +128,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // BSON sort order is Null < Numbers, and a MISSING element sorts as null — so the two ragged rows lead,
-        // tie with each other, and the ThenBy makes that tie deterministic. Measured identical under DriverLinq.
+        // BSON sorts null (and missing) before numbers, so the ragged rows lead and tie; ThenBy breaks the tie.
         Assert.Equal(
             ["r2_null", "r3_missing", "r4_three", "r1_ten"],
             db.Entities.AsNoTracking().OrderBy(x => x.Score!.Value).ThenBy(x => x.Title)
@@ -154,42 +144,25 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
 
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
-            // Over the WELL-FORMED rows the projection goes native and returns the values.
+            // Well-formed rows only.
             Assert.Equal(
                 ["r1_ten=10", "r4_three=3"],
                 db.Entities.AsNoTracking().Where(x => x.Rank <= 2).OrderBy(x => x.Title)
                     .Select(x => new {x.Title, V = x.Score!.Value})
                     .ToList().Select(a => $"{a.Title}={a.V}").ToList());
 
-            // The BARE spelling too (EF-322 step 3a made a bare body native; its $project alias is the leaf's
-            // own document path, "Score").
+            // Bare spelling; its $project alias is the leaf's document path, "Score".
             Assert.Equal(
                 [3, 10],
                 db.Entities.AsNoTracking().Where(x => x.Rank <= 2).OrderBy(x => x.Score!.Value)
                     .Select(x => x.Score!.Value).ToList());
         }
 
-        // Over the RAGGED rows the non-nullable target has nowhere to put a null, and BOTH paths throw — which
-        // is the disposition Step 1's probe measured for DriverLinq and which the decision rule requires native
-        // to match (throw or decline, never a silently different answer).
-        //
-        // The EXACT exception TYPE is asserted PER PATH rather than through a catch-all, because a catch-all
-        // here would also pass on a connection error or an unrelated NullReferenceException — an absence-shaped
-        // assertion over the one behaviour this slice most needed to get right (native must NOT silently return
-        // 0). The two types differ by design and both were measured: the driver fails inside its own
-        // deserializer (FormatException: "Cannot deserialize a 'Int32' from BsonType 'Null'"). Per the
-        // versioning rubric the exception type of an erroneous input is not contract, and the released
-        // 8.4.2/9.1.2/10.0.2 packages throw here too (see the break check in the AGENTS.md note), so this pins
-        // the measurement rather than promising an API.
-        //
-        // Native's message changed under EF-402: TryResolveFieldAccess now peels `.Value` and resolves this
-        // leaf to its own `Score` IProperty (same as every other `.Value` leaf, not only a converted one), so
-        // the read goes through BsonBinding.CreateGetValueExpression + a narrowing Convert to the non-nullable
-        // binding type, rather than falling to the DOM shaper's required-element check. That Convert is exactly
-        // `Nullable<int>.Value`'s own getter, so the message is now .NET's own "Nullable object must have a
-        // value." — the SAME message in-memory LINQ throws for this shape (see the class remarks above) —
-        // rather than the shaper's generic "Document element 'V' is missing but required". Still
-        // InvalidOperationException; still an erroneous-input disposition, not a silently wrong answer.
+        // Over the ragged rows a non-nullable target can't hold null, so both paths must throw rather than
+        // silently return 0. Exception types are asserted per path (not a catch-all, which would also pass on a
+        // connection error) and legitimately differ: native reads through the `Score` property's binding and a
+        // narrowing Convert (.NET's "Nullable object must have a value"), while the driver fails in its
+        // deserializer. The type isn't contract for erroneous input.
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly})
         {
             using var db = CreateContext(collection, mode);
@@ -224,19 +197,17 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
 
         Assert.Equal(["r1_ten", "r4_three"], withValue);
 
-        // The load-bearing half: !HasValue must select the explicit BSON null AND the MISSING element. It does
-        // because $ne/$eq partition every BSON value including missing, which is why the negation renders as
-        // $not over $ne rather than as an inverted relational operator.
+        // !HasValue must select both explicit null and missing; $eq/$ne partition every BSON value including
+        // missing, so the negation renders as $not over $ne.
         Assert.Equal(["r2_null", "r3_missing"], withoutValue);
 
-        // Stated as a PARTITION rather than as two lists, because that is the property that is only true when
-        // both absent states are handled: every row is in exactly one of the two result sets.
+        // Every row must be in exactly one result set, which only holds if both absent states are handled.
         var all = db.Entities.AsNoTracking().OrderBy(x => x.Title).Select(x => x.Title).ToList();
         Assert.Equal(4, all.Count);
         Assert.Empty(withValue.Intersect(withoutValue));
         Assert.Equal(all, withValue.Concat(withoutValue).OrderBy(t => t, StringComparer.Ordinal).ToList());
 
-        // And the whole-entity spelling, so routing is not confounded by the bare projection.
+        // Whole-entity spelling, so routing isn't confounded by the bare projection.
         Assert.Equal(
             ["r2_null", "r3_missing"],
             db.Entities.AsNoTracking().Where(x => !x.Score.HasValue).OrderBy(x => x.Title)
@@ -254,8 +225,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             .OrderBy(x => x.Title).Select(x => x.Title).ToList();
         Assert.Equal(["r2_null", "r3_missing"], titles);
 
-        // A STAGE-SHAPE pin, not a routing proof (the NativeOnly mode above is the routing proof): the emitted
-        // filter must be the complement form that selects missing as well as null.
+        // Stage-shape pin: the filter must be the complement form that selects missing as well as null.
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
         Assert.Contains("\"$not\"", mql);
         Assert.Contains("\"$ne\" : null", mql);
@@ -292,9 +262,8 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         AssertParity(collection, db => db.Entities.AsNoTracking()
             .OrderBy(x => x.Score!.Value).ThenBy(x => x.Title).Select(x => x.Title).ToList());
 
-        // A nullable BOOL .Value: the peel resolves the receiver, and the bare-boolean-member arm then declines
-        // it because a nullable bool bare access could diverge from the driver's rendering. The peel must not
-        // open that hole — so this is a parity assertion over a shape that still FALLS BACK.
+        // Nullable bool .Value: the bare-boolean-member arm declines it (it could diverge from the driver's
+        // rendering), so this pins parity over a shape that still falls back.
         AssertParity(collection, db => db.Entities.AsNoTracking()
             .Where(x => x.Flag!.Value).OrderBy(x => x.Title).Select(x => x.Title).ToList());
     }
@@ -306,25 +275,22 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Parameterized_where_leg));
 
-        // A captured local inside string.StartsWith has no native regex rendering, so TryBuildNativeFactory
-        // declines LATE — after the emit side has already committed a pushed-down projection — under the DEFAULT
-        // Native mode. That route exists in neither NativeOnly (which throws on the decline) nor DriverLinq
-        // (which never builds a native factory), so it needs its own case.
+        // A late decline in TryBuildNativeFactory, after the emit side committed a pushed-down projection, only
+        // happens under Native (NativeOnly throws; DriverLinq never builds a native factory), so it needs its
+        // own case.
         var prefix = "r";
 
         using var db = CreateContext(collection, MongoQueryMode.Native);
 
-        // NULLABLE leaves first, deliberately: an alias miss on a nullable leaf is SILENT (null, no exception),
-        // while a non-nullable leaf throws — and ToList() materializes eagerly, so a loud query run first would
-        // abort the test before either silent row was observed.
+        // Nullable leaves first: an alias miss there is silent (null), while a non-nullable leaf throws and would
+        // abort the test before the silent case is observed.
         Assert.Equal(
             [10, null, null, 3],
             db.Entities.AsNoTracking().Where(x => x.Title.StartsWith(prefix))
                 .OrderBy(x => x.Title).Select(x => x.Score).ToList());
 
-        // A BARE `.Value` projection behind the same late decline — the leaf whose $project alias is chosen by
-        // the provider (the leaf's document path) rather than by a member name, i.e. the one an alias miss would
-        // corrupt silently. Guarded by HasValue so the ragged rows are excluded and the result is well-defined.
+        // Bare `.Value` behind the same late decline: its $project alias is the document path rather than a member
+        // name, so an alias miss would corrupt it silently. HasValue excludes the ragged rows.
         Assert.Equal(
             [10, 3],
             db.Entities.AsNoTracking().Where(x => x.Title.StartsWith(prefix) && x.Score.HasValue)
@@ -346,27 +312,16 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
                 .OrderBy(x => x.Title).Select(x => x.Title).ToList());
     }
 
-    // ── 7. Tripwires: the two sub-shapes this slice deliberately leaves on fallback ─
+    // ── 7. Tripwires ───────────────────────────────────────────────────────────────
 
     [Fact]
     public void Convert_wrapped_nullable_target_projection_leaf_now_goes_native_too()
     {
         var collection = SeedRagged(nameof(Convert_wrapped_nullable_target_projection_leaf_now_goes_native_too));
 
-        // `(int?)x.Score.Value` arrives as a Convert around the member access. Through EF-410 this declined as a
-        // WHOLE: NativeProjectionBinder's plain-field gate admits a MemberExpression (or an EF.Property call),
-        // not a UnaryExpression, and the tier-2 cast/count gate admitted only MongoSizeExpression /
-        // MongoFilteredSizeExpression / MongoConvertExpression — a bare MongoFieldExpression (what
-        // TranslateOperand's Convert branch unwraps this to, since int and int? share the same underlying type,
-        // so it takes the benign-convert unwrap path) was none of those.
-        //
-        // EF-410 widened that gate to also admit a bare MongoFieldExpression when the ORIGINAL leafExpression was
-        // syntactically a Convert. That arm does not distinguish "widening numeric" from "benign nullable-wrap"
-        // Converts — both translate the same way (TranslateOperand's benign/widening unwrap branches both just
-        // recurse into the operand) — so this shape is now admitted too. It is exactly the same field access as
-        // the un-cast `x.Score!.Value` leaf, which was ALREADY native and correct (see
-        // Value_in_a_projection_goes_native above) — Score has default serialization, so there is no read-side
-        // hazard, just an extra no-op cast wrapping an already-native leaf.
+        // `(int?)x.Score.Value` is a Convert that TranslateOperand unwraps to a bare MongoFieldExpression, which
+        // NativeProjectionBinder's cast gate admits when the original leaf was a Convert. It's the same field
+        // access as the un-cast leaf, and Score has default serialization, so there's no read-side hazard.
         foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
@@ -383,19 +338,10 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(HasValue_as_a_projection_leaf_still_declines_and_is_unchanged_by_this_slice));
 
-        // The HasValue arm lives in TranslateNode, the PREDICATE entry point — TryTranslateField (the projection
-        // and sort-key entry point) reaches TryResolveMember, which has no HasValue arm — so a HasValue
-        // PROJECTION leaf still declines and still falls back.
-        //
-        // Keeping it that way is deliberate, and the DIRECTION of the reasoning matters. MEASURED (Step 1 probe
-        // row 8): for a MISSING element, DriverLinq answers True here and in-memory LINQ answers False. Going
-        // native would not "inherit" that divergence — it would CREATE a new one: an aggregation-expression
-        // rendering evaluates a missing path as null, so native would answer False, AGREEING with CLR semantics
-        // and DISAGREEING with DriverLinq. (The measured halves are the two answers above; that native would
-        // render it that way is reasoned from $expr semantics, not measured — nothing was built.) Under this
-        // slice's declared oracle, Native == DriverLinq, that is a divergence and declining is correct — but a
-        // future ticket that changes the oracle for this shape should know it would be moving TOWARD CLR
-        // semantics, not away from them. Pinned so such a widening flips a tripwire.
+        // HasValue is only handled in predicate position (TranslateNode), so as a projection leaf it declines.
+        // Deliberate: for a missing element DriverLinq answers True while CLR semantics (and, by $expr semantics,
+        // a native rendering) answer False, so going native would diverge from the DriverLinq oracle — though it
+        // would move toward CLR semantics. Pinned so a widening flips this tripwire.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -403,29 +349,20 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
                     .Select(x => new {x.Title, H = x.Score.HasValue}).ToList());
         }
 
-        // Native and DriverLinq agree with each other (both take the fallback), which is the oracle that governs.
+        // Both take the fallback, so they agree.
         AssertParity(collection, db => db.Entities.AsNoTracking().OrderBy(x => x.Title)
             .Select(x => new {x.Title, H = x.Score.HasValue})
             .ToList().Select(a => $"{a.Title}={a.H}").ToList());
     }
 
-    // ── 8. EF-402: a VALUE-CONVERTED `.Value` projection leaf now goes native and reads through the converter ──
+    // ── 8. A value-converted `.Value` projection leaf reads through the converter ──
 
     /// <summary>
-    /// EF-402 — the follow-up to the EF-400 tripwire this test replaces. The READ side
-    /// (<c>MongoProjectionBindingRemovingExpressionVisitor.TryResolveFieldAccess</c>) now peels
-    /// <c>Nullable&lt;T&gt;.Value</c> the same way the EMIT side (<c>MongoExpressionTranslator.TryResolveMember</c>)
-    /// already did, so <c>x.Converted.Value</c> resolves to the SAME <see cref="IProperty"/> as <c>x.Converted</c>
-    /// on both sides, and the projection reads through the property's own converter instead of a default type
-    /// serializer. <c>NativeProjectionBinder.TryTranslateLeaf</c>'s <c>.Value</c> decline disjunct (added by
-    /// EF-400 specifically because the two sides disagreed) is now unnecessary and has been removed.
+    /// Both the read side (<c>MongoProjectionBindingRemovingExpressionVisitor.TryResolveFieldAccess</c>) and the
+    /// emit side (<c>MongoExpressionTranslator.TryResolveMember</c>) peel <c>Nullable&lt;T&gt;.Value</c>, so
+    /// <c>x.Converted.Value</c> resolves to the same <see cref="IProperty"/> and reads through its converter. If
+    /// the sides disagree, the raw stored value (14 instead of 7) is returned silently.
     /// </summary>
-    /// <remarks>
-    /// Measured before this fix (stored 14, correct CLR 7): <c>new { V = x.Converted.Value }</c> and the bare
-    /// <c>x.Converted.Value</c> both returned <b>14</b> under <c>Native</c> and <c>NativeOnly</c> — silently,
-    /// under the default mode. This test pins the corrected outcome: both spellings go native under
-    /// <c>NativeOnly</c> and return the converted value, 7.
-    /// </remarks>
     [Fact]
     public void Value_converted_nullable_Value_projection_leaf_goes_native_and_reads_through_the_converter()
     {
@@ -447,17 +384,9 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
 
     // ── Helpers ────────────────────────────────────────────────────────────────────
 
-    // Runs the same query under Native and DriverLinq and asserts they agree — the oracle for this slice.
-    //
-    // BOTH legs must RETURN; a throw on either side fails the helper. An earlier version compared only the
-    // fact-of-throwing, which made the throw-vs-throw case VACUOUS: two legs failing for entirely unrelated
-    // reasons (a connection error on one, a translation bug on the other) would have been reported as
-    // "parity". Every shape routed through here today returns values on both legs, so nothing is lost by
-    // requiring it — and the next person to add a THROWING shape is forced to decide explicitly what parity
-    // means for it rather than inheriting a silent pass. Deliberately NOT "assert the exception types match":
-    // this file already contains a measured shape where they legitimately DIFFER (the non-nullable projection
-    // target in Value_in_a_projection_goes_native — FormatException from the driver's deserializer vs
-    // InvalidOperationException from the DOM shaper), so a matching-types rule would be wrong, not stricter.
+    // Runs the query under Native and DriverLinq and asserts equal results. Both legs must return: comparing
+    // only the fact of throwing would pass for two unrelated failures, and exception types can legitimately
+    // differ (see Value_in_a_projection_goes_native).
     private void AssertParity<T>(IMongoCollection<Item> collection, Func<SingleEntityDbContext<Item>, List<T>> query)
     {
         var (nativeOk, nativeResult, nativeError) = Attempt(collection, MongoQueryMode.Native, query);
@@ -492,11 +421,8 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         }
     }
 
-    // Four rows, three states for every nullable property: a value, an explicit BSON null, and a MISSING
-    // element. r1/r4 carry values (two, so HasValue is not a one-row assertion), r2 is explicitly null and r3
-    // omits the elements entirely. The seed self-checks the stored shape, because "missing" and "present but
-    // null" are indistinguishable from results alone and an un-self-checked seed could silently degrade to two
-    // states — which would make every !HasValue assertion here vacuous.
+    // r1/r4 have values, r2 is explicitly null, r3 omits the elements. The seed self-checks the stored shape,
+    // since missing vs. null is invisible in results and a degraded seed would make the !HasValue tests vacuous.
     private IMongoCollection<Item> SeedRagged(string name)
     {
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -520,11 +446,9 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         return database.MongoDatabase.GetCollection<Item>(raw.CollectionNamespace.CollectionName);
     }
 
-    // Three rows for the value-converted fixture. The converter is v => v * 2 (to store) / v => v / 2 (to read),
-    // so a STORED 14 is a CLR 7 — a value-TRANSFORMING converter, which is the class this guard is about
-    // (HasBsonRepresentation and re-encoding converters happen to survive the raw read because the driver's
-    // default scalar deserializers are lenient about encoding; that is luck, not design). The stored numbers
-    // are all even and all differ from their CLR values, so a raw read is never mistakable for a correct one.
+    // Converter is v * 2 to store / v / 2 to read, so stored 14 is CLR 7. A value-transforming converter is
+    // needed: re-encoding converters survive a raw read only because the driver's deserializers are lenient.
+    // Stored values all differ from their CLR values, so a raw read is never mistaken for a correct one.
     private IMongoCollection<ConvertedItem> SeedConverted(string name)
     {
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -563,8 +487,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // MQL-capture idiom mirrored from NativeBareProjectionTests: FunctionalTests has no TestMqlLoggerFactory /
-    // AssertMql (those live in the SpecificationTests project), so MQL is captured through SpyLoggerProvider.
+    // FunctionalTests has no TestMqlLoggerFactory/AssertMql, so MQL is captured through SpyLoggerProvider.
     private static SingleEntityDbContext<Item> CreateContextWithLogging(
         IMongoCollection<Item> collection, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
     {

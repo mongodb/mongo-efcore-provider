@@ -26,19 +26,12 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-322 SP7 P1.2 — one-pass "deserialize IS materialize" streaming materializer tests. For a
-/// streaming-eligible whole-entity query the native path now uses a custom <c>IBsonSerializer&lt;TEntity&gt;</c>
-/// as the Aggregate output serializer, so the driver cursor yields finished, materialized (and, when tracked,
-/// tracked) entities directly — a single forward reader pass instead of the previous
-/// RawBsonDocument + second-pass materialization.
+/// One-pass "deserialize is materialize" streaming: for a streaming-eligible whole-entity query the Aggregate output
+/// serializer is a custom <c>IBsonSerializer&lt;TEntity&gt;</c>, so the cursor yields finished (and, when tracked,
+/// tracked) entities in a single reader pass.
 /// <para>
-/// The observable contract is unchanged from the double-pass streaming path, so these tests assert:
-/// (a) whole-entity no-track parity with the DOM path + genuine native execution under
-/// <see cref="MongoQueryMode.NativeOnly"/>; (b) whole-entity <em>tracked</em> round-trip — the case that
-/// exercises the state-manager-ordering fix (the driver eagerly materializes cursor batch 1 during the
-/// Aggregate call, before <c>QueryingEnumerable</c> would previously have initialized the state manager);
-/// (c) an entity with an owned reference AND an owned collection streams correct nested values; (d) a
-/// required-but-missing scalar throws the same <see cref="InvalidOperationException"/> as the DOM path.
+/// Covers no-track parity with the DOM path, tracked round-trips, owned reference + collection values, wide
+/// mixed-type rows, IDisposable entities, and the required-but-missing exception.
 /// </para>
 /// </summary>
 [XUnitCollection("QueryTests")]
@@ -91,7 +84,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── (a) whole-entity no-track: streamed set == DOM AsNoTracking set, and genuinely native ──────
+    // ── (a) whole-entity no-track: streamed set == DOM AsNoTracking set, and native ──────
 
     [Fact]
     public void Whole_entity_no_track_streamed_equals_DOM_and_succeeds_under_NativeOnly()
@@ -134,9 +127,8 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
     }
 
     // ── (b) whole-entity tracked: entities are tracked; mutate + SaveChanges round-trips ───────────
-    // This is the case that exercises the state-manager-ordering fix: with the one-pass serializer the
-    // driver materializes (and tracks) cursor batch 1 DURING collection.Aggregate(...) — before the point
-    // where the state manager used to be initialized. If it is not initialized first this NREs.
+    // The driver materializes (and tracks) cursor batch 1 inside collection.Aggregate(...), so the state manager
+    // must be initialized before that call or this NREs.
 
     [Fact]
     public void Whole_entity_tracked_streams_tracked_entities_and_round_trips()
@@ -174,13 +166,8 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
     }
 
     // ── (c) owned reference AND owned collection materialize correct nested values ─────────────────
-    // NOTE (updated EF-322 owned-collection slice): the admit predicate (IsOwnedEmbeddedIncludeSelector) now
-    // accepts EVERY embedded navigation in the auto-include chain, including owned COLLECTION navigations —
-    // so this entity, which mixes an owned reference (ShipTo) with an owned COLLECTION (Lines) on the same
-    // root, ALSO goes native (previously it fell back to driver-LINQ/DOM under Task 2). This test still
-    // asserts Native↔DriverLinq PARITY of the nested values as a materialization guard that the one-pass
-    // changes do not regress owned materialization, and additionally proves routing with a NativeOnly
-    // success assertion below.
+    // Mixes an owned reference (ShipTo) with an owned collection (Lines); asserts Native == DriverLinq nested values
+    // and that the shape routes native.
 
     [Fact]
     public void Owned_reference_and_owned_collection_materialize_correct_nested_values()
@@ -251,8 +238,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             AssertNesting(ctx.Entities.AsNoTracking().OrderBy(o => o.Customer).ToList(), id1);
         }
 
-        // EF-322 owned-collection slice: this mixed owned-ref + owned-collection shape now ALSO routes
-        // native — prove it (NativeOnly succeeds instead of throwing) in addition to the parity guard above.
+        // Proves the mixed owned shape routes native.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, model))
         {
             AssertNesting(nativeOnly.Entities.AsNoTracking().ToList(), id1);
@@ -260,10 +246,8 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
     }
 
     // ── (e) wide mixed-type entity: every typed read (typed-generic + boxed-fallback) is byte-identical ──
-    // Guards the P1.3 rewrite (reuse-context + generic IBsonSerializer<T>.Deserialize, boxed fallback for
-    // non-generic serializers) against a mis-positioned reader or a wrong typed cast silently corrupting a
-    // value. Covers every primitive + its nullable, plus a non-default BsonRepresentation (int stored as a
-    // string — still a generic Int32Serializer) and a value-converter property (ValueConverterSerializer<,>).
+    // Guards against a mis-positioned reader or wrong typed cast silently corrupting a value. Covers every primitive
+    // and its nullable, a non-default BsonRepresentation (int stored as string), and a value converter.
 
     private class WideEntity
     {
@@ -370,12 +354,9 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
     }
 
     // ── (f) an IDisposable entity type must NOT be disposed by ReleaseCurrentRow ─────────────────────
-    // Regression test for a whole-branch-review finding: under the SP7 one-pass path, TSource == TResult
-    // (the cursor yields the finished entity directly, the shaper is identity), so _currentRow and Current
-    // are the SAME reference. ReleaseCurrentRow used to dispose ANY IDisposable _currentRow — which, for a
-    // mapped entity type that happens to implement IDisposable, meant disposing the entity the caller just
-    // received (and, on the tracked path, an entity now owned by the state manager). This must never happen;
-    // only the dormant RawBsonDocument fallback row type should ever be released.
+    // With one-pass streaming the shaper is identity, so _currentRow and Current are the same reference;
+    // ReleaseCurrentRow must not dispose a mapped entity (possibly now owned by the state manager). Only the
+    // RawBsonDocument fallback row type may be released.
 
     private class DisposableItem : IDisposable
     {
@@ -413,8 +394,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             Assert.False(native[i].Disposed);
         }
 
-        // Genuinely native (streaming one-pass); a fallback shape would throw under NativeOnly. Confirms the
-        // one-pass path (where _currentRow and the returned entity are the SAME reference) actually fired.
+        // Native one-pass (where _currentRow is the returned entity); a fallback shape would throw under NativeOnly.
         using (var ctx = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
             var nativeOnly = ctx.Entities.AsNoTracking().OrderBy(e => e.Value).ToList();

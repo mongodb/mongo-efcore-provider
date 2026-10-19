@@ -10,23 +10,19 @@ using Microsoft.EntityFrameworkCore.Query;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// An array of owned entities read back from a native <c>$project</c> OUTPUT ALIAS rather than from the
+/// An array of owned entities read back from a native <c>$project</c> output alias rather than from the
 /// navigation's own document path — the alias-addressed sibling of <see cref="ObjectArrayProjectionExpression"/>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// This node deliberately carries NO alias. The alias is resolved by
-/// <see cref="Visitors.MongoProjectionBindingRemovingExpressionVisitor"/>'s <c>VisitBinary</c> from the
-/// <see cref="ProjectionExpression"/> that the post-processor built from this projection's
-/// <c>ProjectionMember</c> — the identical mechanism every scalar projection leaf uses. Carrying an alias
-/// here as well would create a second, independently-derived copy of the same name and reintroduce exactly
-/// the emit-side/shaper-side alias divergence documented in <c>Query/AGENTS.md</c>.
+/// Carries no alias of its own: <see cref="Visitors.MongoProjectionBindingRemovingExpressionVisitor"/> resolves it
+/// from the <see cref="ProjectionExpression"/> built from the <c>ProjectionMember</c>, like any scalar leaf. A
+/// second copy here could diverge from the emitted name.
 /// </para>
 /// <para>
-/// It is a separate type from <see cref="ObjectArrayProjectionExpression"/>, not a flag on it, because that
-/// node's contract is "read this navigation at its containing element name": its <c>Name</c> is derived from
-/// <c>GetContainingElementName()</c> and participates in its equality. Two nodes that address the same array
-/// by different mechanisms must not compare equal — <c>_projectionBindings</c> is keyed on the node itself.
+/// A separate type rather than a flag on <see cref="ObjectArrayProjectionExpression"/>, whose <c>Name</c>
+/// (from <c>GetContainingElementName()</c>) participates in equality; <c>_projectionBindings</c> is keyed on the
+/// node, so nodes addressing the same array differently must not compare equal.
 /// </para>
 /// </remarks>
 internal sealed class ArrayAliasProjectionExpression : Expression, IPrintableExpression, IArrayProjectionExpression

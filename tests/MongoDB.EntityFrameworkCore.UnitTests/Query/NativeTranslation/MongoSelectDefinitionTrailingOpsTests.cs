@@ -84,9 +84,8 @@ public class MongoSelectDefinitionTrailingOpsTests
     public void IsSetOpTerminalOnly_false_when_a_projection_is_populated()
     {
         var select = WithSetOp();
-        // A trailing projection was pushed down: the set op is no longer the ONLY thing done, so a
-        // subsequent operator must NOT be treated as set-op-terminal-only (it would resolve against the
-        // entity type and mis-place / mis-bind — the composition-after-projection seam this closes).
+        // After a pushed-down projection the set op isn't the only operation, so a later operator must not resolve
+        // against the entity type.
         select.AddProjection(new MongoProjection("N", new MongoConstantExpression(0, forSerialization: null)));
         Assert.False(select.IsSetOpTerminalOnly);
     }

@@ -45,18 +45,11 @@ internal sealed class MongoFieldExpression : MongoExpression
     public string ElementName { get; }
 
     /// <summary>
-    /// When <see langword="true"/>, the aggregation-expression renderer wraps this field reference in
-    /// <c>$ifNull</c> against a literal <c>null</c> before use — mirroring
-    /// <see cref="MongoElementRefExpression.NullSafe"/>'s own precedent and reasoning. Needed for a field
-    /// reached through a left-outer join/lookup's Inner side (e.g. <c>o.Customer.CustomerID</c> after
-    /// <c>Orders.Include(o =&gt; o.Customer)</c>'s <c>$lookup</c> + <c>$unwind(preserveNullAndEmptyArrays:
-    /// true)</c>): an unmatched row's <c>_lookup_Customer</c> sub-document is entirely MISSING (not an
-    /// explicit BSON null), so <c>$_lookup_Customer.CustomerID</c> is itself missing — and <c>$expr</c>'s
-    /// <c>$ne</c>/<c>$eq</c> do NOT treat a missing operand the same as an explicit <c>null</c> the way the
-    /// ordinary query dialect's <c>{field: null}</c> does. Set only by
-    /// <c>MongoExpressionTranslator.TranslateComparisonCore</c> (private) when comparing such a field to a
-    /// literal null via <c>==</c>/<c>!=</c>; every other caller leaves this <see langword="false"/>, so their
-    /// emitted MQL is unaffected.
+    /// When <see langword="true"/>, the aggregation renderer wraps this field in <c>$ifNull</c> against
+    /// <c>null</c> (as <see cref="MongoElementRefExpression.NullSafe"/> does). Needed for a field reached through
+    /// a left-outer <c>$lookup</c> + <c>$unwind(preserveNullAndEmptyArrays)</c>: an unmatched row's lookup
+    /// sub-document is missing, and <c>$expr</c>'s <c>$eq</c>/<c>$ne</c> don't treat missing as <c>null</c>.
+    /// Set only by <c>MongoExpressionTranslator.TranslateComparisonCore</c> for <c>==</c>/<c>!=</c> null.
     /// </summary>
     public bool NullSafe { get; }
 

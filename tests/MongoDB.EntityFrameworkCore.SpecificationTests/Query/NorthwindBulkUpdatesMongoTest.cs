@@ -26,20 +26,15 @@ using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
-// Conformance coverage for EF Core's bulk-update spec suite, scoped to the subset the MongoDB
-// provider supports: a single collection, scoped by Where, with constant / parameter /
-// self-referencing scalar setters (see README "What is supported" and EF-107).
+// Conformance coverage for EF Core's bulk-update spec suite, scoped to what the provider supports: a single
+// collection, scoped by Where, with constant / parameter / self-referencing scalar setters (EF-107).
 //
-// Supported cases call base, which asserts the affected-document count and the before/after
-// document state. Bulk operations emit Executing/ExecutedBulkUpdate|Delete diagnostics events
-// rather than ExecutedMqlQuery, so there is no MQL baseline to pin via AssertMql here (unlike the
-// Northwind *query* suites). Ordering/paging/Distinct-scoped bulk operations are supported via the
-// two-phase (_id-projection) execution path and call base. Per the suite convention (see
-// docs/failing-spec-tests.md) the remaining out-of-subset cases (joins, set operations, GroupBy,
-// SelectMany, navigations, non-entity projections, multiple-collection updates) are not skipped:
-// they run and assert the current failure mode (translation failure, cross-DbSet rejection, or a
-// non-translation exception), tagged with a // Fails: <reason> <ticket> comment. Behavioral
-// coverage for the supported subset also lives in FunctionalTests/Query/ExecuteUpdateTests.cs and
+// Supported cases call base, which asserts the affected-document count and before/after state. Bulk operations
+// emit Executing/ExecutedBulkUpdate|Delete events rather than ExecutedMqlQuery, so there is no AssertMql baseline.
+// Ordering/paging/Distinct-scoped operations use the two-phase (_id-projection) path and also call base.
+// Out-of-subset cases (joins, set operations, GroupBy, SelectMany, navigations, non-entity projections,
+// multiple-collection updates) are not skipped (docs/failing-spec-tests.md): they run and assert the current
+// failure mode, tagged with a // Fails: comment. More coverage: FunctionalTests/Query/ExecuteUpdateTests.cs and
 // ExecuteDeleteTests.cs.
 public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<NorthwindBulkUpdatesMongoFixture<NoopModelCustomizer>>
 {
@@ -140,9 +135,7 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
         => AssertTranslationFailed(() => base.Delete_Intersect(async));
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
-    // EF-347 slice 5: the underlying reference SelectMany now declines with NotSupportedException
-    // (whole-inner-entity guard) instead of EF's generic InvalidOperationException; still unsupported,
-    // only the exception type changed, so use the lenient helper rather than the strict local one.
+    // The reference SelectMany declines with NotSupportedException (whole-inner-entity guard).
     public override Task Delete_SelectMany(bool async)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Delete_SelectMany(async), typeof(NotSupportedException));
 
@@ -257,18 +250,12 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
     public override Task Update_Concat_set_constant(bool async)
         => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Concat_set_constant(async));
 
-    // Fails: EF-347 -- the source's whole-entity, terminal Except now translates (goes native), so the
-    // conformance asserter's before/after snapshot read actually executes the $unionWith pipeline, which the
-    // server rejects inside the multi-document transaction the asserter (and the two-phase bulk path) runs
-    // in ("Stage not supported inside of a multi-document transaction: $unionWith") -- a runtime
-    // MongoCommandException rather than the provider's own compile-time bulk-source rejection. Same root
-    // cause as Update_Concat_set_constant/Update_Union_set_constant just above; still a genuine failure
-    // either way EF-X002.
+    // Fails: the Except source goes native, so the $unionWith pipeline runs inside the asserter's
+    // multi-document transaction and the server rejects it (MongoCommandException) EF-X002.
     public override Task Update_Except_set_constant(bool async)
         => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Except_set_constant(async));
 
-    // Fails: EF-347 -- see Update_Except_set_constant immediately above; the same now-native whole-entity
-    // Intersect source hits the identical $unionWith-inside-a-transaction rejection EF-X002.
+    // Fails: same $unionWith-inside-a-transaction rejection as Update_Except_set_constant EF-X002.
     public override Task Update_Intersect_set_constant(bool async)
         => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Intersect_set_constant(async));
 
@@ -324,9 +311,7 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
         => base.Update_Where_OrderBy_set_constant(async);
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
-    // EF-347 slice 5: the underlying reference SelectMany now declines with NotSupportedException
-    // (whole-inner-entity guard) instead of EF's generic InvalidOperationException; still unsupported,
-    // only the exception type changed, so use the lenient helper rather than the strict local one.
+    // The reference SelectMany declines with NotSupportedException (whole-inner-entity guard).
     public override Task Update_Where_SelectMany_set_null(bool async)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Update_Where_SelectMany_set_null(async), typeof(NotSupportedException));
 

@@ -27,12 +27,9 @@ internal enum MongoAggregateOperator { Count, LongCount, Sum, Min, Max, Average,
 internal enum MongoEmptyAggregateBehavior { DefaultValue, ReturnNull, Throw }
 
 /// <summary>
-/// Native-translation IR for a terminal cardinality / aggregate operator. Exactly one of
-/// <see cref="Reducer"/> (entity reducers: First/Single) or <see cref="Aggregate"/> (scalar aggregates)
-/// is set. Populated by <c>NativeCardinalityBinder</c> from the QMTEV; read by the gate, lowerer, and shaper.
-/// Immutable — constructed exclusively via <see cref="ForReducer"/> / <see cref="ForAggregate"/>, which
-/// enforce that exactly one of <see cref="Reducer"/>/<see cref="Aggregate"/> is set and that
-/// <see cref="ResultType"/> is always populated (no sentinel default).
+/// Native IR for a terminal cardinality/aggregate operator: exactly one of <see cref="Reducer"/> (First/Single/
+/// Last) or <see cref="Aggregate"/> is set, enforced by the <see cref="ForReducer"/>/<see cref="ForAggregate"/>
+/// factories. Populated by <c>NativeCardinalityBinder</c>; read by the gate, lowerer and shaper.
 /// </summary>
 internal sealed class MongoCardinality
 {
@@ -86,12 +83,9 @@ internal sealed class MongoCardinality
     public object? PresentValue { get; }
 
     /// <summary>
-    /// EF-322: <see langword="true"/> for a Last/LastOrDefault <see cref="Reducer"/> composed with no
-    /// explicit prior sort (<c>MongoSelectDefinition.TryFlipTrailingSortDirection</c> declined). Tells
-    /// <c>MongoSelectLowerer</c> to lower this reducer to the <c>$group{_id:null,_last:{$last:"$$ROOT"}}</c>
-    /// + <c>$replaceRoot</c> pattern, emitted AFTER any <c>$lookup</c> so an <c>Include</c>d collection is
-    /// already present in the captured "$$ROOT" — rather than the ordinary sort-flip + <c>$limit</c> pattern
-    /// used when <see langword="false"/>.
+    /// <see langword="true"/> for Last/LastOrDefault with no prior sort to flip. <c>MongoSelectLowerer</c> then
+    /// emits <c>$group{_id:null,_last:{$last:"$$ROOT"}}</c> + <c>$replaceRoot</c> after any <c>$lookup</c> (so an
+    /// included collection is in "$$ROOT"), instead of sort-flip + <c>$limit</c>.
     /// </summary>
     public bool UnorderedLastRow { get; }
 

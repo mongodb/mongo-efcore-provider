@@ -22,25 +22,22 @@ using MongoDB.Bson.Serialization;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Shared value-serialization helpers used by both the compile-time renderer
-/// (<see cref="MongoQueryLanguageRenderer"/>, baking inline constants) and the per-execution
-/// parameter binder (<see cref="MongoPipelineFactory"/>). Keeping a single implementation here
-/// guarantees a captured constant and a runtime parameter of the same value serialize identically.
+/// Value serialization shared by the compile-time renderer (<see cref="MongoQueryLanguageRenderer"/>, inline
+/// constants) and the per-execution parameter binder (<see cref="MongoPipelineFactory"/>), so a constant and a
+/// parameter of the same value serialize identically.
 /// </summary>
 internal static class BsonValueSerializer
 {
     /// <summary>
-    /// The conventional single-field name used to wrap a bare scalar value in a <see cref="BsonDocument"/> —
-    /// both here (per-value serialization) and by the scalar-aggregate output stages
-    /// (<c>$count</c>/<c>$group</c>) and their deserialization in
+    /// Field name wrapping a bare scalar in a <see cref="BsonDocument"/>; also used by the scalar-aggregate output
+    /// stages (<c>$count</c>/<c>$group</c>) and read back in
     /// <see cref="Visitors.MongoShapedQueryCompilingExpressionVisitor"/>.
     /// </summary>
     internal const string ScalarField = "v";
 
     /// <summary>
-    /// Coerces a CLR value to <paramref name="target"/> so the property/value serializer (which casts hard to
-    /// its exact type) accepts it. Handles <c>Nullable&lt;T&gt;</c> by unwrapping to the underlying type, then
-    /// applies enum and numeric promotion. Returns the value unchanged if no safe coercion applies.
+    /// Coerces a CLR value to <paramref name="target"/> (unwrapping <c>Nullable&lt;T&gt;</c>; enum and numeric
+    /// promotion) because serializers cast hard to their exact type. Returns the value unchanged otherwise.
     /// </summary>
     public static object? Coerce(Type target, object? value)
     {
@@ -63,10 +60,8 @@ internal static class BsonValueSerializer
     }
 
     /// <summary>
-    /// Serializes <paramref name="value"/> through <paramref name="serializer"/> using a
-    /// <see cref="BsonDocumentWriter"/> with a <c>"v"</c> wrapper element, returning the wrapped value.
-    /// This is the single serialize-block shared by the compile-time and run-time native paths so the two
-    /// emit identical BSON. The caller is responsible for any coercion (via <see cref="Coerce"/>) beforehand.
+    /// Serializes <paramref name="value"/> through <paramref name="serializer"/> inside a <c>"v"</c> wrapper and
+    /// returns the wrapped value. Callers must <see cref="Coerce"/> first.
     /// </summary>
     public static BsonValue SerializeThroughWriter(IBsonSerializer serializer, object? value)
     {

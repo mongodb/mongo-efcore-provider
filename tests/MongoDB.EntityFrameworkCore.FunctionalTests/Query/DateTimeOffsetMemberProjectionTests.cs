@@ -18,6 +18,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -51,6 +52,22 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         var result = db.Entities.Select(e => e.DateTimeOffset.DateTime).Single();
 
         Assert.Equal(TestValue.DateTime, result);
+    }
+
+    // UtcDateTime alone under NativeOnly: sibling members (TimeOfDay) in Select_DateTimeOffset_remaining_components make that query fall back.
+    [Fact]
+    public void Select_DateTimeOffset_UtcDateTime_goes_native()
+    {
+        using var db = SingleEntityDbContext.Create(CreateSeededCollection(), optionsBuilderAction: b =>
+        {
+            b.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+            new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+        });
+
+        var result = db.Entities.Select(e => new { e.Id, U = e.DateTimeOffset.UtcDateTime }).Single();
+
+        Assert.Equal(TestValue.UtcDateTime, result.U);
+        Assert.Equal(DateTimeKind.Utc, result.U.Kind);
     }
 
     [Fact]
@@ -143,10 +160,7 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
     {
         using var db = SingleEntityDbContext.Create(CreateSeededCollection());
 
-        // DateTimeOffset.UtcNow.Year reaches TryResolveDateTimeOffsetElementAccess as a static MemberExpression
-        // with a null Expression. A prior version null-forgave that and threw NullReferenceException; the fix
-        // falls through to `return false` instead, letting the query translate/evaluate normally. The
-        // regression guarded against is specifically the NullReferenceException, not any particular exception.
+        // DateTimeOffset.UtcNow.Year is a static MemberExpression with a null Expression; it must decline, not throw NullReferenceException.
         var exception = Record.Exception(() => db.Entities.Select(e => DateTimeOffset.UtcNow.Year).Single());
 
         Assert.False(exception is NullReferenceException,
@@ -165,9 +179,8 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(TestValue.DateTime, result);
 
-        // Confirms the rewrite actually renders as a server-side aggregation expression (reading the
-        // stored DateTime/Offset sub-fields and reconstructing via $dateAdd) rather than silently
-        // falling back to client-side evaluation and coincidentally producing the right value.
+        // Proves the member renders server-side ($dateAdd over the stored sub-fields) rather than evaluating
+        // client-side and coincidentally producing the right value.
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains("\"$dateAdd\"", message);
@@ -195,7 +208,6 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
             e.DateTimeOffset.UtcDateTime
         }).Single();
 
-        // Scalar member components work correctly
         Assert.Equal(TestValue.Month, result.Month);
         Assert.Equal(TestValue.Day, result.Day);
         Assert.Equal(TestValue.Hour, result.Hour);

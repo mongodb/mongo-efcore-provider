@@ -23,13 +23,10 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// An enum-to-enum CAST projection leaf — <c>(TargetEnum)c.SourceEnum</c> — has no <c>$toX</c> form
-/// (<see cref="MongoConvertExpression.ToOperatorFor"/> only maps <c>int</c>/<c>long</c>/<c>double</c>/
-/// <c>decimal</c>), so it used to decline the WHOLE projecting <c>Select</c> outright (the closing gap behind
-/// <c>BuiltInDataTypesMongoTest.Can_filter_projection_with_captured_enum_variable</c> /
-/// <c>_inline_enum_variable</c>). It needs no server-side computation at all — the cast only changes the
-/// leaf's DECLARED CLR type, never the stored value — so <see cref="NativeProjectionBinder.TryTranslateLeaf"/>
-/// now admits it as a bare field leaf (the cast dropped entirely), same as an uncast member access.
+/// An enum-to-enum cast projection leaf (<c>(TargetEnum)c.SourceEnum</c>) has no <c>$toX</c> form
+/// (<see cref="MongoConvertExpression.ToOperatorFor"/> maps only numeric types), but the cast only changes the
+/// declared CLR type, not the stored value, so <see cref="NativeProjectionBinder.TryTranslateLeaf"/> admits it as
+/// a bare field leaf. Behind <c>BuiltInDataTypesMongoTest.Can_filter_projection_with_captured_enum_variable</c>.
 /// </summary>
 public class NativeProjectionBinderEnumCastTests
 {

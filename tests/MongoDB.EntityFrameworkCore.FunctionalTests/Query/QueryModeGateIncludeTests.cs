@@ -32,25 +32,15 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Tests covering <c>Include</c> behavior under the EF-323 query-mode gate.
+/// Tests covering <c>Include</c> behavior under the query-mode gate.
 /// <para>
-/// EF-368 final fix wave, Finding 8: this summary used to claim "Reference Includes are EF9+/EF10 only, so
-/// this class is compiled out under EF8". Both halves were false — the class is not gated at all, and a
-/// REQUIRED reference <c>Include</c> lowers to <c>Queryable.Join</c>, which dispatches on all three majors
-/// (only an OPTIONAL one lowers to <c>Queryable.LeftJoin</c>, which is EF10-only). The class is deliberately
-/// left UNGATED; equivalent ungated coverage also exists in <c>NativeReferenceIncludeTests</c> and
-/// <c>RequiredNavigationUnwindTests</c>.
+/// Not version-gated: a required reference <c>Include</c> lowers to <c>Queryable.Join</c> on every EF major
+/// (only an optional one uses the EF10-only <c>LeftJoin</c>).
 /// </para>
 /// </summary>
 /// <remarks>
-/// NOTE: as of EF-368 Task 5, a single-level reference Include recognized by
-/// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleLevelReferenceIncludeSelector</c> now goes
-/// NATIVE under <see cref="MongoQueryMode.Native"/> — see
-/// <see cref="Reference_include_goes_native_under_Native_mode"/> below, which asserts the native
-/// <c>_lookup_&lt;NavigationName&gt;</c> alias rather than the driver-LINQ LeftJoin path's characteristic
-/// <c>_outer</c> / <c>$$ROOT</c> / <c>_inner</c> shape. A shape the recognizer declines (composite key,
-/// a second reference Include, a `ThenInclude` reaching past the looked-up document, post-terminal
-/// composition, …) still falls back to that driver-LINQ LeftJoin path exactly as before Task 5.
+/// A recognized single-level reference Include goes native (root-level <c>_lookup_&lt;NavigationName&gt;</c> alias);
+/// a declined shape falls back to the driver-LINQ LeftJoin path (<c>_outer</c> / <c>$$ROOT</c> / <c>_inner</c>).
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
@@ -123,13 +113,8 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Reference_include_goes_native_under_Native_mode()
     {
-        // EF-368 Task 5: single-level reference Include now goes NATIVE (this test's name and premise
-        // predate that — it used to be "..._falls_back_to_driver_linq_under_Native_mode" and asserted the
-        // OLD driver-LINQ LeftJoin shape; renamed/re-asserted as part of delivering the capability). This
-        // test verifies:
-        //   (a) The materialized result graph is correct (Customer navigation is populated).
-        //   (b) The emitted pipeline reflects the NATIVE $lookup+$unwind shape (a root-level
-        //       _lookup_<NavigationName> alias) rather than the driver's $$ROOT/_outer/_inner LeftJoin shape.
+        // Verifies (a) the materialized graph is correct and (b) the pipeline has the native $lookup+$unwind
+        // shape rather than the driver's $$ROOT/_outer/_inner LeftJoin shape.
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateCustomers") + Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateOrders") + Guid.NewGuid().ToString("N")[..8];
 
@@ -151,22 +136,19 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         Assert.All(orders, o => Assert.NotNull(o.Customer));
         Assert.All(orders, o => Assert.Equal("Alice", o.Customer.FullName));
 
-        // (b) Driver-LINQ LeftJoin shape: $$ROOT is projected as _outer, related documents collected as _inner.
-        //     This is distinct from the future native path which would use a _lookup_<NavigationName> alias.
+        // (b) Native shape, not the driver-LINQ LeftJoin shape.
         var mql = Assert.Single(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains("_lookup_Customer", mql);   // native $lookup alias for the confirmed reference Include
         Assert.Contains(
             "{ \"$unwind\" : { \"path\" : \"$_lookup_Customer\", \"preserveNullAndEmptyArrays\" : false } }",
             mql); // required nav (non-nullable CustomerId) -> inner unwind
-        Assert.DoesNotContain("$$ROOT", mql);   // no longer the driver's LeftJoin shape
+        Assert.DoesNotContain("$$ROOT", mql);   // not the driver's LeftJoin shape
         Assert.DoesNotContain("_outer", mql);
         Assert.DoesNotContain("_inner", mql);
     }
 
-    // ── EF-339: single-level collection Include emits a flat $lookup (no $unwind) natively ─────────
-    // Under NativeOnly, a fallback shape throws NativeTranslationNotSupportedException; success here
-    // proves the collection Include's $lookup went through the native pipeline rather than falling
-    // back to the driver-LINQ join path.
+    // Single-level collection Include emits a flat $lookup (no $unwind) natively; success under NativeOnly
+    // proves it didn't fall back.
 
     [Fact]
     public void Single_level_collection_Include_runs_native()
@@ -317,10 +299,8 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
             _orderDetails = orderDetails;
         }
 
-        // Optional MQL-capture hook (review finding I4): a loggerFactory lets a caller assert the route the
-        // query actually took (e.g. via SpyLoggerProvider + MongoEventId.ExecutedMqlQuery), rather than only
-        // asserting the DATA an explicit MongoQueryMode produced. Byte-for-byte inert (no UseLoggerFactory
-        // call at all) for every pre-existing caller, which all pass null.
+        // Optional MQL capture so a caller can assert the route taken, not just the data. Null means no
+        // UseLoggerFactory call at all.
         private static DbContextOptionsBuilder<NestedOrderCustomerDbContext> Configure(
             DbContextOptionsBuilder<NestedOrderCustomerDbContext> builder, ILoggerFactory? loggerFactory)
             => loggerFactory is null ? builder : builder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();
@@ -357,15 +337,8 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Nested_ThenInclude_runs_native()
     {
-        // A collection-then-collection ThenInclude now goes NATIVE (this test's name and premise predate
-        // that — it used to be "..._still_falls_back" and asserted NativeTranslationNotSupportedException
-        // under NativeOnly). The nested $lookup(s) staged into the parent LookupExpression's own
-        // PipelineStages (MongoProjectionBindingExpressionVisitor's ExtractNestedIncludePipeline /
-        // ExtractThenIncludesFromSubquery — unchanged, and already shared with the driver-LINQ fallback
-        // bridge) are now rendered by the native pipeline too, via
-        // LookupExpression.ToLookupStageDocument()/MongoSelectLowerer.AppendLookupStages. Renamed/
-        // re-asserted as part of delivering the capability, mirroring
-        // Reference_include_goes_native_under_Native_mode above.
+        // A collection-then-collection ThenInclude goes native: the nested $lookup(s) staged into the parent
+        // LookupExpression's PipelineStages are rendered via MongoSelectLowerer.AppendLookupStages.
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNestedCustomers") + Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNestedOrders") + Guid.NewGuid().ToString("N")[..8];
         var orderDetailsName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNestedOrderDetails") + Guid.NewGuid().ToString("N")[..8];
@@ -397,27 +370,10 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Explicit_DriverLinq_mode_is_unaffected_by_a_separate_Include_plus_projected_list_of_the_same_nav()
     {
-        // Task 4 (EF-322 native-projected-collection-navigation plan) Step 7: confirms the fallback path
-        // itself is unaffected by Task 1's new native recognizer for `select new { ..., Orders =
-        // c.Orders.ToList() }` sitting ALONGSIDE a separate `.Include(c => c.Orders).ThenInclude(o =>
-        // o.OrderDetails)` on the same navigation — the exact shape
-        // NorthwindIncludeQueryMongoTest.Multi_level_includes_are_applied_with_skip[_take] exercises, and the
-        // shape that surfaced two real bugs during this task (a whole-root-entity-leaf bind-side collision,
-        // and an ApplyProjection/AddLookup dedup gap) that were fixed in the source. Route selection is
-        // orthogonal to NativeProjectionBinder (only consulted for MongoQueryMode.Native/NativeOnly), so under
-        // an EXPLICIT MongoQueryMode.DriverLinq this query must still produce the SAME correct data it always
-        // did — Task 1 does not touch anything on the fallback path.
-        //
-        // Review finding I4: asserting data alone doesn't prove the query actually TOOK the DriverLinq route
-        // — a future change could silently make it go native under an explicit DriverLinq request and this
-        // test would not notice. Captures the executed MQL (SpyLoggerProvider, the FunctionalTests idiom —
-        // see NativeArrayProjectionTests) and asserts the one thing that DOES distinguish the two routes for
-        // this exact shape: the native route emits a terminal `$project` retaining `CustomerID`/
-        // `_lookup_Orders`/`_id` (see NorthwindIncludeQueryMongoTest's re-baselined AssertMql), while the
-        // array-typed `Orders` leaf forces the DriverLinq/mixed shaper to fold the projection CLIENT-side over
-        // whole documents instead (AGENTS.md: "any entity/collection-typed leaf makes ProjectionAnalyzer.
-        // CanPushDown refuse to hand the query to the driver's LINQ v3 provider") — so a genuine DriverLinq
-        // route for this shape never emits a `$project` stage at all.
+        // A projected `Orders = c.Orders.ToList()` alongside a separate `.Include(c => c.Orders).ThenInclude(...)`
+        // on the same navigation (the Multi_level_includes_are_applied_with_skip shape): explicit DriverLinq must
+        // still return correct data and actually take the DriverLinq route. The array-typed leaf makes the
+        // mixed shaper fold the projection client-side, so a genuine DriverLinq run never emits `$project`.
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateDriverLinqCustomers") + Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateDriverLinqOrders") + Guid.NewGuid().ToString("N")[..8];
         var orderDetailsName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateDriverLinqOrderDetails") + Guid.NewGuid().ToString("N")[..8];
@@ -461,14 +417,8 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void NativeOnly_mode_goes_native_for_a_separate_Include_plus_projected_list_of_the_same_nav()
     {
-        // Positive twin of Explicit_DriverLinq_mode_is_unaffected_by_a_separate_Include_plus_projected_list_
-        // of_the_same_nav above, using the SAME query shape and data, but under NestedOrderCustomerDbContext's
-        // own DEFAULT MongoQueryMode.NativeOnly. Per this file's own stated rule (and AGENTS.md's "MQL shape
-        // cannot prove a query went native" pitfall), correct data alone never proves nativeness — only an
-        // explicit MongoQueryMode.NativeOnly run (which throws NativeTranslationNotSupportedException instead
-        // of silently falling back) plus a positive route signal genuinely proves it. Captures MQL the same
-        // way the DriverLinq twin does and asserts the inverse: a genuinely native run for this shape DOES
-        // emit a terminal `$project` retaining `FullName`/`_lookup_Orders`/`_id`.
+        // Positive twin of the DriverLinq test above, under the context's default NativeOnly: succeeding proves
+        // native, and a terminal `$project` retaining `FullName`/`_lookup_Orders`/`_id` confirms the route.
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNativeOnlyCustomers") + Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNativeOnlyOrders") + Guid.NewGuid().ToString("N")[..8];
         var orderDetailsName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNativeOnlyOrderDetails") + Guid.NewGuid().ToString("N")[..8];
@@ -518,16 +468,14 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
 
         using var db = new NestedOrderCustomerDbContext(database, ordersName, customersName, orderDetailsName);
 
-        // A filtered-Include predicate (`.Include(c => c.Orders.Where(...))`) is rejected before the
-        // native-vs-driver-LINQ fork: the provider doesn't yet translate the predicate into the $lookup
-        // sub-pipeline $match at all (see CrossCollectionIncludeTests.Filtered_collection_include_predicate_
-        // is_not_silently_dropped), so it fails loudly with InvalidOperationException in every query mode
-        // rather than the native-specific NativeTranslationNotSupportedException.
+        // A filtered-Include predicate is rejected before the native/driver-LINQ fork (see
+        // CrossCollectionIncludeTests.Filtered_collection_include_predicate_is_not_silently_dropped), so it
+        // throws InvalidOperationException in every mode.
         Assert.Throws<InvalidOperationException>(
             () => db.Customers.Include(c => c.Orders.Where(o => o.Freight > 0)).ToList());
     }
 
-    // ── EF-339 Task 4: projected collection-navigation Count runs native via $size over $lookup ─────
+    // Projected collection-navigation Count runs native via $size over $lookup.
 
     [Fact]
     public void Projected_collection_Count_runs_native()
@@ -590,15 +538,9 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         var logs = new List<string>();
         using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.NativeOnly);
 
-        // A count with an additional user predicate beyond the plain FK-equality join condition
-        // (c.Orders.Count(o => ...), lowered by EF's nav-expansion to a correlated Count-with-predicate
-        // subquery) is a different, out-of-scope shape for this sub-project. It is NOT recognized by
-        // NativeProjectionBinder (which requires a bare, no-predicate Count/LongCount over the FK-equality
-        // Where), so the native path correctly marks the query not natively representable and defers to
-        // the SAME translation path used in every query mode — which does not yet support this correlated
-        // shape either (a pre-existing gap independent of this task, not a regression). The query therefore
-        // fails identically in every mode with InvalidOperationException, never silently emitting a
-        // wrong-shape native $size.
+        // c.Orders.Count(o => ...) is a correlated Count-with-predicate, which NativeProjectionBinder doesn't
+        // recognize and the fallback doesn't support either, so it throws InvalidOperationException in every
+        // mode rather than emitting a wrong native $size.
         Assert.Throws<InvalidOperationException>(
             () => db.Customers
                 .Select(c => new { c._id, OrderCount = c.Orders.Count(o => o.OrderDescription != "") })

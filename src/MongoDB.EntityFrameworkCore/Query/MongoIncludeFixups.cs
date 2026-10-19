@@ -29,18 +29,8 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// (<c>MongoStreamingEntityMaterializerRewriter</c>).
 /// </summary>
 /// <remarks>
-/// <para>
-/// These are ports of EF Core's own relational binding-remover fix-up methods, so the duplication against
-/// upstream is unavoidable — but the two Mongo read paths held a SECOND copy of each other, byte-identical
-/// apart from nullability annotations and comment punctuation (~110 lines). Both legs must stay
-/// observationally equivalent (a query returns the same object graph whichever shaper compiled it), and
-/// hand-maintaining two copies of the code that wires that graph together is the most direct way to lose that.
-/// </para>
-/// <para>
-/// <see cref="GenerateFixup"/> is the general form: it branches on <c>IsCollection</c> for
-/// both the navigation and its inverse, and so subsumes the streaming path's former separate
-/// reference-only and collection-only generators (each of which was this method with one branch deleted).
-/// </para>
+/// Ported from EF Core's relational binding-remover fix-up methods. Kept in one place because both read paths
+/// must produce the same object graph for a given query.
 /// </remarks>
 internal static class MongoIncludeFixups
 {
@@ -62,9 +52,8 @@ internal static class MongoIncludeFixups
     /// <paramref name="fixup"/> and sets the navigation's loaded flag.
     /// </summary>
     /// <remarks>
-    /// The trailing <c>bool</c> is the <c>SetLoaded</c> flag EF passes; it is unused on the reference path
-    /// (for a non-null related entity the state manager sets the flag itself) but is part of the signature both
-    /// call sites build their <see cref="Expression.Call(MethodInfo, Expression[])"/> against.
+    /// The trailing <c>bool</c> (<c>SetLoaded</c>) is unused here but keeps the signature identical to
+    /// <c>IncludeCollection</c> for the call sites that build the call expression.
     /// </remarks>
     private static void IncludeReference<TIncludingEntity, TIncludedEntity>(
         InternalEntityEntry? entry,
@@ -105,7 +94,7 @@ internal static class MongoIncludeFixups
 
     /// <summary>
     /// Collection-include fix-up: adds each materialized related entity to the principal's collection
-    /// navigation, and guarantees an EMPTY collection is still initialized to a real CLR object.
+    /// navigation, and guarantees an empty collection is still initialized to a real CLR object.
     /// </summary>
     private static void IncludeCollection<TIncludingEntity, TIncludedEntity>(
         InternalEntityEntry? entry,
@@ -146,8 +135,7 @@ internal static class MongoIncludeFixups
 
             if (relatedEntities != null)
             {
-                // Drain the sequence: when tracking, the state manager performs the fix-up as each related
-                // entity is materialized, so enumerating is the work — there is nothing to do per element.
+                // When tracking, the state manager does the fix-up as each entity materializes; just enumerate.
                 using var enumerator = relatedEntities.GetEnumerator();
                 while (enumerator.MoveNext())
                 {
@@ -163,9 +151,8 @@ internal static class MongoIncludeFixups
     }
 
     /// <summary>
-    /// Compiles the two-argument fix-up delegate that assigns <c>relatedEntity</c> onto <c>entity</c> through
-    /// <paramref name="navigation"/> (and, when present, back through <paramref name="inverseNavigation"/>),
-    /// choosing member assignment or collection-add per navigation cardinality.
+    /// Compiles the fix-up delegate that wires <c>relatedEntity</c> onto <c>entity</c> through
+    /// <paramref name="navigation"/> and, when present, <paramref name="inverseNavigation"/>.
     /// </summary>
     public static Delegate GenerateFixup(
         Type entityType,

@@ -22,30 +22,24 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Infrastructure;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-373: <c>Skip</c>/<c>Take</c> written BETWEEN two joins was hoisted above BOTH <c>$lookup</c>s by
-/// <c>StripJoinForLookup</c>, so the paging ran before the second join had filtered any rows — a silently
-/// wrong page. The residual of EF-370: the composed operator was no longer dropped, it was mispositioned.
+/// <c>Skip</c>/<c>Take</c> written between two joins must page the first join's rows, not be hoisted ahead of
+/// both <c>$lookup</c>s (a silently wrong page).
 /// <para>
-/// These tests discriminate on ROW IDENTITY and on MQL STAGE ORDER, not on row count alone and not on
-/// navigation-equality: EF's change-tracker identity fix-up can repair an object graph even when the
-/// pipeline read the wrong rows, and a 1:1 second join returns the right page even with the defect live
-/// (measured), so the second join here deliberately ELIMINATES the first row.
+/// Tests assert row identity and stage order, not row count or navigation equality: identity fix-up can repair
+/// a graph read from the wrong rows, and a 1:1 second join hides the defect, so the second join here drops a row.
 /// </para>
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // ---- T1: the defect. Paging BETWEEN the two joins must page the SECOND join's row set. ----
-    //
-    // Seed ordered by Name is N1, N2, N3. The Mid join matches all three; the Other join matches only
-    // N2 and N3. Skip(1).Take(2) is written between the two joins, so it applies to {N1, N2, N3} and
-    // yields {N2, N3}, both of which survive the Other join. With the defect live BOTH lookups sat above
-    // the paging, so the Other join dropped N1 first and Skip(1) then ate N2, returning {N3}.
+    // Seed by Name is N1, N2, N3; Mid matches all, Other only N2/N3. Skip(1).Take(2) between the joins yields
+    // {N2, N3}; paging after both joins would yield {N3}.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -64,7 +58,7 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
         Assert.Equal(["N2", "N3"], result);
     }
 
-    // ---- T2: the MQL stage-order pin. Position is the actual defect, so pin it directly. ----
+    // Stage-order pin: position is the actual defect.
     [Fact]
     public void Paging_between_two_joins_emits_the_second_lookup_above_the_paging()
     {
@@ -91,15 +85,14 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
         Assert.True(skip >= 0, mql);
         Assert.True(limit >= 0, mql);
 
-        // The first join's $lookup is BELOW the paging; the second join's is ABOVE it.
+        // The first join's $lookup precedes the paging; the second's follows it.
         Assert.True(midLookup < skip, mql);
         Assert.True(skip < limit, mql);
         Assert.True(limit < otherLookup, mql);
     }
 
-    // ---- T3: the control. Paging written BELOW all the joins must keep the pre-EF-373 layout: a single
-    // contiguous lookup group above the base source, in pending order (Other then Mid), with the paging
-    // emitted below both. This is what stops the fix from being over-broad. ----
+    // Control: paging before all joins keeps one contiguous lookup group after the paging, so the fix isn't
+    // over-broad.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -125,20 +118,15 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
 
         Assert.True(limit >= 0 && otherLookup >= 0 && midLookup >= 0, mql);
 
-        // The load-bearing assertion: both lookups are emitted ABOVE the paging, as one contiguous group.
+        // Both lookups follow the paging as one contiguous group.
         Assert.True(limit < otherLookup, mql);
 
-        // ARBITRARY FLUSH ORDER, asserted only to detect unintended change. Within that contiguous group the
-        // two lookups come out in _pendingLookups order, which for this chain happens to be outermost-join
-        // first (Other before Mid) — an incidental property of the dependency sort, not a requirement: these
-        // two lookups are independent (neither localField reads the other's output), so either order is
-        // equally correct. A failure here means the flush order moved, which is only a REGRESSION if
-        // something else in this file also went red.
+        // Incidental flush order (the lookups are independent, so either order is correct); asserted only to
+        // detect unintended change.
         Assert.True(otherLookup < midLookup, mql);
     }
 
-    // ---- T4: the same defect with a lone interleaved Skip (no Take), so the fix is not tied to the
-    // Skip+Take pair being present together. ----
+    // Lone interleaved Skip (no Take).
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -156,13 +144,138 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
         Assert.Equal(["N2", "N3"], result);
     }
 
-    // ---- T5: the ordering the change actually alters. A SORT interleaved between two joins whose SECOND
-    // join is 1:N, so the $unwind expands rather than just filtering. The upstream spec test this fix
-    // re-baselined (Where_join_orderby_join_select) calls AssertQuery with assertOrder defaulting to FALSE, so
-    // nothing committed pinned ORDER for a sort interleave; T1-T4 are all 1:1, where the second $unwind
-    // performs no expansion. Roots are inserted in DESCENDING name order, so a pipeline that does not sort at
-    // all cannot pass, and each root fans out to exactly 3 leaves, so a pipeline that loses the second join
-    // cannot pass either. ----
+    // Paging between two joins whose first join keeps BOTH sides (a transparent identifier), so the chain reaches
+    // the wrapped-projection / scalar-leaf join-scope Select arms rather than the whole-entity path above. Each shape
+    // is compared with LINQ-to-Objects over the same rows; paging deferred past both $lookup/$unwind blocks pages
+    // the fully joined result (N1 dropped by the second join first), giving a silently wrong page.
+    [Theory]
+    [InlineData(MongoQueryMode.Native, "WrappedSkipTake")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedSkipTake")]
+    [InlineData(MongoQueryMode.Native, "WrappedSkip")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedSkip")]
+    [InlineData(MongoQueryMode.Native, "WrappedTake")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedTake")]
+    [InlineData(MongoQueryMode.Native, "WrappedBothScopes")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedBothScopes")]
+    [InlineData(MongoQueryMode.Native, "ScalarLeaf")]
+    [InlineData(MongoQueryMode.DriverLinq, "ScalarLeaf")]
+    [InlineData(MongoQueryMode.Native, "WrappedThenTrailingSelect")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedThenTrailingSelect")]
+    [InlineData(MongoQueryMode.Native, "LeftFirstJoinSkipTake")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftFirstJoinSkipTake")]
+    public void Paging_between_two_transparent_identifier_joins_matches_oracle(MongoQueryMode mode, string shape)
+    {
+        using var db = Setup(mode);
+
+        var actual = RunInterleavedTransparentIdentifierShape(db.Roots, db.Mids, db.Others, shape);
+
+        // Oracle: LINQ-to-Objects over the whole collections read back untracked.
+        var expected = RunInterleavedTransparentIdentifierShape(
+            db.Roots.AsNoTracking().ToList().AsQueryable(),
+            db.Mids.AsNoTracking().ToList().AsQueryable(),
+            db.Others.AsNoTracking().ToList().AsQueryable(),
+            shape);
+
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected, actual);
+    }
+
+    // The native pipeline has no per-join position for paging, so each interleaved shape above must decline
+    // (IsSingleEligibleNativeJoinScope / MongoSelectDefinition.HasPagingRecordedBetweenJoins) rather than defer
+    // the paging past both $lookup blocks (which returns the wrong page).
+    [Theory]
+    [InlineData("WrappedSkipTake")]
+    [InlineData("WrappedSkip")]
+    [InlineData("WrappedTake")]
+    [InlineData("WrappedBothScopes")]
+    [InlineData("WrappedThenTrailingSelect")]
+    [InlineData("LeftFirstJoinSkipTake")]
+    public void Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly(string shape)
+    {
+        using var db = Setup(MongoQueryMode.NativeOnly);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => RunInterleavedTransparentIdentifierShape(db.Roots, db.Mids, db.Others, shape));
+    }
+
+    // Aggregate terminal over an interleaved chain: TryBindAggregate confirms through the same gate.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Count_over_paging_between_two_transparent_identifier_joins_matches_oracle(MongoQueryMode mode)
+    {
+        using var db = Setup(mode);
+
+        var actual = db.Roots
+            .Join(db.Mids, r => r.MidId, m => (ObjectId?)m._id, (r, m) => new { r, m })
+            .OrderBy(x => x.r.Name).Take(2)
+            .Join(db.Others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+            .Count();
+
+        // Take(2) keeps N1, N2; only N2 has an Other. Paging after both joins would count N2 and N3.
+        Assert.Equal(1, actual);
+    }
+
+    // Control: paging written AFTER both joins (hoisted ahead of the chain's pending selector with every join
+    // present) still goes native and pages the fully joined rows.
+    [Fact]
+    public void Paging_after_both_transparent_identifier_joins_still_goes_native_under_NativeOnly()
+    {
+        using var db = Setup(MongoQueryMode.NativeOnly);
+
+        var actual = db.Roots
+            .Join(db.Mids, r => r.MidId, m => (ObjectId?)m._id, (r, m) => new { r, m })
+            .Join(db.Others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+            .OrderBy(x => x.Name)
+            .Skip(1)
+            .ToList();
+
+        // Joined rows by name: N2, N3 (N1 has no Other); Skip(1) leaves N3.
+        Assert.Equal(["N3/O1"], actual.Select(x => x.Name + "/" + x.Label));
+    }
+
+    private static List<string> RunInterleavedTransparentIdentifierShape(
+        IQueryable<Root> roots, IQueryable<Mid> mids, IQueryable<Other> others, string shape)
+    {
+        var firstJoin = roots.Join(mids, r => r.MidId, m => (ObjectId?)m._id, (r, m) => new { r, m });
+        return shape switch
+        {
+            "WrappedSkipTake" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            "WrappedSkip" => firstJoin.OrderBy(x => x.r.Name).Skip(1)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            // Take(1) keeps N1 only, which has no Other: the correct answer is EMPTY, so use Take(2) (N1, N2 -> N2)
+            // to keep the oracle non-empty; paging past both joins would return N2 and N3.
+            "WrappedTake" => firstJoin.OrderBy(x => x.r.Name).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            "WrappedBothScopes" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, x.m.Tag })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Tag).ToList(),
+            "ScalarLeaf" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x, o })
+                .Select(y => y.x.r.Name)
+                .ToList(),
+            "WrappedThenTrailingSelect" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x, o })
+                .Select(y => new { y.x.r.Name, y.o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            // First join left-outer (GroupJoin/SelectMany/DefaultIfEmpty over a collection navigation's inverse),
+            // second an inner join that drops N1.
+            "LeftFirstJoinSkipTake" => roots
+                .GroupJoin(mids, r => r.MidId, m => (ObjectId?)m._id, (r, ms) => new { r, ms })
+                .SelectMany(x => x.ms.DefaultIfEmpty(), (x, m) => new { x.r, m })
+                .OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+    }
+
+    // A sort between two joins whose second join is 1:N, so $unwind expands. Roots are inserted in reverse order
+    // (an unsorted pipeline fails) and each fans out to 3 leaves (losing the join fails).
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -184,10 +297,8 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
         ];
         Assert.Equal(expected, result);
 
-        // The stage-order pin. The data assertion above CANNOT distinguish the pre-EF-373 layout on its own
-        // (measured): $sort and a fan-out $unwind commute with respect to key order, because $unwind preserves
-        // its input order and expands each document into an adjacent run, so sorting before or after the
-        // expansion yields the same ordered key sequence. Position is therefore pinned directly.
+        // The data can't distinguish the layouts ($sort and a fan-out $unwind commute on key order), so pin
+        // stage position directly.
         var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         var midLookup = mql.IndexOf("\"as\" : \"_lookup_Mid\"", StringComparison.Ordinal);
         var leafLookup = mql.IndexOf("\"as\" : \"_lookup_Leaves\"", StringComparison.Ordinal);
@@ -223,7 +334,7 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
             new BsonDocument { { "_id", m1 }, { "tag", "M1" } }
         ]);
 
-        // Inserted N6..N1 - the REVERSE of the asserted order, so an unsorted pipeline fails.
+        // Inserted N6..N1, the reverse of the asserted order, so an unsorted pipeline fails.
         var roots = new List<BsonDocument>();
         var leaves = new List<BsonDocument>();
         for (var i = 6; i >= 1; i--)
@@ -262,7 +373,7 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
             new BsonDocument { { "_id", o1 }, { "label", "O1" } }
         ]);
         database.MongoDatabase.GetCollection<BsonDocument>(rootsName).InsertMany([
-            // N1 has no Other, so the SECOND (inner) join drops it.
+            // N1 has no Other, so the second (inner) join drops it.
             new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "N1" }, { "mid_id", m1 } },
             new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "N2" }, { "mid_id", m1 }, { "other_id", o1 } },
             new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "N3" }, { "mid_id", m1 }, { "other_id", o1 } }
@@ -287,7 +398,7 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
         public List<Root> Roots { get; set; }
     }
 
-    // A collection navigation off Root, so the SECOND join in T5 fans out 1:N.
+    // A collection navigation off Root, so the sort test's second join fans out 1:N.
     public class Leaf
     {
         public ObjectId _id { get; set; }

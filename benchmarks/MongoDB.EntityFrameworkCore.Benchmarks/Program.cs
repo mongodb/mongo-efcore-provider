@@ -42,7 +42,7 @@ if (args.Contains("--verify-native"))
             }
         }
 
-        // WhereToList — should be NATIVE OK
+        // WhereToList — expected native
         RunShape("WhereToList:      ", () =>
         {
             using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
@@ -50,7 +50,7 @@ if (args.Contains("--verify-native"))
             Console.WriteLine($"WhereToList:       NATIVE OK (count={count})");
         });
 
-        // WholeEntityToList — should be NATIVE OK
+        // WholeEntityToList — expected native
         RunShape("WholeEntityToList:", () =>
         {
             using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
@@ -58,7 +58,7 @@ if (args.Contains("--verify-native"))
             Console.WriteLine($"WholeEntityToList: NATIVE OK (count={count})");
         });
 
-        // OrderByTake — should be NATIVE OK
+        // OrderByTake — expected native
         RunShape("OrderByTake:      ", () =>
         {
             using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
@@ -66,12 +66,13 @@ if (args.Contains("--verify-native"))
             Console.WriteLine($"OrderByTake:       NATIVE OK (count={count})");
         });
 
-        // ReferenceInclude — expected to throw NativeTranslationNotSupportedException (Include deferred)
+        // ReferenceInclude — expected native
         RunShape("ReferenceInclude: ", () =>
         {
             using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
             var count = ctx.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count;
-        }, expectFallback: true);
+            Console.WriteLine($"ReferenceInclude:  NATIVE OK (count={count})");
+        });
 
         Console.WriteLine("=== verification done ===");
     }

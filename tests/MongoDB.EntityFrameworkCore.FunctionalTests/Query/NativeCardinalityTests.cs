@@ -28,13 +28,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-SP4 native entity reducers (First/FirstOrDefault/Single/SingleOrDefault). Proves that the reducer
-/// synthesizes a native <c>$limit</c> and that EF Core's base cardinality reduction runs correctly over
-/// the resulting <see cref="System.Collections.Generic.IEnumerable{T}"/> (empty ⇒ throw for
-/// First/Single, empty ⇒ null for *OrDefault, more-than-one ⇒ throw for Single*).
-/// <see cref="MongoQueryMode.NativeOnly"/> is used as the "went native" signal (succeeds ⇒ native;
-/// throws <see cref="NativeTranslationNotSupportedException"/> ⇒ fell back to driver-LINQ) since the
-/// emitted MQL is not otherwise distinguishable from the driver-LINQ fallback.
+/// Native reducers and scalar aggregates. Reducers synthesize a native <c>$limit</c> and EF Core's cardinality
+/// reduction runs over the result (empty ⇒ throw/null, more-than-one ⇒ throw for Single*).
+/// <see cref="MongoQueryMode.NativeOnly"/> is the "went native" signal, since the MQL matches the fallback's.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -48,10 +44,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         public bool IsActive { get; set; }
         public string Name { get; set; } = "";
 
-        // EF-335: a SECOND plain int property, used only by the field-to-field All() fallback test below —
-        // a field-to-field comparison has no exact query-dialect complement (MongoExpressionNegator declines
-        // it), so All(e => e.Value > e.OtherValue) must still fall back to driver-LINQ. Defaults to 0, so
-        // every pre-existing seed (which never sets it) is unaffected.
+        // Used only by the field-to-field All() fallback test; defaults to 0 elsewhere.
         public int OtherValue { get; set; }
     }
 
@@ -184,18 +177,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Contains("more than one", ex.Message);
     }
 
-    // ── Reducer composed after Take/Skip now goes native (EF-397) ─────────────────────────────────
-    //
-    // This block replaces the former First_after_Take_falls_back pin. NativeCardinalityBinder.TryBindReducer
-    // used to decline unconditionally when Select.HasLimit was already true (a preceding Take), on the
-    // grounds that "two limits" were not reconcilable in canonical order. They are: the binder APPENDS its
-    // own $limit to the TAIL of the ordered op list (MongoSelectDefinition.AppendLimit -> ActiveOps.Add), and
-    // consecutive $limit stages narrow monotonically — [$limit 3, $limit 1] yields exactly the first row of
-    // the first three. That is the same fact the set-op TrailingOps path already relied on (HasLimit scans
-    // _pipelineOps only, so a Take recorded into TrailingOps was already invisible to the guard and a second
-    // $limit was already being appended there — deliberately, per that path's own comment).
-    //
-    // The tests below are chosen so the ORDER of the two limits is observable, not just their presence.
+    // Reducer composed after Take/Skip: the reducer appends its $limit to the tail, and consecutive $limit
+    // stages narrow monotonically. Tests are chosen so the order of the two limits is observable.
 
     [Fact]
     public void First_after_Take_now_goes_native()
@@ -208,10 +191,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void First_after_Skip_then_Take_composes_in_recorded_order()
     {
-        // THE ordering discriminator. Correct emission is [$sort, $skip 2, $limit 2, $limit 1] => row 3.
-        // If the reducer's $limit were hoisted ahead of the paging ([$limit 1, $skip 2, $limit 2]) the
-        // pipeline would yield NO rows and First() would throw "no elements" instead of returning 3 — so a
-        // wrong composition cannot pass this test by coincidence.
+        // Correct emission is [$sort, $skip 2, $limit 2, $limit 1] => row 3. Hoisting the reducer's $limit
+        // ahead of the paging would yield no rows and throw.
         using var nativeOnly = CreateContext(
             [1, 2, 3, 4, 5], MongoQueryMode.NativeOnly, nameof(First_after_Skip_then_Take_composes_in_recorded_order) + "only");
         Assert.Equal(3, nativeOnly.Entities.OrderBy(e => e.Value).Skip(2).Take(2).First().Value);
@@ -234,9 +215,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Single_after_Take_of_two_still_throws_more_than_one()
     {
-        // Single appends $limit 2 (so the server can still distinguish "exactly one" from "more than one").
-        // After Take(2) the pipeline is [$limit 2, $limit 2] => two rows survive => Single must throw. A
-        // reducer limit that wrongly REPLACED the Take's limit with 1 would return a value instead.
+        // Single appends $limit 2: [$limit 2, $limit 2] => two rows => throws. Replacing the Take's limit with
+        // 1 would wrongly return a value.
         using var db = CreateContext(
             [1, 2, 3], MongoQueryMode.NativeOnly, nameof(Single_after_Take_of_two_still_throws_more_than_one));
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.OrderBy(e => e.Value).Take(2).Single());
@@ -246,8 +226,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Single_after_Take_of_one_returns_that_element()
     {
-        // [$limit 1, $limit 2] => one row => Single returns it. Pairs with the test above: together they
-        // prove the two limits MIN correctly rather than one clobbering the other in either direction.
+        // [$limit 1, $limit 2] => one row. With the test above, proves the limits take the minimum rather than
+        // one clobbering the other.
         using var db = CreateContext(
             [7, 8, 9], MongoQueryMode.NativeOnly, nameof(Single_after_Take_of_one_returns_that_element));
         Assert.Equal(7, db.Entities.OrderBy(e => e.Value).Take(1).Single().Value);
@@ -256,9 +236,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void First_after_Take_zero_throws_no_elements()
     {
-        // Take(0) lowers to $limit 0, which MongoPipelineFactory.NormalizePagingStages rewrites in place to
-        // the always-false $match (EF-323/EF-254). Composing a reducer on top must therefore see an EMPTY
-        // stream and throw "no elements" — NOT the ArgumentOutOfRangeException a raw $limit:0 would raise.
+        // Take(0) is normalized to an always-false $match, so the reducer sees an empty stream and throws
+        // "no elements", not the ArgumentOutOfRangeException a raw $limit:0 would raise.
         using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(First_after_Take_zero_throws_no_elements));
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Take(0).First());
         Assert.Contains("no elements", ex.Message);
@@ -267,13 +246,12 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void First_after_Skip_only_is_unaffected()
     {
-        // Skip alone never set HasLimit, so this was ALREADY native before EF-397 — pinned so the guard
-        // removal is proven not to have disturbed the pre-existing Skip case.
+        // Skip alone, as a baseline for the Take cases above.
         using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(First_after_Skip_only_is_unaffected));
         Assert.Equal(2, db.Entities.OrderBy(e => e.Value).Skip(1).First().Value);
     }
 
-    // ── Scalar-aggregate native path (EF-SP4 Task 5) ────────────────────────────────────────────
+    // Scalar aggregates.
 
     [Fact]
     public void Count_goes_native_and_counts()
@@ -312,13 +290,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         Assert.False(empty.Entities.Any());
     }
 
-    // FIXED (EF-335, see task-3-report.md): comparison-predicate All(...) now goes native. Previously
-    // NativeCardinalityBinder.TryBindAggregate negated the predicate at the LINQ level via
-    // Expression.Not(predicate.Body), producing a MongoUnaryExpression{Not} over a MongoBinaryExpression
-    // comparison — a node MongoQueryLanguageRenderer.RenderUnary had no case for pre-EF-322-Task-1, so it
-    // threw NativeTranslationNotSupportedException at RENDER time and the gate silently fell back. The
-    // binder now negates the TRANSLATED tree via MongoExpressionNegator, whose $not-wrapped-comparison
-    // rendering (added by EF-322 Task 1) makes this natively representable.
+    // Comparison-predicate All(...) goes native: the binder negates the translated tree via
+    // MongoExpressionNegator ($not-wrapped comparison).
     [Fact]
     public void All_over_empty_is_true()
     {
@@ -329,10 +302,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_with_failing_element_is_false()
     {
-        // EF-335 flip: this used to lock in the documented fallback gap (asserted NativeOnly threw). The
-        // comparison predicate now goes native, so NativeOnly succeeds — asserting the correct value here
-        // proves the native path (not just "no exception"), per the task-3 instruction to invert a flipped
-        // fallback assertion rather than delete it.
+        // Asserting the value, not just no exception, under NativeOnly.
         using var db = CreateContext([1, -1, 2], MongoQueryMode.NativeOnly, nameof(All_with_failing_element_is_false));
         Assert.False(db.Entities.All(e => e.Value > 0)); // -1 fails the predicate => All is false
     }
@@ -340,20 +310,13 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_over_bare_bool_goes_native()
     {
-        // A bare-bool predicate (no comparison to negate) does not hit the Not-over-comparison gap, so it
-        // should go native under NativeOnly.
+        // A bare-bool predicate has no comparison to negate.
         using var active = CreateBoolContext([true, true], MongoQueryMode.NativeOnly, nameof(All_over_bare_bool_goes_native));
         Assert.True(active.Entities.All(e => e.IsActive));
     }
 
-    // ── Top-level All() negates via MongoExpressionNegator (EF-335) ─────────────────────────────────
-    //
-    // Local helpers mirroring NativeOwnedCollectionPredicateTests.AssertNativeAndParity: run the SAME
-    // aggregate under NativeOnly (the only reliable "went native" signal — see the Query AGENTS.md pitfall)
-    // and under DriverLinq (the pre-existing, trusted oracle for a top-level All over a flat entity), assert
-    // the two agree, and return the value so each test can additionally pin the expected answer — a
-    // predicate that is trivially true/false for every seeded row would pass even against a broken negation,
-    // so every seed below is chosen to make the All() answer depend on the negation being EXACT.
+    // Top-level All() negates via MongoExpressionNegator. Helpers run NativeOnly and DriverLinq (the oracle),
+    // assert they agree, and return the value. Seeds make the answer depend on the negation being exact.
 
     private bool AssertAggregateNativeAndParity<TSeed>(
         TSeed[] seed, Func<TSeed, ValueEntity> project, Func<IQueryable<ValueEntity>, bool> query,
@@ -388,11 +351,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_with_a_relational_predicate_goes_native()
     {
-        // EF-335: previously the negation translated but RenderUnary threw, so the gate fell back to
-        // driver-LINQ (throwing under NativeOnly). The negator now renders { Value: { $not: { $gt: 3 } } }.
-        // Seed has TWO rows failing Value > 3 (1 and 2) and one passing (5) — discriminating because a
-        // negation that is merely close (e.g. wrong direction, or an inverted-instead-of-$not-wrapped
-        // relational operator) would flip the surviving-row count and the final All boolean.
+        // Renders { Value: { $not: { $gt: 3 } } }. Two rows fail Value > 3 and one passes, so a wrong-direction
+        // or inverted-instead-of-$not-wrapped negation would flip the result.
         var result = AssertAggregateNativeAndParity([1, 2, 5], NumericProject, q => q.All(e => e.Value > 3));
         Assert.False(result); // rows 1 and 2 fail the predicate
     }
@@ -400,11 +360,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_with_a_conjunctive_predicate_goes_native_via_de_morgan()
     {
-        // De Morgan: All(p1 && p2) negates to NOT(p1) OR NOT(p2). Rows: (5,"A") satisfies both; (5,"B") and
-        // (1,"A") each satisfy exactly ONE of the two conjuncts. A correct OR-negation flags both violators
-        // (2 survivors => All=false); a buggy AND-negation would require BOTH conjuncts to fail
-        // simultaneously — true for neither row — silently missing both violators (0 survivors => All=true,
-        // wrong). This is the discriminating property: AND vs. OR flips the final boolean, not just a count.
+        // De Morgan: All(p1 && p2) negates to NOT(p1) OR NOT(p2). Two rows each fail exactly one conjunct, so
+        // a buggy AND-negation would miss both and wrongly answer true.
         var result = AssertAggregateNativeAndParity(
             [(5, "A"), (5, "B"), (1, "A")],
             t => new ValueEntity { Id = ObjectId.GenerateNewId(), Value = t.Item1, Name = t.Item2 },
@@ -415,12 +372,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_with_a_disjunctive_predicate_goes_native_via_de_morgan()
     {
-        // De Morgan: All(p1 || p2) negates to NOT(p1) AND NOT(p2). Every row satisfies the disjunction, but
-        // each via a DIFFERENT single disjunct: (5,"B") only via Value>2, (1,"A") only via Name=="A". A
-        // correct AND-negation requires BOTH negated conjuncts to hold for a row to survive — never true
-        // here — so 0 survivors => All=true (correct). A buggy OR-negation would let either negated conjunct
-        // alone qualify a row as a survivor — true for both rows — silently reporting All=false (wrong).
-        // Same discriminating property as the conjunctive case, mirrored: AND vs. OR flips the boolean.
+        // De Morgan: All(p1 || p2) negates to NOT(p1) AND NOT(p2). Each row satisfies a different single
+        // disjunct, so a buggy OR-negation would wrongly answer false.
         var result = AssertAggregateNativeAndParity(
             [(5, "B"), (1, "A"), (5, "A")],
             t => new ValueEntity { Id = ObjectId.GenerateNewId(), Value = t.Item1, Name = t.Item2 },
@@ -431,11 +384,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_returning_false_is_still_correct_when_one_row_fails_the_predicate()
     {
-        // The presence-only contract: the negated predicate is pushed as a $match, and ANY surviving row
-        // means All is false. Two rows (5, 5) pass Value > 2 and exactly ONE (1) fails — discriminating for
-        // the "exactly one violator" edge, distinct from the multi-violator case in the relational test
-        // above: it proves the $match/$count presence check correctly detects a SINGLE surviving row rather
-        // than over/under-counting.
+        // Any row surviving the negated $match means false; pins the single-violator edge.
         var result = AssertAggregateNativeAndParity([5, 5, 1], NumericProject, q => q.All(e => e.Value > 2));
         Assert.False(result);
     }
@@ -443,11 +392,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_with_a_field_to_field_predicate_still_falls_back()
     {
-        // No exact complement (a field-to-field comparison is not query-dialect-renderable, so
-        // MongoExpressionNegator.TryNegate declines) ⇒ the binder declines ⇒ graceful fallback: correct
-        // under Native/DriverLinq, throws only under NativeOnly. This is the boundary of what the negator
-        // admits. Values chosen so the predicate is neither trivially true nor trivially false: (5,3)
-        // satisfies Value > OtherValue, (2,2) and (1,4) do not.
+        // A field-to-field comparison has no exact complement, so TryNegate declines and the query falls back
+        // gracefully. Values make the predicate neither trivially true nor false.
         var result = AssertAggregateFallsBackGracefully(
             [(5, 3), (2, 2), (1, 4)],
             t => new ValueEntity { Id = ObjectId.GenerateNewId(), Value = t.Item1, OtherValue = t.Item2 },
@@ -458,10 +404,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_with_a_regex_predicate_is_unchanged_by_the_negator_swap()
     {
-        // Already native BEFORE this slice (MongoExpressionTranslator's Not arm flips MongoRegexExpression.
-        // Negated directly, independent of NativeCardinalityBinder). Pinned so the swap from Expression.Not
-        // to TryNegate is proven behavior-preserving, not just additive: "Banana" does not start with "A", so
-        // the predicate is not vacuously true, and the fixed Value=0 default (unused here) does not affect it.
+        // Regex negation flips MongoRegexExpression.Negated. "Banana" doesn't start with "A", so the predicate
+        // isn't vacuously true.
         var result = AssertAggregateNativeAndParity(
             ["Apple", "Avocado", "Banana"],
             s => new ValueEntity { Id = ObjectId.GenerateNewId(), Name = s },
@@ -492,7 +436,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Equal(6, db.Entities.Sum(e => e.Value * 2));
     }
 
-    // ── Non-int scalar coverage for DeserializeScalar<TResult> (EF-SP4 Task 5 review fix M1) ───────
+    // Non-int scalar coverage for DeserializeScalar<TResult>.
 
     [Fact]
     public void Sum_over_decimal_goes_native()
@@ -529,9 +473,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Min_max_average_over_nullable_all_null_rows_return_null()
     {
-        // Rows exist, but every row's NullableValue is null: $group{v:{$min/$max/$avg:"$NullableValue"}}
-        // yields ONE document with v: null (the empty-input path is NOT taken), so this exercises
-        // DeserializeScalar's handling of a non-empty aggregate whose accumulator result is BSON null.
+        // Every NullableValue is null: $group yields one document with v: null (not the empty-input path).
         using var db = CreateNullableContext(
             [null, null, null],
             MongoQueryMode.NativeOnly,
@@ -542,18 +484,14 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Null(db.Entities.Average(e => e.NullableValue));
     }
 
-    // ── Aggregate-with-predicate after paging now goes native (EF-347 Task 3) ──────────────────────
-    // The paging guard in NativeCardinalityBinder.TryBindAggregate (originally added by EF-SP4 Task 6 to
-    // force fallback here) is gone: AddPredicateConjunct always ANDs the injected predicate into — or
-    // appends it after — the TAIL of the ordered op list, i.e. AFTER any $skip/$limit already recorded,
-    // so it can never hoist ahead of the paging. NativeOnly succeeding (rather than throwing) is the proof.
+    // Aggregate-with-predicate after paging: AddPredicateConjunct targets the tail of the op list, so the
+    // predicate can't hoist ahead of the paging.
 
     [Fact]
     public void All_after_Take_goes_native_and_is_correct()
     {
-        // Bare-bool predicate: goes native as a standalone All, and Take(2).All(...) now goes native too.
-        // First two elements are both active; the third (excluded by Take(2)) is not, so the whole-set
-        // answer would be false while the correct first-two-only answer is true.
+        // The first two rows are active and the third (excluded by Take(2)) isn't, so ignoring the Take would
+        // answer false.
         using var db = CreateBoolContext(
             [true, true, false], MongoQueryMode.Native, nameof(All_after_Take_goes_native_and_is_correct) + "native");
         Assert.True(db.Entities.Take(2).All(e => e.IsActive));
@@ -566,19 +504,15 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Count_after_Take_stays_native()
     {
-        // A plain aggregate that injects no predicate ($limit -> $count) is unaffected by the guard and
-        // must remain native even after a preceding Take.
+        // No injected predicate: $limit -> $count.
         using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(Count_after_Take_stays_native));
         Assert.Equal(2, db.Entities.Take(2).Count()); // succeeds under NativeOnly => went native
     }
 
-    // ── Review-response coverage (EF-336) ───────────────────────────────────────────────────────
-
     [Fact]
     public void All_bare_bool_with_failing_row_is_false_native()
     {
-        // A bare-bool predicate has no comparison to negate, so it goes native under NativeOnly even
-        // when a ¬pred row survives (the false-result branch of native All).
+        // The false-result branch of a native bare-bool All.
         using var db = CreateBoolContext(
             [true, false], MongoQueryMode.NativeOnly, nameof(All_bare_bool_with_failing_row_is_false_native));
         Assert.False(db.Entities.All(e => e.IsActive));
@@ -608,12 +542,8 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Null(first);
     }
 
-    // FLIPPED by EF-322 step 3a: a bare-scalar projection now pushes a $project down, so a cardinality operator
-    // composed after one goes native too. Neither of that slice's two deliberate narrowings (the projected set-op
-    // operand and Distinct) sits on the cardinality path, so this is an INCIDENTAL widening of the boundary
-    // slice rather than the composition work — worth its own pin for exactly that reason. Note the lowerer
-    // appends Projection LAST, so the emitted order is $sort, $limit, $project: the reducer runs before the
-    // projection, which is 1:1 with respect to rows and is the ordering a wrapped projection already had.
+    // A bare-scalar projection pushes down a $project, so a reducer after it goes native. The lowerer emits
+    // $sort, $limit, $project: the reducer runs before the (row-preserving) projection.
     [Fact]
     public void Select_bare_scalar_First_goes_native()
     {

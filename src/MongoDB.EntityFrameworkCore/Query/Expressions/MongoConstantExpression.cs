@@ -19,32 +19,19 @@ using Microsoft.EntityFrameworkCore.Metadata;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Represents a constant value in a MongoDB query expression tree.
-/// An optional <see cref="ForSerialization"/> property provides the
-/// <see cref="IProperty"/> context for serialization (used by the renderer).
+/// A constant value, optionally with the <see cref="IProperty"/> whose serializer the renderer should use.
 /// </summary>
 internal sealed class MongoConstantExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoConstantExpression"/> with the given value.
-    /// </summary>
-    /// <param name="value">The constant value.</param>
-    /// <param name="forSerialization">
-    /// Optional <see cref="IProperty"/> that provides serialization context for
-    /// the renderer. May be <see langword="null"/> for untyped constants.
-    /// </param>
     public MongoConstantExpression(object? value, IProperty? forSerialization)
     {
         Value = value;
         ForSerialization = forSerialization;
     }
 
-    /// <summary>The constant value.</summary>
     public object? Value { get; }
 
-    /// <summary>
-    /// Optional property metadata used by the renderer to select the correct serializer.
-    /// </summary>
+    /// <summary>Property whose serializer renders the value; <see langword="null"/> for untyped constants.</summary>
     public IProperty? ForSerialization { get; }
 
     /// <inheritdoc />

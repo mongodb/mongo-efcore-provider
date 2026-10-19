@@ -27,10 +27,9 @@ using Xunit;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// The client-method-call sibling of <see cref="NativeCtorOnlyProjectionTests"/> (EF-322): a whole-entity
-/// selector wrapped in an opaque client method call (e.g. <c>x =&gt; context.ClientMethod(x)</c>), as opposed
-/// to a ctor-only DTO construction, is left on <c>NativeRoute.WholeEntity</c> with no <c>$project</c> — see
-/// <see cref="NativeProjectionBinder"/>'s client-method-call switch arm.
+/// A whole-entity selector wrapped in an opaque client method call (<c>x =&gt; context.ClientMethod(x)</c>) stays on
+/// <c>NativeRoute.WholeEntity</c> with no <c>$project</c> (see <see cref="NativeProjectionBinder"/>). Sibling of
+/// <see cref="NativeCtorOnlyProjectionTests"/>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -109,9 +108,8 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
         Assert.Single(results);
     }
 
-    // EF.Property(x, "Name") is structurally identical to the client-method-wrap shape (a MethodCallExpression
-    // whose sole argument is the whole entity) but must keep going through the EXISTING native field-projection
-    // path, not the new whole-entity-wrap arm — see NativeProjectionBinder's IsEFPropertyMethod() exclusion.
+    // EF.Property(x, "Name") looks like the client-method-wrap shape but must take the field-projection path
+    // (NativeProjectionBinder's IsEFPropertyMethod() exclusion).
     [Fact]
     public void Select_with_ef_property_still_goes_native_as_a_field_projection()
     {
@@ -125,9 +123,8 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
         Assert.Contains("AROUT", results);
     }
 
-    // A second operand also referencing the entity (e.g. a member read off it) is out of scope for this arm —
-    // it declines and falls through to the bare-body default, which itself declines (falls back / throws under
-    // NativeOnly), same as before this arm existed.
+    // A second operand referencing the entity (e.g. a member read off it) is out of scope: the arm declines,
+    // and so does the bare-body default (falls back / throws under NativeOnly).
     private static string TwoOperandClientMethod(Customer c, string id) => id;
 
     [Fact]
@@ -153,11 +150,9 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
         Assert.Equal(2, results.Count);
     }
 
-    // The opaque client call need not be the entire selector body — it can be embedded inside a larger
-    // client-only expression (a conditional, a string concatenation) as long as every entity reference
-    // anywhere in that expression is still the whole entity itself (never a member extracted for separate
-    // server-side computation). This is the shape EF-322's
-    // Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression exercises.
+    // The client call can be embedded in a larger client-only expression (conditional, concatenation) as long as
+    // every entity reference is the whole entity. Shape of the spec test
+    // Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression.
     [Fact]
     public void Select_with_client_method_embedded_in_conditional_expression_goes_native()
     {
@@ -173,10 +168,9 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
         Assert.Contains("London: False", results);
     }
 
-    // A client-method-wrapped Select composed with a subsequent Union must NOT combine via a native
-    // $unionWith: the per-row RESULT differs from the raw entity, so comparing/deduping documents at the
-    // pipeline level would be wrong. HasClientWrappedWholeEntityShaper routes this through the pre-existing
-    // graceful-decline path instead (see MongoSelectDefinition's own remarks).
+    // A client-method-wrapped Select followed by Union must not use a native $unionWith: the per-row result
+    // differs from the raw document, so server-side dedup would be wrong. HasClientWrappedWholeEntityShaper
+    // declines it (see MongoSelectDefinition).
     [Fact]
     public void Select_with_client_method_composed_with_union_still_declines_under_native_only()
     {

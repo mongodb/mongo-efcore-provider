@@ -65,12 +65,8 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
     public override async Task Project_nested_json_entity_with_missing_scalars(bool async)
     {
-        // Fails: No support for nested JSON EF-X008. EF-425 added an assignability guard in
-        // MongoProjectionBindingExpressionVisitor.VisitMethodCall that now catches this shape earlier,
-        // as a clean translation-failure decline, instead of it reaching the duplicate-key
-        // ArgumentException the visitor's dictionary used to throw. Per this repo's versioning rubric the
-        // exception type for an unsupported shape isn't part of the contract, so this is an improvement,
-        // not a regression, and the assertion is updated to match.
+        // Fails: No support for nested JSON EF-X008. Declined cleanly by the assignability guard in
+        // MongoProjectionBindingExpressionVisitor.VisitMethodCall.
         Assert.Contains(
             CoreStrings.TranslationFailed("")[48..],
             (await Assert.ThrowsAsync<InvalidOperationException>(() =>

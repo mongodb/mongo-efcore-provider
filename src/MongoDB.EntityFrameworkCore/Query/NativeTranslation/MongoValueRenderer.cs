@@ -22,22 +22,19 @@ using MongoDB.EntityFrameworkCore.Serializers;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Renders a <see cref="MongoConstantExpression"/> or <see cref="MongoParameterExpression"/> value node
-/// to a <see cref="BsonValue"/>. Shared by both dialect renderers (<see cref="MongoQueryLanguageRenderer"/>
-/// and <see cref="MongoAggregationExpressionRenderer"/>) so a constant and a parameter of the same value
-/// always emit identical BSON, and so the serializer-failure diagnostics are applied uniformly.
+/// Renders a <see cref="MongoConstantExpression"/> or <see cref="MongoParameterExpression"/> to a
+/// <see cref="BsonValue"/>. Shared by <see cref="MongoQueryLanguageRenderer"/> and
+/// <see cref="MongoAggregationExpressionRenderer"/> so a constant and a parameter of the same value emit identical
+/// BSON and serializer failures are handled uniformly.
 /// </summary>
 internal static class MongoValueRenderer
 {
     /// <summary>
-    /// Renders <paramref name="node"/> (a constant or parameter) to a <see cref="BsonValue"/>, recording
-    /// parameters as placeholders in <paramref name="placeholders"/>.
+    /// Renders <paramref name="node"/> to a concrete value, or to a placeholder sentinel recorded in
+    /// <paramref name="placeholders"/> for a parameter.
     /// </summary>
-    /// <param name="node">The value node to render.</param>
-    /// <param name="placeholders">The placeholder table that records parameter sentinels.</param>
-    /// <returns>The rendered <see cref="BsonValue"/> (a concrete value or a placeholder sentinel).</returns>
     /// <exception cref="NativeTranslationNotSupportedException">
-    /// Thrown when <paramref name="node"/> is not a value node, or a constant cannot be serialized.
+    /// <paramref name="node"/> is not a value node, or a constant cannot be serialized.
     /// </exception>
     internal static BsonValue RenderValue(MongoExpression node, PlaceholderTable placeholders)
     {
@@ -70,11 +67,9 @@ internal static class MongoValueRenderer
         }
     }
 
-    // Serializes value to a BsonValue using the property's serializer, coercing the CLR type first so the
-    // serializer's hard cast succeeds. Coerces to the property's CLR type (compile-time path); the factory
-    // coerces to the serializer's ValueType — these differ for value-converted properties, so the caller's
-    // IProperty target is used. Serializer failures are surfaced as NativeTranslationNotSupportedException
-    // so the query falls back (or throws under NativeOnly) rather than crashing with a raw cast error.
+    // Coerces to the property's CLR type before serializing so the serializer's hard cast succeeds (the factory
+    // coerces to the serializer's ValueType, which differs for value-converted properties). Serializer failures
+    // become NativeTranslationNotSupportedException so the query falls back rather than crashing on a raw cast.
     private static BsonValue ToBsonValue(IProperty property, object? value)
     {
         var info = BsonSerializerFactory.GetPropertySerializationInfo(property);

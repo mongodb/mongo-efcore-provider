@@ -21,13 +21,9 @@ using MongoDB.EntityFrameworkCore.Query.Visitors;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.Visitors;
 
-// EF-409: PopulateCollection used to cast accessor.Create() straight to ICollection<TEntity>, so a
-// collection navigation typed as something that doesn't implement ICollection<TEntity> surfaced an
-// unhelpful, unhandled InvalidCastException from deep inside the shaper with no indication of which
-// navigation or entity type was at fault. This test drives the private static PopulateCollection method
-// directly via reflection (rather than trying to get EF's own model validation to accept an unsupported
-// collection-navigation CLR type, which it may reject earlier for unrelated reasons) to pin the new,
-// diagnosable InvalidOperationException.
+// Pins that PopulateCollection throws an InvalidOperationException naming the navigation (not a bare
+// InvalidCastException) when the collection doesn't implement ICollection<TEntity>. Invoked via reflection
+// because EF model validation may reject such a navigation type earlier.
 public class MongoProjectionBindingRemovingExpressionVisitorTests
 {
     private class Post
@@ -35,8 +31,7 @@ public class MongoProjectionBindingRemovingExpressionVisitorTests
         public int Id { get; set; }
     }
 
-    // Returns something that does NOT implement ICollection<Post> — a bare enumerator over an
-    // already-built array, not a collection at all.
+    // Create() returns an enumerator, which doesn't implement ICollection<Post>.
     private sealed class NonCollectionAccessor : IClrCollectionAccessor
     {
         public Type CollectionType => typeof(Post[]);

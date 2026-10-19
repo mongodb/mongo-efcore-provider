@@ -94,9 +94,7 @@ public class StreamingEligibilityTests
     [Fact]
     public void Entity_WithOwnedFlatCollectionNavigation_IsEligible()
     {
-        // A flat owned collection (element type has no sub-collections) is allowed by the spike's
-        // streaming rules. The rewriter emits an array loop for it. Only "collection-of-collection"
-        // nesting (element type itself owns a collection) is rejected.
+        // A flat owned collection (element owns no collection) is streamable via the rewriter's array loop.
         var entityType = GetEntityType<EntityWithOwnedCollection>(mb =>
         {
             mb.Entity<EntityWithOwnedCollection>().OwnsMany(e => e.Items);
@@ -187,9 +185,7 @@ public class StreamingEligibilityTests
     [Fact]
     public void Entity_WithOwnedCollectionNavigation_WhoseElementHasOwnedCollection_IsNotEligible()
     {
-        // A collection element type that itself owns a collection ("collection-of-collection") makes the
-        // root entity ineligible. The spike rejects this case explicitly (see the navigation.IsCollection &&
-        // target.GetNavigations().Any(n => n.IsCollection) check in StreamingEligibility).
+        // An element that itself owns a collection makes the root ineligible.
         var entityType = GetEntityType<EntityWithNestedOwnedCollection>(mb =>
         {
             mb.Entity<EntityWithNestedOwnedCollection>().OwnsMany(e => e.Inner, inner =>
@@ -222,11 +218,8 @@ public class StreamingEligibilityTests
     [Fact]
     public void Entity_WithOwnedCollectionNavigation_WhoseElementHasOwnedReference_IsNotEligible()
     {
-        // A collection element type that owns a nested single REFERENCE navigation is also
-        // streaming-ineligible — the forward-only reader has no IncludeExpression case for a collection
-        // element, so ANY navigation on the element (not just a nested collection) must route to the
-        // native DOM shaper instead (EF-322 owned-collection slice; locks in the .Any() narrowing added
-        // to StreamingEligibility alongside the collection-of-collection check above).
+        // Any navigation on a collection element (not just a nested collection) makes the root ineligible: the
+        // streaming reader has no IncludeExpression case for a collection element, so it must use the DOM shaper.
         var entityType = GetEntityType<EntityWithOwnedCollectionOfOwnedReference>(mb =>
         {
             mb.Entity<EntityWithOwnedCollectionOfOwnedReference>().OwnsMany(e => e.Outer, o => o.OwnsOne(x => x.Ref));

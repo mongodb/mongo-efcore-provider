@@ -27,22 +27,13 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-382 — native predicate translator support for <c>arrayField.Contains(constant)</c>, the mirror shape
-/// of <c>values.Contains(e.Field)</c> (native since EF-329 as <c>$in</c>). MongoDB's implicit array-element
-/// match (<c>{ field: value }</c>) already means "value is an element of field" for an array-typed field, so
-/// no new operator is needed — only resolving the receiver as a genuine stored array FIELD and the argument
-/// as a value.
+/// Native <c>arrayField.Contains(constant)</c>, the mirror of <c>values.Contains(e.Field)</c> (<c>$in</c>).
+/// Translates to MongoDB's implicit array-element match <c>{ field: value }</c>.
 /// </summary>
 /// <remarks>
-/// The <see cref="Guid"/> case pins the correctness guard the ticket called out: the item's serializer MUST
-/// be resolved from the array field's own ELEMENT serializer (<c>IBsonArraySerializer.TryGetItemSerializationInfo</c>),
-/// never a blind <c>BsonValue.Create</c> over the CLR value — <c>BsonValue.Create(Guid)</c> itself throws
-/// <see cref="ArgumentException"/> (confirmed empirically), so a naive implementation would crash outright for
-/// this element type instead of matching the driver's own <c>GuidSerializer</c> encoding. The
-/// value-converted-array-element case pins the sibling guard: a WHOLE-COLLECTION value converter (the only
-/// value-converter shape this provider supports on a collection-typed property — there is no per-element
-/// converter mechanism) has no per-element serializer to resolve safely, so the translator declines rather
-/// than risk comparing the constant against the wrong (whole-list) shape.
+/// The item must be serialized with the array's element serializer (<c>IBsonArraySerializer</c>), not
+/// <c>BsonValue.Create</c>, which throws for <see cref="Guid"/>. A whole-collection value converter has no
+/// per-element serializer, so the translator declines.
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -76,7 +67,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             .ToList();
         Assert.Equal(["A", "C"], nativeLabels);
 
-        // "Goes native" is proven by NativeOnly succeeding, never by MQL shape (identical $match either way).
+        // Went native is proven by NativeOnly succeeding, not by MQL shape (identical either way).
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities
             .Where(e => e.Tags.Contains("keep"))
@@ -106,9 +97,8 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // 3: the correctness guard — an element type BsonValue.Create cannot handle (Guid). A naive
-    // forSerialization=null implementation would throw ArgumentException; the correct one resolves the
-    // array's own element serializer (GuidSerializer) and matches real stored documents.
+    // 3: Guid element: BsonValue.Create would throw; the array's element serializer (GuidSerializer) must be
+    // used and must match real stored documents.
     // ---------------------------------------------------------------------------------------------------
 
     [Fact]
@@ -127,8 +117,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // 4: regression — the MIRROR shape (a client-side collection containing a stored FIELD, e.g.
-    // values.Contains(e.Field)) must be entirely unaffected: it still goes native via $in.
+    // 4: the mirror shape values.Contains(e.Field) still goes native via $in.
     // ---------------------------------------------------------------------------------------------------
 
     [Fact]
@@ -148,11 +137,8 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // 4b: end-to-end proof that MongoArrayContainsExpression survives MongoFieldPrefixRewriter — reachable
-    // when the shape appears inside an owned SelectMany's inner filter, where the translated predicate gets
-    // its field paths prefixed to the unwound-element document scope before rendering. Without the rewriter
-    // arm this would throw NativeTranslationNotSupportedException from Rewrite's catch-all instead of
-    // working end-to-end.
+    // 4b: inside an owned SelectMany's inner filter, the predicate's paths are rewritten by
+    // MongoFieldPrefixRewriter, which must have an arm for MongoArrayContainsExpression (otherwise it throws).
     // ---------------------------------------------------------------------------------------------------
 
     public class SelectManyOwner
@@ -207,9 +193,8 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // 5: the decline guard — a WHOLE-COLLECTION value converter has no per-element serializer to resolve
-    // safely, so the translator declines (falls back under Native; throws under NativeOnly) rather than
-    // silently comparing the constant against the wrong shape.
+    // 5: a whole-collection value converter has no per-element serializer, so the translator declines (falls
+    // back under Native, throws under NativeOnly) rather than comparing against the wrong shape.
     // ---------------------------------------------------------------------------------------------------
 
     public class ConvertedRow
@@ -224,18 +209,8 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     [Fact]
     public void Whole_collection_value_converted_array_contains_declines_at_translate_time()
     {
-        // This is a translate-time-only assertion (no data needed): the point is that
-        // MongoExpressionTranslator's new arm DECLINES (returns null from TryTranslate) for a whole-collection
-        // value-converted array — never that it silently emits a wrong-shape comparison. Confirmed via
-        // NativeOnly, the only reliable "did this go native" signal (see the Query AGENTS.md "MQL shape cannot
-        // prove a query went native" pitfall): a clean decline throws NativeTranslationNotSupportedException
-        // from EF Core's own query compilation, before any document is read.
-        //
-        // Under the default Native mode this shape falls back to driver-LINQ exactly as it always has (even
-        // before EF-382, the old $in arm already declined it — the item is a constant, not a resolvable
-        // field) — and the driver's OWN LINQ v3 provider also cannot translate Contains over a
-        // whole-collection-converted property (ArraySerializerHelper.GetItemSerializer requires
-        // IBsonArraySerializer), a pre-existing, unrelated limitation this test does not re-assert.
+        // Translate-time only: NativeOnly turns the decline into NativeTranslationNotSupportedException before any
+        // document is read. (Under Native, driver-LINQ can't translate this either — a separate limitation.)
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
             nameof(Whole_collection_value_converted_array_contains_declines_at_translate_time)) + Guid.NewGuid().ToString("N")[..8];
         var mongoCollection = database.MongoDatabase.GetCollection<ConvertedRow>(collectionName);
@@ -259,16 +234,9 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // 6 (EF-382 review fix): p.ArrayField.Contains(constant) INSIDE an owned-collection Any/All quantifier.
-    // Before this ticket the element-scoped translator's own Contains arm ($in) rejected a constant item
-    // exactly like the top-level one did, so this shape declined; now the new arm admits it, which WIDENS
-    // Any/All's native shape matrix (MongoExpressionTranslator's quantifier arm at ~line 457-517 calls
-    // TryTranslate on the element predicate using an element-scoped translator, and — for All — negates it
-    // via MongoExpressionNegator, which is exactly where MongoArrayContainsExpression's own negator arm
-    // actually fires inside the real pipeline, not just in isolation). This was correct but untested and
-    // unmentioned in the original report — this differential test closes that gap for both Any and All in
-    // one shape, per the Query AGENTS.md differential-oracle pattern (same Expression sent to the server and,
-    // compiled, evaluated in memory).
+    // 6: arrayField.Contains(constant) inside an owned-collection Any/All. For All the element predicate is
+    // negated via MongoExpressionNegator, exercising MongoArrayContainsExpression's negator arm in the real
+    // pipeline. Differential test: same expression evaluated on the server and in memory.
     // ---------------------------------------------------------------------------------------------------
 
     public class QuantifierOwner
@@ -322,8 +290,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
                 Title = "noneKeep",
                 Posts = [new QuantifierPost { Tags = ["y"] }, new QuantifierPost { Tags = ["z"] }]
             },
-            // Empty Posts: Any is vacuously false, All is vacuously true — the classic quantifier-over-empty
-            // discriminator this codebase always seeds for exactly this reason.
+            // Empty Posts: Any is vacuously false, All vacuously true.
             new QuantifierOwner { Title = "emptyPosts", Posts = [] },
             // A post whose Tags array is itself empty: Contains is false for that element, so it fails All
             // and contributes nothing to Any.
@@ -348,8 +315,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
                 .Where(predicate.Compile()).Select(o => o.Title).OrderBy(t => t).ToList();
         }
 
-        // Server: the query must go NATIVE (NativeOnly is the only reliable "went native" signal) and agree
-        // exactly with the in-memory oracle.
+        // Server: must go native (NativeOnly) and agree with the in-memory oracle.
         List<string> actual;
         using (var db = SingleEntityDbContext.Create(
                    mongoCollection, QuantifierModel,
@@ -367,25 +333,17 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // 7 (final whole-branch review): the CROSS-TASK interaction between this ticket's node type and the two
-    // AGGREGATION-dialect positions EF-413 opened up via MongoExpressionTranslator.TranslateOperand's
-    // Contains routing. MongoArrayContainsExpression has a QUERY-dialect rendering only
-    // (MongoQueryLanguageRenderer.RenderArrayContains); MongoAggregationExpressionRenderer has NO arm for it
-    // and refuses it at Render's catch-all / CanRender's `_ => false` — deliberately, since $eq over an array
-    // field is whole-array equality, not element membership (see MongoArrayContainsExpression's own remarks).
-    // Both positions were verified safe by inspection during the review but had no test; these two pin the
-    // observable disposition of each, which is DIFFERENT for the two positions and is the point of the pair.
+    // 7: MongoArrayContainsExpression has only a query-dialect rendering; the aggregation renderer refuses it
+    // (on purpose: $eq over an array is whole-array equality, not membership). These pin how the two
+    // aggregation-dialect positions reached via TranslateOperand's Contains routing handle it — differently.
     // ---------------------------------------------------------------------------------------------------
 
     [Fact]
     public void Array_contains_as_a_computed_sort_key_declines_cleanly()
     {
-        // Position 1: a computed SORT key. NativeSlotPopulator.TryTranslateComputedSortKey gates on
-        // MongoAggregationExpressionRenderer.CanRender BEFORE recording the $set/$sort/$unset, and CanRender's
-        // catch-all answers false for this node type — so the whole query is marked non-native at TRANSLATE
-        // time. That is a decline, not a throw: under Native it falls back to driver-LINQ and returns the
-        // right rows; under NativeOnly the gate turns the same decline into
-        // NativeTranslationNotSupportedException.
+        // Computed sort key: TryTranslateComputedSortKey gates on MongoAggregationExpressionRenderer.CanRender,
+        // which is false here, so this is a translate-time decline: falls back under Native, throws under
+        // NativeOnly.
         var collection = Seed(nameof(Array_contains_as_a_computed_sort_key_declines_cleanly));
 
         using var native = CreateContext(collection, MongoQueryMode.Native);
@@ -405,10 +363,8 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
                 .ThenBy(e => e.Label)
                 .Select(e => e.Label)
                 .ToList());
-        // MEASURED: the message is the GATE's generic "forbids the driver-LINQ fallback" one, i.e. a
-        // TRANSLATE-time decline — NOT MongoAggregationExpressionRenderer's "does not support node type"
-        // render-time throw. That contrast with the filtered-count position below is the whole point of this
-        // pair, so it is asserted rather than left to the exception type (which is the same for both).
+        // The message is the gate's "forbids the driver-LINQ fallback" one (a translate-time decline), not the
+        // renderer's "does not support node type" throw; that contrast with the count position below is the point.
         Assert.Contains("MongoQueryMode.NativeOnly forbids the driver-LINQ fallback", ex.Message);
         Assert.DoesNotContain("MongoAggregationExpressionRenderer", ex.Message);
     }
@@ -416,20 +372,10 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     [Fact]
     public void Array_contains_as_a_filtered_count_element_predicate_declines_at_render_time()
     {
-        // Position 2: a filtered COUNT's element predicate — the deliberately GATE-FREE position (see
-        // MongoExpressionTranslator's count branch and MongoAggregationExpressionRenderer.RenderUnary's
-        // remarks: a translate-time null there hard-fails the whole leaf in EVERY mode, so that branch
-        // intentionally lets the render throw instead). MongoArrayContainsExpression therefore survives
-        // translation, is handed to MongoAggregationExpressionRenderer inside the $filter cond, and hits
-        // Render's catch-all: NativeTranslationNotSupportedException.
-        //
-        // MEASURED, not assumed: that render-time throw is caught by
-        // MongoShapedQueryCompilingExpressionVisitor.TryBuildPipeline's
-        // `catch (NativeTranslationNotSupportedException) when (mode != NativeOnly)`, so this position
-        // GRACEFULLY FALLS BACK under Native (correct rows via driver-LINQ) and surfaces the exception only
-        // under NativeOnly — it is NOT the "hard-fails in every mode" family. That asymmetry is precisely
-        // what the gate-free design buys, and it is why this test asserts a working Native result rather
-        // than a throw.
+        // Filtered count's element predicate: this position is intentionally gate-free (a translate-time null
+        // there would hard-fail the whole leaf in every mode — see RenderUnary's remarks), so the node reaches the
+        // renderer and throws NativeTranslationNotSupportedException at render time. TryBuildPipeline catches that
+        // when mode != NativeOnly, so Native falls back gracefully and only NativeOnly throws.
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
             nameof(Array_contains_as_a_filtered_count_element_predicate_declines_at_render_time))
             + Guid.NewGuid().ToString("N")[..8];
@@ -464,8 +410,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
                     .OrderBy(o => o.Title)
                     .Select(o => new {o.Title, N = o.Posts.Count(p => p.Tags.Contains("keep"))})
                     .ToList());
-            // Pins WHICH gate answered — measured, so the test cannot silently start passing because some
-            // earlier, unrelated decline began firing first.
+            // Pins which gate answered, so an unrelated earlier decline can't make this pass.
             Assert.Contains("MongoAggregationExpressionRenderer does not support node type "
                 + "'MongoArrayContainsExpression'", ex.Message);
         }

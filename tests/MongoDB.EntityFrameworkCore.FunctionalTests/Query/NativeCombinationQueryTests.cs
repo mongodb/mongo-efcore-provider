@@ -27,19 +27,12 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-323 end-to-end coverage of the canonical multi-key + paging native shape:
-/// <c>Where(predicate).OrderBy(A).ThenByDescending(B).Skip(skip).Take(take)</c> (and the inverse
-/// direction). Most existing native-gate coverage probes a single operator at a time; this exercises
-/// the full filter → multi-key sort → skip → limit pipeline in one query.
-/// <para>
-/// The data is seeded with deliberately-tied primary sort keys so the secondary key is load-bearing:
-/// if the native pipeline dropped or reordered the <c>ThenBy</c> stage the asserted order would change.
-/// <c>skip</c>/<c>take</c> are captured variables, so they bind as query parameters (compiled-query path).
-/// </para>
-/// Each shape is asserted three ways: (1) under <see cref="MongoQueryMode.NativeOnly"/> it must succeed —
-/// proving it went native rather than falling back — AND return the exact expected order; (2) under
-/// <see cref="MongoQueryMode.Native"/> and (3) <see cref="MongoQueryMode.DriverLinq"/> it returns the
-/// identical ordered sequence (parity).
+/// End-to-end filter → multi-key sort → skip → limit:
+/// <c>Where(predicate).OrderBy(A).ThenByDescending(B).Skip(skip).Take(take)</c> and the inverse direction.
+/// Primary sort keys are tied so a dropped <c>ThenBy</c> changes the order; <c>skip</c>/<c>take</c> are
+/// captured, so they bind as parameters. Each shape must succeed under <see cref="MongoQueryMode.NativeOnly"/>
+/// with the exact order, and match under <see cref="MongoQueryMode.Native"/> and
+/// <see cref="MongoQueryMode.DriverLinq"/>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
@@ -54,9 +47,6 @@ public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
         public bool Active { get; set; }
     }
 
-    // Seed rows where the primary key A is heavily tied, so ThenBy(B) decides the order within a group.
-    // Labels are unique and used as the distinguishing field for ordered comparison.
-    //
     // Active rows (Active == true), grouped by A then by B:
     //   A=1: B=30 "a1b30", B=10 "a1b10", B=20 "a1b20"
     //   A=2: B=15 "a2b15", B=5  "a2b5"

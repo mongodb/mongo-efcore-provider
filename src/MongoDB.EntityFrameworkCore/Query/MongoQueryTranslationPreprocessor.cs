@@ -37,6 +37,7 @@ public class MongoQueryTranslationPreprocessor : QueryTranslationPreprocessor
     {
         query = FinalPredicateHoistingVisitor.Hoist(query);
         query = new EntityFrameworkDetourExpressionVisitor(QueryCompilationContext).Visit(query);
+        query = new LocalCollectionFilterFoldingVisitor(QueryCompilationContext).Visit(query);
 
         // Nav expansion throws for IQueryable methods that it is not aware of, so we remove
         // any VectorSearch call from the root and then put it back after. This only works because

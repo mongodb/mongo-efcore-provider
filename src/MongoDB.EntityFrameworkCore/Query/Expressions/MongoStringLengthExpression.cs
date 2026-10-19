@@ -18,19 +18,14 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// The <c>string.Length</c> member access — the number of UTF-16 code units in <see cref="Operand"/> — rendered
-/// in the aggregation-expression dialect as <c>$strLenCP</c>.
+/// <c>string.Length</c>, rendered in the aggregation-expression dialect as <c>$strLenCP</c>.
 /// </summary>
 /// <remarks>
-/// <see cref="Operand"/> is the general <see cref="MongoExpression"/> type, not a bare field — <c>$strLenCP</c>
-/// accepts any string-valued EXPRESSION, matching <see cref="MongoStringIndexOfExpression"/>'s own operand
-/// shape. Like <see cref="MongoStringIndexOfExpression"/>, this node has no query-dialect form (it produces an
-/// integer VALUE, not a predicate) and must never be admitted by
+/// Produces an integer value, not a predicate, so it has no query-dialect form and must never be admitted by
 /// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>.
 /// </remarks>
 internal sealed class MongoStringLengthExpression(MongoExpression operand) : MongoExpression
 {
-    /// <summary>The string-valued expression whose length is computed.</summary>
     public MongoExpression Operand { get; } = operand;
 
     /// <inheritdoc />

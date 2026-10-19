@@ -28,30 +28,20 @@ namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 internal static class MongoSpecTestHelpers
 {
     /// <summary>
-    /// True when the current run has <c>MONGODB_EF_NATIVE_ONLY=1</c> set, flipping every spec context to
-    /// <c>MongoQueryMode.NativeOnly</c> (see <see cref="Utilities.MongoTestStore.AddProviderOptions"/>). Some
-    /// translation-failure baselines depend on how far the query got before rejecting it: the driver-LINQ
-    /// fallback path can log a partial pipeline before failing, while the native-only path may reject the
-    /// query before anything is logged. Tests with such a baseline should branch on this flag.
+    /// True when <c>MONGODB_EF_NATIVE_ONLY=1</c> flips every spec context to <c>MongoQueryMode.NativeOnly</c> (see
+    /// <see cref="Utilities.MongoTestStore.AddProviderOptions"/>). Translation-failure baselines can differ: the
+    /// driver-LINQ fallback may log a partial pipeline before failing, native-only may reject before logging.
     /// </summary>
     internal static bool IsNativeOnly
         => Environment.GetEnvironmentVariable("MONGODB_EF_NATIVE_ONLY") == "1";
 
     /// <summary>
-    /// Asserts that <paramref name="query"/> fails as a <em>translation</em> failure rather than executing
-    /// and returning (potentially wrong) data. A shape the native translator does not support must fail
-    /// with one of the accepted translation-failure exception types; the exact type depends on the query
-    /// mode and how far the driver-LINQ fallback gets:
-    /// <list type="bullet">
-    /// <item><see cref="NativeTranslationNotSupportedException"/> under <c>MongoQueryMode.NativeOnly</c>;</item>
-    /// <item>an EF <see cref="InvalidOperationException"/> (CoreStrings.TranslationFailed or an internal
-    /// guard) or a driver <see cref="ExpressionNotSupportedException"/> under the default <c>Native</c> mode.</item>
-    /// </list>
-    /// Callers may pass <paramref name="additionalAcceptedTypes"/> for extra exception types that a
-    /// particular suite's driver-LINQ fallback genuinely throws (e.g. <see cref="ArgumentException"/> /
-    /// <see cref="FormatException"/> for GroupBy shapes). Data-assertion failures (xUnit assertion
-    /// exceptions) are deliberately NOT accepted, so a future wrong-data regression still turns the test
-    /// red rather than being masked.
+    /// Asserts that <paramref name="query"/> fails as a translation failure rather than returning (possibly wrong)
+    /// data: <see cref="NativeTranslationNotSupportedException"/> under <c>NativeOnly</c>; an EF
+    /// <see cref="InvalidOperationException"/> or driver <see cref="ExpressionNotSupportedException"/> under
+    /// <c>Native</c>. <paramref name="additionalAcceptedTypes"/> adds types a suite's fallback genuinely throws (e.g.
+    /// <see cref="ArgumentException"/>/<see cref="FormatException"/> for GroupBy). xUnit assertion exceptions are never
+    /// accepted, so a wrong-data regression still fails.
     /// </summary>
     internal static async Task AssertNativeTranslationFailedAsync(
         Func<Task> query, params Type[] additionalAcceptedTypes)
@@ -103,11 +93,9 @@ internal static class MongoSpecTestHelpers
     }
 
     /// <summary>
-    /// Asserts that <paramref name="query"/> is rejected as an unsupported cross-<c>DbSet</c> (multi-collection)
-    /// query. Driver-LINQ mode raises this as an <see cref="InvalidOperationException"/> from a Mongo-specific
-    /// guard, with a message reporting "Unsupported cross-DbSet query between"; native-only mode rejects the
-    /// same shape earlier, as <see cref="NativeTranslationNotSupportedException"/>. Both signal the identical
-    /// unsupported-shape condition, so either is accepted.
+    /// Asserts that <paramref name="query"/> is rejected as an unsupported cross-<c>DbSet</c> query: an
+    /// <see cref="InvalidOperationException"/> ("Unsupported cross-DbSet query between") under driver-LINQ, or
+    /// <see cref="NativeTranslationNotSupportedException"/> under native-only.
     /// </summary>
     internal static async Task AssertNoMultiCollectionQuerySupportAsync(Func<Task> query)
     {

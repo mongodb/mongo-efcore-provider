@@ -18,10 +18,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// <summary>Represents a <c>$count</c> aggregation stage producing a single count document.</summary>
 internal sealed class MongoCountStage : MongoPipelineStage
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MongoCountStage"/> class.
-    /// </summary>
-    /// <param name="outputField">The output field name holding the count (conventionally "v").</param>
+    /// <summary>Creates a <c>$count</c> stage writing to <paramref name="outputField"/>.</summary>
     public MongoCountStage(string outputField) => OutputField = outputField;
 
     /// <summary>The output field name holding the count (conventionally "v").</summary>

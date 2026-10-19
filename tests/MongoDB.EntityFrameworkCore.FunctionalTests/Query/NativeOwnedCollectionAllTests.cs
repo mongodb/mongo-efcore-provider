@@ -30,9 +30,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-322: an All quantifier over an OWNED (embedded) collection navigation translates natively to a NEGATED
-/// $elemMatch over the exact complement of the element predicate. Each admitted shape asserts a NativeOnly
-/// routing proof; each excluded shape asserts a clean decline.
+/// <c>All</c> over an owned (embedded) collection translates natively to a negated <c>$elemMatch</c> over the
+/// exact complement of the element predicate. Admitted shapes assert a NativeOnly routing proof; excluded
+/// shapes a clean decline.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -49,9 +49,8 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // MQL-capture idiom copied from NativeSelectManyTests.cs (the sibling NativeOwnedCollectionPredicateTests.cs
-    // this file otherwise mirrors has NO MQL-asserting test to copy from — TestMqlLoggerFactory/AssertMql live
-    // only in the SpecificationTests project; FunctionalTests captures MQL via SpyLoggerProvider instead).
+    // MQL is captured via SpyLoggerProvider (TestMqlLoggerFactory/AssertMql exist only in SpecificationTests),
+    // as in NativeSelectManyTests.
     private SingleEntityDbContext<T> CreateContextWithLogging<T>(
         IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
@@ -72,9 +71,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             });
     }
 
-    // Full-message equality would also have to match the "Executed MQL query\n<namespace>.aggregate([...])"
-    // wrapper NativeSelectManyTests.cs's idiom leaves out — Assert.Contains against the captured pipeline
-    // fragment (the actual idiom that file uses) pins the pipeline shape without coupling to that wrapper.
+    // Assert.Contains on the pipeline fragment avoids coupling to the "Executed MQL query" message wrapper.
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
@@ -89,16 +86,14 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
 
     public class Post
     {
-        // Nullable ON PURPOSE: a missing or explicitly-null stored field must MATERIALIZE (as null) rather
-        // than throw, or the missing-field state cannot be exercised at all. A required non-nullable element
-        // property with a missing field is a separate, pre-existing materialization concern (it throws in
-        // every mode) and is deliberately out of this file's scope.
+        // Nullable so a missing or explicitly-null stored field materializes as null rather than throwing; otherwise
+        // the missing-field state can't be exercised.
         public int? Rank { get; set; }
         public string? Heading { get; set; }
         public int? Other { get; set; }
 
-        // DELIBERATELY COLLIDES with Blog.Title so the correlated-element-predicate guard is exercised on an
-        // input that would otherwise be ACCEPTED — the element-scoped translator resolves members by NAME.
+        // Collides with Blog.Title on purpose: the element-scoped translator resolves members by name, so this
+        // exercises the correlated-element-predicate guard.
         public string Title { get; set; } = "";
 
         public List<Comment> Comments { get; set; } = [];
@@ -126,8 +121,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     };
 
     // ------------------------------------------------------------------
-    // Shared row builders — each returns a FRESH document (new ObjectId) per call, built exactly once so the
-    // full-matrix and well-formed seeds cannot desynchronize.
+    // Shared row builders; each returns a fresh document (new ObjectId) so the seeds can't desynchronize.
     // ------------------------------------------------------------------
 
     // Every element satisfies Rank > 5.
@@ -146,13 +140,12 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             PostDoc(rank: 1, heading: "b"),
         });
 
-    // An element whose Rank field is ABSENT. THE critical row: naive operator inversion ($gt → $lte) reports
-    // All == true here, because neither $gt nor $lte matches a missing field, where LINQ (null > 5 == false)
-    // says All == false. Any regression to inversion must make a test on this row fail.
+    // Rank field absent. The critical row: naive inversion ($gt -> $lte) reports All == true, since neither
+    // matches a missing field, but LINQ (null > 5 == false) says All == false.
     private static BsonDocument MissingFieldRow()
         => Row("missingfield", new BsonArray { PostWithoutRank(heading: "a") });
 
-    // An element whose Rank is explicitly BSON null — same reasoning as MissingFieldRow.
+    // Rank explicitly BSON null; same reasoning as MissingFieldRow.
     private static BsonDocument NullFieldRow()
         => Row("nullfield", new BsonArray { PostDoc(rank: null, heading: "a") });
 
@@ -177,9 +170,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             { "Other", 0 }, { "Title", title }, { "Comments", new BsonArray() }
         };
 
-    // A Post carrying its own Comments array, for the All-within-Any / Any-within-All / All-within-All nesting
-    // tests below. Rank/Other/Title are unused by those tests' predicates, so fixed, present, non-null values
-    // are fine — only Comments varies per call.
+    // A Post with its own Comments array, for the nested quantifier tests; only Comments varies.
     private static BsonDocument PostWithComments(string heading, BsonArray comments)
         => new()
         {
@@ -191,9 +182,8 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
 
     private static BsonDocument NoteDoc(int length) => new() { { "Length", length } };
 
-    // Home/Tags are always seeded present-but-empty: both are separate required properties on Blog, unrelated
-    // to what these rows test, and a document missing them fails materialization with an unrelated error the
-    // moment a predicate returns the row as a full Blog.
+    // Home/Tags are always present-but-empty: they're required on Blog, and a missing one fails materialization
+    // for unrelated reasons.
     private static BsonDocument Row(string title, BsonValue? posts)
     {
         var doc = new BsonDocument
@@ -217,10 +207,8 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             { "Tags", new BsonArray() }
         };
 
-    // Row variant carrying explicit Tags content, for the primitive-collection Contains-fallback test below —
-    // every OTHER row builder in this file leaves Tags as an empty array (irrelevant to what those rows test),
-    // which would make Tags.All(t => t != "x") vacuously true for all of them and unable to discriminate a
-    // wrong implementation from a correct one.
+    // Carries real Tags; every other builder leaves Tags empty, which would make Tags.All(t => t != "x")
+    // vacuously true and non-discriminating.
     private static BsonDocument RowWithTags(string title, BsonArray tags)
         => new()
         {
@@ -242,22 +230,13 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         => Seed(name, AllPassRow(), OneFailsRow(), MissingFieldRow(), NullFieldRow(),
                       EmptyPostsRow(), MissingPostsRow(), NullPostsRow());
 
-    // Rows whose Posts is a real, non-null ARRAY — element-level missing/null fields are fine here.
-    //
-    // Spike refinement (measured, and wider than the Any slice's equivalent seed): the driver's own All
-    // translation ($expr: {$allElementsTrue: {$map: …}}) aborts the aggregate ONLY on an array-level
-    // missing/null Posts — "$allElementsTrue's argument must be an array, but is null". With every array
-    // present but ELEMENTS carrying a missing or explicit-null Rank, DriverLinq runs and agrees with both the
-    // in-memory oracle and the native MQL. So MissingFieldRow/NullFieldRow BELONG in the parity seed: they put
-    // an independent driver cross-check on exactly the element states where a wrong complement shows up.
-    // Only the array-level missing/null rows are confined to the NativeOnly-plus-hand-verified leg.
+    // Rows whose Posts is a real, non-null array. The driver's All translation ($allElementsTrue over $map) only
+    // aborts on an array-level missing/null Posts, so element-level missing/null Rank rows belong here and get an
+    // independent driver cross-check where a wrong complement would show up.
     private IMongoCollection<Blog> SeedWellFormed(string name)
         => Seed(name, AllPassRow(), OneFailsRow(), MissingFieldRow(), NullFieldRow(), EmptyPostsRow());
 
-    // Runs the query under NativeOnly (routing proof) and under DriverLinq (value oracle), asserts the two
-    // agree on the matched set, and returns the matched titles.
-    // Runs `query` in one mode and reduces it to the comparable Title list every assertion below compares on.
-    // The MODE ORCHESTRATION lives in NativeModeAssert; this is just this class's own plumbing.
+    // Runs `query` in one mode, reduced to the sorted Title list; mode orchestration lives in NativeModeAssert.
     private List<string> RunTitles(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryMode mode)
     {
@@ -269,17 +248,14 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => NativeModeAssert.NativeAndParity(mode => RunTitles(collection, query, mode));
 
-    // Asserts a shape is NOT native: it throws NativeTranslationNotSupportedException under NativeOnly
-    // (a clean decline, not a crash), AND that the fallback it relies on actually delivers correct,
-    // independently-cross-checked results — Native == DriverLinq, both returned to the caller to assert
-    // against a hand-verified expected value.
+    // Asserts a clean decline under NativeOnly and that the fallback is correct (Native == DriverLinq); returns
+    // the rows for a hand-verified expectation.
     private List<string> AssertDeclinesCleanly(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => NativeModeAssert.DeclinesCleanly(mode => RunTitles(collection, query, mode));
 
-    // Proves a shape goes native (NativeOnly succeeds) without a driver-LINQ oracle leg — used for the
-    // full-matrix seed, whose missing/null Posts rows abort the driver's own $allElementsTrue translation.
-    // NativeOnly forbids the fallback, so a result here is proof the shape went native.
+    // NativeOnly-only (no driver oracle), for seeds whose missing/null Posts rows abort the driver's
+    // $allElementsTrue translation.
     private List<string> AssertNativeOnlyMatches(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => RunTitles(collection, query, MongoQueryMode.NativeOnly);
@@ -292,7 +268,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.All(p => p.Rank > 5)));
 
         // allpass: both elements pass. empty/missing/null: All over an empty sequence is true.
-        // missingfield/nullfield: null > 5 is false, so All is FALSE — the rows a naive inversion gets wrong.
+        // missingfield/nullfield: null > 5 is false, so All is false (the rows a naive inversion gets wrong).
         // onefails: one element fails.
         Assert.Equal(new[] { "allpass", "empty", "missing", "null" }, titles);
     }
@@ -308,16 +284,9 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void Owned_collection_All_with_captured_parameter_element_predicate_goes_native()
     {
-        // I-2 (final whole-branch review): mirrors NativeOwnedCollectionPredicateTests's
-        // Owned_collection_Any_with_captured_parameter_element_predicate_goes_native, whose comment explains
-        // why this axis needs its own test rather than relying on the shared guard's Any coverage: a captured
-        // value in the element predicate becomes an EF query parameter — and on EF8/EF9 an EF query parameter
-        // IS a ParameterExpression (a "__"-prefixed name), unlike EF10's typed QueryParameterExpression. The
-        // correlated-element-predicate guard (ReferencesEnclosingScope) that All shares with Any therefore has
-        // to exempt query parameters explicitly via NativeQueryParameter.TryGetQueryParameterName, or a
-        // captured value in an All element predicate would decline on EF8/EF9 ONLY — invisible on EF10, since
-        // every other test in this file uses inline constants. MUST be verified on EF8, not just EF10 — that
-        // is the whole point of this test.
+        // A captured value becomes an EF query parameter, which on EF8/EF9 is a ParameterExpression; the
+        // correlated-element-predicate guard (ReferencesEnclosingScope) must exempt it via
+        // NativeQueryParameter.TryGetQueryParameterName or this declines on EF8/EF9 only. Must be verified on EF8.
         var threshold = 5;
         var collection = SeedWellFormed(
             nameof(Owned_collection_All_with_captured_parameter_element_predicate_goes_native));
@@ -337,8 +306,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void Owned_collection_All_over_an_empty_or_absent_array_is_true()
     {
-        // Called out separately from the matrix test because it is the semantic most likely to be "fixed"
-        // into a regression by someone who reads $not/$elemMatch as "the array must be non-empty".
+        // Separate from the matrix test because $not/$elemMatch is easily misread as "the array must be non-empty".
         var collection = Seed(
             nameof(Owned_collection_All_over_an_empty_or_absent_array_is_true),
             EmptyPostsRow(), MissingPostsRow(), NullPostsRow());
@@ -352,8 +320,8 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     {
         var collection = Seed(
             nameof(Owned_collection_All_multi_condition_requires_every_element_to_satisfy_all_conditions),
-            // Each element satisfies ONE condition but not both: All must be FALSE. A De Morgan slip that
-            // ANDed the complements instead of ORing them would wrongly return this row.
+            // Each element satisfies one condition but not both, so All is false; ANDing the complements instead of
+            // ORing them (a De Morgan slip) would wrongly return this row.
             Row("split", new BsonArray { PostDoc(rank: 9, heading: "no"), PostDoc(rank: 1, heading: "yes") }),
             Row("both", new BsonArray { PostDoc(rank: 9, heading: "yes") }));
 
@@ -370,8 +338,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
 
         _ = db.Entities.AsNoTracking().Where(b => b.Posts.All(p => p.Rank > 5)).ToList();
 
-        // Pins BOTH levels: the enclosing $not/$elemMatch AND the inner $not over the operator document.
-        // Captured from an actual run (see the report) — not hand-written.
+        // Pins both levels: the enclosing $not/$elemMatch and the inner $not over the operator document.
         spyLogger.AssertExecutedMqlContains("{ \"$match\" : { \"Posts\" : { \"$not\" : { \"$elemMatch\" : { \"Rank\" : { \"$not\" : { \"$gt\" : 5 } } } } } } }");
     }
 
@@ -384,7 +351,6 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         _ = db.Entities.AsNoTracking()
             .Where(b => b.Posts.All(p => p.Rank > 5 && p.Heading == "yes")).ToList();
 
-        // Captured from an actual run (see the report) — not hand-written.
         spyLogger.AssertExecutedMqlContains("{ \"$match\" : { \"Posts\" : { \"$not\" : { \"$elemMatch\" : { \"$or\" : [{ \"Rank\" : { \"$not\" : { \"$gt\" : 5 } } }, { \"Heading\" : { \"$ne\" : \"yes\" } }] } } } } }");
     }
 
@@ -431,8 +397,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void All_over_a_collection_reached_through_an_owned_reference_goes_native()
     {
-        // Proves the array path is built scope-relatively and composes through an owned single-ref hop:
-        // the emitted path must be "Home.Notes", not "Notes".
+        // The array path is built scope-relatively through an owned single-ref hop: "Home.Notes", not "Notes".
         var collection = Seed(nameof(All_over_a_collection_reached_through_an_owned_reference_goes_native),
             RowWithNotes("allLong", new BsonArray { NoteDoc(9), NoteDoc(7) }),
             RowWithNotes("oneShort", new BsonArray { NoteDoc(9), NoteDoc(1) }));
@@ -457,9 +422,8 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void All_with_a_field_to_field_element_predicate_declines_and_falls_back_to_correct_rows()
     {
-        // The negator has no exact complement for a field-to-field comparison. Proven to decline under
-        // NativeOnly AND to produce correct rows via the fallback — a decline is only safe if the path it
-        // falls back to actually works.
+        // The negator has no exact complement for a field-to-field comparison; the decline is only safe if the
+        // fallback returns correct rows.
         var collection = SeedWellFormed(
             nameof(All_with_a_field_to_field_element_predicate_declines_and_falls_back_to_correct_rows));
 
@@ -470,8 +434,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void All_with_an_arithmetic_element_predicate_declines_and_falls_back_to_correct_rows()
     {
-        // Same reasoning as the field-to-field case above: p.Rank + 1 is an arithmetic operand, which the
-        // translated comparison renders as a non-query-native ($expr) node the negator has no complement for.
+        // p.Rank + 1 renders as an $expr node, which the negator has no complement for.
         var collection = SeedWellFormed(
             nameof(All_with_an_arithmetic_element_predicate_declines_and_falls_back_to_correct_rows));
 
@@ -484,13 +447,9 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void All_with_a_correlated_element_predicate_now_goes_native_since_EF421()
     {
-        // SUPERSEDED by EF-421: this shape used to decline outright (see git history for the pre-EF-421
-        // version of this test, which asserted AssertDeclinesCleanly). It is now natively representable via
-        // a two-scope translator + $allElementsTrue — same seed, same expected rows (the correlated
-        // predicate `b.Title == "match"` does not depend on p at all, so All reduces to whether the OWNER's
-        // Title is "match" AND the blog has at least one post — "match" qualifies on both counts; "other"
-        // fails the Title check). Post.Title collides with Blog.Title, so a mis-scoped (element-rooted)
-        // resolution would select DIFFERENT rows, keeping this test discriminating rather than vacuous.
+        // Natively representable via a two-scope translator + $allElementsTrue. `b.Title == "match"` doesn't depend
+        // on p, so All holds iff the owner's Title is "match" and the blog has a post. Post.Title collides with
+        // Blog.Title, so a mis-scoped (element-rooted) resolution would select different rows.
         var collection = Seed(nameof(All_with_a_correlated_element_predicate_now_goes_native_since_EF421),
             Row("match", new BsonArray { PostDoc(rank: 9, heading: "a", title: "other") }),
             Row("other", new BsonArray { PostDoc(rank: 9, heading: "a", title: "match") }));
@@ -502,30 +461,13 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void Primitive_collection_All_is_rewritten_upstream_and_now_goes_native_via_EF382()
     {
-        // EF Core's own AllAnyToContainsRewritingExpressionVisitor rewrites All(x => x != c) into
-        // !Contains(c) BEFORE the native translator sees it, so no All node ever reaches the quantifier
-        // matcher for a primitive-element collection. This is the mirror image of the sibling file's
-        // Primitive_collection_Any_now_goes_native_via_the_Contains_path: Any(x => x == c) rewrites to
-        // Contains(c); All(x => x != c) rewrites to !Contains(c). Both land on the SAME Contains/$in-or-
-        // array-contains path (MongoExpressionTranslator.TryMatchContainsMethod + the EF-382 mirror arm),
-        // unchanged by the owned-collection-quantifier slice this file otherwise covers.
-        //
-        // Before EF-382: for `b.Tags.All(t => t != "x")`, TryMatchContainsMethod matched the rewritten
-        // !Tags.Contains("x") with collection = b.Tags (a field) and item = "x" (a constant) — the MIRROR
-        // IMAGE of the one shape TryResolveMember's "item must resolve to a bare field" restriction admits
-        // (`list.Contains(x.Field)`, where the roles are reversed). TryResolveMember declined on the constant
-        // item, so this fell back. EF-382 added the mirror arm (MongoArrayContainsExpression, with Not
-        // flipping its Negated flag — see MongoExpressionTranslator's Not case), so `!Tags.Contains("x")` now
-        // goes native as { Tags: { $ne: "x" } }.
-        // Dedicated seed (not SeedWellFormed/SeedMatrix): every shared row builder in this file leaves Tags
-        // as an empty array, which would make Tags.All(t => t != "x") vacuously true for every row and unable
-        // to discriminate a wrong Contains/$nin implementation from a correct one — only the NativeOnly
-        // routing proof would carry any weight. RowWithTags gives real, discriminating Tags values instead:
+        // EF's AllAnyToContainsRewritingExpressionVisitor rewrites All(x => x != c) to !Contains(c) before native
+        // translation, so this goes through the Contains mirror arm (MongoArrayContainsExpression, negated via Not)
+        // and renders { Tags: { $ne: "x" } }.
+        // Dedicated seed, since other rows have empty Tags (vacuously true):
         //   "hasX"      Tags = ["x", "y"] -> "x" fails t != "x" -> All false.
         //   "noX"       Tags = ["y", "z"] -> every element satisfies t != "x" -> All true.
-        //   "emptyTags" Tags = []          -> vacuously true (kept for parity with the empty-sequence case).
-        // A dedicated seed also means none of the 17 already-verified expectations elsewhere in this file
-        // shift (nothing shares this seed).
+        //   "emptyTags" Tags = []          -> vacuously true.
         var collection = Seed(
             nameof(Primitive_collection_All_is_rewritten_upstream_and_now_goes_native_via_EF382),
             RowWithTags("hasX", new BsonArray { "x", "y" }),
@@ -549,7 +491,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         Assert.Equal(driver, native);
         Assert.Equal(new[] { "emptyTags", "noX" }, native);
 
-        // Routing proof: now goes native (EF-382) — NativeOnly succeeds rather than throwing.
+        // NativeOnly succeeds, so this went native.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
             var nativeOnly = db.Entities.AsNoTracking().Where(b => b.Tags.All(t => t != "x"))
@@ -561,13 +503,9 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void Primitive_collection_All_with_equality_reaches_the_matcher_and_declines_at_path_resolution()
     {
-        // Spike finding: Tags.All(t => t == "x") is NOT rewritten by EF's AllAnyToContainsRewriting (which
-        // only handles All(x => x != c) / Any(x => x == c)), and it arrives in a shape the Any slice's notes
-        // said could not occur — Enumerable.All (not Queryable), a BARE unquoted lambda, and NO AsQueryable()
-        // wrapper. The generalized matcher therefore MATCHES it, and it must decline one step later because
-        // TryResolveOwnedCollectionPath requires an embedded collection NAVIGATION and Tags is a primitive
-        // collection property. Verified: UnwrapAsQueryable passes an unwrapped source through unchanged, so
-        // this is a clean decline, not a crash — this test is what keeps it that way.
+        // Tags.All(t => t == "x") isn't rewritten upstream and arrives as Enumerable.All with a bare lambda and no
+        // AsQueryable(). The matcher matches it, then TryResolveOwnedCollectionPath declines because Tags is a
+        // primitive collection, not a navigation. Pins a clean decline rather than a crash.
         var collection = SeedWellFormed(
             nameof(Primitive_collection_All_with_equality_reaches_the_matcher_and_declines_at_path_resolution));
 
@@ -578,11 +516,9 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     // Differential matrix — the primary correctness bar for the negator
     // ------------------------------------------------------------------
     //
-    // A mis-negated element predicate returns WRONG ROWS rather than declining, and the driver-LINQ oracle
-    // cannot cover the missing/null states (its own All translation aborts the aggregate on such a document).
-    // So the oracle here is IN-MEMORY LINQ over the materialized entities: the SAME expression is sent to the
-    // server and, compiled, evaluated client-side. Using one expression for both legs is what makes this a
-    // real differential test rather than two hand-written predicates that can silently disagree.
+    // A mis-negated element predicate returns wrong rows rather than declining, and the driver oracle aborts on
+    // missing/null arrays. So the oracle is in-memory LINQ: the same expression is sent to the server and
+    // compiled client-side.
 
     public static TheoryData<string, Expression<Func<Blog, bool>>> AllMatrixCases() => new()
     {
@@ -597,22 +533,13 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         { "not",             b => b.Posts.All(p => !(p.Rank > 5)) },
         { "eq-null",         b => b.Posts.All(p => p.Rank == null) },
         { "ne-null",         b => b.Posts.All(p => p.Rank != null) },
-        // Not the brief's literal `p.Heading!.StartsWith("a")`: that predicate goes NATIVE (verified —
-        // StartsWith over a bare param-rooted member hits TryResolveMember's fast path directly, no owned-path
-        // resolution needed), but the `!` null-forgiving operator has NO runtime effect — it only suppresses
-        // the nullable-reference compiler warning — so evaluating the identical brief expression against
-        // DifferentialRows' "headingNull" row (Heading explicitly null) throws NullReferenceException from the
-        // IN-MEMORY ORACLE side (predicate.Compile()), not from translation. That is a defect in the brief's
-        // literal predicate against this shared matrix, not a decline, so this case stays IN the theory with a
-        // null-guarded rewrite that is still a genuine single-expression differential test of StartsWith
-        // negation (and, via the leading `!= null` conjunct, De Morgan over a mixed Regex/Equality pair — a
-        // combination neither "and" nor "or" above exercises, since both those cases pair Rank with Heading
-        // equality, not a null-guard with StartsWith).
+        // Null-guarded because `p.Heading!` has no runtime effect, so the in-memory oracle would throw on the
+        // "headingNull" row. The `!= null` conjunct also exercises De Morgan over a mixed null-guard/StartsWith pair.
         { "startswith",      b => b.Posts.All(p => p.Heading != null && p.Heading.StartsWith("a")) },
         { "nested-any",      b => b.Posts.All(p => p.Comments.Any(c => c.Age > 5)) },
         { "nested-all",      b => b.Posts.All(p => p.Comments.All(c => c.Age > 5)) },
         { "negated-all",     b => !b.Posts.All(p => p.Rank > 5) },
-        // Any regressions: this path must be completely unaffected by the slice.
+        // Any: must be unaffected.
         { "any-gt",          b => b.Posts.Any(p => p.Rank > 5) },
         { "any-bare",        b => b.Posts.Any() },
         { "negated-any",     b => !b.Posts.Any(p => p.Rank > 5) },
@@ -633,9 +560,8 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
                 .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t).ToList();
         }
 
-        // Server: the query must go NATIVE (NativeOnly is the only reliable signal) and agree exactly.
-        // The projection is client-side on purpose — a bare-scalar Select would itself not be native and
-        // would throw under NativeOnly for reasons unrelated to the quantifier.
+        // Server: must go native (NativeOnly) and agree exactly. The projection is client-side because a bare-scalar
+        // Select wouldn't itself be native.
         List<string> actual;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
@@ -646,41 +572,14 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         Assert.Equal(expected, actual);
     }
 
-    // FLIPPED BY EF-400 (EF-322 stream 1, slice A5) — this test USED TO ASSERT A DECLINE, and the paragraph
-    // that stood here explained why: "TryResolveMember's fast path only accepts a BARE `p.Foo` member access,
-    // and `p.Rank!.Value` is a `.Value` property access wrapping that member access, so it falls through to the
-    // dotted-owned-path resolver, which declines outright for a non-document-root scope." That was accurate,
-    // and A5 removed exactly that step — `TryResolveMember` now PEELS `Nullable<T>.Value` before its fast-path
-    // switch, so `p.Rank!.Value` reduces to `p.Rank` and resolves against the owned ELEMENT type like any other
-    // element member. The dotted-owned-path resolver is never reached, and its non-document-root decline (still
-    // correct, and still live for a genuinely dotted element access) no longer applies to this shape.
+    // TryResolveMember peels Nullable<T>.Value, so `p.Rank!.Value` resolves against the owned element type and
+    // goes native as { Posts: { $not: { $elemMatch: { Rank: { $nin: [7, 9] } } } } }. A missing or null Rank
+    // matches $nin, excluding the row, which matches LINQ's All.
     //
-    // So this is an INCIDENTAL widening of A5, not one that slice planned: the peel sits in the one shared
-    // resolver every scope reaches, so it widens the ELEMENT-scoped translator that Any/All build for their
-    // $elemMatch child at the same time as it widens the root-scoped one. Verified, not assumed, that the
-    // widening is value-preserving OVER THIS SEED: the expected titles below are UNCHANGED from the decline
-    // era, and AssertNativeAndParity re-checks the native answer against DriverLinq's on every run. That scope
-    // qualifier is load-bearing — SeedWellFormed deliberately excludes the missing/null ARRAY states, which are
-    // exactly the states where behaviour moved (an exception became correct rows). See
-    // All_with_a_nullable_leaf_Contains_predicate_is_correct_for_missing_and_null_ARRAYS_too below, which
-    // covers them.
+    // Uses SeedWellFormed because DriverLinq's $allElementsTrue translation throws on a missing/null Posts array;
+    // see the next test for those states.
     //
-    // The emitted form is { Posts: { $not: { $elemMatch: { Rank: { $nin: [7, 9] } } } } } — All(pred) as a
-    // negated $elemMatch over the exact complement, with $nin as $in's own complement. It is correct for the
-    // ragged element states for the reason $eq/$ne partitioning always gives here: a MISSING or explicitly-null
-    // Rank matches $nin, so it satisfies the inner $elemMatch and excludes the row, which is what LINQ's All
-    // answers for an element whose Contains(null) is false.
-    //
-    // This uses SeedWellFormed, NOT the full DifferentialRows: DriverLinq's own All-over-collection translation
-    // (the parity oracle) renders as $expr/$allElementsTrue, which — same as the file's existing Any/All notes
-    // document — throws a MongoCommandException when the ARRAY itself is missing/null (DifferentialRows'
-    // MissingPostsRow/NullPostsRow), so the DriverLinq leg cannot execute against the full matrix. SeedWellFormed
-    // (real, non-null Posts arrays; element-level Rank may still be missing/null) is exactly the seed the file's
-    // OTHER parity tests already use for this reason.
-    //
-    // Expected titles, hand-verified and unchanged by the flip: allpass (ranks 9,7, both in {7,9} -> All true);
-    // onefails (ranks 9,1 -> 1 not in {7,9} -> All false, excluded); missingfield/nullfield (Rank absent/null ->
-    // Contains(null) does not match -> All false, excluded); empty (All over an empty sequence is vacuously true).
+    // Expected: allpass (9,7 both in {7,9}) true; onefails excluded; missingfield/nullfield excluded; empty true.
     [Fact]
     public void All_with_a_nullable_leaf_Contains_predicate_goes_native_since_EF400()
     {
@@ -692,27 +591,13 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         Assert.Equal(new[] { "allpass", "empty" }, titles);
     }
 
-    // Minor 5 of EF-400's review round: the flip above is asserted over SeedWellFormed, which by construction
-    // EXCLUDES the two array states where behaviour actually MOVED — so "value-preserving" was true but scoped
-    // to a seed that could not have shown otherwise. This case covers exactly those states.
+    // Covers the missing/null Posts array states the test above excludes. Driver LINQ throws on these
+    // ($allElementsTrue on a null argument); natively, $not/$elemMatch matches them vacuously and they are
+    // correctly included, as LINQ's All over an empty sequence.
     //
-    // BEFORE EF-400 the shape fell back, and the driver's own All translation ($expr/$allElementsTrue) ABORTS
-    // the aggregate on a missing or explicitly-null Posts array ("$allElementsTrue's argument must be an array,
-    // but is null") — so MissingPostsRow/NullPostsRow produced a MongoCommandException and no rows at all.
-    // AFTER EF-400 the shape goes native, $not/$elemMatch matches a missing or null array vacuously, and both
-    // rows are correctly INCLUDED — which is what LINQ's All over an empty sequence returns.
-    //
-    // So over these two states behaviour DID move: exception → correct rows. That is an improvement, and it is
-    // not a break versus the published packages (which have no native path and therefore threw here too), but
-    // it is a change and it belongs in a test rather than in a claim.
-    //
-    // No DriverLinq oracle leg is possible for this seed for the reason above — the oracle cannot execute — so
-    // this uses AssertNativeOnlyMatches, the same helper every other full-matrix case in this file uses, with a
-    // hand-verified expectation. Derivation for { Posts: { $not: { $elemMatch: { Rank: { $nin: [7, 9] } } } } }:
-    // allpass (9,7 — no element is $nin, so nothing matches the inner $elemMatch) INCLUDED; onefails (9,1 — 1 is
-    // $nin) excluded; missingfield/nullfield (a missing or null Rank matches $nin) excluded; empty/missing/null
-    // (no array, or no elements, so the inner $elemMatch cannot match) INCLUDED. Identical to the expectation
-    // Owned_collection_All_goes_native asserts for the same fixture, which is the cross-check.
+    // No driver oracle is possible, so this uses AssertNativeOnlyMatches with a hand-verified expectation:
+    // allpass included; onefails excluded; missingfield/nullfield ($nin matches missing/null Rank) excluded;
+    // empty/missing/null included. Same as Owned_collection_All_goes_native, which is the cross-check.
     [Fact]
     public void All_with_a_nullable_leaf_Contains_predicate_is_correct_for_missing_and_null_ARRAYS_too()
     {
@@ -736,28 +621,15 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         Row("headingNull", new BsonArray { PostDoc(rank: 9, heading: null) }),
         Row("withComments", new BsonArray { PostWithComments("a", new BsonArray { CommentDoc(9), CommentDoc(1) }) }),
         Row("emptyComments", new BsonArray { PostWithComments("a", new BsonArray()) }),
-        // Closes an "or" coverage gap flagged in review: no OTHER row pairs a missing/null Rank with a
-        // Heading that is not "a", so a relational-negation bug that reaches through the OrElse arm's
-        // (correct) AND-composition — e.g. GreaterThan wrongly INVERTING to LessThanOrEqual instead of
-        // $not-wrapping — went undetected by "or" specifically. Reasoning: for `Rank > 5 || Heading == "a"`,
-        // the CORRECT complement is `$not:{$gt:5} AND Heading != "a"` — and $not:{$gt:5} matches a
-        // missing/null Rank (relational operators don't match missing/null, so $not of one does). The FIRST
-        // element below (no Rank field, Heading "z") therefore satisfies the correct complement outright
-        // (missing Rank -> $not:{$gt:5} is true; "z" != "a" is true) -> that element matches $elemMatch ->
-        // this row's All is correctly FALSE. A buggy relational negation using $lte:5 instead does NOT match
-        // a missing Rank (relational operators never match missing/null) -> the buggy complement fails to
-        // match EITHER element in this row -> All wrongly comes back TRUE. The SECOND element (Rank 9,
-        // Heading "a") is the contrasting element satisfying the predicate via the Heading disjunct, so the
-        // row isn't a degenerate single-element case and All's "one bad element is enough" semantics are
-        // still exercised.
+        // For `Rank > 5 || Heading == "a"` the correct complement is `$not:{$gt:5} AND Heading != "a"`, which matches
+        // the first element (no Rank, Heading "z"), so All is false. A buggy $lte:5 inversion doesn't match a missing
+        // Rank, so All would wrongly be true. The second element satisfies the predicate via the Heading disjunct.
         Row("orRelationalGap", new BsonArray { PostWithoutRank(heading: "z"), PostDoc(rank: 9, heading: "a") }),
     ];
 
     // ------------------------------------------------------------------
-    // EF-424 — dotted-path resolution through a nested owned single-reference hop, from INSIDE a quantifier's
-    // element-scoped predicate. Deliberately a SEPARATE fixture (NestedRef*), not an addition to Blog/Post
-    // above: adding an owned single-reference navigation to the shared Post type would need every other
-    // test's BlogModel/seed rows in this file to account for it.
+    // Dotted-path resolution through a nested owned single-reference hop, from inside a quantifier's
+    // element-scoped predicate. A separate fixture (NestedRef*) so the shared Post type stays unchanged.
     // ------------------------------------------------------------------
 
     public class NestedRefBlog
@@ -795,11 +667,9 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void Quantifier_element_predicate_through_nested_owned_reference_hop_goes_native()
     {
-        // EF-424: p.Author.City reached from INSIDE Any's element predicate is a two-hop dotted path rooted at
-        // the owned-collection ELEMENT scope (Post), not the document root (NestedRefBlog) — TryResolveOwnedFieldPath
-        // used to decline unconditionally for any non-root _entityType, forcing a fallback. The "Springfield"
-        // vs "Shelbyville" split makes this DISCRIMINATING (not just "doesn't throw"): a wrong/empty native
-        // $match would return nothing, a mis-scoped one could return both.
+        // p.Author.City from inside Any's predicate is a two-hop dotted path rooted at the element scope (Post), not
+        // the document root. "Springfield" vs "Shelbyville" makes it discriminating: an empty $match returns nothing,
+        // a mis-scoped one both.
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(
             UniqueCollectionName(nameof(Quantifier_element_predicate_through_nested_owned_reference_hop_goes_native)));
         var collection = database.MongoDatabase.GetCollection<NestedRefBlog>(raw.CollectionNamespace.CollectionName);
@@ -821,8 +691,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
 
         using var db = CreateNestedRefContext(collection, MongoQueryMode.NativeOnly);
 
-        // Succeeds under NativeOnly => went native (would throw NativeTranslationNotSupportedException before
-        // the fix). The returned title proves it also matched the CORRECT row, not merely that it didn't throw.
+        // NativeOnly succeeds and the returned title proves the correct row matched.
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => p.Author!.City == "Springfield"))
             .ToList().Select(b => b.Title).ToList();
@@ -843,11 +712,8 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         public NestedRefKeyedAuthor? Author { get; set; }
     }
 
-    // A composite-PK-bearing owned single-reference type, NESTED (not the document root) — the reachable
-    // combination EF-424's fix must also get right: EF's model builder accepts an explicit multi-property
-    // HasKey on an OwnsOne target (verified via a throwaway probe), and the serializer nests a LOCAL "_id"
-    // scoped to this type's own position in the document (e.g. "Author._id.City"), exactly mirroring how the
-    // document root's own composite key nests under the document's top-level "_id".
+    // A composite-key owned single-reference type, nested: the serializer nests a local "_id" at the type's own
+    // position (e.g. "Author._id.City"), mirroring the root's composite key.
     public class NestedRefKeyedAuthor
     {
         public string City { get; set; } = "";
@@ -872,15 +738,9 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     [Fact]
     public void Quantifier_element_predicate_through_nested_owned_reference_composite_key_leaf_goes_native()
     {
-        // The double-fix-interaction case called out in the EF-424 brief: the leaf (City) is BOTH a
-        // composite-PK component of its OWN declaring type (Author, via explicit HasKey) AND reached through a
-        // non-root scope (the Post collection element). Verified (via a throwaway probe reading the raw stored
-        // BSON) that the serializer nests a LOCAL "_id" scoped to Author itself even though Author is not the
-        // document root — { Posts: [{ Author: { _id: { City, Country }, ... } }] } — so the correct emitted
-        // path composes the scope-relative hop prefix with the LEAF's own composite-PK "_id." rewrite:
-        // "Author._id.City", not "Author.City". A fix that only added scope-relative hop-joining but dropped
-        // (or wrongly root-gated) the composite-PK "_id." rewrite for a non-root leaf would silently address
-        // the wrong field here and match nothing — asserting the correct row proves both pieces compose.
+        // The leaf (City) is both a composite-key component of its own type (Author) and reached through a non-root
+        // scope, so the path must compose the hop prefix with the leaf's "_id." rewrite: "Author._id.City", not
+        // "Author.City". Dropping either piece silently addresses the wrong field and matches nothing.
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(
             UniqueCollectionName(nameof(Quantifier_element_predicate_through_nested_owned_reference_composite_key_leaf_goes_native)));
         var collection = database.MongoDatabase.GetCollection<NestedRefKeyedBlog>(raw.CollectionNamespace.CollectionName);

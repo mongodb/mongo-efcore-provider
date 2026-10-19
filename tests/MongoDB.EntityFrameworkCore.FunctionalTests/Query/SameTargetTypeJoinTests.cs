@@ -22,9 +22,9 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-375: two joins onto the SAME target entity type must still flatten. The trigger used to count
-/// distinct inner entity types, so a same-typed pair collapsed to one entry, flattening never fired, and
-/// the driver's second <c>LeftJoin</c> re-nested the document a level deeper than the shaper expected.
+/// EF-375: two joins onto the SAME target entity type must still flatten. Flattening was triggered by counting
+/// distinct inner entity types, so a same-typed pair collapsed to one entry and the driver's second <c>LeftJoin</c>
+/// re-nested the document a level deeper than the shaper expected.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class SameTargetTypeJoinTests(TemporaryDatabaseFixture database)

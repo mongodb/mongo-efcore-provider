@@ -27,17 +27,10 @@ using MongoDB.EntityFrameworkCore.Query.Visitors;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query;
 
 /// <summary>
-/// EF-373. Unit coverage for <see cref="MongoEFToLinqTranslatingExpressionVisitor.DependenciesPrecede"/>,
-/// the check that re-verifies the emitted <c>$lookup</c> order against the actual <c>localField</c>
-/// dependency chain once the interleaved path splits the previously contiguous lookup group.
-/// <para>
-/// It exists because that check has no discriminating FUNCTIONAL test and cannot get one: no ordinary-LINQ
-/// shape has been found that violates the invariant (splitting along the join order preserves it by
-/// construction), so mutating the check to always return <see langword="true"/> turns nothing red at the
-/// functional level. These tests pin its ordering logic directly instead, which is the part a future edit
-/// could get wrong — a lookup emitted before the one whose unwound output its <c>localField</c> reads
-/// matches nothing, and every row is silently dropped.
-/// </para>
+/// Unit coverage for <see cref="MongoEFToLinqTranslatingExpressionVisitor.DependenciesPrecede"/>, which checks the
+/// emitted <c>$lookup</c> order against the <c>localField</c> dependency chain. No known LINQ shape violates the
+/// invariant, so no functional test can catch a broken check; a lookup emitted before the one whose output its
+/// <c>localField</c> reads matches nothing and silently drops every row.
 /// </summary>
 public class Ef373DependenciesPrecedeTests
 {
@@ -66,8 +59,7 @@ public class Ef373DependenciesPrecedeTests
         var first = Lookup("_lookup_Orders", "_id");
         var transitive = Lookup("_lookup_OrderDetails", "_lookup_Orders._id");
 
-        // The transitive lookup's localField reads _lookup_Orders' unwound output, so emitting it first
-        // would match nothing: this is exactly the order the check has to refuse.
+        // The transitive lookup's localField reads _lookup_Orders' unwound output, so it must not come first.
         Assert.False(MongoEFToLinqTranslatingExpressionVisitor.DependenciesPrecede([transitive, first]));
     }
 
@@ -87,8 +79,7 @@ public class Ef373DependenciesPrecedeTests
     [Fact]
     public void An_alias_that_is_merely_a_string_prefix_of_another_is_not_treated_as_a_dependency()
     {
-        // "_lookup_A" is a string prefix of "_lookup_AB", but "_lookup_AB.x" does not read _lookup_A's
-        // output — the separating '.' is what makes it a dependency, so this order must be accepted.
+        // "_lookup_A" is a string prefix of "_lookup_AB", but only a separating '.' makes a dependency.
         var ab = Lookup("_lookup_AB", "root_id");
         var reader = Lookup("_lookup_C", "_lookup_AB.x");
         var a = Lookup("_lookup_A", "root_id");
@@ -106,8 +97,7 @@ public class Ef373DependenciesPrecedeTests
 
     // ── Helpers ───────────────────────────────────────────────────────────────────
     //
-    // The check reads only As and LocalField, both settable, so one real navigation is enough to build as
-    // many distinctly-addressed lookups as a test needs.
+    // The check reads only As and LocalField, so one real navigation suffices for any number of lookups.
     private static LookupExpression Lookup(string @as, string localField)
     {
         var lookup = new LookupExpression(Navigation(), forceUnwind: true) { As = @as, LocalField = localField };

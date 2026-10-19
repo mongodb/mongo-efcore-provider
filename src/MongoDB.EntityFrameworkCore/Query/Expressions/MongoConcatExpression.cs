@@ -19,15 +19,13 @@ using System.Collections.Generic;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// C#'s compiler-generated string concatenation (<c>a + b</c> where the result type is <see cref="string"/>),
-/// rendered as MQL's <c>$concat</c> over <see cref="Operands"/>. A non-string operand arrives wrapped in a
-/// <see cref="MongoConvertExpression"/> targeting <see cref="string"/> (<c>$toString</c>) — see
-/// <c>MongoExpressionTranslator.TranslateStringConcat</c> for how operands are produced and flattened.
+/// String concatenation (<c>a + b</c> with a <see cref="string"/> result), rendered as <c>$concat</c> over
+/// <see cref="Operands"/>. Non-string operands arrive wrapped in a <see cref="MongoConvertExpression"/> to
+/// <see cref="string"/>; see <c>MongoExpressionTranslator.TranslateStringConcat</c>.
 /// </summary>
 /// <remarks>
-/// This node has no query-dialect form — like <see cref="MongoConvertExpression"/>, it is <c>$expr</c>-only
-/// and must stay excluded from <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c> (the catch-all
-/// already returns <see langword="false"/> for an unrecognized node kind, so no explicit arm is needed there).
+/// <c>$expr</c>-only: it has no query-dialect form, and <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>
+/// rejects it via its catch-all.
 /// </remarks>
 internal sealed class MongoConcatExpression(IReadOnlyList<MongoExpression> operands) : MongoExpression
 {
