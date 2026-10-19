@@ -82,6 +82,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// </summary>
     protected virtual bool OwnerKeyMayBeAbsent => false;
 
+    /// <summary>
+    /// The projected document key an owned-reference leaf is read from when the driver returns projected documents (a retained
+    /// pushed-down <c>Select</c>): the member name, which differs from the navigation's own element name once the leaf is renamed
+    /// (<c>new { R = x.O }</c>). <see langword="null"/> keeps the navigation's element name.
+    /// </summary>
+    protected virtual string? ResolveProjectedOwnedReferenceAlias(INavigation navigation) => null;
+
     /// <summary>Whether <paramref name="alias"/> is a native whole-root-entity ("$$ROOT") leaf.</summary>
     private bool IsWholeRootEntityAlias(string? alias)
         => alias != null
@@ -524,6 +531,12 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         var accessExpression = entityProjectionExpression.ParentAccessExpression;
                         _projectionBindings[accessExpression] = parameterExpression;
                         fieldName ??= entityProjectionExpression.Name;
+
+                        if (accessExpression is ObjectAccessExpression { Navigation: { } projectedNavigation }
+                            && ResolveProjectedOwnedReferenceAlias(projectedNavigation) is { } projectedAlias)
+                        {
+                            fieldName = projectedAlias;
+                        }
 
                         switch (accessExpression)
                         {
