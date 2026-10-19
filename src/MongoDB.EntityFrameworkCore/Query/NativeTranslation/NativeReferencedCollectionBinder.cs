@@ -105,22 +105,21 @@ internal static class NativeReferencedCollectionBinder
         out List<LookupExpression> stamps)
     {
         node = null;
-        lookups = [];
-        stamps = [];
+        var staging = new PendingProjectionStaging();
+        lookups = staging.Lookups;
+        stamps = staging.BareCountStamps;
 
         // Only the plain root scan: after a terminal operator or over a join scope the lowering has no place for the flip.
         if (mongoQ.Select.HasTerminalOperator || mongoQ.Select.JoinScope is not null)
             return false;
 
-        var pendingLookups = lookups;
-        var pendingStamps = stamps;
         var resolvedAny = false;
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType, outerParameter)
         {
             ReferencedCollectionResolver = source =>
             {
                 var resolved = NativeProjectionBinder.ResolveReferencedCollection(
-                    mongoQ, outerParameter, source, pendingLookups, pendingStamps);
+                    mongoQ, outerParameter, source, staging);
                 resolvedAny |= resolved is not null;
                 return resolved;
             }

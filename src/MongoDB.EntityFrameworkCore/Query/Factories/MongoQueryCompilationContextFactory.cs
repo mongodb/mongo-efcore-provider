@@ -43,10 +43,10 @@ public class MongoQueryCompilationContextFactory : IQueryCompilationContextFacto
     }
 
     /// <summary>
-    /// Create a <see cref="MongoQueryCompilationContextFactory"/>.
+    /// Create a <see cref="MongoQueryContextFactory"/>.
     /// </summary>
     /// <param name="dependencies">The <see cref="QueryCompilationContextDependencies"/> passed to each created <see cref="MongoQueryCompilationContext" /> instance.</param>
-    /// <param name="dbContextOptions">The <see cref="IDbContextOptions"/> used to resolve the configured <see cref="MongoQueryMode"/>.</param>
+    /// <param name="dbContextOptions">The <see cref="IDbContextOptions"/> used to find the configured query mode.</param>
     public MongoQueryCompilationContextFactory(
         QueryCompilationContextDependencies dependencies,
         IDbContextOptions dbContextOptions)
@@ -60,7 +60,9 @@ public class MongoQueryCompilationContextFactory : IQueryCompilationContextFacto
     /// </summary>
     protected virtual QueryCompilationContextDependencies Dependencies { get; }
 
-    /// <summary>Creates a <see cref="MongoQueryCompilationContext"/>.</summary>
+    /// <summary>
+    /// Create a new <see cref="MongoQueryCompilationContext"/> with the necessary dependencies.
+    /// </summary>
     /// <param name="async"><see langword="true"/> if the query to process is asynchronous, <see langword="false"/> if it is synchronous.</param>
     /// <returns>The newly created <see cref="MongoQueryCompilationContext"/>.</returns>
     public virtual QueryCompilationContext Create(bool async)

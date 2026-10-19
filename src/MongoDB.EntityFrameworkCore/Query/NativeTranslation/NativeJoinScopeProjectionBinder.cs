@@ -491,7 +491,7 @@ internal static class NativeJoinScopeProjectionBinder
     /// </summary>
     internal static void ConfirmEntireChain(MongoQueryExpression mongoQ, MongoJoinScope scope)
     {
-        // Callers reach here only after IsSingleEligibleNativeJoinScope; fail loudly if a future caller skips it.
+        // Callers reach here only after TryAdmitSingleEligibleNativeJoinScope; fail loudly if a future caller skips it.
         Debug.Assert(
             scope.Levels.Count == mongoQ.Joins.Count,
             "ConfirmEntireChain requires one MongoJoinScopeLevel per join on mongoQ.Joins.");
