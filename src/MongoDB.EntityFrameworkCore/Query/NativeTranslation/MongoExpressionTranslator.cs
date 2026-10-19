@@ -211,8 +211,8 @@ internal sealed partial class MongoExpressionTranslator
                         utcField.ElementName + ".DateTime", typeof(DateTime), valueProperty: utcField.Property);
                     return true;
 
+                // LocalDateTime depends on the executing machine's time zone: decline, so the driver-LINQ bridge rejects it.
                 case nameof(DateTimeOffset.DateTime):
-                case nameof(DateTimeOffset.LocalDateTime):
                     if (receiverExpr is not MongoFieldExpression localField)
                         return false;
                     result = new MongoDateTimeOffsetLocalExpression(localField);
@@ -1180,12 +1180,31 @@ internal sealed partial class MongoExpressionTranslator
         return MongoExpressionNegator.TryNegate(predicate, out result);
     }
 
+    private static bool IsRelationalOrEquality(ExpressionType nodeType)
+        => nodeType is ExpressionType.Equal or ExpressionType.NotEqual or ExpressionType.LessThan
+            or ExpressionType.LessThanOrEqual or ExpressionType.GreaterThan or ExpressionType.GreaterThanOrEqual;
+
+    private static bool IsDateTimeOffsetWallClockMember(Expression expression)
+        => expression is MemberExpression
+        {
+            Expression.Type: var type,
+            Member.Name: nameof(DateTimeOffset.DateTime) or nameof(DateTimeOffset.Date)
+        } && (type == typeof(DateTimeOffset) || Nullable.GetUnderlyingType(type) == typeof(DateTimeOffset));
+
     // Shared core of TranslateComparison; also serves instance Equals(T) (its argument carries at most a non-boxing
     // widening, as with ==).
     private MongoBinaryExpression? TranslateComparisonCore(Expression left, Expression right, ExpressionType nodeType)
     {
         var leftUnwrapped = Unwrap(left);
         var rightUnwrapped = Unwrap(right);
+
+        // A DateTimeOffset .DateTime/.Date is a UTC-labelled wall-clock value, so an Unspecified-kind DateTime on the other side
+        // must be taken as-is rather than converted from the host time zone (EF-473). Only the driver-LINQ bridge does that.
+        if (IsRelationalOrEquality(nodeType)
+            && IsDateTimeOffsetWallClockMember(leftUnwrapped) != IsDateTimeOffsetWallClockMember(rightUnwrapped))
+        {
+            return null;
+        }
 
         // Entity-typed operand vs literal null (`c == null`, owned `b.Address == null`). Only a literal null: a captured
         // entity instance has no BsonValue mapping and must decline to driver-LINQ. Both sides are resolved
