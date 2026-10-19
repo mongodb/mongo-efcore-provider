@@ -324,6 +324,52 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
                 .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)));
     }
 
+    // EF-469: under the retained pushed-down Select the driver returns projected documents ({ R, V }), not whole ones. An owned
+    // reference beside it, a plain scalar beside the owned reference and a null-propagating string call all read their own
+    // projected value (or fail loudly); none may answer null / "" for a row that holds a value.
+    [Theory]
+    [InlineData(nameof(MongoQueryMode.DriverLinq))]
+    [InlineData(nameof(MongoQueryMode.Native))]
+    public void Owned_reference_under_a_retained_pushed_down_Select(string mode)
+        => AssertRows(mode, q => q.Select(x => new { R = x.O }).Distinct()
+                .AsEnumerable().Select(x => Show(x.R?.W)),
+            ["<null>", "<null>", "b", "<null>", "b"]);
+
+    [Theory]
+    [InlineData(nameof(MongoQueryMode.DriverLinq))]
+    [InlineData(nameof(MongoQueryMode.Native))]
+    public void Scalar_beside_an_owned_reference_under_a_retained_pushed_down_Select(string mode)
+        => AssertRows(mode, q => q.Select(x => new { R = x.O, V = x.S }).Distinct()
+                .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)),
+            ["<null>:<null>", "<null>:<null>", "b:<null>", "<null>:Abc", "b:Abc"]);
+
+    [Theory]
+    [InlineData(nameof(MongoQueryMode.DriverLinq))]
+    [InlineData(nameof(MongoQueryMode.Native))]
+    public void Owned_reference_and_scalar_under_a_retained_Union(string mode)
+        => AssertRows(mode, q => q.Select(x => new { R = x.O, V = x.S })
+                .Union(q.Select(x => new { R = x.O, V = x.S }))
+                .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)),
+            ["<null>:<null>", "<null>:<null>", "b:<null>", "<null>:Abc", "b:Abc"]);
+
+    // The server's $toUpper answers "" for a null S where C# answers null, and the projected document no longer holds the raw
+    // value to re-apply the mapping to: fail loudly rather than answer "" (EF-469).
+    [Theory]
+    [InlineData(nameof(MongoQueryMode.DriverLinq))]
+    [InlineData(nameof(MongoQueryMode.Native))]
+    public void Case_mapping_under_a_retained_pushed_down_Select_fails_loudly(string mode)
+    {
+        var collection = Seed(nameof(Case_mapping_under_a_retained_pushed_down_Select_fails_loudly) + mode);
+        foreach (var label in new[] { "missing", "null", "sNull", "tNull", "value" })
+        {
+            using var db = CreateContext(collection, Enum.Parse<MongoQueryMode>(mode));
+            var exception = Assert.Throws<InvalidOperationException>(
+                () => db.Entities.AsNoTracking().Where(x => x.Label == label)
+                    .Select(x => new { R = x.O, V = x.S!.ToUpper() }).Distinct().ToList());
+            Assert.StartsWith("The projected value 'V' applies ToLower/ToUpper", exception.Message);
+        }
+    }
+
     private void AssertEveryRowThrows(
         string mode,
         Func<IQueryable<Row>, IEnumerable<string>> query,
