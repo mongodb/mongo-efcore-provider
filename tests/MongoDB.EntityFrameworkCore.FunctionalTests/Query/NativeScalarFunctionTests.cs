@@ -50,6 +50,11 @@ public class NativeScalarFunctionTests(TemporaryDatabaseFixture database) : ICla
     [InlineData("not", new[] { -7, 0, -1, -13 })]
     public void Bitwise_operators_over_a_nullable_int_propagate_null(string op, int[] expectedWithNullAsMinusOne)
     {
+        if (!database.TestServer.SupportsBitwiseOperators)
+        {
+            return;
+        }
+
         // A bitwise Select LEAF is deliberately not admitted natively (fail closed): NativeOnly refuses, Native falls back, and
         // both answers equal driver-LINQ. The predicate forms are native (next test).
         var collection = Seed();
@@ -75,6 +80,11 @@ public class NativeScalarFunctionTests(TemporaryDatabaseFixture database) : ICla
     [Fact]
     public void Bitwise_predicates_over_int_and_long_filter_the_stored_bits()
     {
+        if (!database.TestServer.SupportsBitwiseOperators)
+        {
+            return;
+        }
+
         var collection = Seed();
         NativeModeAssert.NativeAndExpected(
             mode =>

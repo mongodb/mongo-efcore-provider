@@ -128,6 +128,14 @@ public abstract class TestServer : IAsyncLifetime
     public bool SupportsSortArray
         => ServerVersion >= new SemanticVersion(5, 2, 0);
 
+    // $convert from binData (Guid) to string was added in MongoDB 8.0.
+    public bool SupportsBinDataToStringConversion
+        => ServerVersion >= new SemanticVersion(8, 0, 0);
+
+    // Before MongoDB 8.0, $dateAdd over pre-epoch dates returns a result one second off.
+    public bool SupportsPreEpochDateAdd
+        => ServerVersion >= new SemanticVersion(8, 0, 0);
+
     public static bool SupportsAtlas
     {
         get
