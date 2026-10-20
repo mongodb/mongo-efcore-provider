@@ -140,6 +140,10 @@ public abstract class TestServer : IAsyncLifetime
     public static bool SupportsEncryption
         => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CRYPT_SHARED_LIB_PATH"));
 
+    public const string EncryptionSkippedMessage
+        = "CRYPT_SHARED_LIB_PATH is not set, so the CSFLE and Queryable Encryption tests are being skipped. "
+          + "Run: eval \"$(tests/tools/fetch-crypt-shared.sh)\" (see CONTRIBUTING.md).";
+
     public static bool SkipForAtlas(ITestOutputHelper testOutputHelper, string caller)
     {
         if (SupportsAtlas)

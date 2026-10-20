@@ -206,7 +206,7 @@ public class AutoEncryptionTests(TemporaryDatabaseFixture database)
         public override string? Skip
             => TestServer.SupportsEncryption
                 ? null
-                : "Requires encryption library to be present.";
+                : TestServer.EncryptionSkippedMessage;
     }
 
     public enum EncryptionMode

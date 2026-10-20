@@ -53,7 +53,29 @@ path+=('/Users/arthur.vickers/mongodb/mongosh-2.5.3-darwin-arm64/bin')
 
 #### Setting environment variables
 
-The tests require two environment variables to be set. These are:
+##### Encryption tests: fetch the libraries the way CI does
+
+The CSFLE and Queryable Encryption tests need the crypt shared library and the `mongocryptd` binary. Without them they are skipped
+(with a warning in the test output), so a green local run does not cover encryption. Evergreen downloads them with
+[drivers-evergreen-tools](https://github.com/mongodb-labs/drivers-evergreen-tools)' `mongodl.py`; this script does the same
+and prints the two `export` lines:
+
+```zsh
+eval "$(tests/tools/fetch-crypt-shared.sh)"      # latest release; or pass a version, e.g. 8.0.11
+```
+
+Downloads are cached under `~/.cache/mongo-efcore-provider/crypt_shared` (override with `CRYPT_SHARED_CACHE`), so repeat runs, and
+other clones, reuse them. This needs `git` and Python, but not Docker, and it works with the per-process Atlas-local containers used
+when `MONGODB_URI` and `ATLAS_URI` are unset. To have it set for every shell, add the `eval` line to your `~/.zprofile` with an
+absolute path to your clone, since a login shell does not start in the checkout, for example
+`eval "$(/Users/you/code/mongo-efcore-provider/tests/tools/fetch-crypt-shared.sh)"`.
+
+Each encryption test runs against both providers: `AutoEncryptSharedLibrary` uses `CRYPT_SHARED_LIB_PATH`, and `Mongocryptd` spawns
+the process found under `MONGODB_BINARIES`. If you set only the first, the `Mongocryptd` cases fail rather than skip.
+
+##### Using a manually downloaded server
+
+If you installed the server by hand as described above, the tests require two environment variables to be set. These are:
 
 - CRYPT_SHARED_LIB_PATH, which, despite the name, points to the crypt shared library itself--that is, the `.dll`, `.so`, or `.dylib` file.
 - MONGODB_BINARIES, which points to the folder containing the server binaries.

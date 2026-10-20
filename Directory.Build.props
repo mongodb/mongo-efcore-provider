@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <!-- EF version is selected by build Configuration (Debug/Release EF8|EF9|EF10), not by
+         TargetFramework, so each configuration restores a different set of package versions.
+         NuGet's restore outputs (project.assets.json, *.nuget.g.props/targets, etc.) are written
+         to $(MSBuildProjectExtensionsPath), which defaults to the *unqualified* obj\ directory -
+         shared across configurations - so building multiple configurations concurrently races on
+         those files. Give restore its own subdirectory per configuration; leave
+         BaseIntermediateOutputPath (compiled output) untouched, since it is already segregated by
+         configuration and default item excludes ("obj\**") key off it. -->
+    <MSBuildProjectExtensionsPath>obj\$(Configuration)\</MSBuildProjectExtensionsPath>
+  </PropertyGroup>
+</Project>
