@@ -1500,8 +1500,20 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     private int GetProjectionIndex(ProjectionBindingExpression projectionBindingExpression)
-        => projectionBindingExpression.ProjectionMember != null
-            ? _queryExpression.GetMappedProjection(projectionBindingExpression.ProjectionMember).GetConstantValue<int>()
-            : projectionBindingExpression.Index
-              ?? throw new InvalidOperationException("Internal error - projection mapping has neither member nor index.");
+    {
+        if (projectionBindingExpression.ProjectionMember == null)
+        {
+            return projectionBindingExpression.Index
+                   ?? throw new InvalidOperationException("Internal error - projection mapping has neither member nor index.");
+        }
+
+        var mapped = _queryExpression.GetMappedProjection(projectionBindingExpression.ProjectionMember);
+        return mapped is ConstantExpression { Value: int index }
+            ? index
+            : throw new InvalidOperationException(
+                $"Internal error - the projection mapping for '{projectionBindingExpression.ProjectionMember}' was not flattened to a "
+                + $"projection index (found '{mapped.GetType().Name}' of type '{mapped.Type.ShortDisplayName()}'). The query shape is not "
+                + "supported by the provider; if it contains a client-evaluated method before SelectMany or Include, "
+                + "rewrite the query to evaluate on the client explicitly (for example with AsEnumerable()).");
+    }
 }
