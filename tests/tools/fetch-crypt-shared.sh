@@ -16,6 +16,7 @@ fi
 command -v git >/dev/null 2>&1 || { echo "git is required." >&2; exit 2; }
 
 mkdir -p "$cache"
+cache="$(cd "$cache" && pwd)"  # absolute: the downloader below runs from inside $cache
 tools="$cache/drivers-evergreen-tools"
 if [ -d "$tools/.git" ]; then
   git -C "$tools" pull -q --ff-only >&2 || echo "Could not update drivers-evergreen-tools; using the cached copy." >&2

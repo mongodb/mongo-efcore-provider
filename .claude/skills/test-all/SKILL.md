@@ -55,8 +55,10 @@ checks below.
     - Otherwise run `{working directory}/tests/tools/fetch-crypt-shared.sh` (absolute path) (same libraries CI downloads; cached after the first
       run, so later runs are quick; the first can take a minute or two). Its **stdout** is two `export NAME='value'`
       lines — record `ENCRYPTION_ENV = "CRYPT_SHARED_LIB_PATH='<value>' MONGODB_BINARIES='<value>'"` from them.
-    - If the script fails (offline, no Python or git), do **not** stop: record `ENCRYPTION_ENV = ""`, and remember to
-      state in the final summary that encryption tests were skipped and why.
+    - If the script fails (offline, no Python or git), do **not** stop: record
+      `ENCRYPTION_ENV = "CRYPT_SHARED_LIB_PATH= MONGODB_BINARIES="` (both explicitly empty, so a half-set inherited pair
+      such as a library path without `MONGODB_BINARIES` cannot make the `Mongocryptd` cases fail instead of skip), and
+      remember to state in the final summary that encryption tests were skipped and why.
 
 ## Phase 2: Build & Test via Sub-agents
 
@@ -86,7 +88,7 @@ project unless the user passed an explicit filter (see Arguments).
 2. Test:   `$ENCRYPTION_ENV` dotnet test  $SLN -c "Debug EF{version}" --no-build
    --logger "console;verbosity=normal" -v quiet
    (`$ENCRYPTION_ENV` is the literal prefix from Phase 1 step 4, written inline before `dotnet` so it applies to that
-   process; omit it when empty. Pass it to every sub-agent verbatim.)
+   process; omit it only when both variables were already set in the environment. Pass it to every sub-agent verbatim.)
 
 (If the user passed a filter/project arg, append it — e.g. `--filter "<expr>"`
 or the project path — to the test command; otherwise run the full solution so
