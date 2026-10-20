@@ -25,6 +25,12 @@ public static class ModuleInitialization
     [ModuleInitializer]
     public static void ModuleInitializer()
     {
+        // Skipped encryption tests are easy to miss in a green run; warn (without failing) so it is visible.
+        if (!TestServer.SupportsEncryption)
+        {
+            Console.Error.WriteLine("WARNING: " + TestServer.EncryptionSkippedMessage);
+        }
+
         // We always need to do this before any of the test and just once
         try
         {

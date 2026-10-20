@@ -49,10 +49,11 @@ public abstract class AutoEncryptionTestsBase(TemporaryDatabaseFixture database)
     protected class QueryableEncryptionTheory : TheoryAttribute
     {
         public override string? Skip
-            => TestServer.SupportsEncryption
-               && ShouldRunQueryableEncryptionTests
-                ? null
-                : "These Queryable Encryption tests require MongoDB 8.0 or later as declared by the VERSION environment variable.";
+            => !TestServer.SupportsEncryption
+                ? TestServer.EncryptionSkippedMessage
+                : ShouldRunQueryableEncryptionTests
+                    ? null
+                    : "These Queryable Encryption tests require MongoDB 8.0 or later as declared by the VERSION environment variable.";
     }
 
     protected static bool ShouldRunQueryableEncryptionTests =>
