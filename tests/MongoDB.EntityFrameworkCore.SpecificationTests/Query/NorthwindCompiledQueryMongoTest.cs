@@ -245,15 +245,15 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
     // MongoQueryTranslationPostprocessor.Process only calls ApplyProjection() on a top-level
     // ShapedQueryExpression. So neither sub-query's projection mapping is rewritten, and
     // MongoProjectionBindingRemovingExpressionVisitor.GetProjectionIndex throws a parameterless
-    // InvalidOperationException from GetConstantValue<int>. Applying the projection to every shaped query in the
-    // tree would likely make this query succeed; until then this pins the throw site.
+    // InvalidOperationException ("was not flattened to a projection index"). Applying the projection to every shaped query in the
+    // tree would likely make this query succeed; until then this pins the failure.
     public override void Multiple_queries()
     {
         var exception = Assert.Throws<InvalidOperationException>(() => base.Multiple_queries());
 
-        // Asserts the frame because the parameterless exception has no distinguishing message; in particular,
+        // Asserts the message that GetProjectionIndex raises for an unflattened projection mapping; in particular,
         // this must not be the driver-LINQ bridge's "Unsupported cross-DbSet query" guard.
-        Assert.Contains("GetConstantValue", exception.StackTrace);
+        Assert.Contains("was not flattened to a projection index", exception.Message);
         Assert.DoesNotContain("Unsupported cross-DbSet query", exception.Message);
     }
 

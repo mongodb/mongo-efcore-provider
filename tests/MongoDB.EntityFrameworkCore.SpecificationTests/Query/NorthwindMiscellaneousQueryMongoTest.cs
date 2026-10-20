@@ -4697,23 +4697,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
     public override async Task SelectMany_after_client_method(bool async)
     {
-        // The base test's AssertTranslationFailed expects InvalidOperationException, but this cross-collection
-        // reference SelectMany (Customer.Orders) declines with NotSupportedException (the whole-inner-entity
-        // guard). Its query is replicated from NorthwindMiscellaneousQueryTestBase.SelectMany_after_client_method
-        // and wrapped in the lenient helper.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => AssertQueryScalar(
-                async,
-                ss => from o in (from c in ss.Set<Customer>()
-                                 orderby ClientOrderBy(c)
-                                 select c).SelectMany(c => c.Orders).Distinct()
-                      select o.OrderDate,
-                assertOrder: false,
-                assertEmpty: false),
-            typeof(NotSupportedException),
-            // The cross-collection SelectMany over a client-ordered source surfaces a generic "Operation is not
-            // valid due to the current state of the object" rather than a translation message.
-            typeof(InvalidOperationException));
+        await base.SelectMany_after_client_method(async);
 
         AssertMql(
         );

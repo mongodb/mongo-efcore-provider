@@ -4,6 +4,8 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
+## Breaking changes in 8.5.0 / 9.2.0 / 10.1.0
+
 ### Range, sort and aggregate queries over a numeric property stored as a string now fail on non-numeric stored values
 
 #### Old behavior
@@ -96,7 +98,7 @@ returned every order of each matching customer, including those with `OrderID >=
 
 The filter on the inner source is applied inside the join's `$lookup`, so only the filtered rows are joined, with or without an `Include`. Left joins keep the outer row with a `null` inner when no inner row passes the filter. A parameter in the filter is read on each execution.
 
-`MongoQueryMode.DriverLinq` cannot honor such a filter, so it now throws `NativeTranslationNotSupportedException` for these queries instead of returning unfiltered rows. The same applies to a `Native`-mode query that falls back to driver-LINQ after the native translator declines for a different reason.
+`MongoQueryMode.DriverLinq` cannot honor such a filter, so it now throws an exception whose message names the unsupported query shape for these queries instead of returning unfiltered rows. The same applies to a `Native`-mode query that falls back to driver-LINQ after the native translator declines for a different reason.
 
 #### Why
 
@@ -219,7 +221,7 @@ context.Blogs.Where(x => (int)x.Score > 0);   // ran as though it were: x.Score 
 
 #### New behavior
 
-The provider's own MQL translator now renders the cast explicitly, as `$toInt` / `$toLong` / `$toDouble` / `$toDecimal`, instead of handing the query to the driver's LINQ provider. Two observable consequences for a query that ran successfully in `10.0.2` / `9.1.2` / `8.4.2`:
+The provider's own MQL translator now renders the cast explicitly, as `$toInt` / `$toLong` / `$toDouble` / `$toDecimal`, instead of handing the query to the driver's LINQ provider. Two observable consequences for a query that ran successfully in the latest released `10.0.x` / `9.1.x` / `8.4.x`:
 
 * **A narrowing cast compared against a constant now returns the C#-correct rows.** `Where(x => (int)x.D > 0)` over a document with `D = 0.5` previously matched (the cast was dropped, so `0.5 > 0` was evaluated); it no longer does, because `(int)0.5` is `0`. This is a deliberate correctness fix — the new result is the one C# itself produces for the same expression.
 
@@ -307,7 +309,7 @@ The entity materializes as local time, so the server-computed value matched the 
 
 #### New behavior
 
-These queries throw `InvalidOperationException` (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`) naming the property. `AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds`, comparisons, and all of the above on `Utc`-kind or unconfigured `DateTime` properties are unchanged.
+These queries throw `InvalidOperationException` (default and `DriverLinq` query modes; `NativeOnly` also throws, with a message naming the property) naming the property. `AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds`, comparisons, and all of the above on `Utc`-kind or unconfigured `DateTime` properties are unchanged.
 
 #### Mitigations
 
@@ -331,7 +333,7 @@ The same applied wherever such a comparison, key or aggregate appeared: inside a
 
 #### New behavior
 
-These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`). This includes computed shapes over the property (a member or method computed from its stored value, such as `p.Name.Length`, `p.When.Year` or `p.Price.ToString()`; a converted `bool` used for its truth in a key, such as `OrderBy(p => !p.Flag)`), and a key or operand the provider cannot trace back to its properties when such a property flows into it. Filters, equality comparisons and projections elsewhere in the query don't count, and a default-stored primitive collection (`p.Scores.Any(s => s > 5)`) is unaffected. It applies to **every custom value converter** not declared order-preserving (see Mitigations), whether or not it happens to preserve order, so the following now throw for comparisons, sorting and aggregates:
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` also throws, with a message naming the property). This includes computed shapes over the property (a member or method computed from its stored value, such as `p.Name.Length`, `p.When.Year` or `p.Price.ToString()`; a converted `bool` used for its truth in a key, such as `OrderBy(p => !p.Flag)`), and a key or operand the provider cannot trace back to its properties when such a property flows into it. Filters, equality comparisons and projections elsewhere in the query don't count, and a default-stored primitive collection (`p.Scores.Any(s => s > 5)`) is unaffected. It applies to **every custom value converter** not declared order-preserving (see Mitigations), whether or not it happens to preserve order, so the following now throw for comparisons, sorting and aggregates:
 
 * strongly-typed ID value objects stored through a converter (`OrderBy(x => x.Id)` over `HasConversion(id => id.Value, v => new OrderId(v))`);
 * enums stored as their names (`HasConversion<string>()` or `HasBsonRepresentation(BsonType.String)`);
@@ -386,7 +388,7 @@ context.Items.Where(x => x.Num % 2 == 1);             // matched no row
 
 #### New behavior
 
-These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`). It covers a string method (`Contains`, `StartsWith`, `EndsWith`, `ToUpper`, `Substring`, `IndexOf`, ...), a member of a value (`Length`, a date part, `TotalMinutes`), arithmetic (`+`, `%`, unary `-`, ...) and `Math` functions computed from the property, including through a projected member or `g.Key`.
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` also throws, with a message naming the property). It covers a string method (`Contains`, `StartsWith`, `EndsWith`, `ToUpper`, `Substring`, `IndexOf`, ...), a member of a value (`Length`, a date part, `TotalMinutes`), arithmetic (`+`, `%`, unary `-`, ...) and `Math` functions computed from the property, including through a projected member or `g.Key`.
 
 Unchanged:
 
@@ -416,7 +418,7 @@ context.Items.Count(x => (x.Flag ? 1 : 0) == 1);            // counted every row
 
 #### New behavior
 
-These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`). Unchanged: `Where(x => x.Flag)`, `Where(x => !x.Flag)`, `Where(x => x.Flag == false)`, and conditionals over a default-stored `bool`.
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` also throws, with a message naming the property). Unchanged: `Where(x => x.Flag)`, `Where(x => !x.Flag)`, `Where(x => x.Flag == false)`, and conditionals over a default-stored `bool`.
 
 #### Mitigations
 
@@ -478,7 +480,7 @@ Some such queries happened to return the right answer because a per-row evaluati
 
 #### New behavior
 
-These queries throw `InvalidOperationException` in the default and `DriverLinq` query modes (`NativeOnly` may instead throw `NativeTranslationNotSupportedException`) with the message:
+These queries throw `InvalidOperationException` in the default and `DriverLinq` query modes (`NativeOnly` may instead throw a different exception type) with the message:
 
 > The LINQ expression contains a call to 'Random.Next', which cannot be evaluated once per row on the server. Evaluate it before the query and pass the result in as a variable, or apply it client-side after AsEnumerable().
 
