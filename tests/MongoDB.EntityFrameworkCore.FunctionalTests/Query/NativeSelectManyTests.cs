@@ -2725,6 +2725,42 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         }
     }
 
+    private static string ClientKey(RefOwner owner) => owner.Name;
+
+    private static bool ClientPredicate(RefOwner owner) => owner.Name.Length > 0;
+
+    [Fact]
+    public void Reference_SelectMany_after_client_OrderBy_fails_translation_in_every_mode()
+    {
+        // The client-method OrderBy sends the source to the driver-LINQ fallback, which cannot read the native by-index
+        // SelectMany shaper. TranslateSelectMany declines up front, so every mode gets EF's standard translation failure
+        // rather than a bare "Operation is not valid due to the current state of the object" from the shaper compile.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(
+                mode, nameof(Reference_SelectMany_after_client_OrderBy_fails_translation_in_every_mode) + mode, out _, out _);
+
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.OrderBy(o => ClientKey(o)).SelectMany(o => o.Refs).Distinct().Select(r => r.Tag).ToList());
+            Assert.Contains("could not be translated", ex.Message);
+        }
+    }
+
+    [Fact]
+    public void Reference_form_after_client_Where_fails_translation_in_every_mode()
+    {
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateRefContext(
+                mode, nameof(Reference_form_after_client_Where_fails_translation_in_every_mode) + mode, out _, out _);
+
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                db.Owners.Where(o => ClientPredicate(o))
+                    .SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).ToList());
+            Assert.Contains("could not be translated", ex.Message);
+        }
+    }
+
     [Fact]
     public void Reference_form_followed_by_Distinct_hard_fails_in_every_mode()
     {

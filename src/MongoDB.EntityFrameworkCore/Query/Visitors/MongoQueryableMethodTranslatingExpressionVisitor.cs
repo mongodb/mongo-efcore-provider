@@ -1371,6 +1371,12 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor :
         // ReplacingExpressionVisitor member fold resolves ti.Inner back to our projected shaper).
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
 
+        // A source already destined for the driver-LINQ fallback (e.g. an OrderBy/Where over a client method) cannot take a
+        // native SelectMany either: the by-index wrapped shaper built below has no fallback reading, so the compile would
+        // later fail with an opaque projection-mapping error. Decline here for the standard translation-failed error.
+        if (mongoQueryExpression.Select.HasUnsupportedOperator)
+            return null;
+
         // Before the terminal guard: when the only terminal so far is a single reference unwind, this may be the second
         // SelectMany of a nested reference shape; BuildBareNavWrappedShaper reads the now-second UnwindSource.
         if (mongoQueryExpression.Select.IsSingleReferenceUnwindTerminalOnly

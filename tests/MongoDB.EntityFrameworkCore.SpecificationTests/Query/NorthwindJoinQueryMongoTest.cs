@@ -56,7 +56,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task GroupJoin_aggregate_anonymous_key_selectors(bool async)
     {
-        // Fails: GroupJoin shape not translated EF-X016
+        // Fails: GroupJoin shape not translated EF-X023
         await AssertTranslationFailed(() => base.GroupJoin_aggregate_anonymous_key_selectors(async));
 
         AssertMql(
@@ -65,7 +65,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task GroupJoin_aggregate_anonymous_key_selectors2(bool async)
     {
-        // Fails: GroupJoin shape not translated EF-X016
+        // Fails: GroupJoin shape not translated EF-X023
         await AssertTranslationFailed(() => base.GroupJoin_aggregate_anonymous_key_selectors2(async));
 
         AssertMql(
@@ -74,7 +74,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task GroupJoin_aggregate_anonymous_key_selectors_one_argument(bool async)
     {
-        // Fails: GroupJoin shape not translated EF-X016
+        // Fails: GroupJoin shape not translated EF-X023
         await AssertTranslationFailed(() => base.GroupJoin_aggregate_anonymous_key_selectors_one_argument(async));
 
         AssertMql(
@@ -379,7 +379,7 @@ Customers.
     public override async Task Unflattened_GroupJoin_composed(bool async)
     {
         // Fails: an unflattened GroupJoin whose group is projected raw is not translated (GroupJoin shapes not
-        // translated) EF-X016
+        // translated) EF-X023
         await AssertTranslationFailed(() => base.Unflattened_GroupJoin_composed(async));
 
         AssertMql(
@@ -390,7 +390,7 @@ Customers.
     {
         // Fails: same unflattened-GroupJoin shape as Unflattened_GroupJoin_composed above: EF Core rewrites the
         // GroupJoin into a correlated DbSet<Order>().Where(...) in the projection, which the provider's projection
-        // binder can't translate (InvalidOperationException, every mode). EF-X016
+        // binder can't translate (InvalidOperationException, every mode). EF-X023
         await AssertTranslationFailed(() => base.Unflattened_GroupJoin_composed_2(async));
 
         AssertMql(
@@ -823,7 +823,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
     public override async Task GroupJoin_on_true_equal_true(bool async)
     {
         // Fails: same unflattened-GroupJoin projection gap as Unflattened_GroupJoin_composed above
-        // (the raw group `g` is projected without a SelectMany/DefaultIfEmpty flatten or an aggregate). EF-X016
+        // (the raw group `g` is projected without a SelectMany/DefaultIfEmpty flatten or an aggregate). EF-X023
         await AssertTranslationFailed(() => base.GroupJoin_on_true_equal_true(async));
 
         AssertMql(
