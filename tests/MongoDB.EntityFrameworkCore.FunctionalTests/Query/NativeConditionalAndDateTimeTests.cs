@@ -640,6 +640,11 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     [Fact]
     public void AddDays_by_a_captured_non_nullable_amount_Max_and_Min_over_a_Distinct_alias_go_native()
     {
+        if (!database.TestServer.SupportsPreEpochDateAdd)
+        {
+            return;
+        }
+
         var collection = SeedTimeRows(nameof(AddDays_by_a_captured_non_nullable_amount_Max_and_Min_over_a_Distinct_alias_go_native));
         var days = 3;
 

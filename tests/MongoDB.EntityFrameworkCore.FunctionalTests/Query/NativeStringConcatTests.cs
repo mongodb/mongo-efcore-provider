@@ -83,6 +83,11 @@ public class NativeStringConcatTests(TemporaryDatabaseFixture database) : IClass
     [Fact]
     public void Concat_Guid_operand_matches_the_in_memory_oracle()
     {
+        if (!database.TestServer.SupportsBinDataToStringConversion)
+        {
+            return;
+        }
+
         var collection = Seed(nameof(Concat_Guid_operand_matches_the_in_memory_oracle));
         AssertConcatMatchesOracle(collection, x => x.Tag + x.G);
     }
