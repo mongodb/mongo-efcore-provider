@@ -2,7 +2,7 @@
 name: test-all
 description: Build and run tests against all three EF version targets (EF8, EF9, EF10)
 argument-hint: "[optional: test filter or project name] [--model haiku|sonnet|opus]"
-allowed-tools: Bash(dotnet *), Bash(docker info), Bash(printenv:*), Read, Glob, Grep, Agent
+allowed-tools: Bash(dotnet *), Bash(docker info), Bash(printenv:*), Bash(*/tests/tools/fetch-crypt-shared.sh*), Bash(CRYPT_SHARED_LIB_PATH=* MONGODB_BINARIES=* dotnet *), Read, Glob, Grep, Agent
 ---
 
 # Test All EF Versions
@@ -48,6 +48,16 @@ checks below.
    testcontainer, so parallel execution is safe. (An empty/whitespace value or
    `ATLAS_URI=Disabled` keeps `SHARED_DB = false`.)
 
+4. Encryption libraries — the CSFLE / Queryable Encryption tests skip unless `CRYPT_SHARED_LIB_PATH` (crypt_shared
+   library) **and** `MONGODB_BINARIES` (folder containing `mongocryptd`) are set; with only the first, the
+   `Mongocryptd` cases fail instead. Run `printenv CRYPT_SHARED_LIB_PATH` and `printenv MONGODB_BINARIES`:
+    - Both non-empty: record `ENCRYPTION_ENV = ""` (nothing to add; sub-agents inherit them).
+    - Otherwise run `{working directory}/tests/tools/fetch-crypt-shared.sh` (absolute path) (same libraries CI downloads; cached after the first
+      run, so later runs are quick; the first can take a minute or two). Its **stdout** is two `export NAME='value'`
+      lines — record `ENCRYPTION_ENV = "CRYPT_SHARED_LIB_PATH='<value>' MONGODB_BINARIES='<value>'"` from them.
+    - If the script fails (offline, no Python or git), do **not** stop: record `ENCRYPTION_ENV = ""`, and remember to
+      state in the final summary that encryption tests were skipped and why.
+
 ## Phase 2: Build & Test via Sub-agents
 
 Run one build + test pass per EF version (EF8, EF9, EF10), each via the Agent
@@ -73,8 +83,10 @@ and `MongoDB.EntityFrameworkCore.SpecificationTests`. Do not narrow to a single
 project unless the user passed an explicit filter (see Arguments).
 
 1. Build:  dotnet build $SLN -c "Debug EF{version}" -v quiet
-2. Test:   dotnet test  $SLN -c "Debug EF{version}" --no-build
+2. Test:   `$ENCRYPTION_ENV` dotnet test  $SLN -c "Debug EF{version}" --no-build
    --logger "console;verbosity=normal" -v quiet
+   (`$ENCRYPTION_ENV` is the literal prefix from Phase 1 step 4, written inline before `dotnet` so it applies to that
+   process; omit it when empty. Pass it to every sub-agent verbatim.)
 
 (If the user passed a filter/project arg, append it — e.g. `--filter "<expr>"`
 or the project path — to the test command; otherwise run the full solution so
@@ -127,5 +139,9 @@ Use this format for the console summary:
 | EF8     | <actual> | <actual> | <actual> | <actual> |
 | EF9     | <actual> | <actual> | <actual> | <actual> |
 | EF10    | <actual> | <actual> | <actual> | <actual> |
+
+Add one line under the table stating whether encryption tests ran: "Encryption: ran (crypt_shared + mongocryptd)" or
+"Encryption: SKIPPED — <reason>" (the test output also contains a `WARNING: CRYPT_SHARED_LIB_PATH is not set` line when
+they skip; if a sub-agent's log shows it, report it here).
 
 If any version had failures, list failing test names grouped by version.
