@@ -79,8 +79,13 @@ public class MongoPropertiesConfigurationBuilderExtensionsTests
     {
         using var db = new OrderPreservingContext(cb => cb.Properties<DateTimeOffset>().HaveOrderPreservingStorage());
 
-        Assert.True(db.GetProperty((TestEntity t) => t.DateTimeOffsetProperty).IsOrderPreservingStorage());
-        Assert.False(db.GetProperty((TestEntity t) => t.StringProperty).IsOrderPreservingStorage());
+        var dateTimeOffsetProperty = db.GetProperty((TestEntity t) => t.DateTimeOffsetProperty);
+        var stringProperty = db.GetProperty((TestEntity t) => t.StringProperty);
+        Assert.NotNull(dateTimeOffsetProperty);
+        Assert.NotNull(stringProperty);
+
+        Assert.True(dateTimeOffsetProperty.IsOrderPreservingStorage());
+        Assert.False(stringProperty.IsOrderPreservingStorage());
     }
 
     [Fact]
@@ -89,6 +94,8 @@ public class MongoPropertiesConfigurationBuilderExtensionsTests
         using var db = new OrderPreservingContext(cb => cb.Properties<DateTimeOffset>().HaveOrderPreservingStorage(false));
 
         var property = db.GetProperty((TestEntity t) => t.DateTimeOffsetProperty);
+        Assert.NotNull(property);
+
         Assert.False(property.IsOrderPreservingStorage());
         Assert.Null(property.FindAnnotation(MongoAnnotationNames.OrderPreservingStorage));
     }
@@ -101,6 +108,8 @@ public class MongoPropertiesConfigurationBuilderExtensionsTests
             mb => mb.Entity<TestEntity>().Property(e => e.DateTimeOffsetProperty).HasOrderPreservingStorage(false));
 
         var property = db.GetProperty((TestEntity t) => t.DateTimeOffsetProperty);
+        Assert.NotNull(property);
+
         Assert.False(property.IsOrderPreservingStorage());
         Assert.Null(property.FindAnnotation(MongoAnnotationNames.OrderPreservingStorage));
     }
