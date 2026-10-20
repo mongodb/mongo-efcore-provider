@@ -35,6 +35,12 @@ def load(out, v, m, p):
     return res
 
 
+def run_outcome(out, v, m, p):
+    """Run-level outcome from the TRX ResultSummary ('Completed' for a normal run, even with failing tests)."""
+    s = ET.parse(f"{out}/trx/{v}-{m}-{p}.trx").getroot().find('t:ResultSummary', NS)
+    return s.get('outcome') if s is not None else None
+
+
 def main():
     args = sys.argv[1:]
     fail_on_regress = os.environ.get('NATIVE_PARITY_FAIL_ON_REGRESS') == '1'
@@ -54,6 +60,12 @@ def main():
                   f"native={'ok' if n is not None else 'missing'})")
             bad = True
             continue
+        # An aborted/crashed run can still write a TRX holding the few tests that finished; never gate on it.
+        for mode in ('DriverLinq', 'NativeOnly'):
+            ro = run_outcome(out, v, mode, p)
+            if ro not in ('Completed', 'Failed'):
+                print(f"== {v} {p}: {mode} RUN OUTCOME {ro!r} (aborted or incomplete run)")
+                bad = True
         reg = [k for k in d if d[k][0] == 'Passed' and n.get(k, ('?',))[0] == 'Failed']
         imp = [k for k in d if d[k][0] == 'Failed' and n.get(k, ('?',))[0] == 'Passed']
         miss_n = sorted(k for k in d if k not in n)
