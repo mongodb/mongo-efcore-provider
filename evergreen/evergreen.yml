@@ -621,10 +621,21 @@ buildvariants:
   tasks:
     - name: main-tests
 
-# 8.0 and "latest" server builds are not published for Ubuntu 20.04
+# 8.0 server builds are not published for Ubuntu 20.04
+- matrix_name: main-tests-8
+  matrix_spec:
+    version: "8.0"
+    os: ["windows-64", "ubuntu-2204"]
+    topology: "replicaset"
+  display_name: "${version} ${topology} Server on ${os}"
+  tags: ["tests-variant"]
+  tasks:
+    - name: main-tests
+
+# "latest" server builds are not published for Ubuntu 20.04
 - matrix_name: main-tests-latest
   matrix_spec:
-    version: ["8.0", "latest"]
+    version: "latest"
     os: ["windows-64", "ubuntu-2204"]
     topology: "replicaset"
   display_name: "${version} ${topology} Server on ${os}"
