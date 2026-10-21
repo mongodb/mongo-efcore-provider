@@ -20,13 +20,13 @@ public static class TestDatabaseNamer
     // Distinct per assembly, EF version and (when known) server version so concurrent test processes sharing a server
     // never collide or clean up each other's databases, while stale databases from earlier runs are still matched.
 #if EF8
-    private const string EfPrefix = "EF8-SpecTest-";
+    private const string EfPrefix = "EF8-Spec-";
 #elif EF9
-    private const string EfPrefix = "EF9-SpecTest-";
+    private const string EfPrefix = "EF9-Spec-";
 #elif EF10
-    private const string EfPrefix = "EF10-SpecTest-";
+    private const string EfPrefix = "EF10-Spec-";
 #else
-    private const string EfPrefix = "EF-SpecTest-";
+    private const string EfPrefix = "EF-Spec-";
 #endif
 
     public static readonly string TestDatabasePrefix = EfPrefix + ServerVersionSegment();
@@ -41,6 +41,14 @@ public static class TestDatabaseNamer
     private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
     private static int DbCount;
 
+    // MongoDB limits database names to 63 characters, so the static part is truncated to fit; the counter keeps names unique.
+    private const int MaxDatabaseNameLength = 63;
+
     public static string GetUniqueDatabaseName(string? staticName = null)
-        => $"{TestDatabasePrefix}{TimeStamp}{staticName}-{Interlocked.Increment(ref DbCount)}";
+    {
+        var suffix = $"-{Interlocked.Increment(ref DbCount)}";
+        var available = MaxDatabaseNameLength - TestDatabasePrefix.Length - TimeStamp.Length - suffix.Length;
+        staticName = staticName is { Length: > 0 } && available > 0 ? staticName[..Math.Min(staticName.Length, available)] : "";
+        return $"{TestDatabasePrefix}{TimeStamp}{staticName}{suffix}";
+    }
 }
