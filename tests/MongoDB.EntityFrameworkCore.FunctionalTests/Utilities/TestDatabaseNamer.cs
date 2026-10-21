@@ -17,16 +17,26 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 public static class TestDatabaseNamer
 {
-    // Distinct per assembly and EF version so concurrent test processes sharing a server never collide or clean up each other's databases.
+    // Distinct per assembly, EF version and (when known) server version so concurrent test processes sharing a server
+    // never collide or clean up each other's databases, while stale databases from earlier runs are still matched.
 #if EF8
-    public const string TestDatabasePrefix = "EF8-FunctionalTest-";
+    private const string EfPrefix = "EF8-FunctionalTest-";
 #elif EF9
-    public const string TestDatabasePrefix = "EF9-FunctionalTest-";
+    private const string EfPrefix = "EF9-FunctionalTest-";
 #elif EF10
-    public const string TestDatabasePrefix = "EF10-FunctionalTest-";
+    private const string EfPrefix = "EF10-FunctionalTest-";
 #else
-    public const string TestDatabasePrefix = "EF-FunctionalTest-";
+    private const string EfPrefix = "EF-FunctionalTest-";
 #endif
+
+    public static readonly string TestDatabasePrefix = EfPrefix + ServerVersionSegment();
+
+    private static string ServerVersionSegment()
+    {
+        // Database names cannot contain '.', so "8.0" becomes "8_0". Omitted when the server version is not declared.
+        var version = Environment.GetEnvironmentVariable("MONGODB_VERSION");
+        return string.IsNullOrWhiteSpace(version) ? "" : "v" + version.Trim().Replace('.', '_') + "-";
+    }
 
     private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
     private static int DbCount;
