@@ -13,8 +13,8 @@ Read `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` first; the
 
 ## Review focus
 
-- **Test parallelization is disabled by design.** `tests/.../FunctionalTests/Usings.cs` declares `[assembly: CollectionBehavior(DisableTestParallelization = true)]`. Shared MongoDB state and `[CallerMemberName]`-derived collection names both depend on serial execution. Don't enable parallel.
-- **Per-test database isolation.** Tests get a unique database name via `TestDatabaseNamer.GetUniqueDatabaseName()`. Tests using fixed names cross-pollute and produce intermittent failures.
+- **Test concurrency is controlled per project and in CI.** `tests/.../SpecificationTests/Usings.cs` declares `[assembly: CollectionBehavior(DisableTestParallelization = true)]`; `FunctionalTests` (xUnit v3) does not and relies on unique per-fixture databases. Shared MongoDB state, `[CallerMemberName]`-derived collection names and MongoDB 5.0/6.0's snapshot errors (code 246) mean `evergreen/run-tests.sh` runs each test project in turn, with sequential collections, on those servers. Don't make CI run the projects concurrently there.
+- **Per-test database isolation.** Tests get a unique database name via `TestDatabaseNamer.GetUniqueDatabaseName()`; each test assembly has its own `TestDatabaseNamer` with a distinct prefix including the EF version (`EF<n>-FunctionalTest-`, `EF<n>-SpecTest-`) so concurrent processes never collide or clean up each other's databases. Tests using fixed names cross-pollute and produce intermittent failures.
 - **`[CallerMemberName]` collection-name generation.** `TemporaryDatabaseFixtureBase.CreateCollectionName(...)` derives collection names from caller method names. Hard-coded names defeat isolation.
 - **Specification-tests inheritance pattern.** Fixtures inherit `*FixtureBase<TModelCustomizer>` from `Microsoft.EntityFrameworkCore.Specification.Tests`; tests inherit `*TestBase<TFixture>`. Naming is `*MongoFixture<TCustomizer>` / `*MongoTest`.
 - **EF-version `#if` discipline.** Common patterns: `#if EF8` (legacy customizer interface, `Seed()` method), `#if EF8 || EF9` (pre-EF10 shapes), `#if !EF8 && !EF9` (EF10+ features). New tests must compile under all three define-constant configurations.
@@ -32,6 +32,6 @@ See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and
 - Enabling test parallelization at the assembly level.
 - Skipping a Specification test without a clear "permanently unsupported" rationale.
 - Changes to `TestServer.GetOrInitializeTestServerAsync()` connection-priority logic.
-- Changes to unique-name generation in `TestDatabaseNamer` (the `Interlocked.Increment`-backed `GetUniqueDatabaseName`) or the manual `DatabaseCleaner.CleanDatabase` skip-fact.
+- Changes to unique-name generation or the per-assembly prefixes in either `TestDatabaseNamer` (the `Interlocked.Increment`-backed `GetUniqueDatabaseName`) or the manual `DatabaseCleaner.CleanDatabase` skip-fact.
 - New `[XUnitCollection]` that overlaps existing collection memberships in non-obvious ways.
 - Bumping the upstream EF version in `Versions.props` (touches every Specification-tests inheritance chain).
