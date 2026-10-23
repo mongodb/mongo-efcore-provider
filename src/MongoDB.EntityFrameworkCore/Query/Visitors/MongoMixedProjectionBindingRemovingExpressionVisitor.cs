@@ -278,6 +278,13 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                             return rootStringSequenceRead;
                         }
 
+                        // A computed string chain registered whole with no alias (`x.S.ToUpper().Substring(0, 1)` under an outer
+                        // case mapping): re-evaluate it over its own property reads, not the whole document.
+                        if (TryBindClientComputedLeaf(sourceExpression, projectionBindingExpression.Type, out var rootClientLeafRead))
+                        {
+                            return rootClientLeafRead;
+                        }
+
                         var rootField = TryResolveFieldAccess(sourceExpression);
                         if (rootField.Property != null)
                             return CreateGetValueExpression(
