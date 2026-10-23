@@ -15,29 +15,21 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-// TODO(EF-317): Cross-collection $lookup workaround state. The C# driver's LINQ provider has no native
-// LeftJoin translator and cannot express collection / multi-hop joins, so the provider registers manual
-// $lookup + $unwind stages and tracks the inner collections itself. When the driver ships native LeftJoin
-// support, the $lookup-emission members here (the pending-lookup list and its dependency ordering) are
-// expected to be removed; the inner-collection tracking and UsesDriverJoinFields decision are the
-// driver-native seam and will likely shrink rather than disappear.
+// Cross-collection $lookup state: the driver's LINQ provider can't express collection / multi-hop joins.
 internal sealed partial class MongoQueryExpression
 {
     private readonly List<LookupExpression> _pendingLookups = [];
+    private readonly List<MongoCorrelatedReducerLeaf> _correlatedReducerLeaves = [];
     private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
-    private bool _hasInterleavingOperatorSinceLastJoin;
 
-    // IEntityType, so a self-referencing navigation chain like Employee.Manager.Manager, or two sibling
-    // joins onto the same target type, collapse into a single dictionary entry), this records one entry
-    // per join, letting a later hop find the immediately-preceding hop even when it targets the same
-    // entity type, and letting the flatten decision trigger on join COUNT rather than distinct target
-    // entity types. A navigation-less Join hop (EF-377) has no INavigation to key a lookup dictionary
-    // by anyway, so its raw join-key info lives on its own JoinInfo.Lookup instead of a side table.
+    // One entry per join (unlike _innerCollections, keyed by entity type, where Employee.Manager.Manager or two
+    // sibling joins onto one type collapse): a later hop finds its predecessor by position.
     private readonly List<JoinInfo> _joins = [];
 
     /// <summary>
@@ -55,8 +47,6 @@ internal sealed partial class MongoQueryExpression
         var ordered = new List<LookupExpression>();
         var remaining = new List<LookupExpression>(lookups);
 
-        // Repeatedly emit any lookup whose localField does not depend on a still-unemitted lookup's
-        // output field. A lookup depends on another when its localField is prefixed with "<other.As>.".
         while (remaining.Count > 0)
         {
             var emittedThisPass = false;
@@ -65,7 +55,7 @@ internal sealed partial class MongoQueryExpression
                 var candidate = remaining[i];
                 var dependsOnPending = remaining.Any(other =>
                     !ReferenceEquals(other, candidate)
-                    && candidate.LocalField.StartsWith(other.As + ".", StringComparison.Ordinal));
+                    && candidate.ReadsOutputOf(other));
 
                 if (!dependsOnPending)
                 {
@@ -78,7 +68,7 @@ internal sealed partial class MongoQueryExpression
 
             if (!emittedThisPass)
             {
-                // Cyclic / unresolvable dependency — fall back to registration order to avoid a hang.
+                // Cyclic dependency: keep registration order rather than hang.
                 ordered.AddRange(remaining);
                 break;
             }
@@ -88,35 +78,121 @@ internal sealed partial class MongoQueryExpression
     }
 
     /// <summary>
+    /// The single-level reference <c>$lookup</c>s the native streaming path emits. A lone reference Include registers
+    /// no pending <see cref="LookupExpression"/> (driver-LINQ uses a native LeftJoin; see
+    /// <see cref="UsesDriverJoinFields"/>), so lookups are synthesized from <see cref="InnerCollections"/> without
+    /// changing the DOM fallback's join shape.
+    /// </summary>
+    public IReadOnlyList<LookupExpression> GetStreamingReferenceLookups()
+    {
+        var pending = GetPendingLookups();
+        if (pending.Count > 0)
+        {
+            return pending;
+        }
+
+        if (!UsesDriverJoinFields)
+        {
+            return pending;
+        }
+
+        var rootEntityType = CollectionExpression.EntityType;
+        var synthesized = new List<LookupExpression>();
+        foreach (var innerEntityType in _innerCollections.Keys)
+        {
+            var matches = rootEntityType.GetNavigations()
+                .Where(n => !n.IsCollection
+                            && !n.TargetEntityType.IsOwned()
+                            && n.TargetEntityType == innerEntityType)
+                .ToList();
+
+            // Matching is by target type, so two navigations to one collection (Doc.Author and Doc.Editor -> Person)
+            // are ambiguous; fall back rather than risk the wrong navigation's alias.
+            if (matches.Count != 1)
+            {
+                return Array.Empty<LookupExpression>();
+            }
+
+            synthesized.Add(new LookupExpression(matches[0]));
+        }
+
+        return synthesized;
+    }
+
+    /// <summary>
     /// Register a $lookup stage for a cross-collection collection Include.
     /// </summary>
+    /// <remarks>
+    /// Lookups are deduplicated by <see cref="LookupExpression.As"/>: a second registration under an existing alias is dropped, except that a
+    /// pipelined lookup is folded into an existing bare one (<see cref="LookupExpression.PipelineStages"/> and
+    /// <see cref="LookupExpression.PipelineKind"/> only). That merge exists for navigation lookups (an Include meeting a join or a
+    /// filtered Include on one navigation). The other lookup state (<see cref="LookupExpression.InnerPredicate"/>, element filters, sort,
+    /// limit, skip, outer conditions, <see cref="LookupExpression.ExcludesNullLocalKey"/>) is only set on correlated-array lookups, whose alias
+    /// encodes target, key paths, null exclusion and an <c>_f&lt;N&gt;</c> filter suffix, so two with one alias are the same lookup and
+    /// dropping the second is correct; re-registering the same instance (a join's lookup that an Include path registered) is a no-op. A caller that could produce a different lookup under an existing alias must pick a free alias with
+    /// <see cref="GetUnusedLookupAlias"/> first.
+    /// </remarks>
     public void AddLookup(LookupExpression lookup)
     {
-        if (!_pendingLookups.Any(l => l.As == lookup.As))
+        var existingIndex = _pendingLookups.FindIndex(l => l.As == lookup.As);
+        if (existingIndex == -1)
         {
             _pendingLookups.Add(lookup);
+            return;
         }
-    }
 
-    /// <summary>
-    /// Records that a <c>Skip</c>/<c>Take</c>/<c>Distinct</c> was visited while at least one join was
-    /// already registered (see <see cref="Visitors.MongoQueryableMethodTranslatingExpressionVisitor"/>).
-    /// Operators visited before the first join don't count - they precede every join, not sit between two of
-    /// them.
-    /// </summary>
-    public void MarkPotentialJoinInterleavingOperator()
-    {
-        if (_innerCollections.Count > 0)
+        var existing = _pendingLookups[existingIndex];
+
+        // Re-registering the very same instance (a join's lookup that an Include path already registered) is a no-op.
+        if (ReferenceEquals(existing, lookup))
         {
-            _hasInterleavingOperatorSinceLastJoin = true;
+            return;
+        }
+
+        Debug.Assert(
+            existing.IsCorrelatedArraySource == lookup.IsCorrelatedArraySource
+            && (lookup.IsCorrelatedArraySource
+                || (lookup.InnerPredicate is null
+                    && lookup.ElementFilters.Count == 0
+                    && !lookup.HasElementStages
+                    && !lookup.HasOuterConditions
+                    && !lookup.ExcludesNullLocalKey)),
+            $"AddLookup would drop state of '{lookup.As}': only navigation lookups merge, and a correlated-array lookup must get a unique alias.");
+        if (!existing.HasPipeline && lookup.HasPipeline)
+        {
+            existing.PipelineStages.AddRange(lookup.PipelineStages);
+            if (existing.PipelineKind == LookupPipelineKind.None)
+            {
+                existing.PipelineKind = lookup.PipelineKind;
+            }
         }
     }
 
     /// <summary>
-    /// Whether a <c>Skip</c>/<c>Take</c>/<c>Distinct</c> has been visited between two joins - see
-    /// <see cref="MarkPotentialJoinInterleavingOperator"/>.
+    /// <paramref name="candidate"/>, suffixed <c>_1</c>, <c>_2</c>, ... until no registered <c>$lookup</c> or join uses it,
+    /// so a renamed lookup can't land on another's alias (where <see cref="AddLookup"/> would collapse the two). A
+    /// lookup satisfying <paramref name="isSameLookup"/> doesn't count: it is an earlier registration of the same
+    /// lookup, which must keep sharing the alias.
     /// </summary>
-    public bool HasInterleavingOperatorSinceLastJoin => _hasInterleavingOperatorSinceLastJoin;
+    internal string GetUnusedLookupAlias(string candidate, Func<LookupExpression, bool>? isSameLookup = null)
+    {
+        var alias = candidate;
+        for (var suffix = 1;
+             _pendingLookups.Any(l => l.As == alias && isSameLookup?.Invoke(l) != true) || _joins.Any(j => j.Alias == alias);
+             suffix++)
+        {
+            alias = $"{candidate}_{suffix}";
+        }
+
+        return alias;
+    }
+
+    /// <summary>The correlated-reducer projection leaves registered on this query, in projection order.</summary>
+    public IReadOnlyList<MongoCorrelatedReducerLeaf> CorrelatedReducerLeaves => _correlatedReducerLeaves;
+
+    // No dedup, unlike AddLookup: the recognizer declines two leaves on one navigation (they'd collide on As).
+    public void AddCorrelatedReducerLeaf(MongoCorrelatedReducerLeaf leaf)
+        => _correlatedReducerLeaves.Add(leaf);
 
     /// <summary>
     /// Inner collections involved in join operations, deduplicated by entity type — one entry per
@@ -131,6 +207,21 @@ internal sealed partial class MongoQueryExpression
     /// The cross-collection joins on this query, in registration order, one entry per join.
     /// </summary>
     public IReadOnlyList<JoinInfo> Joins => _joins;
+
+    /// <summary>
+    /// Whether every join is a left-outer join over a reference navigation, which neither drops nor multiplies
+    /// rows, so a <c>$skip</c>/<c>$limit</c> before the join equals the same stage after it.
+    /// </summary>
+    internal bool AreAllJoinsRowCountPreserving()
+    {
+        foreach (var join in _joins)
+        {
+            if (!join.IsRowCountPreserving)
+                return false;
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Register a cross-collection join. The returned <see cref="JoinInfo"/> is filled in with the
@@ -182,4 +273,7 @@ internal sealed partial class MongoQueryExpression
 
         return collection;
     }
+
+    /// <summary>See <see cref="GetStreamingReferenceLookups"/>. Recomputed on each access, not a cheap field read.</summary>
+    public IReadOnlyList<LookupExpression> Lookups => GetStreamingReferenceLookups();
 }

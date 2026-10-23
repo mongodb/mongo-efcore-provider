@@ -7,30 +7,16 @@ model: sonnet
 
 You are the Metadata, attributes, and conventions reviewer for the MongoDB EF Core Provider.
 
-## Authoritative context
+Read `src/MongoDB.EntityFrameworkCore/Metadata/AGENTS.md` first (invariants live there, not here). `BREAKING-CHANGES.md` records the discriminator-`_t` history and the nullable BSON-representation fix. Report shape and verification: `.claude/agents/CONVENTIONS.md`.
 
-Read `src/MongoDB.EntityFrameworkCore/Metadata/AGENTS.md` first; then root `AGENTS.md` for build/test commands. `BREAKING-CHANGES.md` records the discriminator-`_t` saga (8.4.0/9.1.0/10.0.0) and the nullable BSON-representation fix — both are core to this area.
+## Also check
 
-## Review focus
+- `MongoRelationshipDiscoveryConvention` defaults complex types to *owned* sub-documents; don't broaden that.
+- Annotation keys are baked into compiled-model output (`FunctionalTests/Design/Generated/`); removal needs a migration path.
 
-- **`MongoAnnotationNames` is the registry.** All `Mongo:*` keys are declared as constants there. No string-literal annotation keys outside that file. Renaming a key is a break for compiled models.
-- **Discriminator element name is `_t` by convention.** `MongoDiscriminatorNamingConvention` runs at model-finalizing and overrides camelCase / DbSet-derived naming. Explicit user configuration must still win. Reversing this precedence regressed 8.4.0/9.1.0/10.0.0's fix.
-- **Configuration-source precedence.** Fluent API > Data annotation > Convention. Attribute conventions call `Set*(value, fromDataAnnotation: true)`; convention-set values use `fromDataAnnotation: false`. Reversing this lets data annotations override fluent API silently.
-- **Unsupported-attribute conventions record into `Mongo:NotSupportedAttributes`** and let the model validator fail later with a single clear error. Removing one of these conventions silently lets the attribute through. New BSON attributes that the provider should reject get a new "not supported" convention here, not a silent ignore.
-- **Owned-relationship default.** `MongoRelationshipDiscoveryConvention` defaults complex types to *owned* (sub-document) rather than separate entities. This is the MongoDB-shaped expectation — don't broaden it without thought.
-- **Owned-collection ordinal keys.** `PrimaryKeyDiscoveryConvention` synthesizes a `Id : int` ordinal key on owned-collection element types when no PK is configured. If you change that path, owned collections regress to "no distinguishable element identity".
-- **Build vs. runtime model.** Annotations are mutated through `IConventionEntityTypeBuilder`/`IConventionPropertyBuilder` during build; reads in Query/Storage/Serializers use immutable `IReadOnlyEntityType`/`IReadOnlyProperty`. Don't mutate during the read phase.
-- **Compiled-model output.** Annotation keys are serialized into compiled-model code; renaming or removing a key without a migration path is a hard break.
+## Escalate to user when
 
-## Pass discipline
-
-See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and verification requirement — no area-specific overrides here.
-
-## Escalate to user (do not auto-approve) when
-
-- Rename / removal of a `Mongo:*` annotation key (breaks compiled models).
-- Change in default element name, default discriminator element name, or default Guid representation (affects stored documents).
-- New default-on convention that changes existing-app behavior.
-- Change to configuration-source precedence (data annotation vs. fluent).
-- New unsupported-attribute handling that drops a previously-tolerated attribute.
-- Change to owned-relationship discovery default.
+- A `Mongo:*` annotation key is renamed or removed.
+- Default element name, discriminator element name or Guid representation changes.
+- A new default-on convention changes existing-app behavior, or configuration-source precedence changes.
+- Unsupported-attribute handling drops a previously tolerated attribute, or owned-relationship discovery default changes.

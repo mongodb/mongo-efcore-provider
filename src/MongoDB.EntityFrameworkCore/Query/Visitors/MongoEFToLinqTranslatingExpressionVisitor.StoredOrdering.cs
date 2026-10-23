@@ -1,0 +1,1348 @@
+﻿/* Copyright 2023-present MongoDB Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+
+namespace MongoDB.EntityFrameworkCore.Query.Visitors;
+
+// EF-337: the driver compares, sorts and reduces a property's stored BSON, so over a value-converted or non-default-represented property
+// a relational comparison, OrderBy/ThenBy key or Sum/Min/Max/Average silently answers on the stored form ("9" > "100", $sum of strings is 0).
+// The native translator declines these shapes, which only moves them here, so this path refuses them loudly. The property tests are
+// StoredOrdering.PreservesClrOrdering and PreservesClrOrderingForAggregateAndSort, shared with the native declines. Equality is exact
+// whatever the storage and is left alone.
+//
+// The whole key/operand is walked (casts, ??, ?:, arithmetic, members of a projected element, g.Key back to the GroupBy key selector,
+// Concat/Union sources). A construct the walk can't classify is refused when the query reads any such property, so an unknown shape never passes.
+internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
+{
+    private enum StoredOrderingUse
+    {
+        Comparison,
+        SortOrAggregate,
+
+        // Sum/Average (EF-472): the stored values are added, so a declared order-preserving converter doesn't qualify.
+        SumOrAverage,
+
+        // A server-side function of the value (EF-465): a string method, Length, a date part, arithmetic.
+        Computation
+    }
+
+    // Lambda parameter -> the sequence(s) whose elements it ranges over; collected once per query root.
+    private Dictionary<ParameterExpression, Expression[]>? _storedOrderingParameterSources;
+
+    // The captured query being translated (and its rewritten form); scanned when a key/operand can't be classified.
+    private Expression[] _storedOrderingQueryRoots = [];
+
+    private void SetStoredOrderingQueryRoots(params Expression?[] roots)
+    {
+        _storedOrderingQueryRoots = roots.OfType<Expression>().Distinct().ToArray();
+        _storedOrderingParameterSources = null;
+    }
+
+    private static bool IsRelationalOperator(ExpressionType nodeType)
+        => nodeType is ExpressionType.LessThan or ExpressionType.LessThanOrEqual
+            or ExpressionType.GreaterThan or ExpressionType.GreaterThanOrEqual;
+
+    // x.P > v (either side, any computed operand), and string.Compare(x.P, v) > 0 / x.P.CompareTo(v) > 0.
+    private void ThrowIfRelationalComparisonOverStoredOrdering(BinaryExpression node)
+    {
+        if (!IsRelationalOperator(node.NodeType))
+        {
+            return;
+        }
+
+        foreach (var (operand, other) in new[] { (node.Left, node.Right), (node.Right, node.Left) })
+        {
+            // EF-472: a model-declared order-preserving property compares by its own serializer only against a value; against another
+            // property or a computation the server would compare two stored forms.
+            var againstValue = IsValueOnly(other);
+            if (StripConverts(operand) is MethodCallExpression
+                {
+                    Method.Name: nameof(string.Compare) or nameof(IComparable.CompareTo)
+                } compare)
+            {
+                var operands = (compare.Object is { } receiver ? new[] { receiver } : []).Concat(compare.Arguments).ToList();
+                foreach (var part in operands)
+                {
+                    ThrowIfReadsStoredOrdering(
+                        part, StoredOrderingUse.Comparison, "comparison",
+                        againstValue && operands.All(o => ReferenceEquals(o, part) || IsValueOnly(o)));
+                }
+            }
+            else
+            {
+                ThrowIfReadsStoredOrdering(operand, StoredOrderingUse.Comparison, "comparison", againstValue);
+            }
+        }
+    }
+
+    // No lambda parameter (so no property of the queried entities): a constant, a captured variable or a query parameter (EF8 and EF9
+    // leave a captured variable as a `__name` ParameterExpression that no lambda binds).
+    private bool IsValueOnly(Expression expression)
+    {
+        var finder = new ParameterFinder();
+        finder.Visit(expression);
+        return finder.Parameters.All(p => p.Name?.StartsWith("__", StringComparison.Ordinal) == true
+                                           && !finder.Bound.Contains(p)
+                                           && !ParameterSources.ContainsKey(p));
+    }
+
+    // OrderBy/ThenBy keys, Sum/Min/Max/Average/MinBy/MaxBy selectors (Queryable or Enumerable, including the
+    // selector-less forms, which reduce the source's element).
+    private void ThrowIfOrderingOrAggregateOverStoredOrdering(MethodCallExpression node)
+    {
+        if (!IsQueryableOrEnumerable(node.Method))
+        {
+            return;
+        }
+
+        switch (node.Method.Name)
+        {
+            case nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending)
+                or nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending)
+                when node.Arguments.Count >= 2:
+            case nameof(Queryable.Sum) or nameof(Queryable.Min) or nameof(Queryable.Max) or nameof(Queryable.Average)
+                or nameof(Enumerable.MinBy) or nameof(Enumerable.MaxBy)
+                when node.Arguments.Count >= 2:
+                if (UnwrapLambda(node.Arguments[1]) is { } selector)
+                {
+                    ThrowIfReadsStoredOrdering(selector.Body, AggregateUse(node.Method.Name), node.Method.Name);
+                }
+
+                break;
+
+            case nameof(Queryable.Sum) or nameof(Queryable.Min) or nameof(Queryable.Max) or nameof(Queryable.Average)
+                when node.Arguments.Count == 1:
+                if (FindElementExpressions(node.Arguments[0]) is { } elements)
+                {
+                    new StoredOrderingWalker(this, AggregateUse(node.Method.Name), node.Method.Name).WalkSources(elements);
+                }
+                else
+                {
+                    ThrowIfQueryReadsStoredOrdering(node.Arguments[0], AggregateUse(node.Method.Name), node.Method.Name);
+                }
+
+                break;
+        }
+    }
+
+    private static StoredOrderingUse AggregateUse(string methodName)
+        => methodName is nameof(Queryable.Sum) or nameof(Queryable.Average)
+            ? StoredOrderingUse.SumOrAverage
+            : StoredOrderingUse.SortOrAggregate;
+
+    private void ThrowIfReadsStoredOrdering(Expression expression, StoredOrderingUse use, string operation, bool allowDeclared = true)
+        => new StoredOrderingWalker(this, use, operation, allowDeclared).Walk(expression);
+
+    // bare: the property is read on its own (not computed from, not combined with another value), so declaring it order-preserving
+    // would let the operation through; the message then names the opt-out.
+    private void ThrowStoredOrdering(IProperty property, string operation, StoredOrderingUse use, bool bare)
+        => throw new NotSupportedException(
+            use is StoredOrderingUse.Comparison or StoredOrderingUse.SortOrAggregate && StoredOrdering.IsDeclaredOrderPreserving(property)
+            ? $"'{operation}' over the property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be "
+              + "translated to a MongoDB query: the property is order-preserving, but only on its own, compared with a "
+              + "value or used as a sort, Min or Max key. Here its stored value is combined with another value (a computed key, a "
+              + "conversion, a projection that computes, another property or a constant in a Concat/Union), which the server would "
+              + "compare in the stored form and return wrong results. Compare or sort by the property itself, or evaluate this "
+              + "operation on the client, for example after AsEnumerable()."
+            : use == StoredOrderingUse.Computation
+            ? $"'{operation}' over the property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be "
+              + "translated to a MongoDB query: the property is stored through a value converter or a BsonRepresentation, "
+              + "so the server would compute it from the stored value rather than the .NET value and return wrong "
+              + "results. Only reading the property and comparing it for equality are supported on such a property; "
+              + "evaluate this operation on the client, for example after AsEnumerable()."
+            : use == StoredOrderingUse.SumOrAverage
+                ? $"'{operation}' over the property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be "
+                  + "translated to a MongoDB query: the property is stored through a value converter or a BsonRepresentation "
+                  + "whose stored values do not add up to the .NET values, so the server would return a wrong result. "
+                  + "Evaluate this operation on the client, for example after AsEnumerable()."
+            :
+            $"'{operation}' over the property '{property.DeclaringType.DisplayName()}.{property.Name}' cannot be "
+            + "translated to a MongoDB query: the property is stored through a value converter or a BsonRepresentation "
+            + "whose stored values do not compare, sort or aggregate like the .NET values, so the server would return "
+            + "wrong results. Only equality comparisons are supported on such a property. "
+            + (bare
+                ? "If the stored form does order like the .NET value, declare it with HasOrderPreservingStorage() on the property "
+                  + "(or HaveOrderPreservingStorage() in ConfigureConventions); otherwise evaluate "
+                : "Evaluate ")
+            + "this operation on the client, for example after AsEnumerable().");
+
+    // The walk couldn't classify `scope`: refuse if any property that can reach it has a differing stored ordering.
+    // Reachable = read inside `scope`, or inside the source sequence(s) of a lambda parameter used in it (recursively).
+    // Only a parameter with no recorded source falls back to the whole query.
+    private void ThrowIfQueryReadsStoredOrdering(Expression scope, StoredOrderingUse use, string operation)
+    {
+        var finder = new StoredOrderingPropertyFinder(this, use);
+        finder.Visit(scope);
+        if (finder.Found is { } property)
+        {
+            ThrowStoredOrdering(property, operation, use, bare: false);
+        }
+    }
+
+    // allowDeclared (EF-472): the model's HasOrderPreservingStorage() counts, but only for a bare read of the property compared with a
+    // value or used as a sort/Min/Max key; mixed with another value (a computed key, a conversion, another property) the server would
+    // compare stored forms, so the walker passes false.
+    // A numeric property stored as a string is read through $convert (StoredValueConversion, EF-337), so the server orders, compares and
+    // computes the number, not the string; the refusal applies to every other stored form. Not while a bulk update writes values back.
+    private bool PreservesStoredOrdering(IProperty property, StoredOrderingUse use, bool allowDeclared)
+    {
+        if (!ReadStoredForm && StoredValueConversion.RequiresConversion(property))
+        {
+            return true;
+        }
+
+        return use switch
+        {
+            StoredOrderingUse.Comparison => allowDeclared
+                ? StoredOrdering.PreservesClrOrdering(property)
+                : StoredOrdering.PreservesClrOrderingByConstruction(property),
+            StoredOrderingUse.Computation => StoredOrdering.PreservesClrValueForComputation(property),
+            StoredOrderingUse.SumOrAverage => StoredOrdering.PreservesClrOrderingForAggregateAndSortByConstruction(property),
+            _ => allowDeclared
+                ? StoredOrdering.PreservesClrOrderingForAggregateAndSort(property)
+                : StoredOrdering.PreservesClrOrderingForAggregateAndSortByConstruction(property)
+        };
+    }
+
+    // EF-465: a member, method or operator the server computes from a property's stored value (x.Name.Length, x.Name.Contains("x"),
+    // x.Num % 2, Math.Abs(x.Num)). Reading the property itself, equality, `in` lists and ??/?: pass-throughs are exact and left alone.
+    // Called for every node of the query as it is visited; the walker resolves each value operand through projections and g.Key.
+    private void ThrowIfComputedFromStoredValue(Expression node)
+    {
+        ThrowIfStoredDifferently(node);
+
+        switch (node)
+        {
+            case BinaryExpression
+            {
+                NodeType: ExpressionType.Add or ExpressionType.AddChecked or ExpressionType.Subtract or ExpressionType.SubtractChecked
+                or ExpressionType.Multiply or ExpressionType.MultiplyChecked or ExpressionType.Divide or ExpressionType.Modulo
+                or ExpressionType.Power or ExpressionType.And or ExpressionType.Or or ExpressionType.ExclusiveOr
+                or ExpressionType.LeftShift or ExpressionType.RightShift
+            } binary when binary.Type != typeof(bool):
+                ThrowIfReadsStoredOrdering(binary.Left, StoredOrderingUse.Computation, binary.NodeType.ToString());
+                ThrowIfReadsStoredOrdering(binary.Right, StoredOrderingUse.Computation, binary.NodeType.ToString());
+                break;
+
+            case UnaryExpression
+            {
+                NodeType: ExpressionType.Negate or ExpressionType.NegateChecked or ExpressionType.OnesComplement
+            } unary when unary.Type != typeof(bool):
+                ThrowIfReadsStoredOrdering(unary.Operand, StoredOrderingUse.Computation, unary.NodeType.ToString());
+                break;
+
+            // A bool tested by truthiness: a converted one (stored "1"/"0", both truthy) takes the wrong branch (EF-466).
+            case ConditionalExpression conditional:
+                ThrowIfReadsStoredOrdering(conditional.Test, StoredOrderingUse.Computation, "conditional test");
+
+                // `(x.NFlag ?? false) ? a : b`: the coalesce yields the stored value of a converted bool? when it is present.
+                if (StripConverts(conditional.Test) is BinaryExpression { NodeType: ExpressionType.Coalesce } coalesceTest)
+                {
+                    ThrowIfReadsStoredOrdering(coalesceTest.Left, StoredOrderingUse.Computation, "conditional test");
+                    ThrowIfReadsStoredOrdering(coalesceTest.Right, StoredOrderingUse.Computation, "conditional test");
+                }
+
+                break;
+
+            case MemberExpression { Expression: { } memberOwner, Member: var member }
+                when IsComputedMember(memberOwner, member):
+                ThrowIfReadsStoredOrdering(memberOwner, StoredOrderingUse.Computation, member.Name);
+                break;
+
+            case MethodCallExpression call when IsComputingMethod(call):
+                if (call.Object is { } receiver)
+                {
+                    ThrowIfReadsStoredOrdering(receiver, StoredOrderingUse.Computation, call.Method.Name);
+                }
+
+                foreach (var argument in call.Arguments)
+                {
+                    ThrowIfReadsStoredOrdering(argument, StoredOrderingUse.Computation, call.Method.Name);
+                }
+
+                break;
+        }
+    }
+
+    // EF-467: equality or `list.Contains(x)` between two operands stored differently compares the stored forms. A constant or parameter
+    // goes through the property's own serializer and stays exact; only two stored operands (a property and a stored collection or its
+    // element) can disagree. Refused unless they are stored alike or both store the CLR value itself.
+    private void ThrowIfStoredDifferently(Expression node)
+    {
+        Expression? left;
+        Expression? right;
+        string operation;
+        switch (node)
+        {
+            case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } equality:
+                (left, right, operation) = (equality.Left, equality.Right, "equality");
+                break;
+
+            case MethodCallExpression { Method.Name: nameof(Enumerable.Contains) } call
+                when call is { Object: { } instanceSource, Arguments: [{ } instanceItem] }:
+                (left, right, operation) = (instanceSource, instanceItem, "Contains");
+                break;
+
+            case MethodCallExpression { Method.Name: nameof(Enumerable.Contains) } call
+                when call is { Object: null, Arguments: [{ } staticSource, { } staticItem] }:
+                (left, right, operation) = (staticSource, staticItem, "Contains");
+                break;
+
+            default:
+                return;
+        }
+
+        if (ResolveStoredProperties(left) is not { } leftProperties || ResolveStoredProperties(right) is not { } rightProperties)
+        {
+            return;
+        }
+
+        foreach (var a in leftProperties)
+        {
+            foreach (var b in rightProperties)
+            {
+                if (!StoredSerialization.StoredAlike(a, b)
+                    && !(StoredOrdering.PreservesClrValueForComputation(a) && StoredOrdering.PreservesClrValueForComputation(b)))
+                {
+                    throw new NotSupportedException(
+                        $"'{operation}' compares the properties '{a.DeclaringType.DisplayName()}.{a.Name}' and "
+                        + $"'{b.DeclaringType.DisplayName()}.{b.Name}', which are stored differently (a value converter or a "
+                        + "BsonRepresentation on one but not the other), so the server would compare their stored forms and return wrong "
+                        + "results. Compare the property with a value instead, or evaluate this on the client, for example after AsEnumerable().");
+                }
+            }
+        }
+    }
+
+    // The mapped properties an operand reads directly: `x.P`, `EF.Property(x, "P")`, or the element of a stored primitive collection.
+    private List<IProperty>? ResolveStoredProperties(Expression operand)
+    {
+        operand = StripConverts(operand);
+        if (TryFindDirectProperties(operand) is { Count: > 0 } direct)
+        {
+            return direct;
+        }
+
+        if (operand is ParameterExpression parameter
+            && !IsMappedEntityType(parameter.Type)
+            && FindParameterElements(parameter) is { Count: > 0 } elements
+            && elements.All(e => e is StoredCollectionElementExpression))
+        {
+            return elements.Cast<StoredCollectionElementExpression>().SelectMany(e => e.Collections).ToList();
+        }
+
+        return null;
+    }
+
+    // A member of a scalar value type (string.Length, DateTime.Year, TimeSpan.TotalMinutes): the server computes it. The members of an
+    // entity, an anonymous projection or a grouping (Key), and the Nullable accessors, only select a stored value.
+    private bool IsComputedMember(Expression owner, MemberInfo member)
+    {
+        var ownerType = StripConverts(owner).Type;
+        if (IsMappedEntityType(ownerType) || (Nullable.GetUnderlyingType(ownerType) != null && member.Name is "Value" or "HasValue"))
+        {
+            return false;
+        }
+
+        ownerType = Nullable.GetUnderlyingType(ownerType) ?? ownerType;
+        return ownerType == typeof(string) || ownerType == typeof(Guid) || ownerType == typeof(decimal)
+               || ownerType == typeof(DateTime) || ownerType == typeof(DateTimeOffset) || ownerType == typeof(TimeSpan)
+               || ownerType == typeof(DateOnly) || ownerType == typeof(TimeOnly) || ownerType.IsPrimitive;
+    }
+
+    // Sequence operators (their lambdas are visited on their own), EF.Property, equality, the collection Contains behind an `in` list,
+    // the ordering methods (Compare/CompareTo: checked by the relational comparison) and `ToString()` of a property stored as that very
+    // string read or compare a stored value without computing from it; any other method (string members, Math, Like) computes.
+    private bool IsComputingMethod(MethodCallExpression call)
+    {
+        var method = call.Method;
+        if (IsQueryableOrEnumerable(method) || method.IsEFPropertyMethod()
+            || method.Name is nameof(string.Compare) or nameof(IComparable.CompareTo))
+        {
+            return false;
+        }
+
+        if (method.Name == nameof(object.Equals))
+        {
+            return call.Arguments.Any(a => a.Type == typeof(StringComparison));
+        }
+
+        if (method.Name == nameof(Enumerable.Contains) && method.DeclaringType != typeof(string))
+        {
+            return false;
+        }
+
+        if (method.Name == nameof(ToString) && call.Arguments.Count == 0 && call.Object is { } receiver && IsStoredAsToStringRead(receiver))
+        {
+            return false;
+        }
+
+        return !(Nullable.GetUnderlyingType(method.DeclaringType ?? typeof(object)) != null
+                 && method.Name is nameof(Nullable<int>.GetValueOrDefault));
+    }
+
+    // A bare property read (x.P / EF.Property) whose stored value is exactly its ToString().
+    private bool IsStoredAsToStringRead(Expression receiver)
+        => TryFindDirectProperties(StripConverts(receiver)) is { Count: > 0 } properties
+           && properties.All(StoredOrdering.IsStoredAsToString);
+
+    // The mapped properties a bare `x.P` / EF.Property(x, "P") reads, or null for anything else.
+    private List<IProperty>? TryFindDirectProperties(Expression expression)
+        => expression switch
+        {
+            MemberExpression { Expression: { } owner, Member: PropertyInfo or FieldInfo } member
+                when IsMappedEntityType(StripConverts(owner).Type)
+                => FindMappedProperties(StripConverts(owner).Type, member.Member.Name).ToList(),
+            MethodCallExpression { Method: var efProperty, Arguments: [{ } source, ConstantExpression { Value: string name }, ..] }
+                when efProperty.IsEFPropertyMethod() && IsMappedEntityType(source.Type)
+                => FindMappedProperties(source.Type, name).ToList(),
+            _ => null
+        };
+
+    // A mapped scalar property `name` of an entity type with this CLR type, or null.
+    private IEnumerable<IProperty> FindMappedProperties(Type ownerType, string name)
+        => _queryContext.Context.Model.FindEntityTypes(ownerType)
+            .Select(t => t.FindProperty(name))
+            .OfType<IProperty>();
+
+    private bool IsMappedEntityType(Type type)
+        => _queryContext.Context.Model.FindEntityTypes(type).Any();
+
+    private Dictionary<ParameterExpression, Expression[]> ParameterSources
+        => _storedOrderingParameterSources ??= LambdaParameterSourceCollector.Collect(_storedOrderingQueryRoots);
+
+    /// <summary>
+    /// The expressions each element of <paramref name="sequence"/> is computed as (a <c>Select</c> body; a
+    /// <c>GroupBy</c> call standing for its groupings; the element selector for a grouping parameter), through operators
+    /// that keep the element; an empty list for a sequence of entities; <see langword="null"/> if unknown.
+    /// </summary>
+    private List<Expression>? FindElementExpressions(Expression sequence, int depth = 0)
+    {
+        if (depth > 32)
+        {
+            return null;
+        }
+
+        sequence = StripConverts(sequence);
+        if (sequence.Type.TryGetItemType() is { } itemType && IsMappedEntityType(itemType))
+        {
+            return [];
+        }
+
+        // A mapped primitive collection (`x.Scores`, EF.Property(x, "Scores")): its elements are stored values of that
+        // property.
+        if (sequence.Type.TryGetItemType() is { } primitiveItemType)
+        {
+            var collectionProperties = sequence switch
+            {
+                MemberExpression { Expression: { } collectionOwner, Member: var collectionMember }
+                    when IsMappedEntityType(StripConverts(collectionOwner).Type)
+                    => FindMappedProperties(StripConverts(collectionOwner).Type, collectionMember.Name).ToList(),
+                MethodCallExpression { Method: var efProperty, Arguments: [{ } collectionSource, ConstantExpression { Value: string collectionName }, ..] }
+                    when efProperty.IsEFPropertyMethod() && IsMappedEntityType(collectionSource.Type)
+                    => FindMappedProperties(collectionSource.Type, collectionName).ToList(),
+                _ => []
+            };
+
+            if (collectionProperties.Count > 0)
+            {
+                return [new StoredCollectionElementExpression(collectionProperties, primitiveItemType)];
+            }
+        }
+
+        switch (sequence)
+        {
+            case NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray:
+                return [.. newArray.Expressions];
+
+            case ListInitExpression listInit when listInit.Initializers.All(i => i.Arguments.Count == 1):
+                return [.. listInit.Initializers.Select(i => i.Arguments[0])];
+
+            case ParameterExpression parameter
+                when parameter.Type.IsGenericType && parameter.Type.GetGenericTypeDefinition() == typeof(IGrouping<,>):
+                if (!ParameterSources.TryGetValue(parameter, out var groupingSources))
+                {
+                    return null;
+                }
+
+                var groupElements = new List<Expression>();
+                foreach (var groupingSource in groupingSources)
+                {
+                    var groupings = FindElementExpressions(groupingSource, depth + 1);
+                    if (groupings is null)
+                    {
+                        return null;
+                    }
+
+                    foreach (var grouping in groupings)
+                    {
+                        if (grouping is not MethodCallExpression { Method.Name: nameof(Queryable.GroupBy) } groupBy)
+                        {
+                            return null;
+                        }
+
+                        if (groupBy.Arguments.Count >= 3 && UnwrapLambda(groupBy.Arguments[2]) is { Parameters.Count: 1 } elementSelector)
+                        {
+                            groupElements.Add(elementSelector.Body);
+                        }
+                        else if (FindElementExpressions(groupBy.Arguments[0], depth + 1) is { } sourceElements)
+                        {
+                            groupElements.AddRange(sourceElements);
+                        }
+                        else
+                        {
+                            return null;
+                        }
+                    }
+                }
+
+                return groupElements;
+
+            case ParameterExpression sequenceParameter:
+                // A sequence-typed parameter (a GroupJoin's inner group): its bound sources' elements.
+                return FindParameterElements(sequenceParameter, depth + 1);
+
+            case MethodCallExpression call
+                when IsQueryableOrEnumerable(call.Method)
+                     && call.Arguments.Count >= 1:
+                switch (call.Method.Name)
+                {
+                    case nameof(Queryable.Select) when call.Arguments.Count == 2
+                                                        && UnwrapLambda(call.Arguments[1]) is { Parameters.Count: 1 } selector:
+                        return [selector.Body];
+
+                    case nameof(Queryable.GroupBy)
+                        when FindGroupByResultSelector(call) is { } resultSelector:
+                        // GroupBy(source, key, [element,] (key, group) => result): the result (its parameters are bound
+                        // by LambdaParameterSourceCollector).
+                        return [resultSelector.Body];
+
+                    case nameof(Queryable.GroupBy) when call.Arguments.Count == 2
+                                                         || (call.Arguments.Count == 3 && UnwrapLambda(call.Arguments[2]) is { Parameters.Count: 1 }):
+                        return [call];
+
+                    case nameof(Queryable.Distinct) or nameof(Queryable.Where) or nameof(Queryable.OrderBy)
+                        or nameof(Queryable.OrderByDescending) or nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending)
+                        or nameof(Queryable.Skip) or nameof(Queryable.Take) or nameof(Queryable.AsQueryable)
+                        or nameof(Queryable.Reverse) or nameof(Queryable.DefaultIfEmpty) or nameof(Enumerable.ToList)
+                        or nameof(Enumerable.ToArray):
+                        return FindElementExpressions(call.Arguments[0], depth + 1);
+
+                    case nameof(Queryable.Concat) or nameof(Queryable.Union) or nameof(Queryable.Intersect)
+                        or nameof(Queryable.Except) when call.Arguments.Count >= 2:
+                        var left = FindElementExpressions(call.Arguments[0], depth + 1);
+                        var right = FindElementExpressions(call.Arguments[1], depth + 1);
+                        return left is null || right is null ? null : [.. left, .. right];
+                }
+
+                return null;
+
+            default:
+                return null;
+        }
+    }
+
+    private static Expression StripConverts(Expression expression)
+    {
+        while (expression is UnaryExpression
+               {
+                   NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked or ExpressionType.TypeAs
+                   or ExpressionType.Quote
+               } unary)
+        {
+            expression = unary.Operand;
+        }
+
+        return expression;
+    }
+
+    /// <summary>
+    /// The elements of every sequence <paramref name="parameter"/> is bound to (<see cref="ParameterSources"/>), or
+    /// <see langword="null"/> if it is unbound or any source's elements are unknown.
+    /// </summary>
+    private List<Expression>? FindParameterElements(ParameterExpression parameter, int depth = 0)
+    {
+        if (!ParameterSources.TryGetValue(parameter, out var sources))
+        {
+            return null;
+        }
+
+        var elements = new List<Expression>();
+        foreach (var source in sources)
+        {
+            if (FindElementExpressions(source, depth) is not { } sourceElements)
+            {
+                return null;
+            }
+
+            elements.AddRange(sourceElements);
+        }
+
+        return elements;
+    }
+
+    /// <summary>The <c>(key, group) =&gt; result</c> selector of a <c>GroupBy</c> call, if it has one.</summary>
+    private static LambdaExpression? FindGroupByResultSelector(MethodCallExpression groupBy)
+        => groupBy.Arguments.Skip(2).Select(UnwrapLambda).FirstOrDefault(l => l is { Parameters.Count: 2 });
+
+    /// <summary>
+    /// The value member <paramref name="name"/> of <paramref name="definition"/> is constructed from: an anonymous
+    /// type's constructor argument, a member-init assignment, or a <c>GroupBy</c>'s key selector for <c>Key</c>.
+    /// <paramref name="definition"/> is matched as given (it does not strip converts).
+    /// </summary>
+    private static bool TryResolveConstructedMember(
+        Expression definition, string name, [NotNullWhen(true)] out Expression? memberValue)
+    {
+        switch (definition)
+        {
+            case NewExpression { Members: { } members } newExpression
+                when members.ToList().FindIndex(m => m.Name == name) is var index and >= 0:
+                memberValue = newExpression.Arguments[index];
+                return true;
+
+            case MemberInitExpression memberInit
+                when memberInit.Bindings.OfType<MemberAssignment>().FirstOrDefault(b => b.Member.Name == name) is { } binding:
+                memberValue = binding.Expression;
+                return true;
+
+            case MethodCallExpression { Method.Name: nameof(Queryable.GroupBy) } groupBy
+                when name == nameof(IGrouping<object, object>.Key) && UnwrapLambda(groupBy.Arguments[1]) is { } keySelector:
+                memberValue = keySelector.Body;
+                return true;
+
+            default:
+                memberValue = null;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Walks a key/operand value and throws on the first mapped property it reads whose stored ordering differs. Only
+    /// the value's ordering matters: a bool-valued sub-expression (a test, an equality) and a nested subquery (checked
+    /// when its own call is visited) aren't descended into.
+    /// </summary>
+    private sealed class StoredOrderingWalker(
+        MongoEFToLinqTranslatingExpressionVisitor owner, StoredOrderingUse use, string operation, bool allowDeclared = true)
+    {
+        private readonly HashSet<Expression> _visiting = new(ReferenceEqualityComparer.Instance);
+
+        // > 0 while walking an operand of a computation (arithmetic, ??, ?:, a method, a type-changing conversion): the property is then
+        // combined with another value and a model declaration (EF-472) no longer applies.
+        private int _computed = allowDeclared ? 0 : 1;
+
+        // EF-472: the properties the walk has read, and the first one accepted only because the model declares it order-preserving. A
+        // declaration vouches for the property alone: when several sources feed one value (a Concat/Union, a parameter with more than
+        // one definition) they must all read exactly the same properties, else the server would order mixed stored forms.
+        private HashSet<IProperty> _reads = new(ReferenceEqualityComparer.Instance);
+
+        private IProperty? _declaredAccepted;
+
+        private void Accept(IProperty property)
+        {
+            _reads.Add(property);
+            if (_computed == 0
+                && use is StoredOrderingUse.Comparison or StoredOrderingUse.SortOrAggregate
+                && !owner.PreservesStoredOrdering(property, use, allowDeclared: false))
+            {
+                _declaredAccepted ??= property;
+            }
+        }
+
+        // Walks the definitions of one value (the sources of a Concat/Union, a parameter's bound elements).
+        public void WalkSources(IEnumerable<Expression> definitions)
+        {
+            var outer = _reads;
+            var signatures = new List<HashSet<IProperty>>();
+            try
+            {
+                foreach (var definition in definitions)
+                {
+                    _reads = new HashSet<IProperty>(ReferenceEqualityComparer.Instance);
+                    Walk(definition);
+                    signatures.Add(_reads);
+                }
+            }
+            finally
+            {
+                _reads = outer;
+                foreach (var signature in signatures)
+                {
+                    outer.UnionWith(signature);
+                }
+            }
+
+            if (_declaredAccepted is { } declared && signatures.Count > 1 && signatures.Any(s => !s.SetEquals(signatures[0])))
+            {
+                owner.ThrowStoredOrdering(declared, operation, use, bare: false);
+            }
+        }
+
+        private void WalkComputed(Expression? expression)
+        {
+            _computed++;
+            try
+            {
+                Walk(expression);
+            }
+            finally
+            {
+                _computed--;
+            }
+        }
+
+        public void Walk(Expression? expression)
+        {
+            if (expression is null || !_visiting.Add(expression))
+            {
+                return;
+            }
+
+            try
+            {
+                WalkCore(expression);
+            }
+            finally
+            {
+                _visiting.Remove(expression);
+            }
+        }
+
+        private void WalkCore(Expression expression)
+        {
+            var isBool = (Nullable.GetUnderlyingType(expression.Type) ?? expression.Type) == typeof(bool);
+
+            switch (expression)
+            {
+                case ConstantExpression or DefaultExpression or LambdaExpression:
+                    return;
+
+                case StoredCollectionElementExpression element:
+                    foreach (var collection in element.Collections)
+                    {
+                        // The collection's own storage decides its elements' (element-level converters aren't
+                        // supported by the provider: the model fails validation).
+                        if (!owner.PreservesStoredOrdering(collection, use, _computed == 0))
+                        {
+                            owner.ThrowStoredOrdering(collection, operation, use, _computed == 0);
+                        }
+
+                        Accept(collection);
+                    }
+
+                    return;
+
+                case UnaryExpression { NodeType: ExpressionType.Not } not when isBool:
+                    WalkTruth(not.Operand);
+                    return;
+
+                case UnaryExpression unary:
+                    if (!isBool || unary.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked)
+                    {
+                        // A nullable wrap keeps the stored value; any other conversion or unary operator computes from it.
+                        if (unary.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked
+                            && (Nullable.GetUnderlyingType(unary.Type) ?? unary.Type)
+                            == (Nullable.GetUnderlyingType(unary.Operand.Type) ?? unary.Operand.Type))
+                        {
+                            Walk(unary.Operand);
+                        }
+                        else
+                        {
+                            WalkComputed(unary.Operand);
+                        }
+                    }
+
+                    return;
+
+                case MemberExpression { Expression: null }:
+                    return; // static member
+
+                case MemberExpression { Expression: { } nullable, Member.Name: "Value" or "HasValue" } nullableMember
+                    when Nullable.GetUnderlyingType(nullable.Type) != null:
+                    if (nullableMember.Member.Name == "Value")
+                    {
+                        Walk(nullable);
+                    }
+
+                    return;
+
+                case MemberExpression { Expression: { } memberOwner, Member: PropertyInfo or FieldInfo } member:
+                    WalkMember(memberOwner, member.Member);
+                    return;
+
+                case MethodCallExpression { Method: var efProperty, Arguments: [{ } source, ConstantExpression { Value: string name }, ..] }
+                    when efProperty.IsEFPropertyMethod():
+                    if (owner.IsMappedEntityType(source.Type))
+                    {
+                        CheckProperties(owner.FindMappedProperties(source.Type, name));
+                    }
+                    else
+                    {
+                        WalkMemberOfValue(source, name);
+                    }
+
+                    return;
+                // `x.P.ToString()` of a property stored as that very string is the stored field itself (EF-465).
+                case MethodCallExpression { Method.Name: nameof(ToString), Object: { } toStringReceiver, Arguments.Count: 0 }
+                    when use == StoredOrderingUse.Computation && owner.IsStoredAsToStringRead(toStringReceiver):
+                    return;
+
+
+                case MethodCallExpression call
+                    when IsQueryableOrEnumerable(call.Method):
+                    WalkSequenceOperatorValue(call);
+                    return;
+
+                case ParameterExpression parameter:
+                    if (!owner.IsMappedEntityType(parameter.Type))
+                    {
+                        WalkValues(parameter, parameter);
+                    }
+
+                    return;
+
+                case BinaryExpression { NodeType: ExpressionType.AndAlso or ExpressionType.OrElse } logical:
+                    WalkTruth(logical.Left);
+                    WalkTruth(logical.Right);
+                    return;
+
+                case BinaryExpression when isBool:
+                    return; // relational parts are checked by VisitBinary; equality is exact
+
+                case BinaryExpression binary:
+                    WalkComputed(binary.Left);
+                    WalkComputed(binary.Right);
+                    return;
+
+                case ConditionalExpression conditional:
+                    WalkTruth(conditional.Test);
+                    WalkComputed(conditional.IfTrue);
+                    WalkComputed(conditional.IfFalse);
+                    return;
+
+                case MethodCallExpression call:
+                    // Any other method (string/DateTime/Math members, bool-valued or not) computes on the stored form.
+                    WalkComputed(call.Object);
+                    foreach (var argument in call.Arguments)
+                    {
+                        WalkComputed(argument);
+                    }
+
+                    return;
+
+                case NewExpression newExpression:
+                    // An anonymous projection only carries its members; any other constructor computes from its arguments.
+                    foreach (var argument in newExpression.Arguments)
+                    {
+                        if (newExpression.Members is null)
+                        {
+                            WalkComputed(argument);
+                        }
+                        else
+                        {
+                            Walk(argument);
+                        }
+                    }
+
+                    return;
+
+                case MemberInitExpression memberInit:
+                    Walk(memberInit.NewExpression);
+                    foreach (var binding in memberInit.Bindings.OfType<MemberAssignment>())
+                    {
+                        Walk(binding.Expression);
+                    }
+
+                    return;
+
+                case { NodeType: ExpressionType.Extension }:
+                    return; // query roots, query parameters, EF's navigation nodes: no scalar property read
+
+                default:
+                    // Unclassified: refuse if the query reads any such property.
+                    owner.ThrowIfQueryReadsStoredOrdering(expression, use, operation);
+                    return;
+            }
+        }
+
+        // A Queryable/Enumerable call used as a value. An element-returning operator (ElementAt, First, Single, Last,
+        // selector-less Min/Max) yields one of its source's elements, so walk those; a selector aggregate is checked when
+        // its own call is visited; a count/test or a sequence reads no ordered stored value; anything else is refused if
+        // the query reads such a property.
+        private void WalkSequenceOperatorValue(MethodCallExpression call)
+        {
+            switch (call.Method.Name)
+            {
+                case nameof(Enumerable.ElementAt) or nameof(Enumerable.ElementAtOrDefault)
+                    or nameof(Enumerable.First) or nameof(Enumerable.FirstOrDefault)
+                    or nameof(Enumerable.Last) or nameof(Enumerable.LastOrDefault)
+                    or nameof(Enumerable.Single) or nameof(Enumerable.SingleOrDefault)
+                    or nameof(Enumerable.Min) or nameof(Enumerable.Max) or nameof(Enumerable.Sum) or nameof(Enumerable.Average)
+                    when call.Arguments.Count == 1
+                         || call.Method.Name is nameof(Enumerable.ElementAt) or nameof(Enumerable.ElementAtOrDefault):
+                    if (owner.FindElementExpressions(call.Arguments[0]) is { } elements)
+                    {
+                        WalkSources(elements);
+                    }
+                    else
+                    {
+                        owner.ThrowIfQueryReadsStoredOrdering(call, use, operation);
+                    }
+
+                    return;
+
+                // A Sum/Average that consumes another aggregate's result (`GroupBy(..).Select(g => g.Max(x => x.P)).Sum()`) adds the stored
+                // values that aggregate produced, so the nested selector must preserve the value, not just the order.
+                case nameof(Enumerable.Sum) or nameof(Enumerable.Min) or nameof(Enumerable.Max) or nameof(Enumerable.Average)
+                    when use == StoredOrderingUse.SumOrAverage && call.Arguments.Count >= 2
+                         && UnwrapLambda(call.Arguments[1]) is { } nestedSelector:
+                    Walk(nestedSelector.Body);
+                    return;
+
+                case nameof(Enumerable.Sum) or nameof(Enumerable.Min) or nameof(Enumerable.Max) or nameof(Enumerable.Average)
+                    or nameof(Enumerable.MinBy) or nameof(Enumerable.MaxBy)
+                    or nameof(Enumerable.Count) or nameof(Enumerable.LongCount)
+                    or nameof(Enumerable.Any) or nameof(Enumerable.All) or nameof(Enumerable.Contains):
+                    return;
+
+                default:
+                    if (call.Type.TryGetItemType() is null)
+                    {
+                        owner.ThrowIfQueryReadsStoredOrdering(call, use, operation);
+                    }
+
+                    return;
+            }
+        }
+
+        // A bool used for its truth (a Not operand, a && / || operand, a ?: test, a bool sort key): the server tests the
+        // stored value's truthiness, so a bool member must be default-stored (a converted "1"/"0" is always truthy).
+        // Comparisons and equalities are exact or checked by VisitBinary; other computations are walked as values.
+        private void WalkTruth(Expression expression)
+        {
+            switch (StripConverts(expression))
+            {
+                case UnaryExpression { NodeType: ExpressionType.Not } not:
+                    WalkTruth(not.Operand);
+                    return;
+
+                case BinaryExpression { NodeType: ExpressionType.AndAlso or ExpressionType.OrElse } logical:
+                    WalkTruth(logical.Left);
+                    WalkTruth(logical.Right);
+                    return;
+
+                case BinaryExpression:
+                    return;
+
+                case ConditionalExpression conditional:
+                    WalkTruth(conditional.Test);
+                    WalkTruth(conditional.IfTrue);
+                    WalkTruth(conditional.IfFalse);
+                    return;
+
+                case var other:
+                    Walk(other);
+                    return;
+            }
+        }
+
+        private void WalkMember(Expression memberOwner, MemberInfo member)
+        {
+            var ownerType = StripConverts(memberOwner).Type;
+            if (owner.IsMappedEntityType(ownerType))
+            {
+                CheckProperties(owner.FindMappedProperties(ownerType, member.Name));
+                return;
+            }
+
+            WalkMemberOfValue(memberOwner, member.Name);
+        }
+
+        // `value.name` where `value` isn't an entity: resolve what `value` is and take its `name` member.
+        private void WalkMemberOfValue(Expression value, string name)
+        {
+            value = StripConverts(value);
+            if (!ContainsParameter(value))
+            {
+                return; // a closure or constant: no stored value
+            }
+
+            // A member computed from a stored value (x.Name.Length, x.When.Year, x.Dur.TotalMinutes, x.N.Value.X): the
+            // server computes it on the stored form, so the value it is read from must itself pass.
+            if (value is not ParameterExpression && !IsProjectionChain(value))
+            {
+                WalkComputed(value);
+                return;
+            }
+
+            var definitions = ResolveValues(value);
+            if (definitions is null)
+            {
+                owner.ThrowIfQueryReadsStoredOrdering(value, use, operation);
+                return;
+            }
+
+            var members = new List<Expression>();
+            foreach (var definition in definitions)
+            {
+                switch (StripConverts(definition))
+                {
+                    case var constructed when TryResolveConstructedMember(constructed, name, out var memberValue):
+                        members.Add(memberValue);
+                        break;
+
+                    case NewExpression { Members: not null } newExpression:
+                        // An anonymous construction without that member: walk all of it.
+                        members.Add(newExpression);
+                        break;
+
+                    case var other when owner.IsMappedEntityType(other.Type):
+                        CheckProperties(owner.FindMappedProperties(other.Type, name));
+                        break;
+
+                    case StoredCollectionElementExpression element:
+                        members.Add(element); // a member of a stored element (d.Year over List<DateTime>)
+                        break;
+
+                    case var other:
+                        // Unknown shape of the value: walk all of it.
+                        members.Add(other);
+                        break;
+                }
+            }
+
+            WalkSources(members);
+        }
+
+        private void WalkValues(ParameterExpression parameter, Expression scope)
+        {
+            var definitions = ResolveValues(parameter);
+            if (definitions is null)
+            {
+                owner.ThrowIfQueryReadsStoredOrdering(scope, use, operation);
+                return;
+            }
+
+            // A grouping as a value is skipped: its aggregates are checked where they are called.
+            WalkSources(definitions.Where(d => d is not MethodCallExpression { Method.Name: nameof(Queryable.GroupBy) }));
+        }
+
+        // What a non-entity value expression is computed as: a parameter's source elements, a projected member, g.Key.
+        private List<Expression>? ResolveValues(Expression value)
+        {
+            switch (StripConverts(value))
+            {
+                case ParameterExpression parameter:
+                    return owner.FindParameterElements(parameter);
+
+                case MemberExpression { Expression: { } inner, Member: var member }:
+                    if (ResolveValues(inner) is not { } innerDefinitions)
+                    {
+                        return null;
+                    }
+
+                    var resolved = new List<Expression>();
+                    foreach (var definition in innerDefinitions)
+                    {
+                        switch (StripConverts(definition))
+                        {
+                            case var constructed when TryResolveConstructedMember(constructed, member.Name, out var memberValue):
+                                resolved.Add(memberValue);
+                                break;
+
+                            case StoredCollectionElementExpression element:
+                                resolved.Add(element);
+                                break;
+
+                            default:
+                                return null;
+                        }
+                    }
+
+                    return resolved;
+
+                case var other:
+                    return [other];
+            }
+        }
+
+        private void CheckProperties(IEnumerable<IProperty> properties)
+        {
+            foreach (var property in properties)
+            {
+                if (!owner.PreservesStoredOrdering(property, use, _computed == 0))
+                {
+                    owner.ThrowStoredOrdering(property, operation, use, _computed == 0);
+                }
+
+                Accept(property);
+            }
+        }
+
+        private bool IsProjectionChain(Expression expression)
+            => StripConverts(expression) switch
+            {
+                ParameterExpression parameter => !owner.IsMappedEntityType(parameter.Type),
+                MemberExpression { Expression: { } inner }
+                    => !owner.IsMappedEntityType(StripConverts(inner).Type) && IsProjectionChain(inner),
+                _ => false
+            };
+
+        private static bool ContainsParameter(Expression expression)
+        {
+            var finder = new ParameterFinder();
+            finder.Visit(expression);
+            return finder.Found;
+        }
+    }
+
+    // The element of a mapped primitive collection (`x.Scores`): a stored value of that property.
+    private sealed class StoredCollectionElementExpression(IReadOnlyList<IProperty> collections, Type elementType) : Expression
+    {
+        public IReadOnlyList<IProperty> Collections { get; } = collections;
+
+        public override ExpressionType NodeType => ExpressionType.Extension;
+
+        public override Type Type { get; } = elementType;
+
+        protected override Expression VisitChildren(System.Linq.Expressions.ExpressionVisitor visitor) => this;
+    }
+
+    private sealed class ParameterFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        public List<ParameterExpression> Parameters { get; } = [];
+
+        // Parameters a lambda inside the visited tree declares.
+        public HashSet<ParameterExpression> Bound { get; } = [];
+
+        public bool Found => Parameters.Count > 0;
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            Parameters.Add(node);
+            return node;
+        }
+
+        protected override Expression VisitLambda<T>(Expression<T> node)
+        {
+            Bound.UnionWith(node.Parameters);
+            return base.VisitLambda(node);
+        }
+
+        protected override Expression VisitExtension(Expression node) => node;
+    }
+
+    // Any mapped property that can reach a tree whose stored ordering differs for `use`: read in the tree, or in the
+    // bound source of a lambda parameter used in it (the whole query for an unbound non-entity parameter).
+    private sealed class StoredOrderingPropertyFinder(MongoEFToLinqTranslatingExpressionVisitor owner, StoredOrderingUse use)
+        : System.Linq.Expressions.ExpressionVisitor
+    {
+        private readonly HashSet<ParameterExpression> _followed = [];
+        private bool _scannedRoots;
+
+        public IProperty? Found { get; private set; }
+
+        public override Expression? Visit(Expression? node)
+            => Found is null ? base.Visit(node) : node;
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (!owner.IsMappedEntityType(node.Type) && _followed.Add(node))
+            {
+                if (owner.ParameterSources.TryGetValue(node, out var sources))
+                {
+                    foreach (var source in sources)
+                    {
+                        Visit(source);
+                    }
+                }
+                else if (!_scannedRoots)
+                {
+                    _scannedRoots = true;
+                    foreach (var root in owner._storedOrderingQueryRoots)
+                    {
+                        Visit(root);
+                    }
+                }
+            }
+
+            return node;
+        }
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (node.Expression is { } memberOwner)
+            {
+                Check(StripConverts(memberOwner).Type, node.Member.Name);
+            }
+
+            return base.VisitMember(node);
+        }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.IsEFPropertyMethod()
+                && node.Arguments is [{ } source, ConstantExpression { Value: string name }, ..])
+            {
+                Check(source.Type, name);
+            }
+
+            // Only what flows into a sequence's elements can reach a value read from it: a filter predicate, a sort key
+            // or a join key selects/orders rows but never becomes an element value, so its reads (e.g. an equality over
+            // a converted enum) are not counted.
+            if (IsQueryableOrEnumerable(node.Method))
+            {
+                switch (node.Method.Name)
+                {
+                    case nameof(Queryable.Where) or nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending)
+                        or nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending) or nameof(Queryable.SkipWhile)
+                        or nameof(Queryable.TakeWhile) or nameof(Queryable.Skip) or nameof(Queryable.Take)
+                        or nameof(Queryable.Distinct) or nameof(Queryable.AsQueryable):
+                        Visit(node.Arguments[0]);
+                        return node;
+
+                    case nameof(Queryable.Join) when node.Arguments.Count >= 5:
+                        Visit(node.Arguments[0]);
+                        Visit(node.Arguments[1]);
+                        Visit(node.Arguments[4]);
+                        return node;
+                }
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        protected override Expression VisitExtension(Expression node)
+            => node.CanReduce ? base.VisitExtension(node) : node;
+
+        private void Check(Type ownerType, string name)
+            => Found ??= owner.FindMappedProperties(ownerType, name).FirstOrDefault(p => !owner.PreservesStoredOrdering(p, use, allowDeclared: false));
+    }
+
+    // Records, for each lambda parameter of a Queryable/Enumerable operator, the sequence(s) it ranges over.
+    private sealed class LambdaParameterSourceCollector : System.Linq.Expressions.ExpressionVisitor
+    {
+        private readonly Dictionary<ParameterExpression, Expression[]> _sources = new();
+
+        public static Dictionary<ParameterExpression, Expression[]> Collect(IEnumerable<Expression> roots)
+        {
+            var collector = new LambdaParameterSourceCollector();
+            foreach (var root in roots)
+            {
+                collector.Visit(root);
+            }
+
+            return collector._sources;
+        }
+
+        protected override Expression VisitExtension(Expression node)
+            => node.CanReduce ? base.VisitExtension(node) : node;
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (IsQueryableOrEnumerable(node.Method)
+                && node.Arguments.Count >= 2)
+            {
+                if (node.Method.Name is nameof(Queryable.Join) or nameof(Queryable.GroupJoin) && node.Arguments.Count >= 5)
+                {
+                    Bind(node.Arguments[2], 0, node.Arguments[0]);
+                    Bind(node.Arguments[3], 0, node.Arguments[1]);
+                    Bind(node.Arguments[4], 0, node.Arguments[0]);
+                    if (node.Method.Name == nameof(Queryable.Join))
+                    {
+                        Bind(node.Arguments[4], 1, node.Arguments[1]);
+                    }
+                }
+                else if (node.Method.Name == nameof(Queryable.SelectMany) && node.Arguments.Count >= 3)
+                {
+                    Bind(node.Arguments[1], 0, node.Arguments[0]);
+                    Bind(node.Arguments[2], 0, node.Arguments[0]);
+                    if (UnwrapLambda(node.Arguments[1]) is { } collectionSelector)
+                    {
+                        Bind(node.Arguments[2], 1, collectionSelector.Body);
+                    }
+                }
+                else if (node.Method.Name == nameof(Queryable.GroupBy)
+                         && FindGroupByResultSelector(node) is { } resultSelector)
+                {
+                    // (key, group) => result: `key` is the key selector's value (a one-element "sequence" of it); `group`
+                    // ranges over the element selector's value, or the source's elements.
+                    Bind(node.Arguments[1], 0, node.Arguments[0]);
+                    var elementSelector = node.Arguments.Count >= 4 ? UnwrapLambda(node.Arguments[2]) : null;
+                    if (elementSelector is { Parameters.Count: 1 })
+                    {
+                        Bind(node.Arguments[2], 0, node.Arguments[0]);
+                    }
+
+                    if (UnwrapLambda(node.Arguments[1]) is { } keySelector)
+                    {
+                        BindParameter(resultSelector.Parameters[0], Expression.NewArrayInit(keySelector.ReturnType, keySelector.Body));
+                    }
+
+                    BindParameter(
+                        resultSelector.Parameters[1],
+                        elementSelector is { Parameters.Count: 1 }
+                            ? Expression.NewArrayInit(elementSelector.ReturnType, elementSelector.Body)
+                            : node.Arguments[0]);
+                }
+                else if (node.Method.Name is nameof(Queryable.Zip) or nameof(Queryable.Aggregate))
+                {
+                    // Multi-source / accumulator lambdas: left unbound (walk refuses conservatively).
+                }
+                else
+                {
+                    for (var i = 1; i < node.Arguments.Count; i++)
+                    {
+                        if (UnwrapLambda(node.Arguments[i]) is { Parameters.Count: 1 })
+                        {
+                            Bind(node.Arguments[i], 0, node.Arguments[0]);
+                        }
+                    }
+                }
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        private void Bind(Expression lambdaArgument, int parameterIndex, Expression source)
+        {
+            if (UnwrapLambda(lambdaArgument) is { } lambda && lambda.Parameters.Count > parameterIndex)
+            {
+                BindParameter(lambda.Parameters[parameterIndex], source);
+            }
+        }
+
+        private void BindParameter(ParameterExpression parameter, Expression source)
+        {
+            if (!_sources.TryGetValue(parameter, out var existing))
+            {
+                _sources[parameter] = [source];
+            }
+            else if (!existing.Contains(source))
+            {
+                _sources[parameter] = [.. existing, source];
+            }
+        }
+    }
+}

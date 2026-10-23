@@ -26,6 +26,7 @@ using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Metadata.Conventions;
+using MongoDB.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.Factories;
 using MongoDB.EntityFrameworkCore.Query.Visitors.Dependencies;
 using MongoDB.EntityFrameworkCore.Serializers;
@@ -164,6 +165,7 @@ public static class MongoServiceCollectionExtensions
             .TryAdd<IValueGeneratorSelector, MongoValueGeneratorSelector>()
             .TryAdd<IDatabaseCreator>(p => p.GetRequiredService<IMongoDatabaseCreator>())
             .TryAdd<IQueryContextFactory, MongoQueryContextFactory>()
+            .TryAdd<IEvaluatableExpressionFilter, MongoEvaluatableExpressionFilter>()
             .TryAdd<ITypeMappingSource, MongoTypeMappingSource>()
             .TryAdd<IValueConverterSelector, MongoValueConverterSelector>()
             .TryAdd<IQueryTranslationPreprocessorFactory, MongoQueryTranslationPreprocessorFactory>()

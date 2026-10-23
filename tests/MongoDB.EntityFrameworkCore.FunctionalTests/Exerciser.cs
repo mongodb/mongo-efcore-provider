@@ -50,14 +50,12 @@ public static class Exerciser
         modelConfig ??= _ => { };
 
         {
-            // Test creation via EF
             using var db = SingleEntityDbContext.Create(collection, modelConfig);
             db.Entities.Add(expected);
             Assert.Equal(1, db.SaveChanges());
         }
 
         {
-            // Test retrieval via EF
             using var db = SingleEntityDbContext.Create(collection, modelConfig);
             var found = db.Entities.First();
             Assert.Equal(roundForComparison(expectedValue), roundForComparison(found.value));
@@ -65,7 +63,6 @@ public static class Exerciser
         }
 
         {
-            // Test MongoDB C# driver retrieval
             var mongoCollection = database.GetCollection<EntityWithValue<TStorage>>(collectionName);
             var found = mongoCollection.AsQueryable().First();
             Assert.Equal(converter(expectedValue), found.value);
@@ -73,7 +70,6 @@ public static class Exerciser
         }
 
         {
-            // Test query via EF
             using var db = SingleEntityDbContext.Create(collection, modelConfig);
             var found = db.Entities.First(e => e.value.Equals(expectedValue));
             Assert.Equal(roundForComparison(expectedValue), roundForComparison(found.value));
@@ -81,7 +77,6 @@ public static class Exerciser
         }
 
         {
-            // Create native one in MongoDB C# Driver & read via EF
             var mongoCollectionName = collectionName + "_";
             var mongoCollection = database.CreateCollection<EntityWithValue<TStorage>>(mongoCollectionName);
             var expectedMongo = new EntityWithValue<TStorage> {_id = ObjectId.GenerateNewId(), value = converter(expectedValue)};
@@ -109,35 +104,30 @@ public static class Exerciser
         modelConfig ??= _ => { };
 
         {
-            // Test creation via EF
             using var db = SingleEntityDbContext.Create(collection, modelConfig);
             db.Entities.Add(expected);
             Assert.Equal(1, db.SaveChanges());
         }
 
         {
-            // Test retrieval via EF
             using var db = SingleEntityDbContext.Create(collection, modelConfig);
             var found = db.Entities.First();
             Assert.Equal(expectedId, found._id);
         }
 
         {
-            // Test MongoDB C# driver retrieval
             var mongoCollection = database.GetCollection<EntityWithId<TStorage>>(collectionName);
             var found = mongoCollection.AsQueryable().First();
             Assert.Equal(converter(expectedId), found._id);
         }
 
         {
-            // Test query via EF
             using var db = SingleEntityDbContext.Create(collection, modelConfig);
             var found = db.Entities.First(e => e._id.Equals(expectedId));
             Assert.Equal(expected._id, found._id);
         }
 
         {
-            // Create native one in MongoDB C# Driver & read via EF
             var mongoCollectionName = collectionName + "_";
             var mongoCollection = database.CreateCollection<EntityWithId<TStorage>>(mongoCollectionName);
             var expectedMongo = new EntityWithId<TStorage> {_id = converter(expectedId)};

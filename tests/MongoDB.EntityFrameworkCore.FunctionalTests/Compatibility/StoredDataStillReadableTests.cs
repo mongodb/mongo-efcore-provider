@@ -126,16 +126,11 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(collection);
         db.Entities.Add(_nullableSet);
         db.Entities.Add(_nullableDefault);
-        // A THIRD row, write-only: OwnedMany left at its CLR default (null). _nullableDefault used to be this
-        // suite's only coverage of writing a null collection navigation, but it is also the READ expectation for
-        // nullDefaultDoc, and EF-358 moved that expectation to "= []" — which silently deleted the null-write
-        // shape from the suite. Keeping the two roles in separate instances is what stops that recurring.
+        // Write-only row with OwnedMany null, so writing a null collection stays covered.
         db.Entities.Add(_nullableNullCollection);
         db.SaveChanges();
 
-        // Assert the persisted BYTES for both collection-write shapes, rather than only that SaveChanges did not
-        // throw: writing null persists "OwnedMany": null and writing an empty collection persists [] — the write
-        // side is unchanged by EF-358, which only affects how stored bytes are READ back.
+        // Assert the persisted bytes: null writes "OwnedMany": null, an empty collection writes [].
         var raw = database.GetCollection<BsonDocument>(collection.CollectionNamespace);
         Assert.Equal(
             BsonNull.Value,
@@ -339,21 +334,15 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         ]
     };
 
-    // "OwnedMany = []" below is the read expectation for nullDefaultDoc ("OwnedMany":null, written by provider
-    // 8.1). Pre-EF-358 the provider never materialized a collection for a missing/null stored array, so this
-    // used to read back as null purely because Nullables.OwnedMany has no "= []" initializer — not because of
-    // any provider contract (same mechanism as the "RENAMED (EF-358)" block in OwnedEntityTests.cs). The stored
-    // bytes are unchanged; only this expectation moves to match the now-uniform empty-collection read.
+    // Read expectation for nullDefaultDoc (stores "OwnedMany": null, written by provider 8.1): null or missing materializes as empty.
     private readonly Nullables _nullableDefault = new()
     {
         id = ObjectId.Parse("670d7d952112a60d7fa17d99"),
         OwnedMany = []
     };
 
-    // WRITE-ONLY fixture, never a read expectation: OwnedMany left at its CLR default (null) so
-    // Can_write_nullable_clr_types still covers WRITING a null collection navigation. _nullableDefault above
-    // doubles as the read expectation for nullDefaultDoc, and moving that expectation to "= []" (EF-358) took
-    // the null-write shape with it; splitting the two roles keeps both write shapes covered.
+    // Write-only fixture (never a read expectation): OwnedMany left null so Can_write_nullable_clr_types covers
+    // writing a null collection navigation.
     private readonly Nullables _nullableNullCollection = new()
     {
         id = ObjectId.Parse("670d7d952112a60d7fa17d9a")

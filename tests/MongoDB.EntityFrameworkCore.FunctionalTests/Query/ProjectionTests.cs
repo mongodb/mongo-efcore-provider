@@ -41,6 +41,25 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
+    public void Anonymous_projection_after_filter_and_order_returns_correct_values()
+    {
+        // Terminal anonymous projection after Where + OrderBy exercises the native $project pushdown end-to-end.
+        var results = _db.Planets
+            .Where(p => p.orderFromSun > 4)
+            .OrderBy(p => p.name)
+            .Select(p => new { p.name, p.orderFromSun })
+            .ToList();
+
+        Assert.Equal(4, results.Count); // Jupiter, Neptune, Saturn, Uranus
+        Assert.All(results, r =>
+        {
+            Assert.False(string.IsNullOrEmpty(r.name));
+            Assert.InRange(r.orderFromSun, 5, 8);
+        });
+        Assert.Equal(["Jupiter", "Neptune", "Saturn", "Uranus"], results.Select(r => r.name));
+    }
+
+    [Fact]
     public void Select_projection_to_anonymous()
     {
         var results = _db.Planets.Take(10).Select(p => new {Name = p.name, Order = p.orderFromSun});
@@ -381,7 +400,6 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Sum_with_ef_property_and_field()
     {
-        // Sum of (orderFromSun + orderFromSun) across all 8 planets: (1+2+3+4+5+6+7+8)*2 = 72
         var result = _db.Planets.Sum(p => EF.Property<int>(p, "orderFromSun") + p.orderFromSun);
         Assert.Equal(72, result);
     }
@@ -389,7 +407,6 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Sum_with_mql_field_and_field()
     {
-        // Sum of (orderFromSun + orderFromSun) across all 8 planets: (1+2+3+4+5+6+7+8)*2 = 72
         var result = _db.Planets.Sum(p => Mql.Field(p, "orderFromSun", Int32Serializer.Instance) + p.orderFromSun);
         Assert.Equal(72, result);
     }
@@ -530,11 +547,20 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
         public bool hasRings { get; set; }
     }
 
-    private SingleEntityDbContext<PlanetWithLongOrder> CreateLongOrderContext()
+    private SingleEntityDbContext<PlanetWithLongOrder> CreateLongOrderContext(
+        MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode? mode = null, string collectionName = "planets")
     {
-        var collection = database.MongoDatabase.GetCollection<PlanetWithLongOrder>("planets");
-        return SingleEntityDbContext.Create(collection, mb =>
-            mb.Entity<PlanetWithLongOrder>().Property(e => e.orderFromSun).HasConversion<int>());
+        var collection = database.MongoDatabase.GetCollection<PlanetWithLongOrder>(collectionName);
+        return SingleEntityDbContext.Create(
+            collection,
+            mb => mb.Entity<PlanetWithLongOrder>().Property(e => e.orderFromSun).HasConversion<int>(),
+            optionsBuilderAction: mode is null
+                ? null
+                : b =>
+                {
+                    b.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+                    new MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder(b).UseQueryMode(mode.Value);
+                });
     }
 
     private class PlanetWithStringOrder
@@ -569,8 +595,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_uses_source_property_serializer));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = p.orderFromSun })
             .ToList();
 
@@ -584,8 +611,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_ef_property_uses_source_property_serializer));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = EF.Property<int>(p, nameof(PlanetWithStringOrder.orderFromSun)) })
             .ToList();
 
@@ -599,8 +627,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_widening_cast));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = (long)p.orderFromSun })
             .ToList();
 
@@ -614,8 +643,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_nullable_lift));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = (int?)p.orderFromSun })
             .ToList();
 
@@ -669,12 +699,45 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
         Assert.Equal(4.5, result);
     }
 
-    [Fact]
-    public void Count_with_value_converter_in_predicate()
+    [Theory]
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native)]
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly)]
+    public void Count_with_value_converter_in_predicate(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode mode)
     {
-        using var db = CreateLongOrderContext();
-        var result = db.Entities.Count(p => p.orderFromSun > 4L);
-        Assert.Equal(4, result);
+        // long stored as int (narrowing): the native comparison serializes the constant by its CLR type (Int64), so it
+        // can't wrap, and the server compares it numerically with the stored Int32 (D-EF337).
+        using var db = CreateLongOrderContext(mode);
+        Assert.Equal(4, db.Entities.Count(p => p.orderFromSun > 4L));
+        Assert.Equal(1, db.Entities.Count(p => p.orderFromSun == 4L));
+    }
+
+    [Fact]
+    public void Count_with_value_converter_in_predicate_is_refused_by_driver_linq()
+    {
+        // The driver-LINQ bridge keeps refusing (EF-337): it would serialize the constant through the unchecked
+        // narrowing converter, so a constant outside the int range would wrap. Equality is exact and works.
+        using var db = CreateLongOrderContext(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.DriverLinq);
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.Count(p => p.orderFromSun > 4L));
+        Assert.Contains("PlanetWithLongOrder.orderFromSun'", ex.Message);
+        Assert.Equal(1, db.Entities.Count(p => p.orderFromSun == 4L));
+    }
+
+    [Theory]
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native)]
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly)]
+    public void Equality_against_out_of_int_range_constant_does_not_wrap(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode mode)
+    {
+        // 3_000_000_000L wraps to -1294967296 through an unchecked long -> int converter; that stored value must not match.
+        var collection = database.MongoDatabase.GetCollection<BsonDocument>("planets_wrap_" + mode);
+        collection.InsertOne(new BsonDocument
+        {
+            { "_id", ObjectId.GenerateNewId() }, { "name", "Wrapped" }, { "orderFromSun", -1294967296 }, { "hasRings", false }
+        });
+
+        using var db = CreateLongOrderContext(mode, "planets_wrap_" + mode);
+        Assert.Equal(0, db.Entities.Count(p => p.orderFromSun == 3_000_000_000L));
+        Assert.Equal(0, db.Entities.Count(p => p.orderFromSun > 3_000_000_000L));
+        Assert.Equal(1, db.Entities.Count(p => p.orderFromSun < 3_000_000_000L));
     }
 
     [Fact]
@@ -746,7 +809,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
                     Sub = new
                     {
                         Double = p.orderFromSun * 2,
-                        NameUpper = p.name.ToUpper()
+                        NameLength = p.name.Length
                     }
                 })
                 .ToList());
@@ -1099,7 +1162,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
         Assert.ThrowsAny<Exception>(() =>
             _db.Planets.Select(p => new
             {
-                Upper = p.name.ToUpper(),
+                Trimmed = p.name.Trim(),
                 Label = FormatLabel(p.name)
             }).ToList());
     }
@@ -1126,13 +1189,16 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public void Select_projection_group_by_not_supported()
+    public void Select_projection_group_by()
     {
-        Assert.ThrowsAny<Exception>(() =>
-            _db.Planets
-                .GroupBy(p => p.hasRings)
-                .Select(g => new { g.Key, Count = g.Count() })
-                .ToList());
+        var results = _db.Planets
+            .GroupBy(p => p.hasRings)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(4, results.Single(r => r.Key).Count);
+        Assert.Equal(4, results.Single(r => !r.Key).Count);
     }
 
     private class OrderWithDates
@@ -1260,7 +1326,6 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Select_projection_owned_type()
     {
-        // Projecting owned entities without the owner requires AsNoTracking
         var results = _db.Planets.AsNoTracking().Select(p => new { p.name, Car = p.parkingCar }).ToList();
 
         Assert.Equal(8, results.Count);
@@ -1298,6 +1363,37 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("\"$match\" : { \"name\" : \"Saturn\" }", message);
+    }
+
+    [Fact]
+    public void Select_projection_after_orderby_take_returns_correct_paged_rows()
+    {
+        // Take before a terminal Select must page on orderFromSun before $project drops it; Mercury/Venus prove it.
+        // (No MQL-capture helper in FunctionalTests, so this checks results rather than stage order.)
+        var results = _db.Planets
+            .OrderBy(p => p.orderFromSun)
+            .Select(p => new { p.name, p.orderFromSun })
+            .Take(2)
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("Mercury", results[0].name);
+        Assert.Equal(1, results[0].orderFromSun);
+        Assert.Equal("Venus", results[1].name);
+        Assert.Equal(2, results[1].orderFromSun);
+    }
+
+    [Fact]
+    public void Select_projection_with_case_differing_members_falls_back_and_throws()
+    {
+        // Two members differing only by case (Name / name): the native $project guard forces a fallback, and driver
+        // LINQ can't represent the constructor either (ExpressionNotSupportedException). Pins the throw so a
+        // regression to silently dropped/null values is caught.
+        Assert.ThrowsAny<Exception>(() =>
+            _db.Planets
+                .Where(p => p.name == "Earth")
+                .Select(p => new { Name = p.name, name = p.hasRings })
+                .ToList());
     }
 
     public void Dispose()

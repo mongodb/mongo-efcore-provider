@@ -128,6 +128,9 @@ public abstract class TestServer : IAsyncLifetime
     public bool SupportsBitwiseOperators
         => ServerVersion >= new SemanticVersion(6, 3, 0);
 
+    public bool SupportsSortArray
+        => ServerVersion >= new SemanticVersion(5, 2, 0);
+
     public static bool SupportsAtlas
     {
         get
