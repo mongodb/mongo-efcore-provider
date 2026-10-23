@@ -147,11 +147,6 @@ functions:
           - "AWS_SESSION_TOKEN"
         script: |
           ${PREPARE_SHELL}
-          # TODO(DRIVERS-3663): remove once fixed upstream. mongodl's GPG check of "latest" downloads puts its
-          # gpg homedir under $TMPDIR; ours is long enough that gpg-agent's socket path exceeds the OS limit.
-          if [ "${VERSION}" = "latest" ]; then
-            unset TMPDIR
-          fi
           MONGODB_VERSION=${VERSION} \
           STORAGE_ENGINE=${STORAGE_ENGINE} \
           ORCHESTRATION_FILE=${ORCHESTRATION_FILE} \
