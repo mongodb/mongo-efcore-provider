@@ -498,7 +498,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// Builds the server-side update for a bulk update. When no setter is self-referencing the update is a simple
     /// <c>$set</c> document of serialized literal values. When any setter references the entity being updated the update
     /// becomes an aggregation pipeline containing a single <c>$set</c> stage; self-referencing setters contribute a
-    /// rendered aggregation expression and constant setters contribute their serialized literal (the two can mix freely).
+    /// rendered aggregation expression and constant setters contribute their serialized value wrapped in <c>$literal</c>
+    /// so it is never evaluated as an expression (the two can mix freely).
     /// </summary>
     private static UpdateDefinition<BsonDocument> BuildUpdate<TSource>(
         QueryContext queryContext,
@@ -533,7 +534,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             }
             else
             {
-                setStageDoc[setter.Property.GetElementName()] = SerializeConstant(queryContext, setter);
+                // Inside an aggregation stage a '$'-prefixed string is a field path/variable and a document can be
+                // an operator expression, so constant values must be wrapped in $literal to be stored as data.
+                setStageDoc[setter.Property.GetElementName()] =
+                    new BsonDocument("$literal", SerializeConstant(queryContext, setter));
             }
         }
 
