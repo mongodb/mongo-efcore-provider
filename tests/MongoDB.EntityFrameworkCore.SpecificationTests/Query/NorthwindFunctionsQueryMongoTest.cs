@@ -1973,7 +1973,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$substrCP" : ["$ContactName", 0, 3] }, "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$in" : [{ "$type" : "$ContactName" }, ["null", "missing"]] }, "then" : null, "else" : { "$substrCP" : ["$ContactName", 0, 3] } } }, "_id" : 0 } }
             """);
     }
 
@@ -1983,7 +1983,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$substrCP" : ["$ContactName", 2, 0] }, "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$in" : [{ "$type" : "$ContactName" }, ["null", "missing"]] }, "then" : null, "else" : { "$substrCP" : ["$ContactName", 2, 0] } } }, "_id" : 0 } }
             """);
     }
 
@@ -1993,7 +1993,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$substrCP" : ["$ContactName", 1, 3] }, "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$in" : [{ "$type" : "$ContactName" }, ["null", "missing"]] }, "then" : null, "else" : { "$substrCP" : ["$ContactName", 1, 3] } } }, "_id" : 0 } }
             """);
     }
 
@@ -2003,7 +2003,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$substrCP" : ["$ContactName", 2, 3] }, "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$in" : [{ "$type" : "$ContactName" }, ["null", "missing"]] }, "then" : null, "else" : { "$substrCP" : ["$ContactName", 2, 3] } } }, "_id" : 0 } }
             """);
     }
 
@@ -2013,7 +2013,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$substrCP" : ["$ContactName", { "$indexOfCP" : ["$ContactName", "a"] }, 3] }, "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$in" : [{ "$type" : "$ContactName" }, ["null", "missing"]] }, "then" : null, "else" : { "$substrCP" : ["$ContactName", { "$indexOfCP" : ["$ContactName", "a"] }, 3] } } }, "_id" : 0 } }
             """);
     }
 
