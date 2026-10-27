@@ -21,7 +21,6 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection("QueryTests")]
 public class StoredValueConversionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

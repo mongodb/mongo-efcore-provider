@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// the .NET call client-side over the (correctly computed) receiver in every query mode, and <c>Where</c> uses an
 /// exact case-insensitive regex. Neither ever emits <c>$toLower</c>/<c>$toUpper</c>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringCaseMappingTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

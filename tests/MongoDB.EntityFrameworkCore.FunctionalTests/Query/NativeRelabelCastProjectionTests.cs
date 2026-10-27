@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// (<c>NativeProjectionBinder.IsClientRelabelCast</c>). A narrowing cast would need the cast operator to run over the
 /// stored string, so it declines.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeRelabelCastProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

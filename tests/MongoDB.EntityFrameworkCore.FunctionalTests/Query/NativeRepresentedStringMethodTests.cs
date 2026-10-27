@@ -37,7 +37,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// NativeOnly throws and Native falls back to the driver-LINQ bridge, which refuses the function over the stored form (EF-465).
 /// A plain string property of the same shapes still translates natively.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeRepresentedStringMethodTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Doc

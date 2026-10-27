@@ -21,7 +21,6 @@ using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
-[XUnitCollection("MappingTests")]
 public class NavigationProxyTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

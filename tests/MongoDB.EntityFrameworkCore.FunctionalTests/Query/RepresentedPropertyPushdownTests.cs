@@ -44,8 +44,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="MongoQueryMode.NativeOnly"/> and <see cref="MongoQueryMode.DriverLinq"/>, against an oracle computed
 /// in memory over the materialized entities (which apply the representation/converter).
 /// </remarks>
-[XUnitCollection("QueryTests")]
-public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
+public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixture database)
 {
     public class Item
     {
@@ -255,13 +254,17 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
            from mode in Modes
            select new object[] { query, storage, mode };
 
+    protected static IEnumerable<object[]> ExactOrConvertedCasesFor(Storage storage)
+        => AllowListedCases().Concat(StringStoredCases()).Where(c => (Storage)c[1] == storage);
+
+    protected static IEnumerable<object[]> RichCasesFor(FlagStorage flag)
+        => RichCases().Where(c => (FlagStorage)c[2] == flag);
+
     /// <summary>
     /// The guard: correct or loud, never a stored-form answer. Pinned to the decline (the answer can't reveal a
     /// guard that happens to get a right answer by accident, e.g. the order-preserving scaling converter).
     /// </summary>
-    [Theory]
-    [MemberData(nameof(RefusedCases))]
-    public void Order_sensitive_query_over_non_order_preserving_storage_is_refused(string query, Storage storage, MongoQueryMode mode)
+    protected void Order_sensitive_query_over_non_order_preserving_storage_is_refusedCore(string query, Storage storage, MongoQueryMode mode)
     {
         var (oracle, run) = Arrange(query, OrderSensitiveQueries[query], storage, mode);
 
@@ -291,10 +294,7 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         }
     }
 
-    [Theory]
-    [MemberData(nameof(AllowListedCases))]
-    [MemberData(nameof(StringStoredCases))]
-    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryMode mode)
+    protected void Order_sensitive_query_over_exact_or_converted_storage_is_correctCore(string query, Storage storage, MongoQueryMode mode)
     {
         var (oracle, run) = Arrange(query, OrderSensitiveQueries[query], storage, mode);
 
@@ -345,9 +345,7 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
            || query.Contains("negated", StringComparison.Ordinal) || query.Contains("computed", StringComparison.Ordinal)
            || query.StartsWith("Distinct", StringComparison.Ordinal);
 
-    [Theory]
-    [MemberData(nameof(EqualityCases))]
-    public void Equality_over_any_storage_keeps_working(string query, Storage storage, MongoQueryMode mode)
+    protected void Equality_over_any_storage_keeps_workingCore(string query, Storage storage, MongoQueryMode mode)
     {
         var (oracle, run) = Arrange(query, EqualityQueries[query], storage, mode);
 
@@ -482,11 +480,9 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
            from mode in Modes
            select new object[] { query, storage, mode };
 
-    [Theory]
-    [MemberData(nameof(TaggedCases))]
-    public void Order_sensitive_query_over_ObjectId_or_enum_representation(string query, EnumStorage storage, MongoQueryMode mode)
+    protected void Order_sensitive_query_over_ObjectId_or_enum_representationCore(string query, EnumStorage storage, MongoQueryMode mode)
     {
-        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Order_sensitive_query_over_ObjectId_or_enum_representation), query, storage, mode)
+        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Order_sensitive_query_over_ObjectId_or_enum_representationCore), query, storage, mode)
                    + Guid.NewGuid().ToString("N")[..8];
 
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
@@ -598,13 +594,9 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         public List<Line> Lines { get; set; } = [];
     }
 
-    [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Owned_element_comparison_over_string_represented_property_is_converted_or_declined(MongoQueryMode mode)
+    protected void Owned_element_comparison_over_string_represented_property_is_converted_or_declinedCore(MongoQueryMode mode)
     {
-        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Owned_element_comparison_over_string_represented_property_is_converted_or_declined), mode)
+        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Owned_element_comparison_over_string_represented_property_is_converted_or_declinedCore), mode)
                    + Guid.NewGuid().ToString("N")[..8];
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
             Prices.Select((price, i) => new BsonDocument
@@ -687,11 +679,9 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
            from mode in Modes
            select new object[] { query, mode };
 
-    [Theory]
-    [MemberData(nameof(NarrowCases))]
-    public void Narrowing_casting_converter(string query, MongoQueryMode mode)
+    protected void Narrowing_casting_converterCore(string query, MongoQueryMode mode)
     {
-        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Narrowing_casting_converter), query, mode)
+        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Narrowing_casting_converterCore), query, mode)
                    + Guid.NewGuid().ToString("N")[..8];
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
             new[] { 1, 2, 3 }.Select(v => new BsonDocument
@@ -767,13 +757,9 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         public int Count { get; set; }
     }
 
-    [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Identity_representation_is_not_refused(MongoQueryMode mode)
+    protected void Identity_representation_is_not_refusedCore(MongoQueryMode mode)
     {
-        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Identity_representation_is_not_refused), mode)
+        var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Identity_representation_is_not_refusedCore), mode)
                    + Guid.NewGuid().ToString("N")[..8];
         var baseDate = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
@@ -883,13 +869,11 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
            from mode in Modes
            select new object[] { query, refused, flag, mode };
 
-    [Theory]
-    [MemberData(nameof(RichCases))]
-    public void Stored_value_members_truthiness_and_primitive_collections(
+    protected void Stored_value_members_truthiness_and_primitive_collectionsCore(
         string query, bool refused, FlagStorage flag, MongoQueryMode mode)
     {
         var collection = database.MongoDatabase.GetCollection<Rich>(
-            TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Stored_value_members_truthiness_and_primitive_collections), query, flag, mode)
+            TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Stored_value_members_truthiness_and_primitive_collectionsCore), query, flag, mode)
             + Guid.NewGuid().ToString("N")[..8]);
 
         SingleEntityDbContext<Rich> Create(MongoQueryMode m)

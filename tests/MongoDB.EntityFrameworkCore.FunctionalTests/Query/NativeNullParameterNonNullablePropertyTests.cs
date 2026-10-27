@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// results, not C# semantics. The seed's row "c" is deliberately ill-formed for the non-nullable
 /// Rank/Gid/When/Flag properties (they are missing).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeNullParameterNonNullablePropertyTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

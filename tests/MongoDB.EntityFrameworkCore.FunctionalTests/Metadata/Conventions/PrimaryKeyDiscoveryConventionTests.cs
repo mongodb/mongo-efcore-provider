@@ -23,7 +23,6 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
-[XUnitCollection("ConventionsTests")]
 public class MongoPrimaryKeyDiscoveryConventionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

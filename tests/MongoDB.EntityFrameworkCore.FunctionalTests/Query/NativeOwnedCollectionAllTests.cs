@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// exact complement of the element predicate. Admitted shapes assert a NativeOnly routing proof; excluded
 /// shapes a clean decline.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(

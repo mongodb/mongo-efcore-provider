@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// with the exact order, and match under <see cref="MongoQueryMode.Native"/> and
 /// <see cref="MongoQueryMode.DriverLinq"/>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

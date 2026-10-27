@@ -47,7 +47,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// the projected receiver; on driver-LINQ it is pushed down, where the driver rejects it.
 /// </para>
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeMemberlessConstructionCaseMappingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

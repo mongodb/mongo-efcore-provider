@@ -40,7 +40,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// parameterized regex term renders via a placeholder sentinel resolved at Build time).
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

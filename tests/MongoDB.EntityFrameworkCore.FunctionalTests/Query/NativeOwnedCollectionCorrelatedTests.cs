@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Correlated owned-collection element predicates — ones referencing the enclosing entity, e.g.
 /// <c>b.Posts.Count(p =&gt; p.Title == b.Title) &gt; 0</c> — translated natively via a two-scope translator.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(

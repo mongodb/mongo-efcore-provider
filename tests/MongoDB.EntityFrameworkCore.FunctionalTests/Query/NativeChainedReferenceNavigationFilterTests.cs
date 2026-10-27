@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Each test asserts NativeOnly equals driver-LINQ AND equals hand-computed rows, over missing, null and dangling
 /// references at each hop.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeChainedReferenceNavigationFilterTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

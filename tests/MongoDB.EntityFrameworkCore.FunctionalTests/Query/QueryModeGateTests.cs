@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// End-to-end tests of the compile-time native-vs-driver gate across <c>MongoQueryMode</c>s. Asserts results
 /// and/or the logged MQL (sensitive-data logging on, so bound parameter values appear).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class QueryModeGateTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>Mql.Field</c>, <c>Tuple.Create</c>) and the cases that must still decline: two members that share a last name at
 /// different levels, and an <c>Mql.Field</c> that names no mapped element or reads a converted property.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeProjectionShapeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

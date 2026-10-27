@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// (<c>MongoDictionaryEntryExpression</c>). Seeded ragged: key present, key absent, explicit null value, empty
 /// dictionary, and no dictionary element at all.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeDictionaryTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

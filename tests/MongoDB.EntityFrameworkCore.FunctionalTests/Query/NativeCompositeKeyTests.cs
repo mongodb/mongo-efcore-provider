@@ -23,7 +23,6 @@ using Xunit;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection("QueryTests")]
 public class NativeCompositeKeyTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

@@ -21,7 +21,6 @@ using MongoDB.EntityFrameworkCore.ValueGeneration;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.ValueGeneration;
 
-[XUnitCollection("StorageTests")]
 public class ValueGenerationTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

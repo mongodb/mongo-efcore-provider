@@ -37,7 +37,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// non-nullable value). Rows: missing (no elements), null (all null), sNull (S null), tNull (T null) and value
 /// (S = "Abc", T = "b"); each row is queried on its own, and <see cref="Throws"/> marks a row that must throw.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private const string Throws = "<throws>";
