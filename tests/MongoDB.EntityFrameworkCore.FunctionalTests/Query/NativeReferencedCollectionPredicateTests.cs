@@ -35,7 +35,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="MongoQueryMode.DriverLinq"/> leg may answer correctly or refuse loudly, never answer wrongly.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeReferencedCollectionPredicateTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Cust

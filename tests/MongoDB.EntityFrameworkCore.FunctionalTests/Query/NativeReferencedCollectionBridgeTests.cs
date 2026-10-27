@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="NativeReferencedCollectionPredicateTests"/>, but every mode, explicit <see cref="MongoQueryMode.DriverLinq"/> included,
 /// must answer exactly, not refuse.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Cust

@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// an empty array is not. The oracle is hand-computed over stored state, never over materialized entities, which
 /// normalize a missing or null array to empty.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionNullCheckTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Parent

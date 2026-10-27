@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// over the subtree for an intermediate type, across real and shadow discriminator mappings.
 /// <see cref="MongoQueryMode.NativeOnly"/> is the "went native" signal, since the MQL matches driver-LINQ's.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public enum MappingMode

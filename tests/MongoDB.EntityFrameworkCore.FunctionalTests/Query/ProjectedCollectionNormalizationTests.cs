@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// materialization does, so <c>Select(b =&gt; b.Posts)</c> never yields null and <c>Select(b =&gt; b.Posts.Count)</c>
 /// never throws from <c>Enumerable.Count(null)</c>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

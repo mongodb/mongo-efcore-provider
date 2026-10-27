@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>GroupBy(...).Select(...)</c> result (<c>.OrderBy(t =&gt; t.Key).Skip(1).Take(2)</c>), which resolve against the Select's
 /// output aliases. The seed has a MISSING key (groups with the null key) and ties on the aggregate.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeGroupKeyAccumulatorTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

@@ -27,7 +27,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// These tests assert ROW COUNTS, not MQL — the wrong MQL is indistinguishable from a legitimately
 /// unfiltered query.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class Ef369MultiJoinComposedTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

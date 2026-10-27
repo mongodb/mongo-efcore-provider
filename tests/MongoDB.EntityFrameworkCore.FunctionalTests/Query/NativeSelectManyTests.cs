@@ -47,7 +47,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// over the by-index projection; cardinality-only <c>Count</c> needs no shaper and falls back gracefully.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private class Owner

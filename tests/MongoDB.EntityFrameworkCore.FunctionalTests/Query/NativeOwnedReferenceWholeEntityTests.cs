@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// A whole-entity query over an entity with an owned single-reference navigation (auto-included by EF
 /// convention) must go native: the gate admits the synthetic <c>Select(x => IncludeExpression(x, ownedNav))</c>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

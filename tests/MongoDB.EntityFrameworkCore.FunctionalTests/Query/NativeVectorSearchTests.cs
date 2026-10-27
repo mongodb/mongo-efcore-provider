@@ -42,7 +42,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// proven by <see cref="MongoQueryMode.NativeOnly"/> succeeding (or throwing for a decline), never by MQL shape,
 /// since both paths emit a structurally identical stage.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     : IClassFixture<AtlasTemporaryDatabaseFixture>
 {

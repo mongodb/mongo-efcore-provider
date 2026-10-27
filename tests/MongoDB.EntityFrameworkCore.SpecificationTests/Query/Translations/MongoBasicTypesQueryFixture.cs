@@ -29,7 +29,11 @@ namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query.Translations;
 
 public class MongoBasicTypesQueryFixture : BasicTypesQueryFixtureBase
 {
-    protected override string StoreName { get; } = TestDatabaseNamer.GetUniqueDatabaseName("BasicTypes");
+    // Shared by every fixture in the process and seeded once, as for Northwind; the translation tests only read it.
+    private static readonly string UniqueStoreName = TestDatabaseNamer.GetUniqueDatabaseName("BasicTypes");
+
+    protected override string StoreName
+        => UniqueStoreName;
 
     private ITestStoreFactory? _testStoreFactory;
 

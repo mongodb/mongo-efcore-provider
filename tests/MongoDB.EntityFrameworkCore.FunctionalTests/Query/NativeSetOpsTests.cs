@@ -36,7 +36,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="MongoQueryMode.NativeOnly"/>). <c>Intersect</c>/<c>Except</c> have no driver-LINQ fallback, so
 /// out-of-scope shapes hard-fail in every mode and results are checked against in-memory LINQ.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     // Public: IntersectComposedOps's MemberData exposes Func<IQueryable<Item>, object> on a public test method,

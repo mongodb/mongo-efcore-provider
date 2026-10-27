@@ -29,7 +29,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>CompareTo</c>/<c>T.Compare</c> over ordered non-string primitives folds to a relational comparison, and
 /// <c>AddTicks</c> with a whole-millisecond constant renders <c>$dateAdd</c> (<c>MongoExpressionTranslator</c>).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeScalarCompareAndDateAddTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

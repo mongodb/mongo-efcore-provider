@@ -20,7 +20,6 @@ using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
-[XUnitCollection("StorageTests")]
 public class SearchIndexNegativeTests(AtlasTemporaryDatabaseFixture database)
     : IClassFixture<AtlasTemporaryDatabaseFixture>
 {

@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// literal). Explicit <c>DriverLinq</c> still throws for a non-constant pattern (the driver has no translation), which
 /// is pinned here so a driver change is noticed.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

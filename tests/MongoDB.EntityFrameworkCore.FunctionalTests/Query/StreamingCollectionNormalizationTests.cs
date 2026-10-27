@@ -37,7 +37,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// has no <c>= []</c> initializer (which would mask the fix) and <see cref="FlatPost"/> has no navigations.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

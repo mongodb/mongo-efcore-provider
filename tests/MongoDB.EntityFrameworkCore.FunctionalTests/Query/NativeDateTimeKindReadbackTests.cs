@@ -42,7 +42,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// local and UTC representations differ in any time zone with a non-zero offset on those dates; in a UTC host zone
 /// the tick comparison can't tell Local from Utc, so every test also asserts the <c>Kind</c> explicitly.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Owner

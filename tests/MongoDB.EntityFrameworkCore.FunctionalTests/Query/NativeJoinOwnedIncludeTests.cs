@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>new { owner, tag }</c>): the owned data rides in the staged whole document, so the owner's Include wrapper must not
 /// decline the projection. Rows with a missing owned reference and missing/empty owned collections are included.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeJoinOwnedIncludeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Car

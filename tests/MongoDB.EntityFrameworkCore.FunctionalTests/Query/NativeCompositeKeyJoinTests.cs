@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// name — which names no field at all, silently matching nothing. Differential against an in-memory LINQ oracle,
 /// all three modes, inner and left-outer.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeCompositeKeyJoinTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

@@ -28,7 +28,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// A null <c>string.Join</c> separator must behave like <c>""</c> (as in .NET); un-coalesced, it would null the
 /// whole <c>$concat</c> on every row. The separator gets the same <c>$ifNull</c> the elements use.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringJoinNullSeparatorTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

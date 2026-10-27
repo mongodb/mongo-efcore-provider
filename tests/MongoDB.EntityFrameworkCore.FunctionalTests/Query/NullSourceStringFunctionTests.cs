@@ -23,7 +23,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// missing operand, so a null (or absent) string column run through ToUpper/ToLower/Substring came back as ""
 /// instead of null wherever the value surfaces as data (projections, grouping keys, aggregates).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NullSourceStringFunctionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

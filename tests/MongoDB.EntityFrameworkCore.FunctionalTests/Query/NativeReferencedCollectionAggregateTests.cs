@@ -38,7 +38,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// bridge does not implement these leaves yet.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Cust

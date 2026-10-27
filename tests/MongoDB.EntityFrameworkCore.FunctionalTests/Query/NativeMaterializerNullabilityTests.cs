@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>default(T)</c>. Queries use <c>.ToList()</c> because scalar-cardinality operators such as <c>.Single()</c>
 /// are never streaming-eligible and would silently take the DOM path.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

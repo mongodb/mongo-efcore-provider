@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// driver-LINQ oracle is wrong or absent here: with an <c>Include</c> it silently drops the inner filter, without one it
 /// throws. The explicit <see cref="MongoQueryMode.DriverLinq"/> leg therefore asserts a LOUD failure, never rows.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Region

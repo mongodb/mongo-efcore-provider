@@ -28,7 +28,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// so it is compared as a value rather than read as a field path (reachable with user input: a search for
 /// <c>"$Text"</c> would otherwise compare against the <c>Text</c> field itself).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringDollarLiteralTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

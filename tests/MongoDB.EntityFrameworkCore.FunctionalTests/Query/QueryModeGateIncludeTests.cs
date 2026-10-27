@@ -42,7 +42,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// A recognized single-level reference Include goes native (root-level <c>_lookup_&lt;NavigationName&gt;</c> alias);
 /// a declined shape falls back to the driver-LINQ LeftJoin path (<c>_outer</c> / <c>$$ROOT</c> / <c>_inner</c>).
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

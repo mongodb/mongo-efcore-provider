@@ -28,7 +28,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// isn't read as a field path, and a <see langword="null"/> replacement is treated as "" (.NET semantics) via
 /// <c>$ifNull</c> rather than nulling out the whole result (server semantics).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringReplaceTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

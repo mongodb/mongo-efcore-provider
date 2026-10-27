@@ -45,7 +45,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// over it yields one row rather than one per document.
 /// </para>
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

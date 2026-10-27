@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// proven native under <see cref="MongoQueryMode.NativeOnly"/> and checked for MQL shape and result parity with
 /// driver-LINQ.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

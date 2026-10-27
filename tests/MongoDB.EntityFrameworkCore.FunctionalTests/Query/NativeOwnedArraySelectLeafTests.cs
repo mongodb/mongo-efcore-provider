@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// the whole owned array and re-applies the <c>Select</c> over the materialized owned entities, so each element member
 /// is read through its owned property's serializer (<c>NativeProjectionBinder.TryMatchOwnedArraySelectLeaf</c>).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedArraySelectLeafTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Kid

@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Scalar aggregates (Count/Sum/Any/Max) honour the cancellation token on every query path: they run lazily at the first
 /// MoveNext, so a pre-cancelled token throws instead of completing.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeAggregateCancellationTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private class ValueEntity

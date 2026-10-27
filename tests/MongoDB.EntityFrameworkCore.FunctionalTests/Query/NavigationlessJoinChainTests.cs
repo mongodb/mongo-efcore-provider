@@ -29,7 +29,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// translator path. The <c>_go_native_under_NativeOnly</c> facts pin native translation under
 /// <see cref="MongoQueryMode.NativeOnly"/>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

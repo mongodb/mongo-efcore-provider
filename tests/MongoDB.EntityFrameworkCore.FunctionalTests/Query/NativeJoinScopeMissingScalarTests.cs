@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>BooleanSerializer</c> reads as false. Each row set is checked against canonical main (upstream/main dec7e26f,
 /// EF10 probe) in all three modes.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeJoinScopeMissingScalarTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

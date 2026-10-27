@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>{ $expr: { $not: [...] } }</c> when <see cref="MongoAggregationExpressionRenderer.CanRender"/> admits the
 /// operand; see <see cref="MongoQueryLanguageRenderer.RenderUnary"/>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Entity

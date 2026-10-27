@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// — EF's <c>Return_type_of_singular_operator_is_preserved</c>. Nav-expansion wraps the projection in a reference
 /// upcast, which the native projection binder looks through.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeUpcastProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

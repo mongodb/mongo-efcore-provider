@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// SelectMany was silently dropped. The guard makes this a hard failure in every mode; fallback isn't possible
 /// because the by-index projection shaper can't be re-read (see <c>NativeSelectManyTests</c>).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private class Owner

@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// instead of wrapping. A default (string-stored) <c>TimeSpan</c> has no server ordering that matches the CLR one, so
 /// <c>Min</c>/<c>Max</c> over it declines.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeAggregateReadBackTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public enum Level { Low = 1, Mid = 2, High = 3 }

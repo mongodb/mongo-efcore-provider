@@ -28,7 +28,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// A <c>char</c> argument to StartsWith/EndsWith/Contains is a one-character literal, escaped per execution when
 /// parameterized, so a regex metacharacter like <c>'.'</c> matches only itself.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringCharArgumentTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Exercises <see cref="NativeModeAssert.NativeAndExpected{T}"/> and <see cref="NativeModeAssert.TwiceWithDifferentValues{T}"/>
 /// over a trivial model.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeModeAssertTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Item

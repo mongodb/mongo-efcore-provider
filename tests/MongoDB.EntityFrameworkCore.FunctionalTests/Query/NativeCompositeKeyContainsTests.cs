@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>$or</c>/<c>$nor</c> (<c>MongoCompositeKeyInExpression</c>), built per execution so one compiled plan serves lists
 /// of any length. Order-agnostic: it never relies on the stored key's field order.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeCompositeKeyContainsTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public enum Tier { Low = 1, High = 2 }

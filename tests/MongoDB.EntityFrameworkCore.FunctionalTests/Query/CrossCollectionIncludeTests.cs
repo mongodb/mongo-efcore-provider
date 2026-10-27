@@ -28,7 +28,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// IMPORTANT: C# property names intentionally differ from BSON element names
 /// to verify that EF element name mappings are respected through the $lookup pipeline.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

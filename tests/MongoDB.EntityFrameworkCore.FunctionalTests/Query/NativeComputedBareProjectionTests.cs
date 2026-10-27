@@ -46,7 +46,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// must keep restoring the previous path.
 /// </para>
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

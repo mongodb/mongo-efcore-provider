@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>o =&gt; o.Customer != null ? o.Customer.Name : "&lt;none&gt;"</c> — against an in-memory LINQ oracle,
 /// including a dangling FK where the null check must fire.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

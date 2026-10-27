@@ -29,7 +29,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// MongoDB's lack of referential integrity); without one, inner and left-outer joins return identical rows.
 /// Assertions are on row counts/identities, never MQL.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

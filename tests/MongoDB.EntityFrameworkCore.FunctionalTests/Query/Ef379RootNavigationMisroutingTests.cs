@@ -45,7 +45,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// the root's own leaf FK at <c>"WRONG"</c> and the intermediate's at the correct leaf.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

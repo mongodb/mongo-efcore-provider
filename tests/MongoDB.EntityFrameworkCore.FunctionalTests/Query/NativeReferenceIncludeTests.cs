@@ -37,7 +37,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// agree on the <c>_lookup_&lt;Nav&gt;</c> field. The <c>$unwind</c> is inner (drops the row) for a required
 /// navigation (<c>Buyer</c>) and left-outer (nav null) for an optional one (<c>Carrier</c>).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

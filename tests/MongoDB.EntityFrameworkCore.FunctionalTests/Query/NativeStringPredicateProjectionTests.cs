@@ -28,7 +28,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Bare boolean/integer projections of string predicates (<c>Select(x =&gt; x.Text.Contains("a"))</c>) run
 /// natively and agree with LINQ-to-objects, including for a document whose field is missing.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringPredicateProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row
