@@ -29,7 +29,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>$ifNull</c>, whose constant/parameter branches must be <c>$literal</c>-wrapped; otherwise <c>"$A"</c> is read
 /// as a path to field <c>A</c> and the join silently uses that field's value.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringJoinDollarSeparatorTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

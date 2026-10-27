@@ -25,7 +25,6 @@ using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
-[XUnitCollection("StorageTests")]
 public class MongoDatabaseCreatorTests
 {
     [AtlasTheory]

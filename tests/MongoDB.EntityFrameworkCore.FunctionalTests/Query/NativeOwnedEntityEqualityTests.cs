@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// order and extra stored elements are irrelevant. The <c>extra</c> and <c>reordered</c> rows discriminate that from a
 /// whole-sub-document match.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedEntityEqualityTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Addr

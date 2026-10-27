@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Guid/number/enum to-string converters) compares the stored string directly
 /// (<c>MongoExpressionTranslator.TryTranslateStoredToStringComparison</c>).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStoredToStringComparisonTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public enum Color { Red = 1, Green = 2 }

@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// the synthesized ordinal keys of the nested owned entities, and tracking modes. Native and DriverLinq must agree, and the
 /// native results are also checked against hand-computed values over raw documents.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

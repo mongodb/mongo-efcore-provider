@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>$cond</c> branches to produce the same BSON type (a number never equals a string). See
 /// <c>MongoStringFirstOrLastExpression</c>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

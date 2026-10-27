@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// source (<c>Where(...).Contains(order)</c> / <c>.Contains(null)</c>) — bound natively as
 /// <c>Any(x =&gt; x == item)</c>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeContainsTerminalTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

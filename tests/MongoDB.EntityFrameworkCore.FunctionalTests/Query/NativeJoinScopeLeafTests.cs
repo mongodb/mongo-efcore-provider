@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// chain of the same self-referencing navigation (<c>e.Manager.Manager.Name</c>; an unmatched level reads
 /// <c>default(T)</c>, an explicit null a throw, as driver-LINQ's push-down did).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeJoinScopeLeafTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Company

@@ -28,7 +28,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// write/lifecycle (read back via the raw driver, so version-agnostic), and serialization and change tracking
 /// through the <c>$lookup</c>-based Include. C# names intentionally differ from BSON element names.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

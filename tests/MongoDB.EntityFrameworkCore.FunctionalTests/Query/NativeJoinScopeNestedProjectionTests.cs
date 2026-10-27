@@ -39,7 +39,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// objects: <c>o.Customer!.Name</c> throws <see cref="NullReferenceException"/> in LINQ-to-Objects, while EF's
 /// translation propagates null, which is the behavior under test.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

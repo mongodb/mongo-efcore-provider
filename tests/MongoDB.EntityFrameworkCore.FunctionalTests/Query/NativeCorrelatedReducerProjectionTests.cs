@@ -39,7 +39,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// is only sound for a non-nullable member (a matched row with a null member looks like no row), so
 /// <c>TryGetCorrelatedReducerLeaf</c> declines <c>First()</c> over a nullable member and those tests reduce to <c>Rank</c>.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

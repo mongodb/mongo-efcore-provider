@@ -38,7 +38,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// does not support must fail, never answer with the wrong rows); the controls must answer correctly.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class ReferencedCollectionCorrelationTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Cust

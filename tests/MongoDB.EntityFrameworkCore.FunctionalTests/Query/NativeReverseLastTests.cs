@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// flips it; otherwise it uses <c>$group</c>/<c>$last</c>. <see cref="MongoQueryMode.NativeOnly"/> is the
 /// "went native" signal, since the MQL can't tell the paths apart.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private class ValueEntity

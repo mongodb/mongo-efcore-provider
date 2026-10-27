@@ -18,7 +18,6 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
-[XUnitCollection("UpdateTests")]
 public class ContextTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>char.IsWhiteSpace</c>: MongoDB's default whitespace set also includes U+0000 (NUL), so omitting it trims
 /// differently from .NET and the driver-LINQ fallback.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringTrimTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

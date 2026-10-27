@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Entity-list <c>Contains</c> where the item is a reference navigation (<c>parents.Contains(c.Parent)</c>, as in
 /// EF's <c>Where_navigation_contains</c>): translated without <c>$lookup</c> as an <c>$in</c> on the root's FK.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeReferenceNavigationEntityListContainsTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private sealed record Seed(Parent[] Parents, Child[] Children);

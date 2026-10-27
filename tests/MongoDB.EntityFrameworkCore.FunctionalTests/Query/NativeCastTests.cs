@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// silently stripped (that sorts/filters by the raw stored value); it either renders as an explicit
 /// <c>MongoConvertExpression</c> (<c>$toX</c>) or declines.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

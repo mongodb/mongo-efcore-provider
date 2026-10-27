@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title }, b.Rank })</c> — mixed with a
 /// sibling leaf, across NativeOnly, Native and DriverLinq. See also <c>NativeOwnedReferenceWholeEntityTests</c>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

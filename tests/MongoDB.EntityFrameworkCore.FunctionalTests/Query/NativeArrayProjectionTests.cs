@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>Select(b =&gt; new { b.Title, b.Posts })</c> — goes native as a server-side <c>$project</c> including the array.
 /// Routing is proven by <see cref="MongoQueryMode.NativeOnly"/>, never by MQL shape.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     // No `= []` on Posts: a field initializer would mask a null-vs-empty read-back bug.

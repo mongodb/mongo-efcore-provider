@@ -38,7 +38,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// cannot answer must fail loudly, never come back empty.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Cust

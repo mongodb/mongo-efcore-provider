@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// projection positions. Routing is proven via <see cref="MongoQueryMode.NativeOnly"/>, not MQL (both paths emit
 /// identical pipelines here).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Item

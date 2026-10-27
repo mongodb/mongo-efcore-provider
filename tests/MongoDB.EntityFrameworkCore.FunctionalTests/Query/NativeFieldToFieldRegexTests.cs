@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// driver-LINQ for the un-negated form; negation renders as <c>$expr:{$not:[...]}</c> rather than the fallback's
 /// <c>$nor:[{$expr:...}]</c> (logically identical).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeFieldToFieldRegexTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row
@@ -162,7 +161,6 @@ public class NativeFieldToFieldRegexTests(TemporaryDatabaseFixture database) : I
 /// the query-dialect <c>{ path: /re/ }</c> form would match nothing. Also covers the unsigned/sbyte integral
 /// <c>ToString()</c> receivers.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeComputedReceiverRegexTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

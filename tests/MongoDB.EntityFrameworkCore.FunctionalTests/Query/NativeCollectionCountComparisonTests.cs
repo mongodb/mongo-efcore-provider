@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// $lookup size is compared server-side. Customers with no, one and several orders (and a dangling FK on an order) pin
 /// every operator.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeCollectionCountComparisonTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Customer

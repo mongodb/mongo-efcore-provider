@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// projection read: a terminal <c>Min</c>/<c>Max</c>/<c>Average</c>, and a projected <c>Distinct</c> over a bare stored
 /// field. Each row set is checked against what canonical main (driver LINQ, upstream/main dec7e26f, EF10 probe) answered.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

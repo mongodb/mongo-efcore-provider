@@ -35,7 +35,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// key matches nothing; an explicit subquery has no guard, so null equals null. <c>$lookup</c> matches null/missing to
 /// null/missing, which is only the second rule. The DriverLinq leg may answer correctly or refuse, never answer wrongly.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Cust

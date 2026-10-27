@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// (<c>Select(e =&gt; e.Value).Sum()</c>) — EF's Northwind <c>*_with_no_arg</c> family. The aggregate reduces the
 /// Select's own <c>$project</c> output alias.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeSelectorlessAggregateTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="ILazyLoader"/> service property, because it is then a no-op that only allocates; these tests pin that an entity that
 /// does have one is still told, for both a reference and a collection Include, and that an entity without one is unaffected.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeNoTrackingLazyLoaderTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

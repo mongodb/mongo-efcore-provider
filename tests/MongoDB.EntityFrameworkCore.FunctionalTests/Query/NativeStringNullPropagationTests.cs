@@ -37,7 +37,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Rows: <c>null</c> (S stored as BSON null), <c>missing</c> (no S element), <c>value</c> (S = "Abc"). Results are
 /// listed in Label order: missing, null, value.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

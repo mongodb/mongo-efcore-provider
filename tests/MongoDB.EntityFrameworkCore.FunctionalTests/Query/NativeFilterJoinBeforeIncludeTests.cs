@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// left-outer (row-preserving); a REQUIRED navigation's inner join can drop rows the page already counted, so that shape
 /// must stay declined.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeFilterJoinBeforeIncludeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Order

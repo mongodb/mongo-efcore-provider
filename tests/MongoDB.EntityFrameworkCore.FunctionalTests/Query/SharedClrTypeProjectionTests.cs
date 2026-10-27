@@ -27,7 +27,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>ParameterExpression</c> branch in <c>TryResolveFieldAccessSource</c>, which must resolve the
 /// owned entity type that actually owns the projected element — not an arbitrary same-CLR-type one.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class SharedClrTypeProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

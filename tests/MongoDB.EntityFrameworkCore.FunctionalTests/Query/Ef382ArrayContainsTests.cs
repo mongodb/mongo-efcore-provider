@@ -35,7 +35,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>BsonValue.Create</c>, which throws for <see cref="Guid"/>. A whole-collection value converter has no
 /// per-element serializer, so the translator declines.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// beyond a plain List/HashSet/array: set-interface-typed parameters, an empty inline list, a tuple needle, and a
 /// closed <c>Enumerable.Where</c> filter applied to the local collection.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeLocalCollectionContainsTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

@@ -29,7 +29,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// Predicates and sort keys over owned single-reference (OwnsOne) sub-properties, at any nesting depth, go native.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

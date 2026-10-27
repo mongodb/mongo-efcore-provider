@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// driver-LINQ agree with each other and not with in-memory LINQ for such strings. BMP-only strings (including
 /// non-ASCII ones) agree everywhere.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringLengthTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

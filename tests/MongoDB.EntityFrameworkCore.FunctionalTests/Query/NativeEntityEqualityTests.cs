@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>MongoElementRefExpression</c>-vs-null mechanism; and an entity compared to another entity or a list of
 /// entities, which uses key-based equality (<c>MongoExpressionTranslator.EntityEquality.cs</c>).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContextWithLogging<T>(

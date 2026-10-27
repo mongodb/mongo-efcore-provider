@@ -29,7 +29,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>$unwind</c>'s <c>preserveNullAndEmptyArrays</c> from <c>ForeignKey.IsRequired</c> and dropped them in every mode.
 /// Rows are raw <see cref="BsonDocument"/> seeds so a missing dependent is real data.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class PrincipalSideReferenceIncludeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

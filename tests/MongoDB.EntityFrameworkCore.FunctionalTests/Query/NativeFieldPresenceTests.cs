@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// null-or-absent. Over a path that may hold an array, <c>{ f: null }</c> would also match an array that merely CONTAINS
 /// null, so the null forms render through <c>$expr</c> there; row <c>r4</c> (<c>Tags: [null]</c>) discriminates that.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeFieldPresenceTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

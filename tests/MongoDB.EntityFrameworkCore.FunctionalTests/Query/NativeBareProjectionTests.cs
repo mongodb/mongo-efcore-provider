@@ -37,7 +37,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// pipeline (whose bare alias is <c>_v</c>). Legs assert values, because that failure is silent (null scalars,
 /// empty arrays) for everything except non-nullable value types.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     // No `= []` initializers on collection navigations, so null-vs-empty is observable. Mixes nullable and

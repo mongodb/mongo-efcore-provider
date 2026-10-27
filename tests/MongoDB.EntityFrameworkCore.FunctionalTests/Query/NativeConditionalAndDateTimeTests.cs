@@ -26,7 +26,6 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection("QueryTests")]
 public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

@@ -26,7 +26,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// none: it changes only the declared CLR type, so <c>NativeProjectionBinder.TryTranslateLeaf</c> binds it as a
 /// bare field leaf and the DOM read materializes the target enum.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeEnumCastProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public enum SourceStatus

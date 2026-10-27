@@ -36,7 +36,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// with driver-LINQ (<see cref="AssertConcatMatchesDriverLinqAcceptedDivergence"/>). See
 /// <c>MongoExpressionTranslator.TranslateConcatOperand</c>.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeStringConcatTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

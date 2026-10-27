@@ -28,7 +28,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// ("_lookup_Buyer.Address.RegionId", not "RegionId"); otherwise it silently matches nothing and leaves
 /// <c>Region</c> null.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class ThenIncludeThroughOwnedNavigationTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

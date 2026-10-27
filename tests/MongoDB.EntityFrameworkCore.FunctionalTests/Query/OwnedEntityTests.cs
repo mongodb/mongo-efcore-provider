@@ -22,7 +22,6 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection("QueryTests")]
 public class OwnedEntityTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

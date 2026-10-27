@@ -38,7 +38,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Every case asserts order, never just a row count: a dropped <c>$sort</c> still returns the right rows, in
 /// insertion order.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class SortItem

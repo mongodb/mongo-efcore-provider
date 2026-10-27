@@ -29,7 +29,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// A bare projection of a stored required scalar whose element is MISSING reads <c>default(T)</c> (as driver-LINQ's
 /// <c>$project</c> push-down did); an explicit BSON null still throws, and whole-entity materialization stays strict.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

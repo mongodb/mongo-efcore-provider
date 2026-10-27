@@ -19,7 +19,6 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
-[XUnitCollection("MappingTests")]
 public class OwnedEntityElementNameTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

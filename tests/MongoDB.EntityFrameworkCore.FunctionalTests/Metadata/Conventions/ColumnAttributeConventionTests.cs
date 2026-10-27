@@ -22,7 +22,6 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
-[XUnitCollection("ConventionsTests")]
 public class ColumnAttributeConventionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

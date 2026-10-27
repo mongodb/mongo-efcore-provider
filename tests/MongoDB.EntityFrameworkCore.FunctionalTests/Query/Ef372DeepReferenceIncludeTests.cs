@@ -39,7 +39,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// shares a name with an intermediate FK.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

@@ -21,7 +21,6 @@ using MongoDB.Driver.Linq;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
-[XUnitCollection("UpdateTests")]
 public class CompositeKeyCrudTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

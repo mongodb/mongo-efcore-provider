@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// under <c>NativeOnly</c>. Also covers a whole-root-entity leaf mixed with computed/scalar/count siblings
 /// (<c>NativeRoute.Projection</c>, distinct from bare <c>Select(c => c)</c>'s <c>NativeRoute.WholeEntity</c>).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

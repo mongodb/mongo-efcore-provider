@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// reference include in one selector, and the owned siblings must be transparent to the recognizer. Each shape runs in
 /// <c>NativeOnly</c> (goes native), <c>Native</c> and <c>DriverLinq</c> (oracle), over rows and full nested owned data.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

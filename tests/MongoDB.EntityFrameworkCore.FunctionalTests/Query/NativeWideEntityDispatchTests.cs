@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// some are absent, unknown ones are skipped, and owned references/collections are dispatched by the same names.
 /// Pins behavior that must hold whatever the dispatch strategy (linear chain or switch).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeWideEntityDispatchTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
