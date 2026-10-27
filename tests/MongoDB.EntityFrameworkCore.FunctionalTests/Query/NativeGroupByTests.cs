@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="NativeTranslationNotSupportedException"/> under <see cref="MongoQueryMode.NativeOnly"/>, which is
 /// the "went native" signal (the MQL is otherwise indistinguishable from the fallback).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private enum OrderStatus { New, Shipped, Cancelled }

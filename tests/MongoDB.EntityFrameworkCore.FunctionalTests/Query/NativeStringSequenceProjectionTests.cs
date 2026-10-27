@@ -39,7 +39,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// (<c>MongoSelectDefinition.HasStringSequenceProjectionLeaf</c>), only the <see cref="MongoQueryMode.DriverLinq"/>
 /// and mixed-shaper legs regress.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

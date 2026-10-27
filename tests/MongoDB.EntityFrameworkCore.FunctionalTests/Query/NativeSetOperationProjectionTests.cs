@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// operand is re-aliased to the first's alias, since every combined row is read through the first operand's shaper.
 /// Anonymous/DTO operands stay strict (<c>ProjectionShapesMatch</c>).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Entity

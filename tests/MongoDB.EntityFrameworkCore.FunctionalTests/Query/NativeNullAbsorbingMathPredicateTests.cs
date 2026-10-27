@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="NativeTranslationNotSupportedException"/>; Native falls back and so matches main). Null-propagating
 /// functions, non-nullable operands, and null-guarded (<c>??</c>) operands stay native.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeNullAbsorbingMathPredicateTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

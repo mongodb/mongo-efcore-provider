@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// cancellation mid-stream (the enumerator checks the token per <c>MoveNext</c>). Both need a replica set, which the
 /// <c>mongodb/mongodb-atlas-local</c> container provides.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

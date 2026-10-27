@@ -42,7 +42,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// counterpart, which the driver rejection already closes.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

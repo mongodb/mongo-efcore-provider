@@ -37,7 +37,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>NativeOnly</c> gets the same <see cref="InvalidOperationException"/>, not
 /// <see cref="NativeTranslationNotSupportedException"/>. <c>Concat</c> already failed cleanly and is the control.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

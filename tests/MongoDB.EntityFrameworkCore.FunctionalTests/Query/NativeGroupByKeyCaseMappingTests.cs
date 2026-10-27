@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// (<c>GroupBy(x =&gt; x.S).Select(g =&gt; new { K = g.Key.ToUpper(), C = g.Count() })</c>) is applied to the grouped
 /// value client-side, never by the server's <c>$toUpper</c>/<c>$toLower</c> (ASCII-only, null as <c>""</c>).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeGroupByKeyCaseMappingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

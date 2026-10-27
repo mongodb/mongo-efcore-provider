@@ -38,7 +38,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>Score</c> where a server-side <c>$match</c>/<c>$sort</c> doesn't (see <c>Query/AGENTS.md</c>). Every nullable
 /// property has three states (value, BSON null, missing); <c>!HasValue</c> must select both absent ones.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Item

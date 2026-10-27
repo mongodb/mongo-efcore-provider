@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// hierarchy: one shared discriminator test (<see cref="MongoDiscriminatorPredicate"/>), where an abstract type has no
 /// discriminator value and contributes nothing.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeTphTypeTestTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     // Base <- Party (abstract) <- Customer <- SubCustomer ; Party <- Supplier ; Base <- Order <- OrderWithLines

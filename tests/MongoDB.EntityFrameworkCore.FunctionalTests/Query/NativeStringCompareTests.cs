@@ -28,7 +28,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// total order puts null/missing before every string, matching .NET's null-first <c>string.Compare</c> — with no
 /// <c>$ifNull</c> wrapping needed (see <c>MongoExpressionTranslator.StringCompare.cs</c>).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringCompareTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

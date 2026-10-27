@@ -39,7 +39,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="MongoQueryMode.Native"/>, <see cref="MongoQueryMode.NativeOnly"/> and <see cref="MongoQueryMode.DriverLinq"/>
 /// against an oracle computed in memory over the materialized entities.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Item

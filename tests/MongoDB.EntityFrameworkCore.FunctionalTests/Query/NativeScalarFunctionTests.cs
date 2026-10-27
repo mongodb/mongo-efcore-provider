@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// null-propagating for <c>int?</c>), <c>CurrentCulture[IgnoreCase]</c> string matching (ordinal, as driver-LINQ does:
 /// D-CULTURE) and <c>DateTime.ToString</c> (client-evaluated over the projected receiver: D-TOSTRING).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeScalarFunctionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

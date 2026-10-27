@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// the derived type's discriminator values
 /// (<c>LookupPipelineKind.DiscriminatorNarrowed</c>), so the sibling type that shares the foreign key never leaks in.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeTphIncludeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Owner

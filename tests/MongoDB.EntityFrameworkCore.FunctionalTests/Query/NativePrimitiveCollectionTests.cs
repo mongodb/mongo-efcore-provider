@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>List&lt;int&gt;</c>) reuse the owned-collection size forms (<c>"path.0": {$exists: true}</c>, null-safe
 /// <c>$size</c>). Seeded ragged: empty, missing, explicit null, one and three elements must all agree with LINQ.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativePrimitiveCollectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class TagRow

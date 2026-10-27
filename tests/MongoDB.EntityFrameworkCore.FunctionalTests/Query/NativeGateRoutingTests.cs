@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="MongoQueryMode.Native"/> and <see cref="MongoQueryMode.DriverLinq"/>) and a routing test under
 /// <see cref="MongoQueryMode.NativeOnly"/>, the only reliable routing signal (MQL shape can't prove it).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

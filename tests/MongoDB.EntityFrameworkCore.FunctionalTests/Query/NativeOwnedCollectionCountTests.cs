@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// A count over an owned collection navigation, compared against a value, translates natively: an array-index
 /// existence test for an integer-constant threshold, otherwise $expr over a null-safe $size.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(

@@ -39,7 +39,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// See <c>MongoExpressionTranslatorTests.Field_to_field_term_with_OrdinalIgnoreCase_reports_not_translatable</c>.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row
