@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// through. The element is now rebound to the property at the same position on the other side. Expected values
 /// are main's (driver-LINQ) results.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeTupleEqualityTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public enum Level { Low = 1, High = 10 }

@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>_lookup_Buyer.Address.RegionId</c>, which the confirm step verifies. Every level that can be absent (no buyer, no
 /// address, no region key, a dangling region key) must still return its row in every mode.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedThenIncludeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Order

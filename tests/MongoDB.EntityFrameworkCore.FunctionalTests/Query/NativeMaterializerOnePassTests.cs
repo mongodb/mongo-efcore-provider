@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// mixed-type rows, IDisposable entities, and the required-but-missing exception.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

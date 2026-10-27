@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>$limit</c> would page the row-multiplied result of the second join. Such a shape must decline (NativeOnly
 /// throws) and Native must return the driver-LINQ rows.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeChainedJoinPagingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

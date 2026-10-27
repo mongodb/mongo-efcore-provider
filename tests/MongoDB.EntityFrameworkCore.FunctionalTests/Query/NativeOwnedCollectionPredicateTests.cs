@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Admitted shapes assert a NativeOnly routing proof plus NativeOnly == DriverLinq parity; excluded shapes
 /// assert a clean decline.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

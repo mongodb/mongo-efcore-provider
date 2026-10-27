@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// reduction runs over the result (empty ⇒ throw/null, more-than-one ⇒ throw for Single*).
 /// <see cref="MongoQueryMode.NativeOnly"/> is the "went native" signal, since the MQL matches the fallback's.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private class ValueEntity

@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>NativeRoute.WholeEntity</c> with no <c>$project</c> (see <see cref="NativeProjectionBinder"/>). Sibling of
 /// <see cref="NativeCtorOnlyProjectionTests"/>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(

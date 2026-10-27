@@ -18,7 +18,6 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
-[XUnitCollection("MappingTests")]
 public class PropertyBuilderExtensionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

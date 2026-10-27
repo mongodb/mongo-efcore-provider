@@ -26,7 +26,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// EF-255: a non-deterministic call (Random, Guid.NewGuid) inside a query must never be evaluated once and baked into
 /// the pipeline as a constant, which silently gives every row the same value.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

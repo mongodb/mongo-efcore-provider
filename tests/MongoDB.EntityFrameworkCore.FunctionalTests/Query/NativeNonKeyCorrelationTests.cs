@@ -36,7 +36,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>Code</c> deliberately differs from <c>Id</c> (and <c>Order.Ref</c> from <c>Order.Id</c>), so a key-bound
 /// result is distinguishable from the correct one. Seeds are raw <see cref="BsonDocument"/> inserts.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

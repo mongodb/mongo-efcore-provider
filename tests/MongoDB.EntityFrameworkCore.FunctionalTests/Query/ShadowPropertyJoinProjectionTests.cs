@@ -25,7 +25,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// EF-352: reading a shadow property via <c>EF.Property&lt;T&gt;(...)</c> inside a client-side cross-collection join
 /// projection must materialise the stored value, not null. Not version-guarded: the defect reproduced on EF8/EF9/EF10.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class ShadowPropertyJoinProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

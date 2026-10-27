@@ -31,7 +31,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// An unfiltered reference-collection-navigation Count/LongCount compared inside a Where predicate translates
 /// natively via $lookup + $size, reusing the machinery of NativeProjectionBinder.TryTranslateProjectedCollectionCount.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

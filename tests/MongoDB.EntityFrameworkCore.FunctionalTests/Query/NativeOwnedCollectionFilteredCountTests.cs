@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// (<c>$expr</c> over a null-safe <c>$size</c> of a <c>$filter</c>) and the projection spelling (a <c>$project</c>
 /// leaf of the same shape).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(

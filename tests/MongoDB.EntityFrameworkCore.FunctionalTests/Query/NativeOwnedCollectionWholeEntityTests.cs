@@ -32,7 +32,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// IsOwnedEmbeddedIncludeSelector admits the synthetic <c>Select(x => IncludeExpression(x, ownedCollection))</c>.
 /// Each case asserts Native == DriverLinq parity plus a NativeOnly routing proof.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

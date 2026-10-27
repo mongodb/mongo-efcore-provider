@@ -27,7 +27,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// re-materialises every property, so any array projection flows through <c>VisitNewArray</c>.
 /// The ticket was blocked on CSHARP-5516 (polymorphic array creation in LINQ), now closed.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class ReloadTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

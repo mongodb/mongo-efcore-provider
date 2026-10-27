@@ -19,7 +19,6 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Compatibility;
 
-[XUnitCollection("CompatibilityTests")]
 public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

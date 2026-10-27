@@ -39,7 +39,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>Select(b => b.Posts.Count(p => p.Rank > 0) * 2)</c>) is rebuilt via <c>IsReachableThroughArithmeticSpine</c>
 /// rather than requiring the Count to be the selector body.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(

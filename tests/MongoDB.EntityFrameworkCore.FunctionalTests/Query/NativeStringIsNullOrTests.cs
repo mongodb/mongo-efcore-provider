@@ -41,7 +41,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// missing field as <see langword="null"/> the way the query dialect's <c>{ field: null }</c> match does, and
 /// would silently misclassify a missing field.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeStringIsNullOrTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Row

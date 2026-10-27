@@ -43,7 +43,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// match), and a missing element materializes as null. The seed mixes stored nulls and missing elements on both
 /// sides; the oracle is LINQ-to-objects over the same rows as materialized. Non-simple keys keep declining.
 /// </remarks>
-[XUnitCollection("QueryTests")]
 public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private class Shipment

@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>&amp;</c> and <c>|</c> over two non-nullable bools translate natively as logical and/or; a <c>bool?</c>
 /// operand (three-valued logic) declines. See <c>MongoExpressionTranslator.IsNonNullableBoolLogical</c>.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeBoolBitwiseTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Item

@@ -34,7 +34,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// a graph read from the wrong rows, and a 1:1 second join hides the defect, so the second join here drops a row.
 /// </para>
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

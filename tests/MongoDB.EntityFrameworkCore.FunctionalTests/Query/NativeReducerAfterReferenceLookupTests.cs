@@ -33,7 +33,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// left-outer reference <c>$lookup</c>, which preserves the row count, so the reducer's <c>$limit</c> is safe to emit
 /// before it.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class NativeReducerAfterReferenceLookupTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     public class Customer
