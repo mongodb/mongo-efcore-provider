@@ -27,7 +27,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>ParameterExpression</c> branch in <c>TryResolveFieldAccessSource</c>, which must resolve the
 /// owned entity type that actually owns the projected element — not an arbitrary same-CLR-type one.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class SharedClrTypeProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -52,13 +51,12 @@ public class SharedClrTypeProjectionTests(TemporaryDatabaseFixture database)
     {
         mb.Entity<MultiSameTypeOwner>(b =>
         {
-            // Configured first → first in Model.GetEntityTypes() for CLR type GeoPoint.
+            // Primary is configured first, so it is first in Model.GetEntityTypes() for CLR type GeoPoint.
             b.OwnsMany(e => e.primary, o =>
             {
                 o.HasElementName("primary");
                 o.Property(p => p.lng).HasElementName("lng").HasBsonRepresentation(BsonType.String);
             });
-            // Configured second → the projected value below comes from here.
             b.OwnsMany(e => e.secondary, o =>
             {
                 o.HasElementName("secondary");
@@ -128,10 +126,8 @@ public class SharedClrTypeProjectionTests(TemporaryDatabaseFixture database)
         public List<GeoPoint> points { get; set; } = null!;
     }
 
-    // Control: nested EF.Property inside a collection Select is an unrelated, pre-existing
-    // translation limitation (crashes in MongoProjectionBindingExpressionVisitor) — it has
-    // nothing to do with shared CLR types. This documents that the EF.Property crash is not
-    // the shared-CLR-type serializer concern.
+    // Control: nested EF.Property inside a collection Select is an unrelated pre-existing translation limitation (crashes
+    // in MongoProjectionBindingExpressionVisitor), not a shared-CLR-type serializer concern.
     [Fact]
     public void Control_nested_ef_property_in_collection_select_is_unsupported_even_single_owned()
     {
@@ -174,12 +170,10 @@ public class SharedClrTypeProjectionTests(TemporaryDatabaseFixture database)
         Assert.Equal(10.5m, found.Lngs.Single().Alias);
     }
 
-    // ---------------------------------------------------------------------------------------
     // Top-level shared-type entities: two DbSets of the SAME CLR type, each mapping `lng` to a
     // different BsonRepresentation. Routes through the base (non-mixed) projection visitor, which
     // resolves the source entity type via TryResolveFieldAccessSource — including the loose
     // FirstOrDefault(e => e.ClrType == parameterExpression.Type) branch.
-    // ---------------------------------------------------------------------------------------
 
     private record SharedDoc
     {
@@ -197,13 +191,12 @@ public class SharedClrTypeProjectionTests(TemporaryDatabaseFixture database)
 
         protected override void OnModelCreating(ModelBuilder mb)
         {
-            // "A" registered first → stored as STRING. Element name shared ("lng") to isolate serializer.
+            // "A" is registered first and stored as string; the shared element name isolates the serializer.
             mb.SharedTypeEntity<SharedDoc>("A", b =>
             {
                 b.ToCollection(collA);
                 b.Property(p => p.lng).HasElementName("lng").HasBsonRepresentation(BsonType.String);
             });
-            // "B" registered second → stored as default decimal128.
             mb.SharedTypeEntity<SharedDoc>("B", b =>
             {
                 b.ToCollection(collB);

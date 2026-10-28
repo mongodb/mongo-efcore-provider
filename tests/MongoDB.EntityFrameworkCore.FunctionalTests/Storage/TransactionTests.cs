@@ -21,7 +21,6 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
-[XUnitCollection("StorageTests")]
 public class TransactionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

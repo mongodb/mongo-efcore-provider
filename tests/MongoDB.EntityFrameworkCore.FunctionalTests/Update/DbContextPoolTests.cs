@@ -20,7 +20,6 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
-[XUnitCollection("UpdateTests")]
 public class DbContextPoolTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

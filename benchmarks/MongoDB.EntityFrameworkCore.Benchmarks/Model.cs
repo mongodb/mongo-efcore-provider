@@ -39,6 +39,7 @@ public class BenchmarkDbContext : DbContext
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<WideEntity> Wides => Set<WideEntity>();
+    public DbSet<MediumEntity> Mediums => Set<MediumEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -47,6 +48,7 @@ public class BenchmarkDbContext : DbContext
 
         modelBuilder.Entity<Account>();
         modelBuilder.Entity<WideEntity>();
+        modelBuilder.Entity<MediumEntity>();
         modelBuilder.Entity<Order>(b =>
         {
             b.HasOne(o => o.Account).WithMany().HasForeignKey(o => o.AccountId);

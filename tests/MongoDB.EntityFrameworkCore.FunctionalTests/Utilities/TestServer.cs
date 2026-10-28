@@ -30,7 +30,6 @@ public abstract class TestServer : IAsyncLifetime
     {
         if (requiredCondition.HasFlag(MongoCondition.IsAtlas))
         {
-            // Double-check locking; don't tell Java!
             if (Atlas != null)
             {
                 return Atlas;
@@ -61,7 +60,6 @@ public abstract class TestServer : IAsyncLifetime
 
         static async Task<TestServer> GetOrCreateDefault()
         {
-            // Double-check locking; don't tell Java!
             if (Default != null)
             {
                 return Default;
@@ -126,6 +124,17 @@ public abstract class TestServer : IAsyncLifetime
 
     public bool SupportsBitwiseOperators
         => ServerVersion >= new SemanticVersion(6, 3, 0);
+
+    public bool SupportsSortArray
+        => ServerVersion >= new SemanticVersion(5, 2, 0);
+
+    // $convert from binData (Guid) to string was added in MongoDB 8.0.
+    public bool SupportsBinDataToStringConversion
+        => ServerVersion >= new SemanticVersion(8, 0, 0);
+
+    // Before MongoDB 8.0, $dateAdd over pre-epoch dates returns a result one second off.
+    public bool SupportsPreEpochDateAdd
+        => ServerVersion >= new SemanticVersion(8, 0, 0);
 
     public static bool SupportsAtlas
     {

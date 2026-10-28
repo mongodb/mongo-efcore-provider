@@ -18,7 +18,6 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
-[XUnitCollection("UpdateTests")]
 public class OwnedNavigationPropertyCrudTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

@@ -24,7 +24,6 @@ using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions;
 
-[XUnitCollection("ConventionsTests")]
 public class CamelCaseElementNameConventionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

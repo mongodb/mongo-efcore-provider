@@ -24,7 +24,6 @@ using MongoDB.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
-[XUnitCollection("StorageTests")]
 public class IndexTests(AtlasTemporaryDatabaseFixture database)
     : IClassFixture<AtlasTemporaryDatabaseFixture>
 {
@@ -968,7 +967,11 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         var creationOptions = new MongoDatabaseCreationOptions(CreateMissingVectorIndexes: false, WaitForVectorIndexes: false);
         _ = async ? await db.Database.EnsureCreatedAsync(creationOptions) : db.Database.EnsureCreated(creationOptions);
 
-        db.AddRange(new SimpleEntity { Floats = [0.36f, -0.57f] }, new SimpleEntity { Floats = [0.31f, -0.54f] });
+        // Filter1 is required; leaving it unset persists a BSON null, which the materializer rejects. Set it since
+        // this test isn't about Filter1.
+        db.AddRange(
+            new SimpleEntity { Floats = [0.36f, -0.57f], Filter1 = "" },
+            new SimpleEntity { Floats = [0.31f, -0.54f], Filter1 = "" });
 
         if (async)
         {

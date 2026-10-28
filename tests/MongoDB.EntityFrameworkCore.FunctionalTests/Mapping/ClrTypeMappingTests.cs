@@ -23,7 +23,6 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
-[XUnitCollection("MappingTests")]
 public class ClrTypeMappingTests(AtlasTemporaryDatabaseFixture database)
     : IClassFixture<AtlasTemporaryDatabaseFixture>
 {

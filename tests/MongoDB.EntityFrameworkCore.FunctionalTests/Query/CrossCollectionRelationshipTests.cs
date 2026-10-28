@@ -24,23 +24,13 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Characterization / lock-in tests for the EF-117 cross-collection relationship feature:
-/// an entity that has its own <see cref="DbSet{TEntity}"/> and is reached by a navigation into a
-/// SEPARATE collection via a foreign key (not embedded). These tests cover the write/lifecycle path
-/// (Group A — version-agnostic where it does not execute an Include query) and serialization /
-/// change-tracking behavior through the <c>$lookup</c>-based Include (Groups B and C — EF10-only,
-/// because cross-collection Include QUERY translation only works on EF10; see EF-X020).
-/// C# property names intentionally differ from BSON element names to verify element-name mapping.
+/// Cross-collection relationships (EF-117): navigations into a separate collection via a foreign key. Covers
+/// write/lifecycle (read back via the raw driver, so version-agnostic), and serialization and change tracking
+/// through the <c>$lookup</c>-based Include. C# names intentionally differ from BSON element names.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // ---------------------------------------------------------------------------------------------
-    // Group A — Write / lifecycle. Read back via the RAW driver (no Include query) so these are
-    // version-agnostic and run on EF8/EF9/EF10.
-    // ---------------------------------------------------------------------------------------------
-
     [Fact]
     public void Write_insert_principal_and_dependent_stores_fk_with_element_name()
     {
@@ -59,13 +49,11 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             orderId = order._id;
         }
 
-        // FK is stored on the dependent under its configured element name "cust_id".
         var rawOrder = database.MongoDatabase.GetCollection<BsonDocument>(ordersName)
             .Find(Builders<BsonDocument>.Filter.Eq("_id", orderId)).Single();
         Assert.Equal(customerId, rawOrder["cust_id"].AsObjectId);
         Assert.Equal("Order 1", rawOrder["desc"].AsString);
 
-        // Round-trips through a fresh context (no Include needed to read the FK back).
         using (var db = new OrderCustomerDbContext(database, ordersName, customersName))
         {
             var order = db.Orders.Single(o => o._id == orderId);
@@ -125,7 +113,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
 
         using (var db = new RequiredOrderCustomerDbContext(database, ordersName, customersName))
         {
-            // Load the principal and its dependents, then delete the principal -> cascade.
             var customer = db.Customers.Single(c => c._id == customerId);
             db.Orders.Where(o => o.CustomerId == customerId).Load();
             db.Customers.Remove(customer);
@@ -161,7 +148,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             db.SaveChanges();
         }
 
-        // ClientSetNull (optional, nullable FK): the dependent survives with a null FK.
         var rawOrder = database.MongoDatabase.GetCollection<BsonDocument>(ordersName)
             .Find(Builders<BsonDocument>.Filter.Eq("_id", orderId)).Single();
         Assert.True(!rawOrder.Contains("cust_id") || rawOrder["cust_id"].IsBsonNull);
@@ -190,17 +176,9 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             Assert.ThrowsAny<Exception>(() => db.SaveChanges());
         }
 
-        // The principal customer write must have rolled back: no customer persisted.
         Assert.Equal(0, database.MongoDatabase.GetCollection<BsonDocument>(customersName).CountDocuments(FilterDefinition<BsonDocument>.Empty));
-        // Only the original pre-existing order remains.
         Assert.Equal(1, database.MongoDatabase.GetCollection<BsonDocument>(ordersName).CountDocuments(FilterDefinition<BsonDocument>.Empty));
     }
-
-#if !EF8 && !EF9
-    // ---------------------------------------------------------------------------------------------
-    // Group B — Serialization through Include. EF10-only (these execute cross-collection Includes,
-    // which only translate on EF10; EF8/EF9 fail to translate — see EF-X020).
-    // ---------------------------------------------------------------------------------------------
 
     [Fact]
     public void Include_bson_representation_on_included_entity_round_trips()
@@ -210,7 +188,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
 
         var customerId = ObjectId.GenerateNewId();
         var publicGuid = Guid.NewGuid();
-        // Customer.PublicId is a Guid stored as a string (HasBsonRepresentation(String)).
         database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
             new BsonDocument { { "_id", customerId }, { "name", "Alice" }, { "pub", publicGuid.ToString() } });
         database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertOne(
@@ -230,7 +207,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("ConvCustomers") + Guid.NewGuid().ToString("N")[..8];
 
         var customerId = ObjectId.GenerateNewId();
-        // Customer.Tier is an enum persisted via a value converter as its string name.
         database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
             new BsonDocument { { "_id", customerId }, { "name", "Alice" }, { "tier", "Gold" } });
         database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertOne(
@@ -360,19 +336,13 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
     {
         using var db = new TypedKeyDbContext<TKey>(database, ordersName, customersName);
 
-        // Reference direction: order -> customer.
         var order = db.Orders.Include(o => o.Customer).First();
         Assert.NotNull(order.Customer);
         Assert.Equal("Alice", order.Customer.FullName);
 
-        // Collection direction: customer -> orders.
         var customer = db.Customers.Include(c => c.Orders).First();
         Assert.Equal(2, customer.Orders.Count);
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // Group C — Change tracking through Include. EF10-only.
-    // ---------------------------------------------------------------------------------------------
 
     [Fact]
     public void Include_identity_resolution_tracking_shares_principal_and_fixes_up_inverse()
@@ -384,9 +354,7 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             .Where(o => o.Customer.FullName == "Alice").ToList();
 
         Assert.Equal(2, aliceOrders.Count);
-        // Both of Alice's orders share the SAME Customer instance.
         Assert.Same(aliceOrders[0].Customer, aliceOrders[1].Customer);
-        // Inverse navigation is fixed up to contain both orders.
         Assert.Equal(2, aliceOrders[0].Customer.Orders.Count);
     }
 
@@ -429,7 +397,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(2, page.Count);
         Assert.Equal(["Customer 1", "Customer 2"], page.Select(c => c.FullName).ToArray());
-        // Each customer has exactly its own two orders (no cross-contamination).
         Assert.All(page, c => Assert.Equal(2, c.Orders.Count));
     }
 
@@ -466,7 +433,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             .ToList();
 
         var alice = Assert.Single(customers);
-        // Alice has exactly 2 orders (no cartesian blow-up from the deeper ThenInclude).
         Assert.Equal(2, alice.Orders.Count);
         var order1 = alice.Orders.Single(o => o.OrderDescription == "Order 1");
         var order2 = alice.Orders.Single(o => o.OrderDescription == "Order 2");
@@ -505,80 +471,99 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.All(order.PriorityItems, i => Assert.IsType<PriorityChainItem>(i));
     }
 
-    // EF-373: once a second join forces the $lookup-flattening fallback, an interleaved Skip/Take/Distinct
-    // has no correct position and would silently return wrong rows - decline instead.
+    // An operator between two cross-collection joins must land between their $lookup stages
+    // (StripInterleavedJoinChain); hoisting it above both pages before the second join filters - a silently
+    // wrong page. Assert row identities, not counts: the wrong window has the right count.
+    // Seed: L1(O1), L2(O2), L3(O1), L4(O1), every line pointing at the one product.
     [Fact]
-    public void Take_between_two_joins_declines_rather_than_returning_wrong_rows()
+    public void Take_between_two_joins_returns_the_correct_page()
     {
         var (linesName, ordersName, productsName) = SetupLinesOrdersProducts();
 
         using var db = new TwoJoinDbContext(database, linesName, ordersName, productsName);
 
-        Assert.Throws<NotSupportedException>(() =>
-            db.Lines
-                .OrderBy(l => l.LineName)
-                .Where(l => l.Order.OrderName != "O2")
-                .Take(3)
-                .Include(l => l.Product)
-                .ToList());
+        var lines = db.Lines
+            .OrderBy(l => l.LineName)
+            .Where(l => l.Order.OrderName != "O2")
+            .Take(3)
+            .Include(l => l.Product)
+            .ToList();
+
+        // Order by name gives L1..L4; the Order join drops L2; Take(3) then takes all three survivors.
+        // Were the $lookup/$unwind for the Product join hoisted above the Take, the Take would have seen
+        // L1,L2,L3 and returned L1,L3 instead.
+        Assert.Equal(["L1", "L3", "L4"], lines.Select(l => l.LineName).ToArray());
+        Assert.All(lines, l => Assert.Equal("Widget", l.Product.ProductName));
     }
 
     [Fact]
-    public void Skip_between_two_joins_declines_rather_than_returning_wrong_rows()
+    public void Skip_between_two_joins_returns_the_correct_page()
     {
         var (linesName, ordersName, productsName) = SetupLinesOrdersProducts();
 
         using var db = new TwoJoinDbContext(database, linesName, ordersName, productsName);
 
-        Assert.Throws<NotSupportedException>(() =>
-            db.Lines
-                .OrderBy(l => l.LineName)
-                .Where(l => l.Order.OrderName != "O2")
-                .Skip(1)
-                .Include(l => l.Product)
-                .ToList());
+        var lines = db.Lines
+            .OrderBy(l => l.LineName)
+            .Where(l => l.Order.OrderName != "O2")
+            .Skip(1)
+            .Include(l => l.Product)
+            .ToList();
+
+        // Survivors of the Order join, in name order, are L1,L3,L4; Skip(1) drops L1. Hoisting the Product
+        // join's $unwind above the Skip would have skipped L1 out of L1,L2,L3,L4 and yielded L3,L4 by luck
+        // here, so this test is paired with the Take one above, which does discriminate.
+        Assert.Equal(["L3", "L4"], lines.Select(l => l.LineName).ToArray());
+        Assert.All(lines, l => Assert.Equal("Widget", l.Product.ProductName));
     }
 
     [Fact]
-    public void Distinct_between_two_joins_declines_rather_than_returning_wrong_rows()
+    public void Distinct_between_two_joins_returns_the_correct_rows()
     {
         var (linesName, ordersName, productsName) = SetupLinesOrdersProducts();
 
         using var db = new TwoJoinDbContext(database, linesName, ordersName, productsName);
 
-        Assert.Throws<NotSupportedException>(() =>
-            db.Lines
-                .Where(l => l.Order.OrderName != "O2")
-                .Distinct()
-                .Include(l => l.Product)
-                .ToList());
+        var lines = db.Lines
+            .Where(l => l.Order.OrderName != "O2")
+            .Distinct()
+            .Include(l => l.Product)
+            .ToList();
+
+        // Distinct is applied to the rows the Order join left (L1,L3,L4 - all distinct entities), so it
+        // removes nothing; the point is that the Product join does not run before it. Order is not
+        // guaranteed after a $group-based Distinct, hence the sort here rather than an ordered assertion.
+        Assert.Equal(["L1", "L3", "L4"], lines.Select(l => l.LineName).OrderBy(n => n).ToArray());
+        Assert.All(lines, l => Assert.Equal("Widget", l.Product.ProductName));
     }
 
-    // EF-373 (review follow-up): InnerCollections is keyed by IEntityType, so two navigations that join
-    // to the SAME target entity type (e.g. a self-join) collapse to one entry there - the guard above
-    // must not rely on that count, or it would stay silent for this shape too.
+    // EF-373: InnerCollections is keyed by IEntityType, so two navigations that join
+    // to the same target entity type (e.g. a self-join) collapse to one entry there - the split must not
+    // rely on that count. Both navigations here target Order.
     [Fact]
-    public void Take_between_two_joins_to_same_target_entity_type_declines_rather_than_returning_wrong_rows()
+    public void Take_between_two_joins_to_same_target_entity_type_returns_the_correct_page()
     {
         var (linesName, ordersName) = SetupSameTypeJoinLinesAndOrders();
 
         using var db = new SameTypeJoinDbContext(database, linesName, ordersName);
 
-        Assert.Throws<NotSupportedException>(() =>
-            db.Lines
-                .OrderBy(l => l.LineName)
-                .Where(l => l.PrimaryOrder.OrderName != "O2")
-                .Take(3)
-                .Include(l => l.SecondaryOrder)
-                .ToList());
+        var lines = db.Lines
+            .OrderBy(l => l.LineName)
+            .Where(l => l.PrimaryOrder.OrderName != "O2")
+            .Take(3)
+            .Include(l => l.SecondaryOrder)
+            .ToList();
+
+        // L2's PrimaryOrder is O2, so the first join drops it; Take(3) then takes all three survivors.
+        Assert.Equal(["L1", "L3", "L4"], lines.Select(l => l.LineName).ToArray());
+        Assert.All(lines, l => Assert.Equal("O1", l.SecondaryOrder.OrderName));
     }
 
     [Fact]
     public void Include_sibling_then_includes_through_same_target_type_do_not_collapse()
     {
-        // EF-376 repro: two sibling reference navigations (PrimaryMid, SecondaryMid) targeting the SAME
-        // entity type, each further ThenInclude'd through the SAME navigation name (Leaf). Both branches
-        // must produce their own $lookup rather than colliding on a shared "_lookup_Leaf" alias.
+        // Sibling navigations (PrimaryMid, SecondaryMid) to the same type, each ThenInclude'd through Leaf:
+        // each branch needs its own $lookup rather than colliding on a shared "_lookup_Leaf" alias.
         var rootsName = TemporaryDatabaseFixtureBase.CreateCollectionName("SibRoots") + Guid.NewGuid().ToString("N")[..8];
         var midsName = TemporaryDatabaseFixtureBase.CreateCollectionName("SibMids") + Guid.NewGuid().ToString("N")[..8];
         var leavesName = TemporaryDatabaseFixtureBase.CreateCollectionName("SibLeaves") + Guid.NewGuid().ToString("N")[..8];
@@ -613,12 +598,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.Equal("PrimaryLeaf", root.PrimaryMid.Leaf.Value);
         Assert.Equal("SecondaryLeaf", root.SecondaryMid.Leaf.Value);
     }
-#endif
-
-    // ---------------------------------------------------------------------------------------------
-    // Helpers / seeding (raw-BSON, mirroring CrossCollectionIncludeTests conventions).
-    // BSON uses: desc, cust_id for Orders; name for Customers.
-    // ---------------------------------------------------------------------------------------------
 
     private static (string ordersName, string customersName) NewCollectionNames()
     {
@@ -714,10 +693,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         return (ordersName, customersName);
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Models + contexts.
-    // ---------------------------------------------------------------------------------------------
-
     class Order
     {
         public ObjectId _id { get; set; }
@@ -779,7 +754,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // Required (non-nullable FK) relationship -> DeleteBehavior.Cascade by default.
     class RequiredOrder
     {
         public ObjectId _id { get; set; }
@@ -823,7 +797,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         }
     }
 
-#if !EF8 && !EF9
     enum CustomerTier
     {
         None,
@@ -1291,8 +1264,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // Two navigations from the same root that join to the SAME target entity type (self-join shape) -
-    // as opposed to TwoJoinLine's two navigations to two DIFFERENT target types.
     class SameTypeJoinLine
     {
         public ObjectId _id { get; set; }
@@ -1337,8 +1308,8 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // Sibling reference navigations targeting the SAME entity type, each ThenInclude'd through the
-    // same navigation name (EF-376 repro): Root -(ref)-> PrimaryMid / SecondaryMid -(ref)-> Leaf.
+    // Sibling reference navigations to the same type, each ThenInclude'd through the same navigation name:
+    // Root -(ref)-> PrimaryMid / SecondaryMid -(ref)-> Leaf.
     class SiblingRoot
     {
         public ObjectId _id { get; set; }
@@ -1395,5 +1366,4 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             });
         }
     }
-#endif
 }

@@ -17,7 +17,6 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection("QueryTests")]
 public class PrimitiveCollectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

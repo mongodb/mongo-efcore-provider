@@ -13,15 +13,17 @@
  * limitations under the License.
  */
 
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
+using MongoDB.EntityFrameworkCore.Infrastructure;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
-[XUnitCollection("QueryTests")]
 public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -35,6 +37,9 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         DateTimeOffset = TestValue,
         OptionalDateTimeOffset = TestValue
     };
+
+    private static void PinDefaultQueryMode(DbContextOptionsBuilder optionsBuilder)
+        => new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(MongoQueryMode.Native);
 
     private IMongoCollection<DateTimeOffsetEntity> CreateSeededCollection([System.Runtime.CompilerServices.CallerMemberName] string? name = null)
     {
@@ -51,6 +56,22 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         var result = db.Entities.Select(e => e.DateTimeOffset.DateTime).Single();
 
         Assert.Equal(TestValue.DateTime, result);
+    }
+
+    // UtcDateTime alone under NativeOnly: sibling members (TimeOfDay) in Select_DateTimeOffset_remaining_components make that query fall back.
+    [Fact]
+    public void Select_DateTimeOffset_UtcDateTime_goes_native()
+    {
+        using var db = SingleEntityDbContext.Create(CreateSeededCollection(), optionsBuilderAction: b =>
+        {
+            b.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+            new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+        });
+
+        var result = db.Entities.Select(e => new { e.Id, U = e.DateTimeOffset.UtcDateTime }).Single();
+
+        Assert.Equal(TestValue.UtcDateTime, result.U);
+        Assert.Equal(DateTimeKind.Utc, result.U.Kind);
     }
 
     [Fact]
@@ -76,7 +97,8 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Where_DateTimeOffset_DateTime_component()
     {
-        using var db = SingleEntityDbContext.Create(CreateSeededCollection());
+        // A wall-clock comparison is answered by the driver-LINQ bridge (EF-473), which NativeOnly forbids.
+        using var db = SingleEntityDbContext.Create(CreateSeededCollection(), optionsBuilderAction: PinDefaultQueryMode);
 
         var result = db.Entities.Where(e => e.DateTimeOffset.DateTime == TestValue.DateTime).Single();
 
@@ -123,7 +145,7 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         using var db = SingleEntityDbContext.Create(collection, modelBuilderAction: mb =>
             mb.Entity<DateTimeOffsetEntity>().Property(e => e.DateTimeOffset).HasBsonRepresentation(BsonType.String));
 
-        Assert.Throws<NotSupportedException>(() => db.Entities.Select(e => e.DateTimeOffset.DateTime).Single());
+        TestQueryMode.AssertRefusal<NotSupportedException>(() => db.Entities.Select(e => e.DateTimeOffset.DateTime).Single());
     }
 
     [Fact]
@@ -135,7 +157,7 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
             mb.Entity<DateTimeOffsetEntity>().Property(e => e.DateTimeOffset)
                 .HasConversion(v => v.Ticks, v => new DateTimeOffset(v, TimeSpan.Zero)));
 
-        Assert.Throws<NotSupportedException>(() => db.Entities.Select(e => e.DateTimeOffset.DateTime).Single());
+        TestQueryMode.AssertRefusal<NotSupportedException>(() => db.Entities.Select(e => e.DateTimeOffset.DateTime).Single());
     }
 
     [Fact]
@@ -143,10 +165,7 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
     {
         using var db = SingleEntityDbContext.Create(CreateSeededCollection());
 
-        // DateTimeOffset.UtcNow.Year reaches TryResolveDateTimeOffsetElementAccess as a static MemberExpression
-        // with a null Expression. A prior version null-forgave that and threw NullReferenceException; the fix
-        // falls through to `return false` instead, letting the query translate/evaluate normally. The
-        // regression guarded against is specifically the NullReferenceException, not any particular exception.
+        // DateTimeOffset.UtcNow.Year is a static MemberExpression with a null Expression; it must decline, not throw NullReferenceException.
         var exception = Record.Exception(() => db.Entities.Select(e => DateTimeOffset.UtcNow.Year).Single());
 
         Assert.False(exception is NullReferenceException,
@@ -165,9 +184,8 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(TestValue.DateTime, result);
 
-        // Confirms the rewrite actually renders as a server-side aggregation expression (reading the
-        // stored DateTime/Offset sub-fields and reconstructing via $dateAdd) rather than silently
-        // falling back to client-side evaluation and coincidentally producing the right value.
+        // Proves the member renders server-side ($dateAdd over the stored sub-fields) rather than evaluating
+        // client-side and coincidentally producing the right value.
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains("\"$dateAdd\"", message);
@@ -175,6 +193,195 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         Assert.Contains("\"unit\" : \"minute\"", message);
         Assert.Contains("\"amount\" : \"$DateTimeOffset.Offset\"", message);
     }
+
+    private SingleEntityDbContext<DateTimeOffsetEntity> CreateModeContext(MongoQueryMode mode, string name) =>
+        SingleEntityDbContext.Create(CreateSeededCollection(name), optionsBuilderAction: b =>
+        {
+            b.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+            new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+        });
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    public void Select_DateTimeOffset_ToString_matches_client_evaluation(MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"{nameof(Select_DateTimeOffset_ToString_matches_client_evaluation)}_{mode}");
+
+        var result = db.Entities.Select(e => e.DateTimeOffset.ToString()).Single();
+
+        Assert.Equal(TestValue.ToString(), result);
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    public void Select_DateTimeOffset_ToString_format_matches_client_evaluation(MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"{nameof(Select_DateTimeOffset_ToString_format_matches_client_evaluation)}_{mode}");
+
+        var result = db.Entities.Select(e => e.DateTimeOffset.ToString("o")).Single();
+
+        Assert.Equal(TestValue.ToString("o"), result);
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    public void Select_optional_DateTimeOffset_Value_ToString_matches_client_evaluation(MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"{nameof(Select_optional_DateTimeOffset_Value_ToString_matches_client_evaluation)}_{mode}");
+
+        var result = db.Entities.Select(e => e.OptionalDateTimeOffset!.Value.ToString()).Single();
+
+        Assert.Equal(TestValue.ToString(), result);
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    public void Select_DateTimeOffset_ToString_in_anonymous_projection_matches_client_evaluation(MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"{nameof(Select_DateTimeOffset_ToString_in_anonymous_projection_matches_client_evaluation)}_{mode}");
+
+        var result = db.Entities.Select(e => new { e.Id, S = e.DateTimeOffset.ToString() }).Single();
+
+        Assert.Equal(SeedEntity.Id, result.Id);
+        Assert.Equal(TestValue.ToString(), result.S);
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    public void Where_DateTimeOffset_ToString_throws_instead_of_matching_bson_json(MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"{nameof(Where_DateTimeOffset_ToString_throws_instead_of_matching_bson_json)}_{mode}");
+        var expected = TestValue.ToString();
+
+        Assert.Throws<InvalidOperationException>(() => db.Entities.Where(e => e.DateTimeOffset.ToString() == expected).ToList());
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    public void Select_DateTimeOffset_ToString_consumed_by_server_computation_throws(MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"{nameof(Select_DateTimeOffset_ToString_consumed_by_server_computation_throws)}_{mode}");
+
+        Assert.Throws<InvalidOperationException>(() => db.Entities.Select(e => e.DateTimeOffset.ToString().Length).Single());
+    }
+
+    // A boxed receiver (`((object)x.Dto).ToString()`) is the same call: evaluated client-side over the typed read
+    // rather than rendered as $toString over the stored sub-document, which yields BSON JSON (EF-217).
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq), InlineData(MongoQueryMode.NativeOnly)]
+    public void Select_boxed_DateTimeOffset_ToString_matches_client_evaluation(MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"{nameof(Select_boxed_DateTimeOffset_ToString_matches_client_evaluation)}_{mode}");
+
+        AssertCorrectOrNativeOnlyDecline(
+            mode, TestValue.ToString(), () => db.Entities.Select(e => ((object)e.DateTimeOffset).ToString()).Single()!);
+        AssertCorrectOrNativeOnlyDecline(
+            mode, TestValue.ToString(),
+            () => db.Entities.Select(e => new { e.Id, S = ((object)e.DateTimeOffset).ToString() }).Single().S!);
+        AssertCorrectOrNativeOnlyDecline(
+            mode, TestValue.ToString(), () => db.Entities.Select(e => ((object?)e.OptionalDateTimeOffset)!.ToString()).Single()!);
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq), InlineData(MongoQueryMode.NativeOnly)]
+    public void Where_boxed_DateTimeOffset_ToString_throws_instead_of_matching_bson_json(MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"{nameof(Where_boxed_DateTimeOffset_ToString_throws_instead_of_matching_bson_json)}_{mode}");
+        var expected = TestValue.ToString();
+
+        var exception = AssertLoud(mode, () => db.Entities.Where(e => ((object)e.DateTimeOffset).ToString() == expected).Count());
+        if (mode != MongoQueryMode.NativeOnly)
+        {
+            Assert.Contains("DateTimeOffset.ToString()", exception.Message);
+        }
+    }
+
+    public static TheoryData<string, MongoQueryMode> ConcatenationShapes => CreateConcatenationShapes();
+
+    private static TheoryData<string, MongoQueryMode> CreateConcatenationShapes()
+    {
+        var data = new TheoryData<string, MongoQueryMode>();
+        foreach (var shape in ConcatenationQueries.Keys)
+        {
+            foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+            {
+                data.Add(shape, mode);
+            }
+        }
+
+        return data;
+    }
+
+    // Each concatenation boxes the DateTimeOffset operand (the object overloads of string.Concat), which both paths
+    // render as $toString over the stored sub-document: BSON JSON, or no matching rows in a predicate (EF-217).
+    private static readonly Dictionary<string, Func<IQueryable<DateTimeOffsetEntity>, object>> ConcatenationQueries = new()
+    {
+        ["prefix"] = q => q.Select(e => "a" + e.DateTimeOffset).Single(),
+        ["suffix"] = q => q.Select(e => e.DateTimeOffset + "x").Single(),
+        ["nullable"] = q => q.Select(e => "a" + e.OptionalDateTimeOffset).Single(),
+        ["nested"] = q => q.Select(e => "a" + ("b" + e.DateTimeOffset)).Single(),
+        ["concat_two"] = q => q.Select(e => string.Concat(e.DateTimeOffset, e.DateTimeOffset)).Single(),
+        ["concat_three"] = q => q.Select(e => string.Concat("a", e.DateTimeOffset, "b")).Single(),
+        ["concat_array"] = q => q.Select(e => string.Concat(new object[] { "a", e.DateTimeOffset, "b", "c", "d" })).Single(),
+        ["anonymous"] = q => q.Select(e => new { e.Id, S = "a" + e.DateTimeOffset }).Single().S,
+        ["where"] = q => q.Where(e => "a" + e.DateTimeOffset == "a" + TestValue.ToString()).Count(),
+        ["order_by"] = q => q.OrderBy(e => "a" + e.DateTimeOffset).Select(e => e.Id).ToList(),
+    };
+
+    [Theory, MemberData(nameof(ConcatenationShapes))]
+    public void Concatenating_DateTimeOffset_throws_instead_of_bson_json(string shape, MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"Concatenating_DateTimeOffset_{shape}_{mode}");
+
+        var exception = AssertLoud(mode, () => ConcatenationQueries[shape](db.Entities));
+        if (mode != MongoQueryMode.NativeOnly)
+        {
+            Assert.Contains("Concatenating a DateTimeOffset", exception.Message);
+        }
+    }
+
+    // With a whole-entity leaf the shaper reads whole documents and evaluates the concatenation over the typed read.
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq), InlineData(MongoQueryMode.NativeOnly)]
+    public void Select_entity_and_concatenated_DateTimeOffset_matches_client_evaluation(MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"{nameof(Select_entity_and_concatenated_DateTimeOffset_matches_client_evaluation)}_{mode}");
+
+        AssertCorrectOrNativeOnlyDecline(
+            mode, "a" + TestValue, () => db.Entities.Select(e => new { e, S = "a" + e.DateTimeOffset }).Single().S);
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq), InlineData(MongoQueryMode.NativeOnly)]
+    public void Formatting_DateTimeOffset_throws(MongoQueryMode mode)
+    {
+        using var db = CreateModeContext(mode, $"{nameof(Formatting_DateTimeOffset_throws)}_{mode}");
+
+        foreach (var query in new Expression<Func<DateTimeOffsetEntity, string>>[]
+                 {
+                     e => string.Format("{0}", e.DateTimeOffset),
+                     e => $"{e.DateTimeOffset}",
+                     e => $"{e.DateTimeOffset:o}"
+                 })
+        {
+            if (mode == MongoQueryMode.NativeOnly)
+            {
+                Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.Select(query).Single());
+            }
+            else
+            {
+                Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => db.Entities.Select(query).Single());
+            }
+        }
+    }
+
+    // NativeOnly declines these shapes (the result is computed client-side); the other modes answer as .NET does.
+    private static void AssertCorrectOrNativeOnlyDecline(MongoQueryMode mode, string expected, Func<string> query)
+    {
+        if (mode == MongoQueryMode.NativeOnly)
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(query);
+        }
+        else
+        {
+            Assert.Equal(expected, query());
+        }
+    }
+
+    private static Exception AssertLoud(MongoQueryMode mode, Func<object> query)
+        => mode == MongoQueryMode.NativeOnly
+            ? Assert.Throws<NativeTranslationNotSupportedException>(query)
+            : Assert.Throws<InvalidOperationException>(query);
 
     [Fact]
     public void Select_DateTimeOffset_remaining_components()
@@ -195,7 +402,6 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
             e.DateTimeOffset.UtcDateTime
         }).Single();
 
-        // Scalar member components work correctly
         Assert.Equal(TestValue.Month, result.Month);
         Assert.Equal(TestValue.Day, result.Day);
         Assert.Equal(TestValue.Hour, result.Hour);
@@ -212,7 +418,7 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Select_DateTimeOffset_LocalDateTime_throws()
     {
-        using var db = SingleEntityDbContext.Create(CreateSeededCollection());
+        using var db = SingleEntityDbContext.Create(CreateSeededCollection(), optionsBuilderAction: PinDefaultQueryMode);
 
         // Depends on the executing machine's time zone, which the server cannot know.
         var exception = Assert.Throws<NotSupportedException>(() => db.Entities.Select(e => e.DateTimeOffset.LocalDateTime).Single());
@@ -227,7 +433,7 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         var value = new DateTimeOffset(2024, 7, 15, 13, 45, 30, 250, TimeSpan.FromHours(1));
         var collection = database.CreateCollection<DateTimeOffsetEntity>();
         collection.InsertOne(new DateTimeOffsetEntity { Id = ObjectId.GenerateNewId(), DateTimeOffset = value });
-        using var db = SingleEntityDbContext.Create(collection);
+        using var db = SingleEntityDbContext.Create(collection, optionsBuilderAction: PinDefaultQueryMode);
 
         Assert.Single(db.Entities.Where(e => e.DateTimeOffset.DateTime == value.DateTime));
         Assert.Single(db.Entities.Where(e => value.DateTime == e.DateTimeOffset.DateTime));

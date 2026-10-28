@@ -17,7 +17,6 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
-[XUnitCollection("MappingTests")]
 public class DictionaryChangeTrackingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

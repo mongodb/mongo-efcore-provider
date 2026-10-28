@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>$lookup</c> must match on <c>_id.ProductId</c> (<c>LookupExpression.GetFieldPath</c>), not the bare element
 /// name — which names no field at all, silently matching nothing. Differential against an in-memory LINQ oracle.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class CompositeKeyJoinTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

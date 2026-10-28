@@ -26,6 +26,7 @@ public sealed class MongoDbAtlasBuilder : ContainerBuilder<MongoDbAtlasBuilder, 
 {
     private const string MongoDbAtlasImage = "mongodb/mongodb-atlas-local:latest";
     public const ushort MongoDbAtlasPort = 27017;
+    private const string TmpfsOptions = "rw,uid=1000,gid=1000,mode=0755";
 
     public MongoDbAtlasBuilder()
         : this(new())
@@ -55,9 +56,23 @@ public sealed class MongoDbAtlasBuilder : ContainerBuilder<MongoDbAtlasBuilder, 
     }
 
     protected override MongoDbAtlasBuilder Init()
-        => base.Init()
+    {
+        var builder = base.Init()
             .WithImage(MongoDbAtlasImage)
             .WithPortBinding(MongoDbAtlasPort, true);
+
+        // Collection creation is serialized in the server and dominated by disk syncs, which are slow on Docker's
+        // virtual disk. The container is throwaway, so keep the data in RAM. Set MONGODB_EF_TEST_TMPFS=0 to opt out.
+        // mongod and mongot run as uid 1000 in this image, so the (root-owned by default) mounts must be chowned.
+        return Environment.GetEnvironmentVariable("MONGODB_EF_TEST_TMPFS") == "0"
+            ? builder
+            : builder.WithCreateParameterModifier(parameters =>
+            {
+                parameters.HostConfig.Tmpfs ??= new Dictionary<string, string>();
+                parameters.HostConfig.Tmpfs["/data/db"] = TmpfsOptions;
+                parameters.HostConfig.Tmpfs["/data/mongot"] = TmpfsOptions;
+            });
+    }
 
     protected override MongoDbAtlasBuilder Clone(IResourceConfiguration<CreateContainerParameters> resourceConfiguration)
         => Merge(DockerResourceConfiguration, new ContainerConfiguration(resourceConfiguration));
