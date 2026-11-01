@@ -45,6 +45,7 @@ internal sealed class MongoPipelineFactory
     {
         _template = template;
         _placeholders = placeholders;
+        SingleOutputField = FindSingleOutputField(template);
 
         foreach (var slot in template)
         {
@@ -54,6 +55,60 @@ internal sealed class MongoPipelineFactory
                 break;
             }
         }
+    }
+
+    /// <summary>
+    /// The name of the one field every document this pipeline yields holds, or <see langword="null"/> when that is not known: the last
+    /// <c>$project</c> emits a single plain field (and suppresses <c>_id</c>) and only stages that neither add nor remove fields follow it. An
+    /// absent value drops the field, so a document is that field or empty. The cursor reads such a document without matching names.
+    /// </summary>
+    internal string? SingleOutputField { get; }
+
+    private static string? FindSingleOutputField(IReadOnlyList<StageSlot> template)
+    {
+        for (var i = template.Count - 1; i >= 0; i--)
+        {
+            if (template[i].RenderedDocument is not { ElementCount: > 0 } stage)
+            {
+                return null;
+            }
+
+            var stageName = stage.GetElement(0).Name;
+            if (stageName is "$sort" or "$skip" or "$limit" or "$match")
+            {
+                continue;
+            }
+
+            if (stageName != "$project" || stage[0] is not BsonDocument body)
+            {
+                return null;
+            }
+
+            string? field = null;
+            foreach (var element in body)
+            {
+                if (element.Name == "_id")
+                {
+                    if (element.Value is BsonInt32 { Value: 0 } or BsonBoolean { Value: false })
+                    {
+                        continue;
+                    }
+
+                    return null;
+                }
+
+                if (field != null || element.Name.Contains('.') || element.Name.StartsWith('$'))
+                {
+                    return null;
+                }
+
+                field = element.Name;
+            }
+
+            return field;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -76,6 +131,9 @@ internal sealed class MongoPipelineFactory
         internal static StageSlot Deferred(Func<MongoNativeBuildContext, BsonDocument> builder) => new(null, builder);
 
         internal bool IsDeferred => _builder is not null;
+
+        /// <summary>The rendered stage as it is in the template (not a copy; do not mutate), or <see langword="null"/> for a deferred slot.</summary>
+        internal BsonDocument? RenderedDocument => _document;
 
         /// <summary>Deep-clones the template document so substitution never mutates it. Not for deferred slots.</summary>
         internal BsonDocument CloneDocument() => (BsonDocument)_document!.DeepClone();
@@ -100,6 +158,8 @@ internal sealed class MongoPipelineFactory
                 template.AddRange(RenderSetDifference(setDiff, renderer, placeholders).Select(StageSlot.Rendered));
             else if (stage is MongoVectorSearchStage vectorSearch)
                 template.Add(StageSlot.Deferred(CreateVectorSearchBuilder(vectorSearch.Search, renderer, placeholders)));
+            else if (stage is MongoUnwindStage { ClientFiltered: true })
+                continue;
             else if (stage is MongoUnwindStage { AtMostOneMatch: true } singleMatch)
                 template.AddRange(RenderSingleMatchUnwind(singleMatch).Select(StageSlot.Rendered));
             else
@@ -325,9 +385,40 @@ internal sealed class MongoPipelineFactory
     {
         var body = new BsonDocument();
         foreach (var field in fields)
-            body.Add(field.Alias, MongoAggregationExpressionRenderer.RenderBranch(field.Expression, placeholders));
+        {
+            body.Add(
+                field.Alias,
+                field.PrunedElementFields is { } keptFields && field.Expression is MongoElementRefExpression arrayRef
+                    ? RenderPrunedArray(arrayRef.Path, keptFields)
+                    : MongoAggregationExpressionRenderer.RenderBranch(field.Expression, placeholders));
+        }
 
         return body;
+    }
+
+    // A projected owned array with the sub-documents and arrays its consumer never reads left out of each element
+    // (MongoProjection.PrunedElementFields). A value that is not an array (missing or null) passes through, and so does an element that is
+    // not a document, so only a document element is rewritten; a kept field a document lacks stays missing, as it was.
+    private static BsonValue RenderPrunedArray(string path, IReadOnlyList<string> keptFields)
+    {
+        var array = "$" + path;
+        var element = new BsonDocument();
+        foreach (var name in keptFields)
+        {
+            element.Add(name, "$$e." + name);
+        }
+
+        var isDocument = new BsonDocument("$eq", new BsonArray { new BsonDocument("$type", "$$e"), "object" });
+        var map = new BsonDocument(
+            "$map",
+            new BsonDocument
+            {
+                { "input", array },
+                { "as", "e" },
+                { "in", new BsonDocument("$cond", new BsonArray { isDocument, element, "$$e" }) }
+            });
+
+        return new BsonDocument("$cond", new BsonArray { new BsonDocument("$isArray", array), map, array });
     }
 
     private static BsonDocument RenderUnset(MongoUnsetStage stage)

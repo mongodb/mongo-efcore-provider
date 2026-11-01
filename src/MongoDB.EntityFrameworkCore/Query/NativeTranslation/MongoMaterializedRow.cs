@@ -20,8 +20,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <summary>
 /// A row of the native one-pass cursor of a tracked query: the entity as constructed while the driver deserialized the batch, plus the
 /// tracking still to be done when the enumerator reaches it. <see cref="Deferred"/> is <see langword="null"/> when there is none, or the
-/// <see cref="MongoSimpleTracking"/> or <see cref="MongoPendingTracking"/> to replay. (A row that failed to materialize is an empty slot;
-/// see <see cref="MongoQueryContext.RowFailed"/>.)
+/// <see cref="MongoSimpleTracking"/> or <see cref="MongoPendingTracking"/> to replay.
 /// </summary>
 internal readonly struct MongoMaterializedRow<TEntity>(TEntity? instance, object? deferred)
 {

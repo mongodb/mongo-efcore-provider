@@ -84,7 +84,7 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
     {
         var rowType = CursorRowType(query);
         Assert.True(
-            rowType.IsGenericType && rowType.GetGenericTypeDefinition() == typeof(MongoProjectedRow<>),
+            MongoProjectedRowState.IsRowType(rowType),
             $"Expected the streaming projection reader, but the cursor yields {rowType}.");
     }
 
@@ -107,6 +107,35 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
         });
 
         Assert.Equal([1, 2, 3, 4], results);
+    }
+
+    [Fact]
+    public void Single_field_projection_reads_present_null_and_missing_elements_like_driver_linq()
+    {
+        // A projection of exactly one field is read without matching element names: the server yields that element or an empty document.
+        var collection = SeedRows();
+        var raw = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName);
+        raw.InsertOne(new BsonDocument { { "_id", 5 }, { "Name", "e" }, { "Rate", 5.5 } });
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            var opt = db.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Opt)
+                .AsEnumerable().Select(v => "opt " + (v?.ToString() ?? "<null>"));
+            var name = db.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Name)
+                .AsEnumerable().Select(v => "name " + (v ?? "<null>"));
+            var count = db.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Count)
+                .AsEnumerable().Select(v => "count " + v);
+            return opt.Concat(name).Concat(count).ToList();
+        });
+
+        Assert.Equal(
+            [
+                "opt 10", "opt <null>", "opt <null>", "opt 40", "opt <null>",
+                "name a", "name <null>", "name <null>", "name d", "name e",
+                "count 1", "count 2", "count 3", "count 4", "count 0"
+            ],
+            results);
     }
 
     [Fact]
@@ -317,7 +346,7 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Malformed_element_fails_only_its_own_row_with_the_same_exception_type_as_driver_linq()
+    public void Malformed_element_fails_with_the_same_exception_type_as_driver_linq()
     {
         var collection = database.CreateCollection<Row>();
         var raw = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName);
@@ -333,33 +362,11 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
         var driverType = Assert.ThrowsAny<Exception>(
             () => driverDb.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Count).ToList()).GetType();
 
+        // Stored data that contradicts the model is not recovered from: the native cursor fails the same way, at the same point.
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
-        using var enumerator = db.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Count).AsEnumerable().GetEnumerator();
-
-        // The two valid rows before the malformed one come back; the failure is raised only when the enumerator reaches row 3.
-        Assert.True(enumerator.MoveNext());
-        Assert.Equal(1, enumerator.Current);
-        Assert.True(enumerator.MoveNext());
-        Assert.Equal(2, enumerator.Current);
-
-        Assert.Equal(driverType, Assert.ThrowsAny<Exception>(() => enumerator.MoveNext()).GetType());
-    }
-
-    [Fact]
-    public void Malformed_row_after_the_rows_read_does_not_throw()
-    {
-        var collection = database.CreateCollection<Row>();
-        var raw = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName);
-        raw.InsertMany([
-            new BsonDocument { { "_id", 1 }, { "Count", 1 } },
-            new BsonDocument { { "_id", 2 }, { "Count", 2 } },
-            new BsonDocument { { "_id", 3 }, { "Count", "not an int" } },
-        ]);
-
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
-        var firstTwo = db.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Count).AsEnumerable().Take(2).ToList();
-
-        Assert.Equal([1, 2], firstTwo);
+        Assert.Equal(
+            driverType,
+            Assert.ThrowsAny<Exception>(() => db.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Count).ToList()).GetType());
     }
 
     // ---- Client-side code runs when the enumerator reaches a row ---------------------------------------
@@ -405,6 +412,6 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
 
         // A whole entity is the entity materializer's, not a projection's, and is never a MongoProjectedRow.
         var rowType = CursorRowType(db.Entities.AsNoTracking());
-        Assert.False(rowType.IsGenericType && rowType.GetGenericTypeDefinition() == typeof(MongoProjectedRow<>));
+        Assert.False(MongoProjectedRowState.IsRowType(rowType));
     }
 }

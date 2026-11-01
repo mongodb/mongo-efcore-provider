@@ -124,7 +124,7 @@ public class NativeStreamingOwnedCollectionProjectionTests(TemporaryDatabaseFixt
     {
         var rowType = CursorRowType(query);
         Assert.True(
-            rowType.IsGenericType && rowType.GetGenericTypeDefinition() == typeof(MongoProjectedRow<>),
+            MongoProjectedRowState.IsRowType(rowType),
             $"Expected the streaming projection reader, but the cursor yields {rowType}.");
     }
 

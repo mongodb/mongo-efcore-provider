@@ -34,6 +34,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
     private readonly bool _standAloneStateManager;
     private readonly bool _threadSafetyChecksEnabled;
     private readonly Action<MongoQueryContext, MongoExecutableQuery>? _onZeroResults;
+    private readonly Func<TSource, bool>? _isDropped;
 
     public QueryingEnumerable(
         MongoQueryContext queryContext,
@@ -42,8 +43,9 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         Type contextType,
         bool standAloneStateManager,
         bool threadSafetyChecksEnabled,
-        Action<MongoQueryContext, MongoExecutableQuery>? onZeroResults)
-        : this(queryContext, () => executableQuery, shaper, contextType, standAloneStateManager, threadSafetyChecksEnabled, onZeroResults)
+        Action<MongoQueryContext, MongoExecutableQuery>? onZeroResults,
+        Func<TSource, bool>? isDropped = null)
+        : this(queryContext, () => executableQuery, shaper, contextType, standAloneStateManager, threadSafetyChecksEnabled, onZeroResults, isDropped)
     {
     }
 
@@ -56,8 +58,10 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         Type contextType,
         bool standAloneStateManager,
         bool threadSafetyChecksEnabled,
-        Action<MongoQueryContext, MongoExecutableQuery>? onZeroResults)
+        Action<MongoQueryContext, MongoExecutableQuery>? onZeroResults,
+        Func<TSource, bool>? isDropped = null)
     {
+        _isDropped = isDropped;
         _queryContext = queryContext;
         _executableQueryFactory = executableQueryFactory;
         _contextType = contextType;
@@ -89,6 +93,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
         private readonly Func<MongoExecutableQuery> _executableQueryFactory;
         private MongoExecutableQuery? _executableQuery;
         private readonly Action<MongoQueryContext, MongoExecutableQuery>? _onZeroResults;
+        private readonly Func<TSource, bool>? _isDropped;
         private bool _gotResults;
 
         private IEnumerator<TSource>? _enumerator;
@@ -104,6 +109,7 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
             _cancellationToken = cancellationToken;
             _exceptionDetector = _queryContext.ExceptionDetector;
             _onZeroResults = queryingEnumerable._onZeroResults;
+            _isDropped = queryingEnumerable._isDropped;
 
             Current = default!;
 
@@ -182,7 +188,6 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                 // driver constructs the first batch during Execute and may consult it (a null key part), so a
                 // tracked query would otherwise NRE. Harmless for the DOM / driver-LINQ paths, which materialize later.
                 _queryContext.InitializeStateManager(_standAloneStateManager);
-                _queryContext.ResetRowFailures();
 
                 try
                 {
@@ -197,18 +202,18 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                 }
             }
 
-            var hasNext = _enumerator.MoveNext();
+            // A row the cursor's reader dropped (a required reference with no document, see MongoStreamingEntityMaterializerRewriter) is not a result.
+            bool hasNext;
+            do
+            {
+                hasNext = _enumerator.MoveNext();
+            }
+            while (hasNext && _isDropped != null && _isDropped(_enumerator.Current));
 
             logAction?.Invoke();
 
             if (hasNext)
             {
-                // A row the native one-pass serializer could not materialize is an empty slot: raise its failure now that it is read.
-                if (_executableQuery?.Streaming == true)
-                {
-                    _queryContext.ThrowIfRowFailed();
-                }
-
                 // A null source row (e.g. SingleOrDefault/FirstOrDefault with no match, returned as a
                 // single null by the scalar path) must not be passed to the entity shaper, which would
                 // dereference a null BsonDocument. Yield default(TTarget); a projected identity shaper

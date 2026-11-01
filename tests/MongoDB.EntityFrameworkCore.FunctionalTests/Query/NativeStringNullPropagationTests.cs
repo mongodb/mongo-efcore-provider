@@ -176,8 +176,8 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
         => AssertThrowsOnNullOrMissing(q => q.Select(x => x.S!.Length + 1).ToList(), [4]);
 
     [Fact]
-    public void Non_nullable_Length_group_key_declines()
-        => AssertDeclines(db => db.Entities.GroupBy(x => x.S!.Length).Select(g => new { g.Key, C = g.Count() }).ToList());
+    public void Non_nullable_Length_group_key_throws_on_null()
+        => AssertThrowsOnNull(db => db.Entities.GroupBy(x => x.S!.Length).Select(g => new { g.Key, C = g.Count() }).ToList());
 
     [Fact]
     public void Non_nullable_Length_max_accumulator_declines()
@@ -225,8 +225,8 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
             q => q.Select(x => new { L = x.Label != "" ? x.S!.Length : -1 }).ToList().Select(x => x.L).ToList(), [3]);
 
     [Fact]
-    public void Non_nullable_conditional_Length_group_key_declines()
-        => AssertDeclines(db => db.Entities.GroupBy(x => x.Label != "" ? x.S!.Length : 0).Select(g => new { g.Key, C = g.Count() }).ToList());
+    public void Non_nullable_conditional_Length_group_key_throws_on_null()
+        => AssertThrowsOnNull(db => db.Entities.GroupBy(x => x.Label != "" ? x.S!.Length : 0).Select(g => new { g.Key, C = g.Count() }).ToList());
 
     [Fact]
     public void Non_nullable_conditional_Length_max_accumulator_declines()
@@ -473,6 +473,14 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
             var exception = Assert.Throws<InvalidOperationException>(() => query(db.Entities.OrderBy(x => x.Label)));
             Assert.Equal("Nullable object must have a value.", exception.Message);
         }
+    }
+
+    // A group key flagged as null-propagated is read back strictly: the null group throws EF's error instead of reading 0.
+    private void AssertThrowsOnNull<T>(Func<SingleEntityDbContext<Row>, T> query, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
+    {
+        using var db = CreateContext(Seed(name), MongoQueryMode.NativeOnly);
+        var exception = Assert.Throws<InvalidOperationException>(() => query(db));
+        Assert.Equal("Nullable object must have a value.", exception.Message);
     }
 
     private void AssertDeclines<T>(Func<SingleEntityDbContext<Row>, T> query, [System.Runtime.CompilerServices.CallerMemberName] string name = "")

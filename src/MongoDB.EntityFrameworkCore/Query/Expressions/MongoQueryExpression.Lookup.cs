@@ -274,6 +274,13 @@ internal sealed partial class MongoQueryExpression
         return collection;
     }
 
+    /// <summary>
+    /// Set by the compile step once the streaming shaper is chosen and drops the rows whose required reference has no document
+    /// (<see cref="LookupExpression.CanBeFilteredOnClient"/>): the pipeline then leaves that filtering to the cursor, unless a stage after the
+    /// lookups depends on it. A property of the query, not of a lookup, because a lone reference Include's lookup is synthesized on each access.
+    /// </summary>
+    internal bool FiltersReferenceLookupsOnClient { get; set; }
+
     /// <summary>See <see cref="GetStreamingReferenceLookups"/>. Recomputed on each access, not a cheap field read.</summary>
     public IReadOnlyList<LookupExpression> Lookups => GetStreamingReferenceLookups();
 }

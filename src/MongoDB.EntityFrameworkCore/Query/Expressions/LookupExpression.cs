@@ -397,6 +397,14 @@ internal sealed class LookupExpression
     public bool IsStreamableReference
         => IsReference && !HasPipeline && !LocalField.StartsWith(LookupAliasPrefix, System.StringComparison.Ordinal);
 
+    /// <summary>
+    /// Whether the cursor can do the work of this reference Include's inner <c>$unwind</c> itself: a single-level reference that matches at
+    /// most one document and that a document must have (<see cref="PreserveNullAndEmptyArrays"/> is <see langword="false"/>), so the rows
+    /// without a match are the ones to drop. See <see cref="NativeTranslation.Stages.MongoUnwindStage.ClientFiltered"/>.
+    /// </summary>
+    internal bool CanBeFilteredOnClient
+        => Navigation is { IsCollection: false } && IsStreamableReference && !PreserveNullAndEmptyArrays && MatchesAtMostOneDocument;
+
     /// <summary>Whether $unwind should be applied after $lookup.</summary>
     public bool ShouldUnwind => IsReference || ForceUnwind;
 

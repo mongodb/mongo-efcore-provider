@@ -681,9 +681,13 @@ public class SlotPopulationTests
         var receiver = Assert.IsAssignableFrom<BinaryExpression>(block.Expressions[0]).Right;
         Assert.IsType<NativeComputedLeafExpression>(receiver);
 
-        // Consumed by further computation: not a projected value, so it doesn't force the client shaper.
+        // A literal concatenation is a step of the client chain, so it runs client-side with the mapping (null propagated).
         var nested = TranslateToShapedQuery<Customer>(q => q.Select(c => c.Name.ToUpper() + "!"));
-        Assert.False(ProjectionAnalyzer.HasCaseMappingProjectedValue(nested.ShaperExpression));
+        Assert.True(ProjectionAnalyzer.HasCaseMappingProjectedValue(nested.ShaperExpression));
+
+        // Consumed by a computation the client cannot take over (`x.Name.ToUpper().Length`): not a projected value.
+        var consumed = TranslateToShapedQuery<Customer>(q => q.Select(c => c.Name.ToUpper().Length));
+        Assert.False(ProjectionAnalyzer.HasCaseMappingProjectedValue(consumed.ShaperExpression));
     }
 
     // Matching is structural against the staged leaf's own source subtree, not by member name/type: a client call

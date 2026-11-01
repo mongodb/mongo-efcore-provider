@@ -282,9 +282,16 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor :
 
             // The native projection holds the raw receiver of a client-reapplied ToLower/ToUpper, so value-reading operators
             // would see the wrong value. Marked after the switch because base.VisitMethodCall builds a new query expression.
-            if (sourceHasCaseMappingLeaf && !IsProjectedValueFreeOperator(methodDefinition))
+            // Distinct and Contains over such a projection are finished by the client (MongoClientOperators); nothing after a client Distinct can run on
+            // the server, as the rows it would see are not yet distinct.
+            var translatedSelect = ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select;
+            var finishedByClient = sourceHasCaseMappingLeaf
+                                   && (methodDefinition == QueryableMethods.Distinct
+                                       || methodDefinition == QueryableMethods.Contains && translatedSelect.ClientContains != null);
+            if (sourceHasCaseMappingLeaf && !IsProjectedValueFreeOperator(methodDefinition) && !finishedByClient
+                || translatedSelect.ClientDistinct && !finishedByClient)
             {
-                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.MarkNotNativelyRepresentable();
+                translatedSelect.MarkNotNativelyRepresentable();
             }
 
             // A client-evaluated leaf is never projected, so value-reading operators would read a missing field. Distinct is
@@ -300,6 +307,12 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor :
 
             // Operates on the already-visited source; never re-traverse.
             NativeSlotPopulator.PopulateNativeSlots(shapedQueryExpression, methodDefinition, methodCallExpression);
+
+            if (sourceHasCaseMappingLeaf && methodDefinition == QueryableMethods.Distinct
+                && ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select is { Route: not NativeRoute.Fallback } distinctSelect)
+            {
+                distinctSelect.ClientDistinct = true;
+            }
 
             var newCardinality = GetResultCardinality(method);
             if (newCardinality != shapedQueryExpression.ResultCardinality)
@@ -812,17 +825,7 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor :
     // Re-applies the case-mapping chain peeled off `original` down to `receiver` over `boundReceiver`, null propagated as
     // MongoProjectionBindingExpressionVisitor does for a named member.
     private static Expression ReapplyCaseMapping(Expression original, Expression receiver, Expression boundReceiver)
-        => original switch
-        {
-            _ when ReferenceEquals(original, receiver) => boundReceiver,
-            UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
-                => convert.Update(ReapplyCaseMapping(convert.Operand, receiver, boundReceiver)),
-            MethodCallExpression call when NativeCaseMapping.IsCaseMappingCall(call)
-                => MongoProjectionBindingExpressionVisitor.NullPropagatingStringCall(
-                    call, ReapplyCaseMapping(call.Object!, receiver, boundReceiver)),
-            _ => throw new InvalidOperationException(
-                $"Unexpected case-mapped projection shape '{original.GetType().Name}'.")
-        };
+        => MongoProjectionBindingExpressionVisitor.ReapplyClientStringChain(original, receiver, boundReceiver);
 
     /// <summary>
     /// Builds the index-based result shaper for a positional-ctor DTO <c>Select</c> after the native binder committed its
@@ -1205,10 +1208,30 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor :
     protected override ShapedQueryExpression TranslateContains(ShapedQueryExpression source, Expression item)
     {
         var mongoQ = (MongoQueryExpression)source.QueryExpression;
+
+        // Over a projected client case mapping the sought value is compared with the mapped rows, which only the client holds: the rows come from the
+        // native query and the client looks for the item among them.
+        if (mongoQ.Select is { HasClientCaseMappingProjectionLeaf: true, ClientDistinct: false, Route: NativeRoute.Projection }
+            && IsRuntimeValue(item))
+        {
+            mongoQ.Select.ClientContains = new ClientContainsTerminal(item, source.ShaperExpression);
+            return ReshapeShaperExpression(source, typeof(bool));
+        }
+
         if (!NativeCardinalityBinder.TryBindContains(mongoQ, source.ShaperExpression, item))
             mongoQ.Select.MarkNotNativelyRepresentable();
         return ReshapeShaperExpression(source, typeof(bool));
     }
+
+    // A constant or a query parameter: a value the query context holds at execution.
+    private static bool IsRuntimeValue(Expression item)
+        => item is ConstantExpression
+#if EF8 || EF9
+           || item is ParameterExpression parameter
+           && parameter.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal) == true;
+#else
+           || item is QueryParameterExpression;
+#endif
 
     protected override ShapedQueryExpression TranslateCount(ShapedQueryExpression source, LambdaExpression? predicate)
         => BindAggregateOrFallback(source, MongoAggregateOperator.Count, null, predicate, typeof(int));

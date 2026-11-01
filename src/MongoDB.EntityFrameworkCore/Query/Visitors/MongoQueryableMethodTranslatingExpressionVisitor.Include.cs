@@ -41,10 +41,20 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor
     /// <see cref="MongoProjectionBindingExpressionVisitor"/>, so the Select must not be marked non-representable.
     /// </summary>
     private static bool IsSingleLevelCollectionIncludeSelector(LambdaExpression selector)
-        => selector.Body is IncludeExpression { Navigation: INavigation navigation } includeExpression
-           && includeExpression.EntityExpression == selector.Parameters[0]
-           && navigation.IsCollection
-           && !navigation.IsEmbedded();
+    {
+        // Sibling collection Includes (Include(c => c.Orders).Include(c => c.Tags)) nest through EntityExpression; each is its own
+        // root-level $lookup, registered when the projection binder visits it.
+        var body = selector.Body;
+        var sawInclude = false;
+        while (body is IncludeExpression { Navigation: INavigation { IsCollection: true } navigation } includeExpression
+               && !navigation.IsEmbedded())
+        {
+            sawInclude = true;
+            body = includeExpression.EntityExpression;
+        }
+
+        return sawInclude && body == selector.Parameters[0];
+    }
 
     /// <summary>
     /// Recognizes <c>Select(ti =&gt; IncludeExpression(ti.Outer, nav, ...))</c> (or the <c>ti.Inner</c> mirror, or a longer

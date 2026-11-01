@@ -84,15 +84,29 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     // row, so the elements' shadow owner keys, which only tracking reads, have no value to read and stand as default.
     private bool _ownerKeysAbsent;
 
+    // The root's reference navigations that a document must have: a row whose `$lookup` found none of it is not a result, so the shaper
+    // returns no entity for it (see Rewrite).
+    private readonly IReadOnlyCollection<INavigation> _requiredReferences;
+
     // No BsonSerializerFactory dependency: each property's serializer is baked into the expression tree at
     // compile time via the static BsonSerializerFactory.GetPropertySerializationInfo (see BuildTypedRead).
     public MongoStreamingEntityMaterializerRewriter(
-        IEntityType rootEntityType, bool trackedQuery, IReadOnlyCollection<INavigation>? lookupCollections = null)
+        IEntityType rootEntityType,
+        bool trackedQuery,
+        IReadOnlyCollection<INavigation>? lookupCollections = null,
+        IReadOnlyCollection<INavigation>? requiredReferences = null)
     {
         _rootEntityType = rootEntityType;
         _trackedQuery = trackedQuery;
         _lookupCollections = lookupCollections ?? [];
+        _requiredReferences = requiredReferences ?? [];
     }
+
+    /// <summary>
+    /// The required reference navigations (of those passed to the constructor) the rewritten shaper checks: it returns
+    /// <see langword="default"/> instead of an entity for a row whose lookup found no document for one of them. Set by <see cref="Rewrite"/>.
+    /// </summary>
+    public IReadOnlyCollection<INavigation> RowDroppingReferences { get; private set; } = [];
 
     private static readonly MethodInfo ReadStartDocumentMethod =
         typeof(IBsonReader).GetMethod(nameof(IBsonReader.ReadStartDocument))!;
@@ -204,7 +218,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     // The per-document context from MongoEntityMaterializerSerializer.Deserialize (its Reader IS _reader), reused for every typed read,
     // including nested owned sub-documents, so no context is allocated per property.
     private ParameterExpression _context = null!;
-    private readonly ParameterExpression _name = Expression.Variable(typeof(string), "__name");
+    private readonly ParameterExpression _nameIndex = Expression.Variable(typeof(int), "__nameIndex");
 
     /// <summary>
     /// Rewrites the post-injection materializer into a forward-streaming one reading from
@@ -225,7 +239,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         var fillLoop = BuildFillLoop(rootPlan);
 
-        var allLocals = new List<ParameterExpression> { _name };
+        var allLocals = new List<ParameterExpression> { _nameIndex };
         var initializers = new List<Expression>();
         CollectLocals(rootPlan, allLocals, initializers);
 
@@ -233,7 +247,20 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         body.AddRange(initializers);
         body.Add(fillLoop);
         body.Add(Expression.Call(_reader, ReadEndDocumentMethod));
-        body.Add(rewrittenBody);
+
+        // The whole document is read before the row is judged, so the reader is left after it either way. A row missing a required reference is
+        // dropped here rather than by a `$match` on the server (which costs about as much as the lookup it filters); the enumerator skips it.
+        var missing = rootPlan.LookupReferences
+            .Where(lookup => _requiredReferences.Any(required => lookup.Navigation == required || lookup.Navigation.Name == required.Name))
+            .ToList();
+        RowDroppingReferences = missing.Select(lookup => lookup.Navigation).ToList();
+        body.Add(
+            missing.Count == 0
+                ? rewrittenBody
+                : Expression.Condition(
+                    missing.Select(lookup => (Expression)Expression.Not(lookup.Target.Present!)).Aggregate(Expression.OrElse),
+                    Expression.Default(resultType),
+                    rewrittenBody));
 
         return Expression.Block(resultType, allLocals, body);
     }
@@ -262,7 +289,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         BuildCollectionElementConstructor(collectionExpression, collection, enclosing: null);
 
-        var locals = new List<ParameterExpression> { _name, collection.Counter, collection.List };
+        var locals = new List<ParameterExpression> { _nameIndex, collection.Counter, collection.List };
         var initializers = new List<Expression>
         {
             Expression.Assign(collection.Counter, Expression.Constant(0)),
@@ -282,6 +309,80 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         return Expression.Lambda(
             Expression.Block(collection.List.Type, locals, body), QueryCompilationContext.QueryContextParameter, _reader, _context);
+    }
+
+    /// <summary>
+    /// Builds a reader of an element <c>Select</c> over one owned collection of the root (<c>o.Lines.Select(l =&gt; l.Sku).ToList()</c>): as
+    /// <see cref="BuildOwnedCollectionReader"/>, but the elements are never constructed. Each element's scalar members that <paramref name="selector"/>
+    /// reads are filled into locals (every other element is skipped), and the selector's body, with those members replaced by the locals, is
+    /// evaluated for the <see cref="List{T}"/> of results. Throws <see cref="NativeTranslationNotSupportedException"/> when the selector reads
+    /// anything but such members (see <see cref="MongoElementSelectorRewriter"/>). Only an untracked query is supported.
+    /// <paramref name="elementNames"/> are the stored element names the selector reads, the only ones the reader needs from each element.
+    /// </summary>
+    public LambdaExpression BuildOwnedCollectionSelectReader(
+        INavigation navigation, LambdaExpression selector, out IReadOnlyList<string> elementNames)
+    {
+        _reader = Expression.Parameter(typeof(IBsonReader), "__reader");
+        _context = Expression.Parameter(typeof(BsonDeserializationContext), "__context");
+        _ownerKeysAbsent = true;
+
+        var target = navigation.TargetEntityType;
+        var full = BuildPlan(target, present: null, new Dictionary<IProperty, ParameterExpression>(), allowLookupReferences: false);
+
+        var selectorRewriter = new MongoElementSelectorRewriter(target, full.Locals, selector.Parameters[0]);
+        var result = selectorRewriter.Visit(selector.Body)!;
+
+        // Only the members the selector reads are filled; the fill loop skips every other element, owned navigations included. A required
+        // member the selector reads still throws when it is missing.
+        var locals = full.Locals.Where(entry => selectorRewriter.Used.Contains(entry.Key)).ToDictionary(entry => entry.Key, entry => entry.Value);
+        elementNames = locals.Keys.Select(property => property.GetElementName()).Distinct().ToList();
+        var plan = new EntityPlan
+        {
+            EntityType = target,
+            Locals = locals,
+            RequiredPresence = full.RequiredPresence.Where(entry => locals.ContainsKey(entry.Key)).ToDictionary(entry => entry.Key, entry => entry.Value),
+            OwnedNavigations = [],
+            OwnedCollections = [],
+            DerivedProperties = [],
+            DerivedPresence = new Dictionary<IProperty, ParameterExpression>(),
+            LookupReferences = [],
+            AllLocals = locals
+        };
+
+        var listType = typeof(List<>).MakeGenericType(selector.ReturnType);
+        var list = Expression.Variable(listType, "__list_select_" + target.ShortName());
+        var declared = new List<ParameterExpression> { _nameIndex, list };
+        var elementInitializers = new List<Expression>();
+        CollectLocals(plan, declared, elementInitializers);
+
+        var elementBreak = Expression.Label("__elemDone_select_" + target.ShortName());
+        var arrayBody = Expression.Block(
+            Expression.Call(_reader, ReadStartArrayMethod),
+            Expression.Loop(
+                Expression.IfThenElse(
+                    Expression.NotEqual(
+                        Expression.Call(_reader, ReadBsonTypeMethod),
+                        Expression.Constant(BsonType.EndOfDocument, typeof(BsonType))),
+                    Expression.Block(
+                        // The locals are reused across elements: a member an element omits must not read the previous element's value.
+                        elementInitializers.Count == 0 ? Expression.Empty() : Expression.Block(elementInitializers),
+                        Expression.Call(_reader, ReadStartDocumentMethod),
+                        BuildFillLoop(plan),
+                        Expression.Call(_reader, ReadEndDocumentMethod),
+                        Expression.Call(list, listType.GetMethod(nameof(List<object>.Add))!, result)),
+                    Expression.Break(elementBreak)),
+                elementBreak),
+            Expression.Call(_reader, ReadEndArrayMethod));
+
+        // A BSON null array is consumed and reads as empty, as an absent one does (the slot reader's missing state).
+        var body = Expression.Block(
+            listType,
+            declared,
+            Expression.Assign(list, Expression.New(listType)),
+            Expression.IfThenElse(IsCurrentNull(), Expression.Call(_reader, ReadNullMethod), arrayBody),
+            list);
+
+        return Expression.Lambda(body, QueryCompilationContext.QueryContextParameter, _reader, _context);
     }
 
     /// <summary>
@@ -343,7 +444,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     // The reader sits at the sub-document (the slot reader consumed a BSON null before getting here), so the entity is always present.
     private LambdaExpression BuildEntityLeafReader(EntityPlan plan, Expression read)
     {
-        var locals = new List<ParameterExpression> { _name };
+        var locals = new List<ParameterExpression> { _nameIndex };
         var initializers = new List<Expression>();
         CollectLocals(plan, locals, initializers);
 
@@ -435,7 +536,14 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         var ownedNavigations = new List<(INavigationBase, EntityPlan)>();
         var ownedCollections = new List<CollectionPlan>();
         var lookupReferences = new List<LookupReferencePlan>();
-        foreach (var navigation in entityType.GetNavigations())
+
+        // The owned navigations declared by the derived types of a hierarchy's root are read with it, when the shaper includes them (a query of
+        // one derived type includes only its own): a document holds those of one concrete type.
+        var navigations = isRootPlan
+            ? entityType.GetNavigations().Concat(
+                entityType.GetDerivedTypes().SelectMany(t => t.GetDeclaredNavigations()).Where(_includedNavigations.Contains))
+            : entityType.GetNavigations();
+        foreach (var navigation in navigations)
         {
             var target = navigation.TargetEntityType;
 
@@ -444,10 +552,11 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 // Non-owned references are planned one level deep, off the root only: a self-referential relationship (e.g. Staff.Manager)
                 // would otherwise recurse forever. A deeper (ThenInclude) reference has no LookupReferencePlan, so
                 // RewriteLookupReferenceNavigation rejects it and falls back to the DOM path.
-                // The element of an included lookup collection reads the references the shaper includes off it (ThenInclude); any other
-                // non-owned navigation of it is not read.
+                // The element of an included lookup collection reads the references and collections the shaper includes off it (ThenInclude);
+                // any other non-owned navigation of it is not read.
                 if (!allowLookupReferences
-                    && !(readIncludedReferences && !navigation.IsCollection && _includedReferences.Contains(navigation)))
+                    && !(readIncludedReferences
+                         && (navigation.IsCollection ? _includedCollections : _includedReferences).Contains(navigation)))
                 {
                     continue;
                 }
@@ -458,8 +567,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 if (navigation.IsCollection)
                 {
                     // A collection the shaper does not include is not read: either it has no array in the document, or it has one only
-                    // because the query uses it in a predicate or a count, and the fill loop skips an element it has no entry for.
-                    if (!_lookupCollections.Contains(navigation) || !_includedCollections.Contains(navigation))
+                    // because the query uses it in a predicate or a count, and the fill loop skips an element it has no entry for. One off an
+                    // element of an included collection (ThenInclude) is an array of that element, at its own alias, and is not a query-level lookup.
+                    if (!_includedCollections.Contains(navigation) || !(_lookupCollections.Contains(navigation) || readIncludedReferences))
                     {
                         continue;
                     }
@@ -642,7 +752,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         {
             // The joined sub-document is a root-level `_lookup_<Nav>` element. Same null-guarded descent as an owned reference, keyed by
             // the lookup alias; BSON Null (no $lookup match) -> present = false -> null navigation.
-            entries.Add((lookup.ElementName, BuildNullGuardedDescent(lookup.Target)));
+            entries.Add((lookup.ElementName, BuildLookupReferenceDescent(lookup.Target)));
         }
 
         foreach (var collection in plan.OwnedCollections)
@@ -663,11 +773,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     Expression.Call(_reader, ReadBsonTypeMethod),
                     Expression.Constant(BsonType.EndOfDocument, typeof(BsonType))),
                 Expression.Block(
-                    Expression.Assign(
-                        _name,
-                        Expression.Call(
-                            _reader, ReadNameMethod,
-                            Expression.Constant(new MongoElementNameDecoder(entries.Select(e => e.ElementName)), typeof(INameDecoder)))),
+                    ReadNameIndex(entries),
                     dispatch),
                 Expression.Break(breakTarget)),
             breakTarget);
@@ -736,11 +842,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     Expression.Call(_reader, ReadBsonTypeMethod),
                     Expression.Constant(BsonType.EndOfDocument, typeof(BsonType))),
                 Expression.Block(
-                    Expression.Assign(
-                        _name,
-                        Expression.Call(
-                            _reader, ReadNameMethod,
-                            Expression.Constant(new MongoElementNameDecoder(parts.Select(p => p.ElementName)), typeof(INameDecoder)))),
+                    ReadNameIndex(parts),
                     BuildDispatch(parts)),
                 Expression.Break(breakTarget)),
             breakTarget);
@@ -809,9 +911,22 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
            && BsonSerializerFactory.GetPropertySerializationInfo(first).Serializer.GetType()
            == BsonSerializerFactory.GetPropertySerializationInfo(second).Serializer.GetType();
 
-    // The fill loop's element-name dispatch: one switch on the current element name (a hash/binary-search jump), so the cost per
-    // element does not grow with the entity's width; an unmapped element is skipped. When two members map to the same element name
-    // the LAST one added wins, as it did when the dispatch was a chain wrapped last-first; Expression.Switch rejects duplicate cases.
+    private static readonly MethodInfo ReadNameIndexMethod =
+        typeof(MongoElementNameDecoder).GetMethod(nameof(MongoElementNameDecoder.ReadIndex))!;
+
+    // Reads the next element name into _nameIndex: its position among the entries' distinct names (the order BuildDispatch numbers its cases
+    // in), or -1 for an unmapped name. The decoder is built from the same entries, so the two agree.
+    private Expression ReadNameIndex(IEnumerable<(string ElementName, Expression Body)> entries)
+        => Expression.Assign(
+            _nameIndex,
+            Expression.Call(
+                ReadNameIndexMethod,
+                _reader,
+                Expression.Constant(new MongoElementNameDecoder(entries.Select(e => e.ElementName)), typeof(MongoElementNameDecoder))));
+
+    // The fill loop's element-name dispatch: a jump table on the name's index (see ReadNameIndex), so the cost per element does not grow
+    // with the entity's width and no name is compared; an unmapped element (-1) is skipped. When two members map to the same element name
+    // the LAST one added wins, as it did when the dispatch was a chain wrapped last-first.
     private Expression BuildDispatch(List<(string ElementName, Expression Body)> entries)
     {
         var skip = (Expression)Expression.Call(_reader, SkipValueMethod);
@@ -820,20 +935,15 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             return skip;
         }
 
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var cases = new List<SwitchCase>(entries.Count);
-        for (var i = entries.Count - 1; i >= 0; i--)
+        var names = MongoElementNameDecoder.DistinctNames(entries.Select(e => e.ElementName));
+        var cases = new List<SwitchCase>(names.Count);
+        for (var index = 0; index < names.Count; index++)
         {
-            if (seen.Add(entries[i].ElementName))
-            {
-                cases.Add(
-                    Expression.SwitchCase(
-                        Expression.Block(typeof(void), entries[i].Body),
-                        Expression.Constant(entries[i].ElementName, typeof(string))));
-            }
+            var body = entries.Last(e => e.ElementName == names[index]).Body;
+            cases.Add(Expression.SwitchCase(Expression.Block(typeof(void), body), Expression.Constant(index)));
         }
 
-        return Expression.Switch(typeof(void), _name, Expression.Block(typeof(void), skip), comparison: null, cases);
+        return Expression.Switch(typeof(void), _nameIndex, Expression.Block(typeof(void), skip), comparison: null, cases);
     }
 
     private Expression IsCurrentNull()
@@ -854,6 +964,58 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 Expression.Call(_reader, ReadStartDocumentMethod),
                 BuildFillLoop(plan),
                 Expression.Call(_reader, ReadEndDocumentMethod)));
+
+    // Descends into a `_lookup_<Nav>` field. The pipeline leaves it either as the joined document (a `$set` to the array's first element) or,
+    // when the cursor does the filtering, as the `$lookup`'s own array of at most one document; both are read here. BSON Null, and an empty
+    // array, are no match: present = false, as before.
+    private Expression BuildLookupReferenceDescent(EntityPlan plan)
+    {
+        var isArray = Expression.Variable(typeof(bool), "__lookupIsArray");
+        var hasDocument = Expression.Variable(typeof(bool), "__lookupHasDocument");
+        var skipDone = Expression.Label("__lookupSkipDone");
+
+        return Expression.IfThenElse(
+            IsCurrentNull(),
+            Expression.Block(
+                Expression.Call(_reader, ReadNullMethod),
+                Expression.Assign(plan.Present!, Expression.Constant(false))),
+            Expression.Block(
+                typeof(void),
+                [isArray, hasDocument],
+                Expression.Assign(
+                    isArray,
+                    Expression.Equal(
+                        Expression.Call(_reader, GetCurrentBsonTypeMethod),
+                        Expression.Constant(BsonType.Array, typeof(BsonType)))),
+                Expression.IfThen(isArray, Expression.Call(_reader, ReadStartArrayMethod)),
+                Expression.Assign(
+                    hasDocument,
+                    Expression.OrElse(
+                        Expression.Not(isArray),
+                        Expression.NotEqual(
+                            Expression.Call(_reader, ReadBsonTypeMethod),
+                            Expression.Constant(BsonType.EndOfDocument, typeof(BsonType))))),
+                Expression.Assign(plan.Present!, hasDocument),
+                Expression.IfThen(
+                    hasDocument,
+                    Expression.Block(
+                        Expression.Call(_reader, ReadStartDocumentMethod),
+                        BuildFillLoop(plan),
+                        Expression.Call(_reader, ReadEndDocumentMethod),
+                        // A lookup that matches at most one document leaves nothing more in the array; skip whatever is there regardless.
+                        // (An empty array has already reported its end, which cannot be read again.)
+                        Expression.IfThen(
+                            isArray,
+                            Expression.Loop(
+                                Expression.IfThenElse(
+                                    Expression.NotEqual(
+                                        Expression.Call(_reader, ReadBsonTypeMethod),
+                                        Expression.Constant(BsonType.EndOfDocument, typeof(BsonType))),
+                                    Expression.Call(_reader, SkipValueMethod),
+                                    Expression.Break(skipDone)),
+                                skipDone)))),
+                Expression.IfThen(isArray, Expression.Call(_reader, ReadEndArrayMethod))));
+    }
 
     /// <summary>
     /// Builds the array loop for an owned collection (reader at the array value). BSON Null is consumed and the accumulator left NULL:
@@ -989,7 +1151,10 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         Expression relatedEntityExpression,
         bool setLoaded)
     {
-        var instanceVariable = entityBlock.Variables.Single(v => v.Type == navigation.DeclaringEntityType.ClrType);
+        // The block ends with the instance. For a navigation declared by a derived type it is typed as the type the query reads (the fixup checks
+        // the concrete type at run time), so it is taken from the block rather than found by the declaring type.
+        var instanceVariable = entityBlock.Expressions[^1] as ParameterExpression
+                               ?? entityBlock.Variables.Single(v => v.Type == navigation.DeclaringEntityType.ClrType);
         var concreteEntityTypeVariable = entityBlock.Variables.Single(v => v.Type == typeof(IEntityType));
 #pragma warning disable EF1001 // Internal EF Core API usage.
         var entryVariable = entityBlock.Variables.SingleOrDefault(v => v.Type == typeof(InternalEntityEntry));
