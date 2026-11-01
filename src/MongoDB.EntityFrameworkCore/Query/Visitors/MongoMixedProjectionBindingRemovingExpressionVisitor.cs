@@ -153,7 +153,10 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 value = convert.Operand;
             }
 
-            if (name == member && (_collectAny || (value is MethodCallExpression call && NativeCaseMapping.IsCaseMappingCall(call))))
+            if (name == member && (_collectAny
+                              || (value is MethodCallExpression call
+                                  && (NativeCaseMapping.IsCaseMappingCall(call) || NativeCaseMapping.IsClientStringChainStep(call)))
+                              || (value is BinaryExpression concat && NativeCaseMapping.TryMatchClientStringConcat(concat, out _, out _, out _))))
             {
                 _found = true;
             }

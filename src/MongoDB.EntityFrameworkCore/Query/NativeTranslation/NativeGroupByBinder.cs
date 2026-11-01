@@ -80,9 +80,9 @@ internal static class NativeGroupByBinder
             case NewExpression { Members: { Count: > 0 } members } newExpr:
                 for (var i = 0; i < newExpr.Arguments.Count; i++)
                 {
-                    if (!TryBindKeyPartValue(newExpr.Arguments[i], translator, out var partValue))
+                    if (!TryBindKeyPartValue(newExpr.Arguments[i], translator, out var partValue, out var partThrowsOnNull))
                         return false;
-                    parts.Add(new MongoGroupingKeyPart(members[i].Name, partValue));
+                    parts.Add(new MongoGroupingKeyPart(members[i].Name, partValue, partThrowsOnNull));
                 }
 
                 break;
@@ -101,18 +101,18 @@ internal static class NativeGroupByBinder
                     if (memberMap is null || memberMap.ElementName != assignment.Member.Name)
                         return false;
 
-                    if (!TryBindKeyPartValue(assignment.Expression, translator, out var memberPartValue))
+                    if (!TryBindKeyPartValue(assignment.Expression, translator, out var memberPartValue, out var memberThrowsOnNull))
                         return false;
-                    parts.Add(new MongoGroupingKeyPart(assignment.Member.Name, memberPartValue));
+                    parts.Add(new MongoGroupingKeyPart(assignment.Member.Name, memberPartValue, memberThrowsOnNull));
                 }
 
                 break;
 
             // A bare member, EF.Property call, computed expression, constant or parameter; a multi-argument constructor key (Members == null) also lands here and declines.
             default:
-                if (!TryBindKeyPartValue(keySelector.Body, translator, out var scalarValue))
+                if (!TryBindKeyPartValue(keySelector.Body, translator, out var scalarValue, out var scalarThrowsOnNull))
                     return false;
-                parts.Add(new MongoGroupingKeyPart(null, scalarValue));
+                parts.Add(new MongoGroupingKeyPart(null, scalarValue, scalarThrowsOnNull));
                 break;
         }
 
@@ -126,9 +126,10 @@ internal static class NativeGroupByBinder
     /// <see cref="NativeSlotPopulator.TryProbeBareValueRenders"/>, since a translatable value can still throw at build time (a captured <see cref="Guid"/> parameter).
     /// </summary>
     private static bool TryBindKeyPartValue(
-        Expression body, MongoGroupElementTranslator translator, [NotNullWhen(true)] out MongoExpression? result)
+        Expression body, MongoGroupElementTranslator translator, [NotNullWhen(true)] out MongoExpression? result, out bool throwsOnNull)
     {
         result = null;
+        throwsOnNull = false;
 
         if (!translator.TryTranslateValue(body, out var translated))
             return false;
@@ -139,9 +140,16 @@ internal static class NativeGroupByBinder
         if (!MongoAggregationExpressionRenderer.CanRender(translated))
             return false;
 
-        // A non-nullable Length/IndexOf key over a possibly-null string would group its null rows under 0.
-        if (MongoAggregationExpressionRenderer.ReadsNullAsDefault(NativeSlotPopulator.UnwrapBoxingToObjectType(body), translated))
-            return false;
+        // A non-nullable Length/IndexOf or date-part key over a possibly-null value groups its null rows under null, which a non-nullable read would take as 0 where EF
+        // throws (EF-461). The key part is flagged so a direct key read throws on null (MongoProjection.ThrowsOnNull); where an operator may absorb the null, decline.
+        var keyType = NativeSlotPopulator.UnwrapBoxingToObjectType(body);
+        if (MongoAggregationExpressionRenderer.ReadsNullAsDefault(keyType, translated))
+        {
+            if (MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(keyType, translated) != NonNullableValueRead.ThrowOnNull)
+                return false;
+
+            throwsOnNull = true;
+        }
 
         if (!NativeSlotPopulator.TryProbeBareValueRenders(translated, NativeSlotPopulator.UnwrapBoxingToObjectType(body)))
             return false;
@@ -252,7 +260,27 @@ internal static class NativeGroupByBinder
                     out var memberValue, out var isKeyRead))
                 return false;
 
-            flatten.Add(new MongoProjection(memberName, memberValue));
+            var readsThrowingKey = false;
+            if (scope.KeyParts.Any(p => p.ThrowsOnNull))
+            {
+                if (isKeyRead)
+                {
+                    // Only a read of the throwing part itself can throw; a whole composite key is read through its class map, which cannot.
+                    if (!TryGetKeyMemberPath(valueExpr, scope, out var readPath, allowWholeKeyRead: true))
+                        return false;
+
+                    readsThrowingKey = KeyPathThrowsOnNull(readPath, scope, out var wholeCompositeRead);
+                    if (wholeCompositeRead)
+                        return false;
+                }
+                else if (KeyReferenceFinder.References(valueExpr, scope.GroupingParameter))
+                {
+                    // A computed member over a throwing key part would need the operator to propagate the null; decline.
+                    return false;
+                }
+            }
+
+            flatten.Add(new MongoProjection(memberName, memberValue, ThrowsOnNull: readsThrowingKey));
             if (isKeyRead && isBareBody)
                 isBareBodyKeyMember = true;
         }
@@ -769,6 +797,51 @@ internal static class NativeGroupByBinder
            // Not only over a join: a non-nullable $min/$max/$avg of a Length/IndexOf over a possibly-null string reduces an all-null group to null, read back as 0
            // (MayBeNullBehindNonNullableType). $sum skips a null as EF does.
            || (op is "$min" or "$max" or "$avg" && MongoAggregationExpressionRenderer.ReadsNullAsDefault(resultType, operand));
+
+    // Whether reading the key at `path` reads a part flagged ThrowsOnNull (whole: the whole composite key, which a class-map read cannot make throw).
+    private static bool KeyPathThrowsOnNull(string? path, GroupBindingScope scope, out bool wholeCompositeRead)
+    {
+        wholeCompositeRead = false;
+        if (path == GroupIdFieldName)
+        {
+            if (scope.IsComposite)
+            {
+                wholeCompositeRead = scope.KeyParts.Any(p => p.ThrowsOnNull);
+                return false;
+            }
+
+            return scope.KeyParts.Any(p => p.ThrowsOnNull);
+        }
+
+        return scope.KeyParts.Any(p => p.ThrowsOnNull && path == GroupIdFieldName + "." + p.Name);
+    }
+
+    // Whether an expression reads the grouping parameter's Key.
+    private sealed class KeyReferenceFinder : ExpressionVisitor
+    {
+        private readonly ParameterExpression _grouping;
+        private bool _found;
+
+        private KeyReferenceFinder(ParameterExpression grouping) => _grouping = grouping;
+
+        internal static bool References(Expression body, ParameterExpression grouping)
+        {
+            var finder = new KeyReferenceFinder(grouping);
+            finder.Visit(body);
+            return finder._found;
+        }
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (node.Member.Name == "Key" && node.Expression == _grouping)
+            {
+                _found = true;
+                return node;
+            }
+
+            return base.VisitMember(node);
+        }
+    }
 
     // Finds a condition (ternary, comparison, logical operator or negation) anywhere in an operand.
     private sealed class ConditionFinder : ExpressionVisitor

@@ -37,11 +37,13 @@ public class SingleResultBenchmarks
         _efOptionsDriverLinq = new DbContextOptionsBuilder<BenchmarkDbContext>()
             .UseMongoDB(_client, _dbName, o => o.UseQueryMode(MongoQueryMode.DriverLinq))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .EnableThreadSafetyChecks(false)
             .Options;
 
         _efOptionsNative = new DbContextOptionsBuilder<BenchmarkDbContext>()
             .UseMongoDB(_client, _dbName, o => o.UseQueryMode(MongoQueryMode.Native))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .EnableThreadSafetyChecks(false)
             .Options;
 
         _driverLinqFactory = BenchmarkContexts.Pool(_efOptionsDriverLinq);

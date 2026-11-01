@@ -309,20 +309,16 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     // ---- Errors ------------------------------------------------------------------------------------
 
     [Fact]
-    public void Malformed_article_in_a_later_category_does_not_fail_the_categories_before_it()
+    public void Malformed_article_in_a_later_category_throws_when_the_batch_is_read()
     {
         var (suffix, db) = SeedBlog(MongoQueryMode.NativeOnly);
         using (db)
         {
             db.Raw("Articles").UpdateOne(new BsonDocument("_id", 4), new BsonDocument("$set", new BsonDocument("Views", "not an int")));
 
-            // Only the first category is read: the malformed article belongs to the second, which the driver's batch holds but the caller never reaches.
-            var first = db.Categories.AsNoTracking().Include(c => c.Articles).OrderBy(c => c.Id).AsEnumerable().Take(1).ToList();
-            Assert.Equal(3, Assert.Single(first).Articles.Count);
-
-            using var enumerator = db.Categories.AsNoTracking().Include(c => c.Articles).OrderBy(c => c.Id).AsEnumerable().GetEnumerator();
-            Assert.True(enumerator.MoveNext());
-            Assert.Throws<FormatException>(() => enumerator.MoveNext());
+            // Stored data that contradicts the model is not recovered from: the driver deserializes the whole batch before yielding the
+            // first category, so the malformed article of the second fails the query, as under driver-LINQ.
+            Assert.Throws<FormatException>(() => db.Categories.AsNoTracking().Include(c => c.Articles).OrderBy(c => c.Id).ToList());
         }
     }
 

@@ -192,6 +192,27 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
+    // A literal built in the query (`new DateTime(...)`) can reach the translator un-evaluated; it is a value like any constant.
+    [Fact]
+    public void A_DateTime_literal_built_in_the_predicate_goes_native_and_matches_the_driver()
+    {
+        var collection = SeedTimeRows(nameof(A_DateTime_literal_built_in_the_predicate_goes_native_and_matches_the_driver));
+
+        var native = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateTimeContext(collection, mode);
+            var before = db.Entities.AsNoTracking().Where(x => x.When < new DateTime(2024, 3, 11, 0, 0, 0, DateTimeKind.Utc))
+                .OrderBy(x => x.Label).Select(x => x.Label).ToList();
+            var first = db.Entities.AsNoTracking().OrderBy(x => x.When)
+                .First(x => x.When > new DateTime(2024, 3, 10, 0, 0, 0, 0, DateTimeKind.Utc)).Label;
+            var nullable = db.Entities.AsNoTracking().Where(x => x.MaybeWhen >= new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+                .OrderBy(x => x.Label).Select(x => x.Label).ToList();
+            return before.Concat([first]).Concat(nullable).ToList();
+        });
+
+        Assert.Equal(["a", "d", "e", "a", "a", "d"], native);
+    }
+
     [Fact]
     public void TimeOfDay_bare_projection_goes_native_and_matches_the_driver()
     {
@@ -284,16 +305,31 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
         Assert.Equal([2024, 1999, 2024, 1969], native);
     }
 
-    // EF-461: a group key or $min/$max/$avg accumulator over a date part of a null date must not read the null as 0
-    // (EF throws "Nullable object must have a value."); the shape declines to the fallback instead.
+    // EF-461: a group key over a date part of a null date must not read the null as 0 (EF throws "Nullable object must have a value."): the key
+    // is flagged, so reading it throws; rows with a date group natively.
     [Fact]
-    public void GroupBy_key_over_a_date_part_of_a_nullable_date_declines()
+    public void GroupBy_key_over_a_date_part_of_a_nullable_date_goes_native_for_non_null_rows()
     {
-        var collection = SeedTimeRows(nameof(GroupBy_key_over_a_date_part_of_a_nullable_date_declines));
+        var collection = SeedTimeRows(nameof(GroupBy_key_over_a_date_part_of_a_nullable_date_goes_native_for_non_null_rows));
         using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.AsNoTracking()
+        var native = db.Entities.AsNoTracking().Where(x => x.MaybeWhen != null)
+            .GroupBy(x => x.MaybeWhen!.Value.Year).Select(g => new { g.Key, C = g.Count() }).OrderBy(r => r.Key).ToList();
+
+        Assert.Equal(
+            [(1969, 1), (1999, 1), (2024, 2)],
+            native.Select(r => (r.Key, r.C)).ToList());
+    }
+
+    [Fact]
+    public void GroupBy_key_over_a_date_part_of_a_null_date_throws_like_CSharp()
+    {
+        var collection = SeedTimeRows(nameof(GroupBy_key_over_a_date_part_of_a_null_date_throws_like_CSharp));
+        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.AsNoTracking()
             .GroupBy(x => x.MaybeWhen!.Value.Year).Select(g => new { g.Key, C = g.Count() }).ToList());
+        Assert.Equal(NullableValueMessage(), ex.Message);
     }
 
     [Fact]

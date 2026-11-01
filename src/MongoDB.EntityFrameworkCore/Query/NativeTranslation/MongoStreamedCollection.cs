@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -179,6 +180,13 @@ internal sealed class StreamedCollectionSubstituter : System.Linq.Expressions.Ex
     /// <summary>The variables declared by the replaced subtrees, which no longer exist in the shaper.</summary>
     public List<ParameterExpression> RemovedVariables { get; } = [];
 
+    /// <summary>
+    /// For each owned array an element <c>Select</c> reads in place (see <see cref="TryStreamElementSelect"/>), the alias it is projected under and the
+    /// stored element names the Select needs from each element. Nothing else of the array is read, so once the shaper is in use the pipeline may
+    /// project just these (<see cref="MongoSelectDefinition.TryNarrowArrayProjection"/>).
+    /// </summary>
+    public List<(string Alias, IReadOnlyList<string> ElementNames)> NarrowedArrays { get; } = [];
+
     public int Replaced { get; private set; }
 
     /// <summary>The shaper with its streamable owned collections replaced, or <see langword="null"/> when there are none or one cannot be read.</summary>
@@ -187,11 +195,13 @@ internal sealed class StreamedCollectionSubstituter : System.Linq.Expressions.Ex
         IEntityType rootEntityType,
         MongoQueryExpression queryExpression,
         bool trackedQuery,
-        out List<ParameterExpression> removedVariables)
+        out List<ParameterExpression> removedVariables,
+        out List<(string Alias, IReadOnlyList<string> ElementNames)> narrowedArrays)
     {
         var substituter = new StreamedCollectionSubstituter(rootEntityType, queryExpression, trackedQuery);
         var rewritten = substituter.Visit(injectedBody);
         removedVariables = substituter.RemovedVariables;
+        narrowedArrays = substituter.NarrowedArrays;
         return substituter._declined || substituter.Replaced == 0 ? null : rewritten;
     }
 
@@ -228,6 +238,70 @@ internal sealed class StreamedCollectionSubstituter : System.Linq.Expressions.Ex
         }
 
         return base.VisitExtension(node);
+    }
+
+    // `ToList(Select(Convert(<owned collection block>), l => body))`: the binding visitor's re-application of an element Select over a
+    // root-level owned collection (NativeProjectionBinder.TryMatchOwnedArraySelectLeaf). When the lambda reads only scalar members of its
+    // element (MongoElementSelectorRewriter), the cursor evaluates it per element straight off the reader and yields the List<TResult>, so no
+    // owned entity (nor its nested owned types) is constructed. Anything else leaves the collection to be read whole and the Select to run on it.
+    protected override Expression VisitMethodCall(MethodCallExpression node)
+        => !_trackedQuery && TryStreamElementSelect(node) is { } fused ? fused : base.VisitMethodCall(node);
+
+    private Expression? TryStreamElementSelect(MethodCallExpression toList)
+    {
+        if (toList is not
+            {
+                Method: { Name: nameof(Enumerable.ToList), DeclaringType: var toListType },
+                Arguments:
+                [
+                    MethodCallExpression
+                    {
+                        Method: { Name: nameof(Enumerable.Select), DeclaringType: var selectType },
+                        Arguments:
+                        [
+                            UnaryExpression
+                            {
+                                NodeType: ExpressionType.Convert,
+                                Operand: BlockExpression
+                                {
+                                    Variables: [{ } arrayVariable],
+                                    Expressions:
+                                    [
+                                        BinaryExpression { NodeType: ExpressionType.Assign, Right: UnaryExpression { NodeType: ExpressionType.TypeAs, Operand: ProjectionBindingExpression binding } },
+                                        CollectionShaperExpression shaper
+                                    ]
+                                } block
+                            },
+                            LambdaExpression { Parameters.Count: 1 } selector
+                        ]
+                    }
+                ]
+            }
+            || toListType != typeof(Enumerable)
+            || selectType != typeof(Enumerable)
+            || arrayVariable.Type != typeof(BsonArray)
+            || !TryResolveOwnedCollection(binding, shaper, out var navigation, out var alias))
+        {
+            return null;
+        }
+
+        IBsonSerializer serializer;
+        IReadOnlyList<string> elementNames;
+        try
+        {
+            var reader = new MongoStreamingEntityMaterializerRewriter(_rootEntityType, trackedQuery: false)
+                .BuildOwnedCollectionSelectReader(navigation, selector, out elementNames);
+            serializer = (IBsonSerializer)CreateSerializerMethod.MakeGenericMethod(selector.ReturnType).Invoke(null, [reader.Compile()])!;
+        }
+        catch (NativeTranslationNotSupportedException)
+        {
+            return null;
+        }
+
+        RemovedVariables.AddRange(CollectVariables(block));
+        Replaced++;
+        NarrowedArrays.Add((alias, elementNames));
+        return new MongoStreamedCollectionExpression(alias, typeof(List<>).MakeGenericType(selector.ReturnType), serializer);
     }
 
     private static readonly MethodInfo CreateEntitySerializerMethod =
@@ -289,6 +363,12 @@ internal sealed class StreamedCollectionSubstituter : System.Linq.Expressions.Ex
             return TryStreamWholeRoot(leaf, projectedAlias ?? wholeRoot.Name);
         }
 
+        // The inner entity of an explicit Join / LeftJoin: its whole document, staged at the root under its join level's prefix.
+        if (entityProjection is { ParentAccessExpression: EntityTypeObjectAccessExpression { AccessExpression: RootReferenceExpression } innerAccess })
+        {
+            return TryStreamJoinInner(leaf, innerAccess.EntityType, projectedAlias ?? innerAccess.Name);
+        }
+
         if (entityProjection is not { ParentAccessExpression: ObjectAccessExpression { Navigation: { IsCollection: false } navigation, AccessExpression: RootReferenceExpression } access }
             || navigation.DeclaringEntityType != _rootEntityType)
         {
@@ -342,6 +422,32 @@ internal sealed class StreamedCollectionSubstituter : System.Linq.Expressions.Ex
         return new MongoStreamedCollectionExpression(alias, target.ClrType, serializer, missingMessage);
     }
 
+    // A join's inner document reads like a root document of the inner type; an absent or null one (an unmatched LeftJoin) is a null entity.
+    private Expression? TryStreamJoinInner(Expression leaf, IEntityType innerType, string alias)
+    {
+        // An Include on the inner entity (`join o in orders.Include(o => o.Customer) ...`) is not read from the joined document: the DOM shaper
+        // keeps handling it exactly as it did.
+        if (leaf is IncludeExpression || !StreamingEligibility.IsEligible(innerType))
+        {
+            return null;
+        }
+
+        IBsonSerializer serializer;
+        try
+        {
+            var reader = new MongoStreamingEntityMaterializerRewriter(innerType, _trackedQuery).BuildRootEntityReader(leaf);
+            serializer = (IBsonSerializer)CreateEntitySerializerMethod.MakeGenericMethod(innerType.ClrType).Invoke(null, [reader.Compile()])!;
+        }
+        catch (NativeTranslationNotSupportedException)
+        {
+            return null;
+        }
+
+        RemovedVariables.AddRange(CollectVariables(leaf));
+        Replaced++;
+        return new MongoStreamedCollectionExpression(alias, innerType.ClrType, serializer);
+    }
+
     private Expression? TryStreamWholeRoot(Expression leaf, string? alias)
     {
         if (alias == null || !StreamingEligibility.IsEligible(_rootEntityType))
@@ -374,15 +480,22 @@ internal sealed class StreamedCollectionSubstituter : System.Linq.Expressions.Ex
         return node;
     }
 
-    private Expression? TryStream(BlockExpression block, ProjectionBindingExpression binding, CollectionShaperExpression shaper)
+    // An untracked, streamable owned collection of the root, projected under its own alias: its navigation and the alias it is read under.
+    private bool TryResolveOwnedCollection(
+        ProjectionBindingExpression binding,
+        CollectionShaperExpression shaper,
+        [NotNullWhen(true)] out INavigation? navigation,
+        [NotNullWhen(true)] out string? alias)
     {
+        navigation = null;
+        alias = null;
         if (_trackedQuery
-            || shaper.Navigation is not INavigation { IsCollection: true } navigation
-            || navigation.DeclaringEntityType != _rootEntityType
-            || !navigation.TargetEntityType.IsOwned()
-            || !StreamingEligibility.IsEligibleOwnedElement(navigation.TargetEntityType))
+            || shaper.Navigation is not INavigation { IsCollection: true } found
+            || found.DeclaringEntityType != _rootEntityType
+            || !found.TargetEntityType.IsOwned()
+            || !StreamingEligibility.IsEligibleOwnedElement(found.TargetEntityType))
         {
-            return null;
+            return false;
         }
 
         var index = binding.ProjectionMember == null
@@ -390,13 +503,25 @@ internal sealed class StreamedCollectionSubstituter : System.Linq.Expressions.Ex
             : _queryExpression.GetMappedProjection(binding.ProjectionMember) is ConstantExpression { Value: int mapped } ? mapped : null;
         if (index is not { } projectionIndex)
         {
-            return null;
+            return false;
         }
 
         var projection = _queryExpression.Projection[projectionIndex];
-        if (projection.Alias is not { } alias
+        if (projection.Alias is not { } projected
             || projection.Expression is not IArrayProjectionExpression { OwnerEntityType: { } owner, AccessExpression: RootReferenceExpression }
             || owner != _rootEntityType)
+        {
+            return false;
+        }
+
+        navigation = found;
+        alias = projected;
+        return true;
+    }
+
+    private Expression? TryStream(BlockExpression block, ProjectionBindingExpression binding, CollectionShaperExpression shaper)
+    {
+        if (!TryResolveOwnedCollection(binding, shaper, out var navigation, out var alias))
         {
             return null;
         }

@@ -1301,7 +1301,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }, { "$lookup" : { 
 """,
             //
             """
-OrderDetails.{ "$match" : { "_id.OrderID" : { "$in" : [10643, 10692, 10702, 10835, 10952, 11011] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$match" : { "_lookup_Order.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Order" : { "$arrayElemAt" : ["$_lookup_Order", 0] } } }
+OrderDetails.{ "$match" : { "_id.OrderID" : { "$in" : [10643, 10692, 10702, 10835, 10952, 11011] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }
 """);
     }
 

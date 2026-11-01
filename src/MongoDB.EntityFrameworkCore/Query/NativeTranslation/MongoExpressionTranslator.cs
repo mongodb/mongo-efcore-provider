@@ -329,20 +329,8 @@ internal sealed partial class MongoExpressionTranslator
     {
         result = null;
 
-        // A clock member must never be baked into the cached template: it is a per-execution value
-        // (TryCreateRuntimeClockParameter); a clock subtree that isn't admitted there declines.
-        if (ContainsParameterOrExtensionNode(node) || NonDeterministicCalls.ContainsNonDeterministicCall(node) || RuntimeClock.ContainsClock(node))
+        if (!TryEvaluateClosedValue(node, out var value))
             return false;
-
-        object? value;
-        try
-        {
-            value = Expression.Lambda<Func<object>>(Expression.Convert(node, typeof(object))).Compile().Invoke();
-        }
-        catch
-        {
-            return false; // the subtree throws when evaluated (e.g. an invalid DateTime); decline, don't crash
-        }
 
         // Relabel (not convert) a non-Utc DateTime literal as Utc. Otherwise BsonValue.Create calls ToUniversalTime,
         // which depends on the host time zone and can skew the rendered $date (e.g. Europe/Dublin's pre-1916
@@ -354,6 +342,27 @@ internal sealed partial class MongoExpressionTranslator
 
         result = new MongoConstantExpression(value, forSerialization: null);
         return true;
+    }
+
+    // The value of a closed subtree, or false when it is not closed, is non-deterministic or holds a clock, or throws when evaluated.
+    private static bool TryEvaluateClosedValue(Expression node, out object? value)
+    {
+        value = null;
+
+        // A clock member must never be baked into the cached template: it is a per-execution value
+        // (TryCreateRuntimeClockParameter); a clock subtree that isn't admitted there declines.
+        if (ContainsParameterOrExtensionNode(node) || NonDeterministicCalls.ContainsNonDeterministicCall(node) || RuntimeClock.ContainsClock(node))
+            return false;
+
+        try
+        {
+            value = Expression.Lambda<Func<object>>(Expression.Convert(node, typeof(object))).Compile().Invoke();
+            return true;
+        }
+        catch
+        {
+            return false; // the subtree throws when evaluated (e.g. an invalid DateTime); decline, don't crash
+        }
     }
 
     private static bool ContainsParameterOrExtensionNode(Expression node)
@@ -1497,7 +1506,15 @@ internal sealed partial class MongoExpressionTranslator
         => node is ConstantExpression
            || NativeQueryParameter.TryGetQueryParameterName(node, out _)
            || NativeQueryParameter.TryGetParameterArrayElementIndex(node, out _, out _)
-           || RuntimeClock.IsRuntimeEvaluable(node);
+           || RuntimeClock.IsRuntimeEvaluable(node)
+           || IsClosedLiteralConstruction(node);
+
+    // `new DateTime(2000, 1, 26, 0, 0, 0, DateTimeKind.Utc)`: a value built from constants alone, which TranslateValue evaluates.
+    private static bool IsClosedLiteralConstruction(Expression node)
+        => node is NewExpression
+           && !ContainsParameterOrExtensionNode(node)
+           && !NonDeterministicCalls.ContainsNonDeterministicCall(node)
+           && !RuntimeClock.ContainsClock(node);
 
     /// <summary>int/long (or nullable): the integer types whose C# bitwise result matches the server's. short/byte promote to
     /// int through a Convert; uint/ulong are excluded (the server's results are signed).</summary>
@@ -1978,7 +1995,15 @@ internal sealed partial class MongoExpressionTranslator
         if (NativeQueryParameter.TryGetParameterArrayElementIndex(node, out var arrayParameterName, out var index))
             return new MongoParameterExpression(arrayParameterName, forSerialization, arrayElementIndex: index, valueType: node.Type);
 
-        return TryCreateRuntimeClockParameter(node, forSerialization);
+        if (TryCreateRuntimeClockParameter(node, forSerialization) is { } clockParameter)
+            return clockParameter;
+
+        // A literal built in the query (`new DateTime(2000, 1, 26, 0, 0, 0, DateTimeKind.Utc)`) compared to a property can reach the translator
+        // un-evaluated: it is a value like a constant, and serializes as one through the property. A projected literal (no property to serialize
+        // through) is left to the shaper, which evaluates it on the client.
+        return forSerialization is not null && node is NewExpression && TryEvaluateClosedValue(node, out var literal)
+            ? new MongoConstantExpression(literal, forSerialization)
+            : null;
     }
 
     private static int _runtimeParameterSeed;

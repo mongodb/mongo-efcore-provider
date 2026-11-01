@@ -123,7 +123,7 @@ public class NativeStreamingGroupByTests(TemporaryDatabaseFixture database)
     {
         var rowType = CursorRowType(query);
         Assert.True(
-            rowType.IsGenericType && rowType.GetGenericTypeDefinition() == typeof(MongoProjectedRow<>),
+            MongoProjectedRowState.IsRowType(rowType),
             $"Expected the streaming reader, but the cursor yields {rowType}.");
     }
 
@@ -148,7 +148,7 @@ public class NativeStreamingGroupByTests(TemporaryDatabaseFixture database)
         Assert.Equal(unordered ? driver.Order().ToList() : driver, unordered ? native.Order().ToList() : native);
         Assert.NotEmpty(native);
 
-        var streamed = rowType.IsGenericType && rowType.GetGenericTypeDefinition() == typeof(MongoProjectedRow<>);
+        var streamed = MongoProjectedRowState.IsRowType(rowType);
         Assert.True(streamed == streams, streams ? $"Expected streaming, cursor yields {rowType}." : $"Expected the DOM shaper, cursor yields {rowType}.");
         return native;
     }
