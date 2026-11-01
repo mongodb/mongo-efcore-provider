@@ -28,14 +28,14 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
 /// The native one-pass materializer constructs each row while the driver deserializes its whole cursor batch, so it must leave
-/// tracking, and any failure, to the moment the enumerator reaches the row: rows the caller never reads are neither tracked nor able
-/// to fail the rows before them.
+/// tracking to the moment the enumerator reaches the row: rows the caller never reads are not tracked. Stored data that does not match
+/// the model (a string in an <see cref="int"/> property) is not recovered from; it throws, as it does under driver-LINQ.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // ---- Malformed rows ----------------------------------------------------------------------------
+    // ---- Stored data that does not match the model --------------------------------------------------
 
     [Fact]
     public void Unconsumed_rows_of_the_cursor_batch_are_not_tracked()
@@ -49,58 +49,31 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Fact]
-    public void Malformed_row_after_the_consumed_rows_does_not_throw()
+    public void A_stored_value_of_the_wrong_type_in_the_last_row_throws_and_tracks_nothing()
     {
+        // The driver deserializes the whole batch before yielding its first row, so the failure surfaces when the batch is read.
+        // Stored data that contradicts the model is not recovered from.
         using var db = SeedItems(malformedLast: true);
 
-        var result = db.Entities.OrderBy(e => e.Value).AsEnumerable().Take(1).ToList();
-
-        Assert.Equal([1], result.Select(e => e.Value));
+        Assert.Throws<FormatException>(() => db.Entities.OrderBy(e => e.Id).ToList());
+        Assert.Empty(db.ChangeTracker.Entries());
     }
 
     [Fact]
-    public void Malformed_row_throws_when_it_is_reached_and_not_before()
-    {
-        using var db = SeedItems(malformedLast: true);
-
-        using var enumerator = db.Entities.OrderBy(e => e.Value).AsEnumerable().GetEnumerator();
-
-        Assert.True(enumerator.MoveNext());
-        Assert.Equal(1, enumerator.Current.Value);
-        Assert.True(enumerator.MoveNext());
-        Assert.Equal(2, enumerator.Current.Value);
-
-        var exception = Assert.ThrowsAny<Exception>(() => enumerator.MoveNext());
-        Assert.Contains("not an int", exception.Message);
-
-        // The two rows before the failure were tracked as they were read; nothing else was.
-        Assert.Equal(2, db.ChangeTracker.Entries().Count());
-    }
-
-    [Fact]
-    public void Malformed_row_in_the_middle_of_a_batch_does_not_stop_the_rows_before_it()
+    public void A_stored_value_of_the_wrong_type_in_the_middle_row_throws_and_tracks_nothing()
     {
         using var db = SeedItems(malformedMiddle: true);
 
-        using var enumerator = db.Entities.OrderBy(e => e.Id).AsEnumerable().GetEnumerator();
-
-        Assert.True(enumerator.MoveNext());
-        Assert.Equal(1, enumerator.Current.Value);
-
-        // The failure is the row's own (raised from its stored value), not a corrupted-reader error from the rows after it.
-        var exception = Assert.ThrowsAny<Exception>(() => enumerator.MoveNext());
-        Assert.Contains("not an int", exception.Message);
+        Assert.Throws<FormatException>(() => db.Entities.OrderBy(e => e.Id).ToList());
+        Assert.Empty(db.ChangeTracker.Entries());
     }
 
     [Fact]
-    public void Malformed_row_does_not_fail_an_untracked_query_before_it_is_reached()
+    public void A_stored_value_of_the_wrong_type_throws_for_an_untracked_query_too()
     {
         using var db = SeedItems(malformedLast: true);
 
-        var result = db.Entities.AsNoTracking().OrderBy(e => e.Value).AsEnumerable().Take(2).ToList();
-
-        Assert.Equal([1, 2], result.Select(e => e.Value));
-        Assert.Empty(db.ChangeTracker.Entries());
+        Assert.Throws<FormatException>(() => db.Entities.AsNoTracking().OrderBy(e => e.Id).ToList());
     }
 
     // ---- Tracking ----------------------------------------------------------------------------------

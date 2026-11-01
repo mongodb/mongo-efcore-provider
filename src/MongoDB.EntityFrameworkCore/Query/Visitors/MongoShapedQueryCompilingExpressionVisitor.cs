@@ -118,6 +118,87 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// <inheritdoc/>
     protected override Expression VisitShapedQuery(ShapedQueryExpression shapedQueryExpression)
     {
+        if (shapedQueryExpression.QueryExpression is not MongoQueryExpression { Select: { ClientDistinct: true } or { ClientContains: not null } } clientFinished)
+        {
+            return VisitNativeShapedQuery(shapedQueryExpression);
+        }
+
+        // The client finishes the rows of the native query. When the query does not run natively (DriverLinq, or a pipeline that cannot be lowered), the
+        // driver runs the whole captured chain, operator included, so there is nothing for the client to finish.
+        var select = clientFinished.Select;
+        var queryMode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
+        if (queryMode == MongoQueryMode.DriverLinq || TryBuildNativeFactory(queryMode, clientFinished) == null)
+        {
+            select.ClientDistinct = false;
+            select.ClientContains = null;
+            return VisitNativeShapedQuery(shapedQueryExpression);
+        }
+
+        var rows = select.ClientContains is { } terminal
+            ? shapedQueryExpression.UpdateShaperExpression(terminal.RowShaper).UpdateResultCardinality(ResultCardinality.Enumerable)
+            : shapedQueryExpression;
+        var finished = VisitNativeShapedQuery(rows);
+        var rowType = finished.Type.GetInterfaces().Concat([finished.Type])
+            .First(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>)).GetGenericArguments()[0];
+
+        if (select.ClientDistinct)
+        {
+            finished = Expression.Call(
+                typeof(MongoClientOperators).GetMethod(nameof(MongoClientOperators.Distinct))!.MakeGenericMethod(rowType), finished);
+        }
+
+        if (select.ClientContains is { } contains)
+        {
+            finished = Expression.Call(
+                typeof(MongoClientOperators).GetMethod(nameof(MongoClientOperators.Contains))!.MakeGenericMethod(rowType),
+                QueryCompilationContext.QueryContextParameter,
+                finished,
+                BuildRuntimeValue(contains.Item, rowType));
+        }
+
+        return finished;
+    }
+
+    // `queryContext => value`: a constant, or the query parameter's value read from the context at execution.
+    private static Expression BuildRuntimeValue(Expression item, Type valueType)
+    {
+        var queryContext = QueryCompilationContext.QueryContextParameter;
+        Expression body = item switch
+        {
+            ConstantExpression constant => constant,
+#if EF8 || EF9
+            ParameterExpression parameter => Expression.Call(
+                typeof(MongoClientOperators).GetMethod(nameof(MongoClientOperators.ParameterValue))!.MakeGenericMethod(parameter.Type),
+                queryContext,
+                Expression.Constant(parameter.Name)),
+#else
+            QueryParameterExpression parameter => Expression.Call(
+                typeof(MongoClientOperators).GetMethod(nameof(MongoClientOperators.ParameterValue))!.MakeGenericMethod(parameter.Type),
+                queryContext,
+                Expression.Constant(parameter.Name)),
+#endif
+            _ => throw new InvalidOperationException("Unexpected client Contains item.")
+        };
+
+        if (body.Type != valueType)
+        {
+            body = Expression.Convert(body, valueType);
+        }
+
+        // The compiled form closes over nothing: the context is its parameter.
+        var contextParameter = Expression.Parameter(typeof(QueryContext), "queryContext");
+        body = new ParameterReplacer(queryContext, contextParameter).Visit(body);
+        return Expression.Constant(Expression.Lambda(body, contextParameter).Compile(), typeof(Func<,>).MakeGenericType(typeof(QueryContext), valueType));
+    }
+
+    private sealed class ParameterReplacer(ParameterExpression search, ParameterExpression replacement) : System.Linq.Expressions.ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node)
+            => node == search ? replacement : node;
+    }
+
+    private Expression VisitNativeShapedQuery(ShapedQueryExpression shapedQueryExpression)
+    {
         if (shapedQueryExpression.QueryExpression is not MongoQueryExpression mongoQueryExpression)
         {
             throw new NotSupportedException($" Unhandled expression node type '{nameof(shapedQueryExpression.QueryExpression)}'");
@@ -169,6 +250,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // native pipeline returns (the driver pushes the Select down as `_v`), so strip that Select on fallback.
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
             CreateDomBindingRemover(rootEntityType, mongoQueryExpression),
+            allowProjectionStreaming: mongoQueryExpression.Select.HasBareJoinInnerEntityLeaf,
             stripBareProjectionOnFallback: mongoQueryExpression.Select.HasBareJoinInnerEntityLeaf);
     }
 
@@ -601,9 +683,15 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             {
                 var trackedQuery = trackingBehavior is QueryTrackingBehavior.TrackAll
                     or QueryTrackingBehavior.NoTrackingWithIdentityResolution;
-                var onePassBody = new MongoStreamingEntityMaterializerRewriter(
-                        rootEntityType, trackedQuery, GetStreamingLookupCollections(mongoQueryExpression))
-                    .Rewrite(injectedBody, readerParameter, contextParameter);
+                // A reference a document must have (a required navigation to a collection the lookup matches by `_id`): the reader drops a row
+                // whose lookup found nothing, so the pipeline need not filter on the server (see MongoUnwindStage.ClientFiltered).
+                var requiredReferences = mongoQueryExpression.GetStreamingReferenceLookups()
+                    .Where(lookup => lookup.CanBeFilteredOnClient)
+                    .Select(lookup => lookup.Navigation!)
+                    .ToList();
+                var rewriter = new MongoStreamingEntityMaterializerRewriter(
+                    rootEntityType, trackedQuery, GetStreamingLookupCollections(mongoQueryExpression), requiredReferences);
+                var onePassBody = rewriter.Rewrite(injectedBody, readerParameter, contextParameter);
 
                 var onePassLambda = Expression.Lambda(
                     onePassBody,
@@ -633,6 +721,36 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                         rowParameter, QueryCompilationContext.QueryContextParameter, rowParameter).Compile();
                 }
 
+                // The shaper returns no entity for a row it dropped, which the enumerator must skip. The pipeline stops filtering on the server
+                // only when the shaper checks every required reference; otherwise it keeps its `$match`.
+                Expression? isDropped = null;
+                if (rewriter.RowDroppingReferences.Count > 0 && !resultType.IsValueType)
+                {
+                    var row = Expression.Parameter(rowType, "row");
+                    isDropped = Expression.Constant(
+                        Expression.Lambda(
+                            Expression.Equal(
+                                trackedQuery
+                                    ? Expression.Property(row, nameof(MongoMaterializedRow<object>.Instance))
+                                    : row,
+                                Expression.Constant(null, resultType)),
+                            row).Compile(),
+                        typeof(Func<,>).MakeGenericType(rowType, typeof(bool)));
+
+                    if (rewriter.RowDroppingReferences.Count == requiredReferences.Count)
+                    {
+                        mongoQueryExpression.FiltersReferenceLookupsOnClient = true;
+                        if (TryBuildNativeFactory(mode, mongoQueryExpression) is { } clientFilteredFactory)
+                        {
+                            nativeFactory = clientFilteredFactory;
+                        }
+                        else
+                        {
+                            mongoQueryExpression.FiltersReferenceLookupsOnClient = false;
+                        }
+                    }
+                }
+
                 return BuildExecuteCall(
                     rowType,
                     Expression.Constant(rowShaper),
@@ -641,7 +759,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                     onePassShaper: Expression.Constant(
                         compiledOnePassShaper,
                         typeof(Func<,,,>).MakeGenericType(
-                            typeof(QueryContext), typeof(IBsonReader), typeof(BsonDeserializationContext), resultType)));
+                            typeof(QueryContext), typeof(IBsonReader), typeof(BsonDeserializationContext), resultType)),
+                    isDropped: isDropped);
             }
             catch (NativeTranslationNotSupportedException)
             {
@@ -669,16 +788,40 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             && !useFallbackBindingRemover
             && StreamedCollectionSubstituter.TryRewrite(
                     injectedBody, rootEntityType, mongoQueryExpression, trackingBehavior != QueryTrackingBehavior.NoTracking,
-                    out var removedVariables)
+                    out var removedVariables,
+                    out var narrowedArrays)
                 is { } streamedBody
             && !bsonInjector.AllVariables.Except(removedVariables).Any()
             && MongoProjectionStreamingPlanner.TryPlan(
                     createBindingRemover(bsonDocParameter, trackingBehavior).Visit(streamedBody),
                     bsonDocParameter,
                     QueryCompilationContext.QueryContextParameter,
-                    trackingBehavior != QueryTrackingBehavior.NoTracking)
+                    trackingBehavior != QueryTrackingBehavior.NoTracking,
+                    nativeFactory.SingleOutputField)
                 is { } streamedCollectionProjection)
         {
+            // The shaper reads only the element fields its fused Selects need, so the pipeline may ship just those. The factory is rebuilt over the
+            // narrowed projection; if that cannot be done the query keeps the wider pipeline (the shaper reads it as well).
+            var narrowed = narrowedArrays
+                .Select(array => (array.Alias, Replaced: mongoQueryExpression.Select.TryNarrowArrayProjection(array.Alias, array.ElementNames)))
+                .Where(array => array.Replaced.HasValue)
+                .ToList();
+            if (narrowed.Count > 0)
+            {
+                var narrowedFactory = TryBuildNativeFactory(mode, mongoQueryExpression);
+                if (narrowedFactory != null)
+                {
+                    nativeFactory = narrowedFactory;
+                }
+                else
+                {
+                    foreach (var array in narrowed)
+                    {
+                        mongoQueryExpression.Select.RestoreProjection(array.Replaced!.Value);
+                    }
+                }
+            }
+
             return BuildProjectedRowsCall(streamedCollectionProjection);
         }
 
@@ -701,7 +844,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             && nativeFactory != null
             && !useFallbackBindingRemover
             && bsonInjector.AllVariables.Count == 0
-            && MongoProjectionStreamingPlanner.TryPlan(domShaperBody, bsonDocParameter, QueryCompilationContext.QueryContextParameter)
+            && MongoProjectionStreamingPlanner.TryPlan(
+                    domShaperBody, bsonDocParameter, QueryCompilationContext.QueryContextParameter,
+                    singleOutputField: nativeFactory.SingleOutputField)
                 is { } streamingProjection)
         {
             return BuildProjectedRowsCall(streamingProjection);
@@ -738,7 +883,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 Expression.Constant(plan.TracksEntities && standAloneStateManager));
 
         MethodCallExpression BuildExecuteCall(
-            Type rowType, Expression compiledShaper, Type returnType, bool streaming, Expression? onePassShaper = null)
+            Type rowType, Expression compiledShaper, Type returnType, bool streaming, Expression? onePassShaper = null,
+            Expression? isDropped = null)
             => Expression.Call(null,
                 ExecuteShapedQueryMethodInfo.MakeGenericMethod(
                     rowType, rootEntityType.ClrType, returnType),
@@ -756,11 +902,33 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 onePassShaper ?? Expression.Constant(
                     null,
                     typeof(Func<,,,>).MakeGenericType(
-                        typeof(QueryContext), typeof(IBsonReader), typeof(BsonDeserializationContext), returnType)));
+                        typeof(QueryContext), typeof(IBsonReader), typeof(BsonDeserializationContext), returnType)),
+                isDropped ?? Expression.Constant(null, typeof(Func<,>).MakeGenericType(rowType, typeof(bool))));
     }
 
     // The one-pass form of a whole entity wrapped in client code: the cursor yields the entity (or, tracked, the entity with its deferred
     // tracking), and the shaper replays the tracking and runs the wrapper around the resulting entity.
+    // Whether two entity shapers of one type read the same document: a joined entity of the root's own type (a self-reference such as
+    // `e.Manager`) is another entity, not another use of this one. The document each reads is what its shaper assigns to its document variable.
+    private static bool ReadsSameDocument(Expression shaper, Expression other)
+    {
+        static Expression? DocumentSource(Expression shaper)
+        {
+            while (shaper is IncludeExpression include)
+            {
+                shaper = include.EntityExpression;
+            }
+
+            return shaper is BlockExpression { Expressions: [BinaryExpression { NodeType: ExpressionType.Assign } assign, ..] } ? assign.Right : null;
+        }
+
+        var source = DocumentSource(shaper);
+        var otherSource = DocumentSource(other);
+        return source != null
+               && otherSource != null
+               && Microsoft.EntityFrameworkCore.Query.ExpressionEqualityComparer.Instance.Equals(source, otherSource);
+    }
+
     private MongoProjectionStreamingPlanner.Plan? TryBuildWrappedEntityPlan(
         ShapedQueryExpression shapedQueryExpression,
         MongoQueryExpression mongoQueryExpression,
@@ -777,12 +945,19 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         var locator = new WholeEntityLocator(rootEntityType.ClrType);
         locator.Visit(injectedBody);
-        if (locator.Found.Count != 1)
+
+        // The wrapper may use the entity more than once (`new Dto(c) { City = c.City }`), each use its own materializer block. This route has
+        // no `$project` and no lookups, so every one of them reads the row's own document: one entity serves them all. The block that
+        // carries the Includes (at most one may) is the entity; the others are only less complete views of it.
+        if (locator.Found.Count == 0
+            || locator.Found.Any(found => found.Type != locator.Found[0].Type)
+            || locator.Found.Count(found => found is IncludeExpression) > 1
+            || locator.Found.Skip(1).Any(found => !ReadsSameDocument(found, locator.Found[0])))
         {
             return null;
         }
 
-        var entityShaper = locator.Found[0];
+        var entityShaper = locator.Found.FirstOrDefault(found => found is IncludeExpression) ?? locator.Found[0];
         var tracked = trackingBehavior is QueryTrackingBehavior.TrackAll or QueryTrackingBehavior.NoTrackingWithIdentityResolution;
         var entityType = entityShaper.Type;
         var reader = Expression.Parameter(typeof(IBsonReader), "__reader");
@@ -836,7 +1011,24 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             entityOfRow = row;
         }
 
-        var wrapper = ReplacingExpressionVisitor.Replace(entityShaper, entityOfRow, injectedBody);
+        Expression wrapper;
+        if (locator.Found.Count == 1)
+        {
+            wrapper = ReplacingExpressionVisitor.Replace(entityShaper, entityOfRow, injectedBody);
+        }
+        else
+        {
+            // Read the row once (a tracked row's tracking is replayed when it is read), then use it everywhere the entity was.
+            var sharedEntity = Expression.Variable(entityType, "sharedEntity");
+            wrapper = injectedBody;
+            foreach (var found in locator.Found)
+            {
+                wrapper = ReplacingExpressionVisitor.Replace(found, sharedEntity, wrapper);
+            }
+
+            wrapper = Expression.Block(wrapper.Type, [sharedEntity], Expression.Assign(sharedEntity, entityOfRow), wrapper);
+        }
+
         var shaper = Expression.Lambda(wrapper, queryContext, row).Compile();
         var rowReader = Expression.Lambda(readerBody, queryContext, reader, context).Compile();
 
@@ -1353,7 +1545,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         ResultCardinality resultCardinality,
         MongoPipelineFactory? nativeFactory,
         bool streaming,
-        Func<QueryContext, IBsonReader, BsonDeserializationContext, TResult>? onePassShaper)
+        Func<QueryContext, IBsonReader, BsonDeserializationContext, TResult>? onePassShaper,
+        Func<TSource, bool>? isDropped)
     {
         Func<MongoQueryContext, IBsonSerializer>? outputSerializerFactory =
             onePassShaper is null
@@ -1376,7 +1569,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             contextType,
             standAloneStateManager,
             threadSafetyChecksEnabled,
-            GetOnZeroResultsAction(queryExpression));
+            GetOnZeroResultsAction(queryExpression),
+            isDropped);
     }
 
     // A native scalar projection read straight off the cursor: the cursor yields TRow (typed slots, see MongoProjectedRow), and the shaper

@@ -169,14 +169,10 @@ public class NativeStringCaseMappingTests(TemporaryDatabaseFixture database) : I
             var source = rows.Where(r => r.Text != null).ToList();
             var queries = new (object Expected, Func<object> Actual)[]
             {
-                (source.Select(r => r.Text!.ToUpper()).Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList(),
-                    () => context.Entities.Where(x => x.Text != null).Select(x => x.Text!.ToUpper()).Distinct().ToList()
-                        .OrderBy(s => s, StringComparer.Ordinal).ToList()),
+                // A Distinct is finished by the client (see Distinct_over_a_projected_case_mapping_is_finished_by_the_client), so nothing can follow it
+                // on the server: the rows it would count are not yet distinct.
                 (source.Select(r => r.Text!.ToUpper()).Distinct().Count(),
                     () => context.Entities.Where(x => x.Text != null).Select(x => x.Text!.ToUpper()).Distinct().Count()),
-                (source.Select(r => r.Text!.ToLower()).Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList(),
-                    () => context.Entities.Where(x => x.Text != null).Select(x => new { U = x.Text!.ToLower() }).Distinct()
-                        .ToList().Select(r => r.U).OrderBy(s => s, StringComparer.Ordinal).ToList()),
                 (source.Select(r => r.Text!.ToLower()).OrderBy(s => s, StringComparer.Ordinal).ToList(),
                     () => context.Entities.Where(x => x.Text != null).Select(x => x.Text!.ToLower()).OrderBy(s => s).ToList()),
                 (source.Select(r => r.Text!.ToLower()).Max(StringComparer.Ordinal)!,
@@ -196,6 +192,27 @@ public class NativeStringCaseMappingTests(TemporaryDatabaseFixture database) : I
                     Assert.Equal(expected, actual());
                 }
             }
+        }
+    }
+
+    // Distinct dedups the raw values the server holds and the client dedups the mapped rows, so ASCII case variants collapse as they do in C#.
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void Distinct_over_a_projected_case_mapping_is_finished_by_the_client(string mode)
+    {
+        var (context, rows) = SeedCaseVariants(nameof(Distinct_over_a_projected_case_mapping_is_finished_by_the_client) + mode, mode);
+        using (context)
+        {
+            var source = rows.Where(r => r.Text != null).ToList();
+
+            Assert.Equal(
+                source.Select(r => r.Text!.ToUpper()).Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList(),
+                context.Entities.Where(x => x.Text != null).Select(x => x.Text!.ToUpper()).Distinct().ToList()
+                    .OrderBy(s => s, StringComparer.Ordinal).ToList());
+            Assert.Equal(
+                source.Select(r => r.Text!.ToLower()).Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList(),
+                context.Entities.Where(x => x.Text != null).Select(x => new { U = x.Text!.ToLower() }).Distinct()
+                    .ToList().Select(r => r.U).OrderBy(s => s, StringComparer.Ordinal).ToList());
         }
     }
 

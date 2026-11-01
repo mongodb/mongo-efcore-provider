@@ -16,7 +16,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.ExceptionServices;
 using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -47,39 +46,6 @@ public class MongoQueryContext : QueryContext
     /// The <see cref="IMongoClientWrapper"/> this query should be executed using.
     /// </summary>
     public virtual IMongoClientWrapper MongoClient { get; }
-
-    // The native one-pass materializer constructs rows while the driver deserializes a whole batch, but a row that fails to materialize
-    // must only fail the query if the enumerator reaches it. The serializer yields an empty slot for it and records the failure here, by
-    // the row's position; the enumerator counts the rows it reads and raises the failure at that position. Almost always empty.
-    private Queue<(long Ordinal, ExceptionDispatchInfo Error)>? _rowFailures;
-    private long _rowsDeserialized;
-    private long _rowsRead;
-
-    /// <summary>Starts counting the rows of a native one-pass execution.</summary>
-    internal void ResetRowFailures()
-    {
-        _rowFailures?.Clear();
-        _rowsDeserialized = 0;
-        _rowsRead = 0;
-    }
-
-    /// <summary>The serializer constructed the next row.</summary>
-    internal void RowDeserialized() => _rowsDeserialized++;
-
-    /// <summary>The serializer could not construct the next row: its slot is empty and <paramref name="error"/> is raised if it is read.</summary>
-    internal void RowFailed(ExceptionDispatchInfo error)
-        => (_rowFailures ??= new()).Enqueue((_rowsDeserialized++, error));
-
-    /// <summary>The enumerator is about to read the next row: raises the failure recorded for it, if there is one.</summary>
-    internal void ThrowIfRowFailed()
-    {
-        if (_rowFailures is { Count: > 0 } failures && failures.Peek().Ordinal == _rowsRead)
-        {
-            failures.Dequeue().Error.Throw();
-        }
-
-        _rowsRead++;
-    }
 
     // While set, the native one-pass materializer is constructing a row inside the driver's batch deserialization: tracking is recorded,
     // not performed (see MongoPendingTracking).
@@ -141,12 +107,21 @@ public class MongoQueryContext : QueryContext
         return deferred;
     }
 
-    /// <summary>Stops deferring and discards whatever the failed row recorded.</summary>
-    internal void AbandonDeferral()
+    /// <summary>
+    /// As <see cref="EndDeferral"/> for a projected row, which has no single result instance: a row whose only recorded tracking is one plain
+    /// entity gets a <see cref="MongoSimpleRowTracking"/> (one small object) rather than a full <see cref="MongoPendingTracking"/>.
+    /// </summary>
+    internal object? EndRowDeferral()
     {
+        if (_pending != null || _inlineKey == null || _inlineEntityType == null)
+        {
+            return EndDeferral(null);
+        }
+
+        var deferred = new MongoSimpleRowTracking(GetSimple(_inlineKey, _inlineEntityType), _inlineInstance!, _inlineKeyValues!);
         _deferring = false;
-        _pending = null;
         ClearInline();
+        return deferred;
     }
 
     /// <summary>Records an include's <c>SetIsLoaded</c> for replay when its entity's tracking is deferred.</summary>

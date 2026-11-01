@@ -2203,22 +2203,12 @@ Orders.{ "$match" : { "_id" : { "$gt" : 10500 } } }, { "$group" : { "_id" : "$Cu
 
     public override async Task GroupBy_aggregate_followed_another_GroupBy_aggregate(bool async)
     {
-        // EF-461: a group key over a date part of a nullable date declines native; NativeOnly forbids the fallback.
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            await AssertTranslationFailed(() => base.GroupBy_aggregate_followed_another_GroupBy_aggregate(async));
+        await base.GroupBy_aggregate_followed_another_GroupBy_aggregate(async);
 
-            AssertMql();
-        }
-        else
-        {
-            await base.GroupBy_aggregate_followed_another_GroupBy_aggregate(async);
-
-            AssertMql(
-                """
-Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "Year" : { "$year" : "$OrderDate" } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "Year" : "$_id.Year", "_id" : 0 } }, { "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "_id" : 0 } }
+        AssertMql(
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "Year" : { "$ifNull" : [{ "$year" : "$OrderDate" }, null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "Year" : "$_id.Year", "_id" : 0 } }, { "$group" : { "_id" : "$CustomerID", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
-        }
     }
 
     public override async Task GroupBy_aggregate_without_selectMany_selecting_first(bool async)
@@ -2269,22 +2259,12 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Data" : { "$push" : { "$ifNull" : 
 
     public override async Task GroupBy_with_grouping_key_DateTime_Day(bool async)
     {
-        // EF-461: a group key over a date part of a nullable date declines native; NativeOnly forbids the fallback.
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            await AssertTranslationFailed(() => base.GroupBy_with_grouping_key_DateTime_Day(async));
+        await base.GroupBy_with_grouping_key_DateTime_Day(async);
 
-            AssertMql();
-        }
-        else
-        {
-            await base.GroupBy_with_grouping_key_DateTime_Day(async);
-
-            AssertMql(
-                """
-Orders.{ "$group" : { "_id" : { "$dayOfMonth" : "$OrderDate" }, "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "_id" : 0 } }
+        AssertMql(
+            """
+Orders.{ "$group" : { "_id" : { "$dayOfMonth" : "$OrderDate" }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
 """);
-        }
     }
 
     public override async Task GroupBy_with_cast_inside_grouping_aggregate(bool async)

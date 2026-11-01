@@ -564,7 +564,7 @@ Orders.{ "$match" : { "_id" : -1 } }, { "$limit" : 2 }, { "$lookup" : { "from" :
 
         AssertMql(
             """
-OrderDetails.{ "$match" : { "$expr" : { "$eq" : [{ "$mod" : ["$_id.OrderID", 23] }, 13] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$match" : { "_lookup_Order.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Order" : { "$arrayElemAt" : ["$_lookup_Order", 0] } } }
+OrderDetails.{ "$match" : { "$expr" : { "$eq" : [{ "$mod" : ["$_id.OrderID", 23] }, 13] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }
 """);
     }
 
@@ -968,7 +968,7 @@ Customers.{ "$sort" : { "ContactName" : -1 } }, { "$limit" : 10 }, { "$lookup" :
 
         AssertMql(
             """
-OrderDetails.{ "$match" : { "$expr" : { "$eq" : [{ "$mod" : ["$_id.OrderID", 23] }, 13] } } }, { "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$match" : { "_lookup_Product.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Product" : { "$arrayElemAt" : ["$_lookup_Product", 0] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$match" : { "_lookup_Order.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Order" : { "$arrayElemAt" : ["$_lookup_Order", 0] } } }
+OrderDetails.{ "$match" : { "$expr" : { "$eq" : [{ "$mod" : ["$_id.OrderID", 23] }, 13] } } }, { "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }
 """);
     }
 

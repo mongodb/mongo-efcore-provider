@@ -216,7 +216,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // shape stays Fallback and goes to the mixed shaper, which can't read a raw BinaryExpression.
             case BinaryExpression binaryExpression
                 when NativeProjectionBinder.IsArithmeticLeafShape(binaryExpression)
-                     && _queryExpression.Select.Route == NativeRoute.Projection:
+                     && _queryExpression.Select.Route == NativeRoute.Projection
+                     && !NativeCaseMapping.TryMatchClientStringConcat(binaryExpression, out _, out _, out _):
                 return BindWholeLeaf(binaryExpression);
 
             // Numeric-cast leaf: register the whole Convert (the default walk keeps only the operand, and the read side
@@ -289,8 +290,15 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // ToLower/ToUpper over a string: $toLower/$toUpper are ASCII-only, so the call always runs client-side over
             // the bound receiver (the binder stages only the receiver), null-propagated; also kept off driver-LINQ
             // push-down (ProjectionAnalyzer.HasCaseMappingProjectedValue).
-            case MethodCallExpression caseMappingCall when NativeCaseMapping.IsCaseMappingCall(caseMappingCall):
+            case MethodCallExpression caseMappingCall
+                when NativeCaseMapping.IsCaseMappingCall(caseMappingCall) || NativeCaseMapping.IsClientStringChainStep(caseMappingCall):
                 return NullPropagatingStringCall(caseMappingCall, NullPropagatingReceiver(Visit(caseMappingCall.Object)!));
+
+            // A literal concatenation (and any further step) applied to a case-mapped value runs client-side with it, null propagated.
+            case BinaryExpression stringConcat
+                when NativeCaseMapping.TryMatchClientStringConcat(stringConcat, out var concatChain, out var concatConstant, out var concatChainIsLeft):
+                return NullPropagatingStringConcat(
+                    Visit(concatChain)!, concatConstant, concatChainIsLeft, stringConcat.Method);
 
             // DateTimeOffset.ToString(...): the driver would render the stored sub-document as BSON JSON (EF-217). Bind
             // the receiver and re-apply the call client-side.
@@ -429,8 +437,44 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// True for the client-side case-mapping form <see cref="Visit"/> produces for <c>x.S.ToLower()</c> et al.
     /// </summary>
     internal static bool IsClientCaseMapping(Expression expression)
-        => expression is BlockExpression { Result: ConditionalExpression { IfFalse: MethodCallExpression call } }
-           && NativeCaseMapping.IsCaseMappingCall(call);
+        => expression is BlockExpression { Result: ConditionalExpression { IfFalse: var applied } }
+           && (applied is MethodCallExpression call
+               && (NativeCaseMapping.IsCaseMappingCall(call) || NativeCaseMapping.IsClientStringStepMethod(call))
+               || applied is BinaryExpression { NodeType: ExpressionType.Add, Method.Name: "Concat" });
+
+    // `receiver == null ? null : receiver + literal` (or `literal + receiver`): the concatenation step of a client string chain.
+    internal static Expression NullPropagatingStringConcat(
+        Expression receiver, ConstantExpression literal, bool receiverIsLeft, System.Reflection.MethodInfo concat)
+    {
+        var value = Expression.Variable(typeof(string), "value");
+        var nullString = Expression.Constant(null, typeof(string));
+        return Expression.Block(
+            typeof(string),
+            [value],
+            Expression.Assign(value, receiver),
+            Expression.Condition(
+                Expression.Equal(value, nullString),
+                nullString,
+                receiverIsLeft ? Expression.Add(value, literal, concat) : Expression.Add(literal, value, concat)));
+    }
+
+    /// <summary>
+    /// Re-applies the client string chain peeled off <paramref name="original"/> down to <paramref name="receiver"/> over <paramref name="boundReceiver"/>:
+    /// each case mapping, step and literal concatenation, null propagated.
+    /// </summary>
+    internal static Expression ReapplyClientStringChain(Expression original, Expression receiver, Expression boundReceiver)
+        => original switch
+        {
+            _ when ReferenceEquals(original, receiver) => boundReceiver,
+            UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
+                => convert.Update(ReapplyClientStringChain(convert.Operand, receiver, boundReceiver)),
+            MethodCallExpression call when NativeCaseMapping.IsCaseMappingCall(call) || NativeCaseMapping.IsClientStringChainStep(call)
+                => NullPropagatingStringCall(call, ReapplyClientStringChain(call.Object!, receiver, boundReceiver)),
+            BinaryExpression binary when NativeCaseMapping.TryMatchClientStringConcat(binary, out var chain, out var literal, out var chainIsLeft)
+                => NullPropagatingStringConcat(ReapplyClientStringChain(chain, receiver, boundReceiver), literal, chainIsLeft, binary.Method!),
+            _ => throw new InvalidOperationException(
+                $"Unexpected case-mapped projection shape '{original.GetType().Name}'.")
+        };
 
     /// <summary>
     /// True for <c>ToString(...)</c> on a <see cref="DateTimeOffset"/> (or nullable), also through a boxing conversion;
@@ -1725,7 +1769,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // (TryResolveFieldAccess) also unwraps Convert on every route, so gating here would make the sides disagree.
             if (source.RemoveConvert() is StructuralTypeShaperExpression { StructuralType: IEntityType entityType })
             {
-                var navigation = entityType.FindNavigation(memberName);
+                // A navigation declared by a derived type is reached through a Convert to it, which RemoveConvert dropped.
+                var declaringType = entityType.GetDerivedTypesInclusive().FirstOrDefault(t => t.ClrType == source.Type) ?? entityType;
+                var navigation = declaringType.FindNavigation(memberName);
                 return navigation == null || !navigation.IsEmbedded();
             }
 

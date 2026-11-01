@@ -42,4 +42,12 @@ internal sealed class MongoUnwindStage : MongoPipelineStage
     /// <c>$lookup</c>, which is 2-6x slower on 8.x for the same documents.
     /// </summary>
     public bool AtMostOneMatch { get; }
+
+    /// <summary>
+    /// Whether the cursor's reader drops the rows with no match and reads the lookup's array as it is, so the stage renders nothing: no
+    /// <c>$match</c> on the array and no <c>$set</c> to its first element. A <c>$match</c> that reads a <c>$lookup</c>'s output costs the
+    /// server about as much as the lookup itself. Only for <see cref="AtMostOneMatch"/> on an inner lookup, and cleared by
+    /// <see cref="MongoSelectLowerer"/> when a stage after it depends on the rows that would have been dropped.
+    /// </summary>
+    public bool ClientFiltered { get; set; }
 }

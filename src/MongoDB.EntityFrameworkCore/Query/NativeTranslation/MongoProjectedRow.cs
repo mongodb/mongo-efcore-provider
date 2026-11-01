@@ -28,21 +28,34 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <see cref="States"/> records, two bits per slot, whether the element was missing, BSON null or present, because what that means (a default,
 /// a throw, an empty value) is decided when the shaper reads the slot, as it was when it read the document.
 /// </summary>
+/// <remarks>
+/// The driver collects a batch's rows in a <see cref="List{T}"/> it creates without a capacity, so the row's size is paid about twice per row as
+/// the list grows: the states are a <see cref="uint"/> when the projection has at most 16 slots (a <see cref="ulong"/> up to 32), and a row with no
+/// tracking to defer is this type, not <see cref="MongoTrackedProjectedRow{TValues, TStates}"/>.
+/// </remarks>
 /// <typeparam name="TValues">The nested value tuple of the slot types, in slot order.</typeparam>
-internal readonly struct MongoProjectedRow<TValues>(TValues values, ulong states, object? deferred)
+/// <typeparam name="TStates">The packed states, <see cref="uint"/> or <see cref="ulong"/>.</typeparam>
+internal readonly struct MongoProjectedRow<TValues, TStates>(TValues values, TStates states)
 {
     public readonly TValues Values = values;
 
-    public readonly ulong States = states;
+    public readonly TStates States = states;
+}
+
+/// <summary>
+/// A <see cref="MongoProjectedRow{TValues, TStates}"/> of a tracked query whose projection holds entities, plus the tracking the row deferred.
+/// </summary>
+internal readonly struct MongoTrackedProjectedRow<TValues, TStates>(TValues values, TStates states, object? deferred)
+{
+    public readonly TValues Values = values;
+
+    public readonly TStates States = states;
 
     /// <summary>
-    /// For a tracked query whose projection holds entities: the <see cref="MongoPendingTracking"/> the row recorded while the driver
-    /// deserialized it (see <see cref="MongoQueryContext.BeginDeferral"/>), replayed when the enumerator reaches the row.
+    /// The <see cref="MongoPendingTracking"/> the row recorded while the driver deserialized it (see <see cref="MongoQueryContext.BeginDeferral"/>),
+    /// replayed when the enumerator reaches the row.
     /// </summary>
     public readonly object? Deferred = deferred;
-
-    /// <summary>The state of slot <paramref name="slot"/>: <see cref="MongoProjectedRowState.Missing"/>, <see cref="MongoProjectedRowState.Null"/> or <see cref="MongoProjectedRowState.Present"/>.</summary>
-    public static int StateOf(ulong states, int slot) => (int)((states >> (2 * slot)) & 3UL);
 }
 
 internal static class MongoProjectedRowState
@@ -50,10 +63,25 @@ internal static class MongoProjectedRowState
     public const int Missing = 0;
     public const int Null = 1;
     public const int Present = 2;
+
+    /// <summary>The state of slot <paramref name="slot"/>: <see cref="Missing"/>, <see cref="Null"/> or <see cref="Present"/>.</summary>
+    public static int StateOf(ulong states, int slot) => (int)((states >> (2 * slot)) & 3UL);
+
+    /// <summary>Whether slot <paramref name="slot"/> is missing or BSON null (the shaper's <c>IsElementAbsentOrNull</c> test).</summary>
+    public static bool IsAbsentOrNull(ulong states, int slot) => StateOf(states, slot) != Present;
+
+    /// <summary>Whether slot <paramref name="slot"/> is missing (the shaper's <c>IsElementAbsent</c> test; an explicit null is present).</summary>
+    public static bool IsAbsent(ulong states, int slot) => StateOf(states, slot) == Missing;
+
+    /// <summary>Whether <paramref name="type"/> is a streamed projection row (tracked or not).</summary>
+    public static bool IsRowType(Type type)
+        => type.IsGenericType
+           && type.GetGenericTypeDefinition() is var definition
+           && (definition == typeof(MongoProjectedRow<,>) || definition == typeof(MongoTrackedProjectedRow<,>));
 }
 
 /// <summary>
-/// What the shaper does with a slot of a <see cref="MongoProjectedRow{TValues}"/>. Each method is the behavior of the <see cref="BsonBinding"/>
+/// What the shaper does with a slot of a <see cref="MongoProjectedRow{TValues, TStates}"/>. Each method is the behavior of the <see cref="BsonBinding"/>
 /// read it replaces, given the element's state and value in place of the document, so a projection reads exactly as it did from a
 /// <see cref="MongoDB.Bson.BsonDocument"/> (including every error message).
 /// </summary>
@@ -117,13 +145,18 @@ internal static class MongoProjectedRowReads
     /// Replays the tracking a row deferred, as EF would have done it entity by entity while materializing, and returns what to substitute for
     /// an entity of the row that the state manager resolved to one already tracked (<see langword="null"/> when none was).
     /// </summary>
-    public static Dictionary<object, object>? Replay(QueryContext queryContext, object? deferred)
-        => deferred is MongoPendingTracking pending ? pending.ReplayWithRemap((MongoQueryContext)queryContext) : null;
+    public static MongoEntityRemap? Replay(QueryContext queryContext, object? deferred)
+        => deferred switch
+        {
+            MongoSimpleRowTracking simple => simple.ReplayWithRemap((MongoQueryContext)queryContext),
+            MongoPendingTracking pending => pending.ReplayWithRemap((MongoQueryContext)queryContext),
+            _ => null
+        };
 
     /// <summary>The instance to hand the shaper for an entity slot: the tracked one when the row's own instance lost to it.</summary>
-    public static T? Canonical<T>(Dictionary<object, object>? remap, T? value)
+    public static T? Canonical<T>(MongoEntityRemap? remap, T? value)
         where T : class
-        => remap != null && value != null && remap.TryGetValue(value, out var canonical) ? (T)canonical : value;
+        => remap != null && value != null ? (T)remap.Resolve(value) : value;
 
     /// <summary>A collection the cursor read into a list: an absent or null array reads as an empty collection, as the DOM shaper normalizes it.</summary>
     public static System.Collections.Generic.List<TElement> StreamedList<TElement>(

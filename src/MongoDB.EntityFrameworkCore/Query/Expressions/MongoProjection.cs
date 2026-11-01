@@ -32,6 +32,14 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <c>T?</c> and throws EF's "Nullable object must have a value." on null rather than reading <c>default(T)</c>. Set
 /// by the emit side from the same predicate call that admitted the leaf; never re-derived.
 /// </param>
+/// <param name="PrunedElementFields">
+/// For a projected owned array whose consumer reads only some of each element's sub-documents and arrays (an element
+/// <c>Select</c>, <c>NativeProjectionBinder.TryMatchOwnedArraySelectLeaf</c>): the element names each array element keeps, rendered as a
+/// per-element <c>$map</c> by <c>MongoPipelineFactory</c>. Every stored scalar is kept, so a required property is never missing from
+/// a document that had it; only owned navigations the consumer never touches are left out. <see langword="null"/> projects the array whole. The
+/// one exception: a Select the cursor evaluates in place, which constructs no element, narrows this to the scalars it reads once the streaming
+/// shaper is chosen (<c>MongoSelectDefinition.TryNarrowArrayProjection</c>).
+/// </param>
 /// <param name="ThrowsOnMalformedNull">
 /// Read-side only: a reference to an upstream computed leaf classified <c>NonNullableValueRead.ThrowOnMalformedNull</c>
 /// (a projected Distinct's flattened key over <c>x.Rank + 1</c>), read strictly. Unlike
@@ -49,4 +57,5 @@ internal readonly record struct MongoProjection(
     System.Linq.Expressions.Expression? Source = null,
     bool ThrowsOnNull = false,
     bool ThrowsOnMalformedNull = false,
-    bool DefaultsOnMalformedMissing = false);
+    bool DefaultsOnMalformedMissing = false,
+    System.Collections.Generic.IReadOnlyList<string>? PrunedElementFields = null);

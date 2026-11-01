@@ -19,6 +19,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;  // IsEFPropertyMethod()
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -361,6 +362,43 @@ internal static class NativeProjectionBinder
             => leafValue is MaterializeCollectionNavigationExpression
                || TryMatchOwnedArraySelectLeaf(leafValue, _mongoQ.CollectionExpression.EntityType, out _, out _, out _);
 
+        // What the projection reads of each owned array it stages, by the array's document path. A bare `b.Posts` leaf needs the whole array; an
+        // element `Select` needs the owned navigations its lambda touches. Leaves that share an array (one stored array, one projection) combine.
+        private readonly Dictionary<string, OwnedArrayNeed> _ownedArrayNeeds = [];
+
+        private sealed class OwnedArrayNeed
+        {
+            public bool NeedsWholeArray { get; set; }
+
+            public INavigation? Navigation { get; set; }
+
+            public HashSet<INavigation> Navigations { get; } = [];
+        }
+
+        private void NoteOwnedArrayUse(MongoExpression leaf, Expression value)
+        {
+            if (leaf is not MongoElementRefExpression array || !IsOwnedArrayLeafValue(value))
+            {
+                return;
+            }
+
+            if (!_ownedArrayNeeds.TryGetValue(array.Path, out var need))
+            {
+                _ownedArrayNeeds[array.Path] = need = new OwnedArrayNeed();
+            }
+
+            if (!need.NeedsWholeArray
+                && TryMatchOwnedArraySelectLeaf(value, _mongoQ.CollectionExpression.EntityType, out var navigation, out _, out var selector)
+                && (need.Navigation is null || need.Navigation == navigation)
+                && TryCollectAccessedNavigations(selector, navigation.TargetEntityType, need.Navigations))
+            {
+                need.Navigation = navigation;
+                return;
+            }
+
+            need.NeedsWholeArray = true;
+        }
+
         // Claims the alias (false on a case-insensitive collision) and stages one leaf, keeping _leafIsArray/_leafIsOwnedNavEntity index-aligned with _projections and folding it into the has*Leaf flags.
         private bool TryStageLeaf(
             string alias, MongoExpression leaf, Expression value, bool throwsOnNull,
@@ -370,15 +408,26 @@ internal static class NativeProjectionBinder
             {
                 // Two array leaves over the same owned collection (`new { b.Posts, Titles = b.Posts.Select(...) }`) read one stored array: the second shares the first's projection (and registers its own
                 // alias override). Only owned arrays: a projected reference-collection list (`_lookup_<Nav>`) also sets isArrayLeaf, and two of those must keep declining.
-                return isArrayLeaf
-                       && IsOwnedArrayLeafValue(value)
-                       && leaf is MongoElementRefExpression sharedArray
-                       && _projections.Exists(p => p.Alias == alias && p.Expression is MongoElementRefExpression existing
-                                                  && existing.Path == sharedArray.Path
-                                                  && p.Source is { } existingValue && IsOwnedArrayLeafValue(existingValue));
+                var sharesArray = isArrayLeaf
+                                  && IsOwnedArrayLeafValue(value)
+                                  && leaf is MongoElementRefExpression sharedArray
+                                  && _projections.Exists(p => p.Alias == alias && p.Expression is MongoElementRefExpression existing
+                                                             && existing.Path == sharedArray.Path
+                                                             && p.Source is { } existingValue && IsOwnedArrayLeafValue(existingValue));
+                if (sharesArray)
+                {
+                    NoteOwnedArrayUse(leaf, value);
+                }
+
+                return sharesArray;
             }
 
             _projections.Add(new MongoProjection(alias, leaf, value, throwsOnNull));
+            if (isArrayLeaf)
+            {
+                NoteOwnedArrayUse(leaf, value);
+            }
+
             _leafIsArray.Add(isArrayLeaf);
             _hasArrayLeaf |= isArrayLeaf;
             _leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
@@ -460,6 +509,20 @@ internal static class NativeProjectionBinder
                 // Properties[0] is only an approximate Type for a composite key (stored nested under _id); inert, nothing reads it.
                 var keyProperty = _mongoQ.CollectionExpression.EntityType.FindPrimaryKey()!.Properties[0];
                 _projections.Add(new MongoProjection("_id", new MongoElementRefExpression("_id", keyProperty.ClrType)));
+            }
+
+            // An owned array read only through an element Select keeps just the owned navigations that Select touches (MongoProjection.PrunedElementFields).
+            for (var i = 0; i < _leafIsArray.Count; i++)
+            {
+                if (_leafIsArray[i]
+                    && _projections[i].Expression is MongoElementRefExpression { Path: var arrayPath }
+                    && _ownedArrayNeeds.TryGetValue(arrayPath, out var arrayNeed)
+                    && !arrayNeed.NeedsWholeArray
+                    && arrayNeed.Navigation is { } prunedNavigation
+                    && TryGetPrunedElementFields(prunedNavigation, arrayNeed.Navigations, out var prunedFields))
+                {
+                    _projections[i] = _projections[i] with { PrunedElementFields = prunedFields };
+                }
             }
 
             // Every leaf is client-evaluated: stage a constant so Route stays Projection (one row per document) instead of collapsing to WholeEntity. A constant rather than _id, so a
@@ -1398,6 +1461,134 @@ internal static class NativeProjectionBinder
         => elementType.GetNavigations()
             .Where(n => n.IsEagerLoaded)
             .All(n => n.IsEmbedded() && EagerNavigationsAreAllEmbedded(n.TargetEntityType));
+
+    // The element names a pruned owned array keeps (MongoProjection.PrunedElementFields): every stored scalar, and each owned navigation the
+    // consumer touches or the model requires. A missing optional reference reads as null and a missing collection as empty, so leaving the rest
+    // out changes nothing the consumer can see; a missing required scalar throws, which is why no scalar is ever left out. Declines (whole
+    // array) when nothing would be left out, or for a hierarchy or complex property whose stored shape this does not reason about.
+    internal static bool TryGetPrunedElementFields(
+        INavigation navigation, IReadOnlySet<INavigation> accessed, [NotNullWhen(true)] out IReadOnlyList<string>? fields)
+    {
+        fields = null;
+        var elementType = navigation.TargetEntityType;
+        if (elementType.GetDirectlyDerivedTypes().Any() || elementType.GetComplexProperties().Any())
+        {
+            return false;
+        }
+
+        var kept = new List<string>();
+        foreach (var property in elementType.GetProperties())
+        {
+            // The owner's key an owned element is keyed by is not stored in the element.
+            if (property.IsOwnedTypeKey())
+            {
+                continue;
+            }
+
+            var name = property.GetElementName();
+            if (!IsPrunableFieldName(name))
+            {
+                return false;
+            }
+
+            if (!kept.Contains(name))
+            {
+                kept.Add(name);
+            }
+        }
+
+        var droppedAny = false;
+        foreach (var nested in elementType.GetNavigations())
+        {
+            if (!nested.IsEmbedded())
+            {
+                continue;
+            }
+
+            var name = nested.TargetEntityType.GetContainingElementName();
+            if (name is null || !IsPrunableFieldName(name))
+            {
+                return false;
+            }
+
+            if (accessed.Contains(nested) || nested.ForeignKey.IsRequiredDependent)
+            {
+                if (!kept.Contains(name))
+                {
+                    kept.Add(name);
+                }
+            }
+            else
+            {
+                droppedAny = true;
+            }
+        }
+
+        if (!droppedAny)
+        {
+            return false;
+        }
+
+        fields = kept;
+        return true;
+    }
+
+    internal static bool IsPrunableFieldName(string name)
+        => name.Length > 0 && name[0] != '$' && !name.Contains('.') && !name.Contains('\0');
+
+    /// <summary>
+    /// Collects the owned navigations of <paramref name="elementType"/> that <paramref name="selector"/> reads off its element parameter.
+    /// <see langword="false"/> when the element is used any other way (passed whole, converted, or a member that is neither a mapped property nor a
+    /// navigation, which may read anything), since then the whole element is needed.
+    /// </summary>
+    internal static bool TryCollectAccessedNavigations(LambdaExpression selector, IEntityType elementType, HashSet<INavigation> accessed)
+    {
+        var collector = new ElementMemberCollector(selector.Parameters[0], elementType);
+        collector.Visit(selector.Body);
+        if (collector.Escapes)
+        {
+            return false;
+        }
+
+        accessed.UnionWith(collector.Navigations);
+        return true;
+    }
+
+    private sealed class ElementMemberCollector(ParameterExpression element, IEntityType elementType) : ExpressionVisitor
+    {
+        public bool Escapes { get; private set; }
+
+        public HashSet<INavigation> Navigations { get; } = [];
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (!ReferenceEquals(node.Expression, element))
+            {
+                return base.VisitMember(node);
+            }
+
+            if (elementType.FindNavigation(node.Member.Name) is { } navigation)
+            {
+                Navigations.Add(navigation);
+            }
+            else if (elementType.FindProperty(node.Member.Name) is null)
+            {
+                Escapes = true;
+            }
+
+            return node;
+        }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (ReferenceEquals(node, element))
+            {
+                Escapes = true;
+            }
+
+            return node;
+        }
+    }
 
     /// <summary>
     /// Recognizes an element <c>Select</c> over a root-declared owned collection, <c>ToList(Select(AsQueryable(EF.Property(root, "Nav")), o =&gt; ...))</c>, yielding the navigation, the <c>AsQueryable</c> call (the

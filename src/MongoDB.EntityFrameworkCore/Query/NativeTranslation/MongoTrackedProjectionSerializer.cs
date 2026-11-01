@@ -14,7 +14,6 @@
  */
 
 using System;
-using System.Runtime.ExceptionServices;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
@@ -25,8 +24,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <summary>
 /// The one-pass output serializer of a tracked query whose projection holds entities: <paramref name="rowReader"/> (from
 /// <see cref="MongoProjectionStreamingPlanner"/>) defers the tracking of the entities it constructs and ends the deferral into the row
-/// (<see cref="MongoProjectedRow{TValues}.Deferred"/>), which the enumerator replays when it reaches the row. A row that fails to
-/// materialize is skipped through a reader bookmark and raised only if it is read, as for <see cref="MongoUntrackedEntitySerializer{TEntity}"/>.
+/// (<see cref="MongoTrackedProjectedRow{TValues, TStates}.Deferred"/>), which the enumerator replays when it reaches the row. Stored data that does not
+/// match the model is not recovered from, as for <see cref="MongoUntrackedEntitySerializer{TEntity}"/>.
 /// </summary>
 internal sealed class MongoTrackedProjectionSerializer<TRow>(
     Func<QueryContext, IBsonReader, BsonDeserializationContext, TRow> rowReader,
@@ -34,25 +33,5 @@ internal sealed class MongoTrackedProjectionSerializer<TRow>(
     : SerializerBase<TRow>
 {
     public override TRow Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
-    {
-        var reader = context.Reader;
-        var bookmark = reader.GetBookmark();
-
-        try
-        {
-            var row = rowReader(queryContext, reader, context);
-            queryContext.RowDeserialized();
-            return row;
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            queryContext.AbandonDeferral();
-
-            reader.ReturnToBookmark(bookmark);
-            reader.SkipValue();
-
-            queryContext.RowFailed(ExceptionDispatchInfo.Capture(exception));
-            return default!;
-        }
-    }
+        => rowReader(queryContext, context.Reader, context);
 }

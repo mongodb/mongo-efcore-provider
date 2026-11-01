@@ -102,8 +102,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.All(results, o => Assert.NotNull(o.Buyer));
 
         spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
-            "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }, " +
-            "{ \"$match\" : { \"_lookup_Buyer.0\" : { \"$exists\" : true } } }, { \"$set\" : { \"_lookup_Buyer\" : { \"$arrayElemAt\" : [\"$_lookup_Buyer\", 0] } } }");
+            "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }");
     }
 
     [Fact]
@@ -122,8 +121,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.All(results, o => Assert.Equal("Springfield", o.Buyer.Address.City));
 
         spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
-            "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }, " +
-            "{ \"$match\" : { \"_lookup_Buyer.0\" : { \"$exists\" : true } } }, { \"$set\" : { \"_lookup_Buyer\" : { \"$arrayElemAt\" : [\"$_lookup_Buyer\", 0] } } }");
+            "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }");
     }
 
     [Fact]
@@ -664,8 +662,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // $match before $lookup: filter/sort/paging push ahead of the join.
         spyLogger.AssertExecutedMqlContains("{ \"$match\" : { \"Total\" : { \"$gt\" : { \"$numberDecimal\" : \"10\" } } } }, " +
             "{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
-            "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }, " +
-            "{ \"$match\" : { \"_lookup_Buyer.0\" : { \"$exists\" : true } } }, { \"$set\" : { \"_lookup_Buyer\" : { \"$arrayElemAt\" : [\"$_lookup_Buyer\", 0] } } }");
+            "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }");
     }
 
     /// <summary>
@@ -707,8 +704,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         // Gate 2, IsStreamableReference fact (IsReference && !HasPipeline && local field not _lookup_-prefixed).
         spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.CustomersCollectionName +
-            "\", \"localField\" : \"UniCustomerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_UniCustomer\" } }, " +
-            "{ \"$match\" : { \"_lookup_UniCustomer.0\" : { \"$exists\" : true } } }, { \"$set\" : { \"_lookup_UniCustomer\" : { \"$arrayElemAt\" : [\"$_lookup_UniCustomer\", 0] } } }");
+            "\", \"localField\" : \"UniCustomerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_UniCustomer\" } }");
     }
 
     /// <summary>

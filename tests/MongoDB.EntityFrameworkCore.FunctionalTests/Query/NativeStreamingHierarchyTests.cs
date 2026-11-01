@@ -213,6 +213,269 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
         }
     }
 
+    // ---- derived types with navigations of their own ----------------------------------------------------
+
+    private abstract class Vehicle
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public Plate? Plate { get; set; }
+    }
+
+    private class Car : Vehicle
+    {
+        public int Doors { get; set; }
+        public Engine? Engine { get; set; }
+        public List<Wheel> Wheels { get; set; } = [];
+    }
+
+    private class SportsCar : Car
+    {
+        public Spoiler? Spoiler { get; set; }
+    }
+
+    private class Truck : Vehicle
+    {
+        public double Load { get; set; }
+        public Bed Bed { get; set; } = null!;
+    }
+
+    private class Plate
+    {
+        public string Code { get; set; } = "";
+    }
+
+    private class Engine
+    {
+        public int Horsepower { get; set; }
+        public Maker? Maker { get; set; }
+    }
+
+    private class Maker
+    {
+        public string Country { get; set; } = "";
+    }
+
+    private class Wheel
+    {
+        public int Size { get; set; }
+    }
+
+    private class Spoiler
+    {
+        public string Style { get; set; } = "";
+    }
+
+    private class Bed
+    {
+        public double Length { get; set; }
+    }
+
+    private static readonly Action<ModelBuilder> VehicleModel = mb =>
+    {
+        mb.Entity<Vehicle>();
+        mb.Entity<Car>(b =>
+        {
+            b.OwnsOne(c => c.Engine, e => e.OwnsOne(x => x.Maker));
+            b.OwnsMany(c => c.Wheels);
+        });
+        mb.Entity<SportsCar>().OwnsOne(c => c.Spoiler);
+        mb.Entity<Truck>().OwnsOne(t => t.Bed);
+        mb.Entity<Vehicle>().OwnsOne(v => v.Plate);
+    };
+
+    private IMongoCollection<Vehicle> SeedVehicles([CallerMemberName] string? name = null)
+    {
+        var collection = database.CreateCollection<Vehicle>(name);
+        using var seed = CreateContext(collection, MongoQueryMode.Native, VehicleModel);
+        seed.Entities.AddRange(
+            new Car
+            {
+                Id = 1, Name = "mini", Doors = 3, Plate = new Plate { Code = "A1" },
+                Engine = new Engine { Horsepower = 90, Maker = new Maker { Country = "UK" } },
+                Wheels = [new Wheel { Size = 14 }, new Wheel { Size = 15 }]
+            },
+            new Truck { Id = 2, Name = "hauler", Load = 7.5, Bed = new Bed { Length = 4.5 } },
+            new SportsCar
+            {
+                Id = 3, Name = "zoom", Doors = 2, Engine = new Engine { Horsepower = 400 }, Spoiler = new Spoiler { Style = "wing" },
+                Wheels = [new Wheel { Size = 19 }]
+            },
+            new Car { Id = 4, Name = "bare", Doors = 5 });
+        seed.SaveChanges();
+        return collection;
+    }
+
+    private static string Describe(Vehicle v)
+        => $"{v.GetType().Name}:{v.Id}:{v.Name}:{v.Plate?.Code ?? "-"}:" + v switch
+        {
+            SportsCar s => $"{s.Doors}:{s.Engine?.Horsepower.ToString() ?? "-"}:{s.Engine?.Maker?.Country ?? "-"}:"
+                           + $"{string.Join("/", s.Wheels.Select(w => w.Size))}:{s.Spoiler?.Style ?? "-"}",
+            Car c => $"{c.Doors}:{c.Engine?.Horsepower.ToString() ?? "-"}:{c.Engine?.Maker?.Country ?? "-"}:{string.Join("/", c.Wheels.Select(w => w.Size))}",
+            Truck t => $"{t.Load}:{t.Bed?.Length.ToString() ?? "-"}",
+            _ => "?"
+        };
+
+    [Fact]
+    public void A_hierarchy_whose_derived_types_own_navigations_streams()
+    {
+        var collection = SeedVehicles();
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, VehicleModel);
+
+        Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Entities.AsNoTracking()));
+        Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Entities));
+    }
+
+    [Fact]
+    public void Derived_owned_references_and_collections_come_back_with_each_concrete_type()
+    {
+        var collection = SeedVehicles();
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode, VehicleModel);
+            return db.Entities.AsNoTracking().OrderBy(v => v.Id).AsEnumerable().Select(Describe).ToList();
+        });
+
+        Assert.Equal(
+            [
+                "Car:1:mini:A1:3:90:UK:14/15",
+                "Truck:2:hauler:-:7.5:4.5",
+                "SportsCar:3:zoom:-:2:400:-:19:wing",
+                "Car:4:bare:-:5:-:-:"
+            ],
+            results);
+    }
+
+    [Fact]
+    public void Derived_type_queries_with_owned_navigations_match_driver_linq()
+    {
+        var collection = SeedVehicles();
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode, VehicleModel);
+            var cars = db.Entities.AsNoTracking().OfType<Car>().OrderBy(v => v.Id).AsEnumerable().Select(Describe).ToList();
+            var sports = db.Set<SportsCar>().AsNoTracking().AsEnumerable().Select(Describe).ToList();
+            var trucks = db.Set<Truck>().AsNoTracking().Where(t => t.Load > 1).AsEnumerable().Select(Describe).ToList();
+            return cars.Concat(sports).Concat(trucks).ToList();
+        });
+
+        Assert.Equal(
+            [
+                "Car:1:mini:A1:3:90:UK:14/15", "SportsCar:3:zoom:-:2:400:-:19:wing", "Car:4:bare:-:5:-:-:",
+                "SportsCar:3:zoom:-:2:400:-:19:wing",
+                "Truck:2:hauler:-:7.5:4.5"
+            ],
+            results);
+    }
+
+    [Fact]
+    public void Tracked_hierarchy_query_tracks_the_owned_parts_of_each_concrete_type()
+    {
+        var collection = SeedVehicles();
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode, VehicleModel);
+            var vehicles = db.Entities.OrderBy(v => v.Id).ToList();
+            return new List<string>
+            {
+                $"engines={db.ChangeTracker.Entries<Engine>().Count()}",
+                $"wheels={db.ChangeTracker.Entries<Wheel>().Count()}",
+                $"beds={db.ChangeTracker.Entries<Bed>().Count()}",
+                $"spoilers={db.ChangeTracker.Entries<Spoiler>().Count()}",
+                $"makers={db.ChangeTracker.Entries<Maker>().Count()}",
+                $"plates={db.ChangeTracker.Entries<Plate>().Count()}",
+                $"unchanged={db.ChangeTracker.Entries().All(e => e.State == EntityState.Unchanged)}",
+                string.Join(",", vehicles.Select(Describe))
+            };
+        });
+
+        Assert.Equal(
+            ["engines=2", "wheels=3", "beds=1", "spoilers=1", "makers=1", "plates=1", "unchanged=True"],
+            results.Take(7).ToList());
+    }
+
+    [Fact]
+    public void A_required_owned_reference_of_a_derived_type_is_required_for_that_type_only()
+    {
+        var collection = SeedVehicles();
+        var raw = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName);
+        raw.UpdateOne(Builders<BsonDocument>.Filter.Eq("_id", 2), Builders<BsonDocument>.Update.Unset("Bed"));
+
+        foreach (var mode in new[] { MongoQueryMode.DriverLinq, MongoQueryMode.Native })
+        {
+            using var db = CreateContext(collection, mode, mb =>
+            {
+                VehicleModel(mb);
+                mb.Entity<Truck>().Navigation(t => t.Bed).IsRequired();
+            });
+
+            // The truck without its Bed fails; the cars, which have no Bed to be required, do not.
+            Assert.Throws<InvalidOperationException>(() => db.Entities.AsNoTracking().OrderBy(v => v.Id).ToList());
+            Assert.Equal(
+                ["Car:1:mini:A1:3:90:UK:14/15", "Car:4:bare:-:5:-:-:"],
+                db.Entities.AsNoTracking().Where(v => v.Id == 1 || v.Id == 4).OrderBy(v => v.Id).AsEnumerable().Select(Describe).ToList());
+        }
+    }
+
+    // ---- derived types that own different navigations under one element name ----------------------------
+
+    private abstract class Fruit
+    {
+        public int Id { get; set; }
+    }
+
+    private class Apple : Fruit
+    {
+        public Seed? Info { get; set; }
+    }
+
+    private class Pear : Fruit
+    {
+        public Stone? Info { get; set; }
+    }
+
+    private class Seed
+    {
+        public int Count { get; set; }
+    }
+
+    private class Stone
+    {
+        public string Kind { get; set; } = "";
+    }
+
+    private static readonly Action<ModelBuilder> FruitModel = mb =>
+    {
+        mb.Entity<Fruit>();
+        mb.Entity<Apple>().OwnsOne(a => a.Info);
+        mb.Entity<Pear>().OwnsOne(p => p.Info);
+    };
+
+    // One element name holds a Seed in an apple and a Stone in a pear, which one plan cannot read: the DOM shaper does.
+    [Fact]
+    public void Siblings_that_own_different_navigations_under_one_element_name_still_read_correctly()
+    {
+        var collection = database.CreateCollection<Fruit>();
+        using (var seed = CreateContext(collection, MongoQueryMode.Native, FruitModel))
+        {
+            seed.Entities.AddRange(new Apple { Id = 1, Info = new Seed { Count = 5 } }, new Pear { Id = 2, Info = new Stone { Kind = "hard" } });
+            seed.SaveChanges();
+        }
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode, FruitModel);
+            return db.Entities.AsNoTracking().OrderBy(f => f.Id).AsEnumerable()
+                .Select(f => f switch { Apple a => $"Apple:{a.Info?.Count}", Pear p => $"Pear:{p.Info?.Kind}", _ => "?" })
+                .ToList();
+        });
+
+        Assert.Equal(["Apple:5", "Pear:hard"], results);
+    }
+
     // ---- a hierarchy the plan cannot tell apart ----------------------------------------------------------
 
     private abstract class Shape

@@ -55,7 +55,7 @@ internal static class ProfileHarness
                 ? new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(conn, dbName, o => o.UseQueryMode(mode))
                 : new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(client, dbName, o => o.UseQueryMode(mode)))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
-            .EnableThreadSafetyChecks(!args.Contains("--nothreadsafety")).Options;
+            .EnableThreadSafetyChecks(args.Contains("--threadsafety")).Options;
         var dl = Options(MongoQueryMode.DriverLinq);
         var nat = Options(MongoQueryMode.Native);
 
@@ -92,7 +92,7 @@ internal static class ProfileHarness
                 Authors = db.GetCollection<Author>("Authors"),
             };
 
-            var firstId = flat.Find(FilterDefinition<FlatItem>.Empty).Skip(rows / 2).Limit(1).Project(f => f.Id).First();
+            var firstId = flat.Find(FilterDefinition<FlatItem>.Empty).Skip(rows / 2).Limit(1).Project(f => f.Id).FirstOrDefault();
             var opts = config == "native" ? nat : dl;
             // Pooled like AddDbContextPool unless --nopool; disposing a pooled context returns it to the pool.
             var pool = args.Contains("--nopool") ? null : BenchmarkContexts.Pool(opts);

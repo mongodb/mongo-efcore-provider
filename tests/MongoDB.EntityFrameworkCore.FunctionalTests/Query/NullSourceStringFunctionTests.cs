@@ -15,6 +15,7 @@
 
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -157,9 +158,51 @@ public class NullSourceStringFunctionTests(TemporaryDatabaseFixture database)
     {
         using var db = Seed();
 
-        // Substring(0, 0) is "" for every row when unguarded, null and missing included, so the Where keeps all
-        // three rows and the guarded projection then yields a null. Had the Where predicate been guarded too, the
-        // null and missing rows would be filtered out and Contains(null) would be false.
-        Assert.True(db.Set<Row>().Where(x => x.S!.Substring(0, 0) == "").Select(x => x.S!.ToUpper()).Contains(null));
+        // Substring(0, 0) is "" for every row when unguarded, null and missing included, so a Where on it keeps all three rows and the guarded
+        // projection then yields a null: Contains(null) is true. The native translator guards that predicate itself (a null source is not "", as in
+        // SQL), so it filters the null and missing rows out before Contains looks, and Contains(null) is false. In neither mode does Contains add a
+        // guard of its own to the predicate.
+        var predicateKeepsNullRows = TestQueryMode.Current == MongoQueryMode.DriverLinq;
+        Assert.Equal(predicateKeepsNullRows, db.Set<Row>().Where(x => x.S!.Substring(0, 0) == "").Select(x => x.S!.ToUpper()).Contains(null));
+    }
+
+    [Fact]
+    public void Steps_and_literal_concatenation_above_a_case_mapping_project_null_for_null_or_missing()
+    {
+        using var db = Seed();
+
+        AssertNullAndMissingAreNull(db.Set<Row>().Select(x => x.S!.ToUpper().Trim() + "!").ToArray(), "AB!");
+        AssertNullAndMissingAreNull(db.Set<Row>().Select(x => "<" + x.S!.ToLower()).ToArray(), "<ab");
+        AssertNullAndMissingAreNull(db.Set<Row>().Select(x => x.S!.ToUpper().Replace("A", "_").PadRight(3, '.')).ToArray(), "_B.");
+    }
+
+    [Fact]
+    public void Distinct_after_a_case_mapping_dedups_the_mapped_values()
+    {
+        using var db = Seed();
+        db.Set<Row>().AddRange(new Row { S = "AB" }, new Row { S = "Ab" }, new Row { S = "cd" });
+        db.SaveChanges();
+
+        // The server holds the raw values ("ab", "AB", "Ab", ...), which differ; once mapped, three of them are "AB".
+        var results = db.Set<Row>().Select(x => x.S!.ToUpper()).Distinct().ToList();
+
+        Assert.Equal(3, results.Count);
+        Assert.Contains("AB", results);
+        Assert.Contains("CD", results);
+        Assert.Contains(null, results);
+    }
+
+    [Fact]
+    public async Task Contains_after_a_case_mapping_looks_among_the_mapped_values_asynchronously()
+    {
+        using var db = Seed();
+
+        Assert.True(await db.Set<Row>().Select(x => x.S!.ToUpper()).ContainsAsync("AB"));
+        Assert.False(await db.Set<Row>().Select(x => x.S!.ToUpper()).ContainsAsync("ab"));
+        Assert.False(await db.Set<Row>().Select(x => x.S!.ToUpper()).ContainsAsync(""));
+        Assert.True(await db.Set<Row>().Select(x => x.S!.ToUpper()).ContainsAsync(null));
+
+        var wanted = "AB";
+        Assert.True(await db.Set<Row>().Select(x => x.S!.ToUpper()).ContainsAsync(wanted));
     }
 }

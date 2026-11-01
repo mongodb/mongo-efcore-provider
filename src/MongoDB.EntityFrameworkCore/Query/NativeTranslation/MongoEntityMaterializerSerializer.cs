@@ -14,7 +14,6 @@
  */
 
 using System;
-using System.Runtime.ExceptionServices;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
@@ -31,9 +30,9 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <remarks>
 /// The driver deserializes a whole cursor batch before yielding its first row, so anything done here happens for rows the caller may
 /// never read. Construction is therefore all that is done: tracking is recorded for the enumerator to replay when it reaches the row
-/// (<see cref="MongoQueryContext.BeginDeferral"/>), and a row that fails to materialize is skipped and raised only if it is read, so a
-/// malformed later row cannot fail an earlier valid one (<see cref="MongoQueryContext.RowFailed"/>). The skip needs a reader bookmark
-/// per row. This is the serializer for a tracked query; an untracked one uses <see cref="MongoUntrackedEntitySerializer{TEntity}"/>.
+/// (<see cref="MongoQueryContext.BeginDeferral"/>). Stored data that does not match the model is not recovered from: the exception surfaces
+/// from the driver's batch deserialization. This is the serializer for a tracked query; an untracked one uses
+/// <see cref="MongoUntrackedEntitySerializer{TEntity}"/>.
 /// </remarks>
 internal sealed class MongoEntityMaterializerSerializer<TEntity>(
     Func<QueryContext, IBsonReader, BsonDeserializationContext, TEntity> shaper,
@@ -55,27 +54,9 @@ internal sealed class MongoEntityMaterializerSerializer<TEntity>(
     // driver's class-map serializer does, rather than allocating one per property per row.
     public override MongoMaterializedRow<TEntity> Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
     {
-        var reader = context.Reader;
-        var bookmark = reader.GetBookmark();
-
         queryContext.BeginDeferral();
-        try
-        {
-            var instance = shaper(queryContext, reader, context);
-            var deferred = queryContext.EndDeferral(instance);
-            queryContext.RowDeserialized();
-            return new MongoMaterializedRow<TEntity>(instance, deferred);
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            queryContext.AbandonDeferral();
-
-            // The reader is somewhere inside the failed document: go back to its start and skip it, so the rest of the batch still reads.
-            reader.ReturnToBookmark(bookmark);
-            reader.SkipValue();
-
-            queryContext.RowFailed(ExceptionDispatchInfo.Capture(exception));
-            return default;
-        }
+        var instance = shaper(queryContext, context.Reader, context);
+        var deferred = queryContext.EndDeferral(instance);
+        return new MongoMaterializedRow<TEntity>(instance, deferred);
     }
 }

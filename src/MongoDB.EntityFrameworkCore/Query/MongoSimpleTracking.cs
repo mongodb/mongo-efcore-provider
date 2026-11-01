@@ -51,16 +51,37 @@ internal sealed class MongoSimpleTracking
     /// materialized the row.
     /// </summary>
     /// <returns>The instance to yield.</returns>
-    public object Replay(MongoQueryContext queryContext, object instance)
+    /// <param name="queryContext">The query's context.</param>
+    /// <param name="instance">The instance the row constructed.</param>
+    /// <param name="keyValues">The key values EF's materializer already read from the instance, if the row kept them.</param>
+    public object Replay(MongoQueryContext queryContext, object instance, object[]? keyValues = null)
     {
-        var keyValues = new object?[_keyGetters.Length];
-        for (var i = 0; i < keyValues.Length; i++)
+        if (keyValues == null)
         {
-            keyValues[i] = _keyGetters[i].GetClrValue(instance);
+            keyValues = new object[_keyGetters.Length];
+            for (var i = 0; i < keyValues.Length; i++)
+            {
+                keyValues[i] = _keyGetters[i].GetClrValue(instance)!;
+            }
         }
 
-        var entry = queryContext.ReplayTryGetEntry(_key, keyValues!, throwOnNullKey: true, out _)
+        var entry = queryContext.ReplayTryGetEntry(_key, keyValues, throwOnNullKey: true, out _)
                     ?? queryContext.ReplayStartTracking(_entityType, instance, MongoQueryContext.EmptyShadowValues);
         return entry.Entity;
+    }
+}
+
+/// <summary>
+/// The deferred tracking of a projected row whose only tracked entity is a plain one: the shared <see cref="MongoSimpleTracking"/> of its
+/// type and the instance the row constructed.
+/// </summary>
+internal sealed class MongoSimpleRowTracking(MongoSimpleTracking tracking, object instance, object[] keyValues)
+{
+    /// <summary>Replays the tracking, as <see cref="MongoPendingTracking.ReplayWithRemap"/> does for a richer row.</summary>
+    /// <returns>The entity to read in place of the row's instance when the state manager resolved it to one already tracked, otherwise <see langword="null"/>.</returns>
+    public MongoEntityRemap? ReplayWithRemap(MongoQueryContext queryContext)
+    {
+        var tracked = tracking.Replay(queryContext, instance, keyValues);
+        return ReferenceEquals(tracked, instance) ? null : new MongoEntityRemap(instance, tracked);
     }
 }

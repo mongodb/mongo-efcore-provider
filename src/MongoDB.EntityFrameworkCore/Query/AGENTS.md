@@ -58,9 +58,19 @@ Scope, joins, grouping:
 - **Bare join-scope leaves.** A bare scalar leaf over a chain re-roots onto the ONE scope its hop chain names
   (`TryTranslateSingleScope`), never by CLR type; it declines when paging, ordering or a deferred paging snapshot exists
   (the lowerer places a chain's paging after every `$lookup`). A bare INNER entity leaf (`HasBareJoinInnerEntityLeaf`)
-  never streams: the streaming rewriter is typed by the root entity. A construction whose members are ALL whole-entity
+  is not the whole-entity streaming shape (that rewriter is typed by the root entity); it is read as a projection leaf instead,
+  the inner document under its join level's prefix (`StreamedCollectionSubstituter.TryStreamJoinInner`, which also serves the inner
+  entity beside other projected values). An Include on the inner entity keeps the DOM. A construction whose members are ALL whole-entity
   inner leaves stages each level whole; `BindResultMember` rebinds each shaper with `alias: null` so a sibling
   `o1.o2` is the same instance.
+- **A required reference Include is filtered by the cursor, not the server** (`LookupExpression.CanBeFilteredOnClient`,
+  `MongoUnwindStage.ClientFiltered`). In a document database "required" means non-null if present, and a document may point at
+  nothing. A server `$match` on a `$lookup`'s output costs about as much as the lookup, so once the whole-entity streaming shaper is chosen
+  the compile step sets `MongoQueryExpression.FiltersReferenceLookupsOnClient` (only if the shaper checks EVERY such reference) and rebuilds
+  the factory: the stage then renders nothing, the shaper reads the `[doc]` array form (`BuildLookupReferenceDescent` also reads the `$set`
+  document form) and returns `default` for a row whose reference is absent, which `QueryingEnumerable` skips (`isDropped`). The lowerer keeps
+  the server `$match` + `$set` when any stage after the first such lookup is not a further lookup/unwind (paging, sort or `Where` over
+  the join, set operations, a count), because those depend on the dropped rows. Dropped rows must record no tracking.
 - **Filter joins before a reference Include** (`TryAdmitFilterJoins`): extra joins are admitted only when each is a
   resolved, flattened, eligible reference join and the Where that created them left its predicate (and later
   paging/Distinct) in `PostJoinOps`. A REQUIRED navigation's inner join can drop rows the page counted and stays
@@ -270,6 +280,10 @@ Rendering (null/missing/dialect semantics):
 - **A non-deterministic call must stay in the tree for `NonDeterministicCalls` to refuse it.** EF's default filter only keeps
   `Random.Next` and `Guid.NewGuid`; `MongoEvaluatableExpressionFilter` keeps every call `IsNonDeterministic` recognizes
   (`NextDouble`, `NextSingle`, `NextInt64`, `Guid.CreateVersion7`), or EF parameterizes it and every row shares one value (EF-464).
+- **Stored data that contradicts the model is not recovered from.** A string in an `int` property throws from the driver's batch
+  deserialization (it deserializes the whole batch before yielding row 1, as under driver-LINQ), as EF Core does when a column breaks
+  its declared shape. The native serializers hold no per-row reader bookmark, `try`/`catch` or deferred row failure; don't add one back
+  (it cost ~130 B/row on every streamed query). Tracking is still deferred to the enumerator (`BeginDeferral`).
 - **Read modes: how a non-nullable value read back treats null and MISSING.** Driver-LINQ is the oracle: a malformed
   document must answer what it answered there, never a silent `0`. Emit side decides once per value leaf
   (`MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead`; projected Distinct over a bare field uses
@@ -316,6 +330,13 @@ Shapers and projections:
   collection's whole array (`TryMatchOwnedArraySelectLeaf`, the one predicate both sides call); the shaper re-applies the
   `Select` over materialized owned entities. The lambda must be self-contained (`IsSelfContainedLambda`). A lambda reading
   the outer entity crashes shaper build in every mode (pre-existing).
+  - **The streaming shaper evaluates such a Select in place** (`StreamedCollectionSubstituter.TryStreamElementSelect`,
+    `MongoElementSelectorRewriter`): when the lambda reads only scalar members of its element, no element (nor its nested owned
+    types) is constructed, and the lambda runs inside the driver's batch deserialization. So it must be side-effect free: member
+    reads, operators, conditionals, anonymous types, and `string`/`Math`/`Nullable<T>` methods only; anything else declines to the
+    whole-array read. Once that shaper is chosen the pipeline is narrowed to the scalars the lambda reads
+    (`MongoSelectDefinition.TryNarrowArrayProjection`, factory rebuilt), so a stored element missing a required scalar the lambda
+    does NOT read no longer throws; the pruning above never drops a scalar otherwise.
 - **`Mql.Field(p, "element", serializer)` resolves like a mapped field** (`TryResolveMqlField`, shared by Where, OrderBy,
   Select, aggregate selectors) by STORED element name. The serializer argument is ignored (can't be inspected at compile
   time), so a converter/non-default representation or a CLR-type mismatch declines.

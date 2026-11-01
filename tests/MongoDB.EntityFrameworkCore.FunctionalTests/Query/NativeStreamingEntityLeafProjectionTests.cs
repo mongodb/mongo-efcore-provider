@@ -108,7 +108,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
     {
         var rowType = CursorRowType(query);
         Assert.True(
-            rowType.IsGenericType && rowType.GetGenericTypeDefinition() == typeof(MongoProjectedRow<>),
+            MongoProjectedRowState.IsRowType(rowType),
             $"Expected the streaming projection reader, but the cursor yields {rowType}.");
     }
 
@@ -285,6 +285,112 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
 
         Assert.Equal("same=True", results[0]);
         Assert.Equal("entries=5", results[1]);
+    }
+
+    [Fact]
+    public void A_computed_projection_streams_and_reads_a_missing_or_null_value_as_the_dom_did()
+    {
+        var collection = SeedOrders();
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode, OrderModel);
+            return db.Entities.AsNoTracking().OrderBy(o => o.Id)
+                .Select(o => new { Pick = o.Code == "one" ? -1 : o.Id, Carrier = o.Shipping!.Carrier ?? "none" })
+                .ToList().Select(r => $"{r.Pick}:{r.Carrier}").ToList();
+        });
+
+        Assert.Equal(["-1:air", "2:none", "3:none", "4:sea", "5:rail"], results);
+
+        using var streaming = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        AssertStreams(streaming.Entities.AsNoTracking().Select(o => o.Code == "one" ? -1 : o.Id));
+    }
+
+    private class Wrapped(Order order)
+    {
+        public Order Order { get; } = order;
+        public string? Code { get; set; }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_wrapper_that_uses_its_entity_more_than_once_streams_and_tracks_each_row_once(bool tracked)
+    {
+        var collection = SeedOrders("Wrapped" + tracked);
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode, OrderModel);
+            var first = tracked ? db.Entities.AsTracking().Single(o => o.Id == 2) : null;
+            var query = tracked ? db.Entities.AsTracking() : db.Entities.AsNoTracking();
+            var rows = query.OrderBy(o => o.Id).Select(o => new Wrapped(o) { Code = o.Code }).ToList();
+            return new List<string>
+            {
+                $"same={(first == null || ReferenceEquals(first, rows[1].Order))}",
+                $"entries={db.ChangeTracker.Entries<Order>().Count()}",
+                string.Join(",", rows.Select(r => r.Order.Id + r.Code)),
+            };
+        });
+
+        Assert.Equal("same=True", results[0]);
+        Assert.Equal(tracked ? "entries=5" : "entries=0", results[1]);
+        Assert.Equal("1one,2two,3three,4four,5five", results[2]);
+
+        using var streaming = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        AssertCursorIsNotDocument(streaming.Entities.AsNoTracking().Select(o => new Wrapped(o) { Code = o.Code }));
+    }
+
+    private class Marker
+    {
+        public int Tag { get; set; } = 7;
+    }
+
+    [Fact]
+    public void A_projection_that_reads_nothing_from_the_document_streams_one_row_per_document()
+    {
+        var collection = SeedOrders();
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode, OrderModel);
+            return new List<string>
+            {
+                string.Join(",", db.Entities.AsNoTracking().Select(o => new Marker()).ToList().Select(m => m.Tag)),
+                string.Join(",", db.Entities.AsNoTracking().Where(o => o.Id > 3).Select(o => 1).ToList()),
+                string.Join(",", db.Entities.AsNoTracking().Select(o => new Marker()).Distinct().ToList().Select(m => m.Tag)),
+            };
+        });
+
+        Assert.Equal("7,7,7,7,7", results[0]);
+        Assert.Equal("1,1", results[1]);
+        Assert.Equal("7", results[2]);
+
+        using var streaming = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        AssertStreams(streaming.Entities.AsNoTracking().Select(o => new Marker()));
+    }
+
+    [Fact]
+    public void A_tracked_whole_entity_beside_a_scalar_resolves_to_the_entity_already_tracked()
+    {
+        var collection = SeedOrders();
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode, OrderModel);
+            var first = db.Entities.AsTracking().Single(o => o.Id == 1);
+            var rows = db.Entities.AsTracking().OrderBy(o => o.Id).Select(o => new { Item = o, o.Code.Length }).ToList();
+            return new List<string>
+            {
+                $"same={ReferenceEquals(first, rows[0].Item)}",
+                $"entries={db.ChangeTracker.Entries<Order>().Count()}",
+                string.Join(",", rows.Select(r => r.Item.Code + ":" + r.Length)),
+            };
+        });
+
+        Assert.Equal("same=True", results[0]);
+        Assert.Equal("entries=5", results[1]);
+        Assert.Equal("one:3,two:3,three:5,four:4,five:4", results[2]);
     }
 
     [Fact]

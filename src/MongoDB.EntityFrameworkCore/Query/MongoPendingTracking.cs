@@ -98,9 +98,9 @@ internal sealed class MongoPendingTracking
     /// As <see cref="Replay"/> for a row with no single result: returns the entities of the row that the state manager resolved to an already
     /// tracked instance, by the instance the row constructed, or <see langword="null"/> when every entity was tracked as constructed.
     /// </summary>
-    public Dictionary<object, object>? ReplayWithRemap(MongoQueryContext queryContext)
+    public MongoEntityRemap? ReplayWithRemap(MongoQueryContext queryContext)
     {
-        Dictionary<object, object>? remap = null;
+        MongoEntityRemap? remap = null;
         foreach (var entity in _entities)
         {
             var entry = queryContext.ReplayTryGetEntry(entity.Key, entity.KeyValues, entity.ThrowOnNullKey, out _);
@@ -112,7 +112,14 @@ internal sealed class MongoPendingTracking
             entity.Entry = entry;
             if (entry != null && entity.Instance != null && !ReferenceEquals(entity.Instance, entry.Entity))
             {
-                (remap ??= new Dictionary<object, object>(ReferenceEqualityComparer.Instance))[entity.Instance] = entry.Entity;
+                if (remap == null)
+                {
+                    remap = new MongoEntityRemap(entity.Instance, entry.Entity);
+                }
+                else
+                {
+                    remap.Add(entity.Instance, entry.Entity);
+                }
             }
         }
 

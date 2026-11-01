@@ -583,13 +583,27 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         Assert.Null(context.Entities.Select(e => new { L = e.Label!.Length }).Distinct().Max(a => (int?)a.L));
     }
 
-    // A GroupBy nested on the Distinct keys or accumulates over its flattened (flagged) alias. Before the fix each of
-    // these went native and answered 0 for the all-null input (Key 0; Max/Min/Average 0) where EF throws; the key
-    // part / accumulator guards now see the flag on the element reference and decline. No driver oracle (its
-    // unguarded $strLenCP fails server-side on null), so only the NativeOnly decline is asserted.
+    // A GroupBy nested on the Distinct keys over its flattened (flagged) alias: the key is read back flagged, so the null throws
+    // EF's error rather than reading 0. No driver oracle (its unguarded $strLenCP fails server-side on null).
     [Theory]
     [InlineData("Key")]
     [InlineData("KeyPlusOne")]
+    public void GroupBy_over_distinct_nullable_string_length_key_throws_on_null(string shape)
+    {
+        var collection = CreateAllNullLabelCollection(nameof(GroupBy_over_distinct_nullable_string_length_key_throws_on_null), shape);
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        var rows = context.Entities.Select(e => new { e.Id, L = e.Label!.Length }).Distinct();
+        var ex = Assert.Throws<InvalidOperationException>(() => shape switch
+        {
+            "Key" => rows.GroupBy(x => x.L).Select(g => new { g.Key, C = g.Count() }).ToList().Select(r => (double)r.Key).ToList(),
+            _ => rows.GroupBy(x => x.L + 1).Select(g => new { g.Key, C = g.Count() }).ToList().Select(r => (double)r.Key).ToList()
+        });
+        Assert.Equal("Nullable object must have a value.", ex.Message);
+    }
+
+    // A GroupBy accumulating over the flattened (flagged) alias: $min/$max/$avg of an all-null group would read 0 where EF throws, so the
+    // accumulator guard sees the flag on the element reference and declines.
+    [Theory]
     [InlineData("Max")]
     [InlineData("Min")]
     [InlineData("Average")]
@@ -600,8 +614,6 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         var rows = context.Entities.Select(e => new { e.Id, L = e.Label!.Length }).Distinct();
         Assert.Throws<NativeTranslationNotSupportedException>(() => shape switch
         {
-            "Key" => rows.GroupBy(x => x.L).Select(g => new { g.Key, C = g.Count() }).ToList().Select(r => (double)r.Key).ToList(),
-            "KeyPlusOne" => rows.GroupBy(x => x.L + 1).Select(g => new { g.Key, C = g.Count() }).ToList().Select(r => (double)r.Key).ToList(),
             "Max" => rows.GroupBy(x => x.Id).Select(g => new { g.Key, M = g.Max(x => x.L) }).ToList().Select(r => (double)r.M).ToList(),
             "Min" => rows.GroupBy(x => x.Id).Select(g => new { g.Key, M = g.Min(x => x.L) }).ToList().Select(r => (double)r.M).ToList(),
             _ => rows.GroupBy(x => x.Id).Select(g => new { g.Key, M = g.Average(x => x.L) }).ToList().Select(r => r.M).ToList()

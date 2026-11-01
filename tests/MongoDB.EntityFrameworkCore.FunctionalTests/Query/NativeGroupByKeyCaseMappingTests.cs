@@ -165,10 +165,11 @@ public class NativeGroupByKeyCaseMappingTests(TemporaryDatabaseFixture database)
     [MemberData(nameof(AllModes))]
     public void Case_mapping_elsewhere_in_a_grouped_query_throws(string mode)
     {
-        // Consumed by a concatenation.
+        // A concatenation with a literal is a step of the client chain: native modes answer, with the mapping run client-side and a null key
+        // staying null (the same composition NullSourceStringFunctionTests pins); DriverLinq would compute it on the server and throws.
         AssertGroups(mode, q => q.GroupBy(x => x.S).Select(g => new { K = g.Key!.ToUpper() + "!", C = g.Count() })
                 .AsEnumerable().Select(x => Show(x.K) + ":" + x.C),
-            ["!:2", "ABC!:1", "ÉCOLE!:1"], Loud);
+            ["<null>:2", "ABC!:1", "ÉCOLE!:1"], Native);
         // In the key selector.
         AssertGroups(mode, q => q.GroupBy(x => x.S!.ToUpper()).Select(g => new { g.Key, C = g.Count() })
                 .AsEnumerable().Select(x => Show(x.Key) + ":" + x.C),

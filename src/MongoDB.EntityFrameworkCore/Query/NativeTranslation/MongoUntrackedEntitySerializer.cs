@@ -14,7 +14,6 @@
  */
 
 using System;
-using System.Runtime.ExceptionServices;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
@@ -24,10 +23,9 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
 /// The one-pass output serializer of an untracked query: each cursor row is the finished <typeparamref name="TEntity"/>, constructed
-/// during the driver's own deserialization pass. There is nothing to defer, so the cursor yields the entities themselves and the only
-/// addition to the plain one-pass read is that a row that fails to materialize is skipped, through a reader bookmark, and its failure
-/// raised only if the enumerator reaches it (<see cref="MongoQueryContext.RowFailed"/>), so a malformed later row of the driver's batch
-/// cannot fail an earlier valid one. A tracked query uses <see cref="MongoEntityMaterializerSerializer{TEntity}"/>.
+/// during the driver's own deserialization pass. There is nothing to defer, so the cursor yields the entities themselves. Stored data that
+/// does not match the model (a string where the property is an <see cref="int"/>) is not recovered from: the exception surfaces from the
+/// driver's batch deserialization. A tracked query uses <see cref="MongoEntityMaterializerSerializer{TEntity}"/>.
 /// </summary>
 internal sealed class MongoUntrackedEntitySerializer<TEntity>(
     Func<QueryContext, IBsonReader, BsonDeserializationContext, TEntity> shaper,
@@ -35,24 +33,5 @@ internal sealed class MongoUntrackedEntitySerializer<TEntity>(
     : SerializerBase<TEntity>
 {
     public override TEntity Deserialize(BsonDeserializationContext context, BsonDeserializationArgs args)
-    {
-        var reader = context.Reader;
-        var bookmark = reader.GetBookmark();
-
-        try
-        {
-            var instance = shaper(queryContext, reader, context);
-            queryContext.RowDeserialized();
-            return instance;
-        }
-        catch (Exception exception) when (exception is not OutOfMemoryException)
-        {
-            // The reader is somewhere inside the failed document: go back to its start and skip it, so the rest of the batch still reads.
-            reader.ReturnToBookmark(bookmark);
-            reader.SkipValue();
-
-            queryContext.RowFailed(ExceptionDispatchInfo.Capture(exception));
-            return default!;
-        }
-    }
+        => shaper(queryContext, context.Reader, context);
 }
