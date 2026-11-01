@@ -150,6 +150,25 @@ internal static class BsonBinding
             Expression.Constant(name),
             Expression.Constant(new PropertyReadInfo(property)));
 
+    /// <summary>
+    /// A read of a value the streaming projection reader has already produced for <paramref name="name"/> with <paramref name="serializer"/>
+    /// (see <see cref="Query.NativeTranslation.MongoStreamedCollectionExpression"/>). It exists only for the planner to take over.
+    /// </summary>
+    internal static MethodCallExpression CreateGetStreamedValueExpression(
+        Expression bsonDocExpression, string name, IBsonSerializer serializer, Type type, string? missingMessage)
+        => Expression.Call(
+            null,
+            typeof(BsonBinding).GetMethod(nameof(GetStreamedValueAtElement), BindingFlags.Static | BindingFlags.NonPublic)!.MakeGenericMethod(type),
+            bsonDocExpression,
+            Expression.Constant(name),
+            Expression.Constant(serializer, typeof(IBsonSerializer)),
+            Expression.Constant(missingMessage, typeof(string)));
+
+    internal static T GetStreamedValueAtElement<T>(
+        BsonDocument document, string elementName, IBsonSerializer serializer, string? missingMessage)
+        => throw new InvalidOperationException(
+            $"Element '{elementName}' is read by the streaming projection reader and has no document form.");
+
     internal static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
 

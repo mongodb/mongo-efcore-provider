@@ -89,11 +89,11 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
     public override async Task Project_root_entity_with_missing_required_navigation(bool async)
     {
         // Fails: Missing property values issue EF-164
-        Assert.Contains(
-            "Field 'RequiredReference' required but not present",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Project_root_entity_with_missing_required_navigation(async)))
-            .Message);
+        // The document lacks two required references (the root's, and one inside an element of its owned collection). Which is reported first
+        // depends on whether the collection's elements are built before the root's own references are checked, which is not part of the contract.
+        var message = (await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            base.Project_root_entity_with_missing_required_navigation(async))).Message;
+        Assert.Matches("Field '(Nested)?RequiredReference' required but not present", message);
 
         AssertMql(
             """

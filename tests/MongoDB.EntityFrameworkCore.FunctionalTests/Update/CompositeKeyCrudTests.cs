@@ -129,13 +129,13 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(collection, builder =>
             builder.Entity<Entity>().HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
         db.Entities.AddRange(
-            new Entity { Id1 = "key", Id2 = 2 },
-            new Entity { Id1 = "key", Id2 = 1 },
-            new Entity { Id1 = "key", Id2 = 4 },
-            new Entity { Id1 = "key", Id2 = 0 },
-            new Entity { Id1 = "key2", Id2 = 2 },
-            new Entity { Id1 = "key2", Id2 = 4 },
-            new Entity { Id1 = "key2", Id2 = 3 });
+            new Entity { Id1 = "key", Id2 = 2, Data = "d" },
+            new Entity { Id1 = "key", Id2 = 1, Data = "d" },
+            new Entity { Id1 = "key", Id2 = 4, Data = "d" },
+            new Entity { Id1 = "key", Id2 = 0, Data = "d" },
+            new Entity { Id1 = "key2", Id2 = 2, Data = "d" },
+            new Entity { Id1 = "key2", Id2 = 4, Data = "d" },
+            new Entity { Id1 = "key2", Id2 = 3, Data = "d" });
         db.SaveChanges();
 
         var actualOrdered = db.Entities.OrderBy(e => e).ToList();

@@ -344,6 +344,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     return CreateAliasRead(projection.Alias, projectionBindingExpression.Type);
                 }
 
+            // A root-level owned collection the cursor reads into a list: only the streaming planner can answer the read.
+            case MongoStreamedCollectionExpression streamedCollection:
+                return BsonBinding.CreateGetStreamedValueExpression(
+                    DocParameter, streamedCollection.Alias, streamedCollection.Serializer, streamedCollection.Type, streamedCollection.MissingMessage);
+
             case CollectionShaperExpression collectionShaperExpression:
                 {
                     IArrayProjectionExpression arrayProjection;
@@ -1475,7 +1480,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         = typeof(MongoProjectionBindingRemovingExpressionVisitor).GetTypeInfo()
             .GetDeclaredMethod(nameof(PopulateCollection))!;
 
-    private static TCollection PopulateCollection<TEntity, TCollection>(
+    internal static TCollection PopulateCollection<TEntity, TCollection>(
         IClrCollectionAccessor accessor,
         string declaringEntityTypeDisplayName,
         string navigationName,

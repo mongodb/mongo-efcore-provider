@@ -39,7 +39,7 @@ internal static class StreamingEligibility
     /// <see cref="IsEligibleLookupElement"/>).
     /// </summary>
     public static bool IsEligible(IEntityType entityType, IReadOnlyCollection<INavigation> lookupCollections)
-        => IsEligible(entityType, new HashSet<IEntityType>(), lookupCollections, ignoreNonOwned: false);
+        => IsEligible(entityType, new HashSet<IEntityType>(), lookupCollections, ignoreNonOwned: false, isRoot: true);
 
     /// <summary>
     /// Whether the target of a lookup collection Include can be read as the elements of a root-level <c>$lookup</c> array: a plain entity
@@ -48,25 +48,33 @@ internal static class StreamingEligibility
     /// </summary>
     public static bool IsEligibleLookupElement(IEntityType elementType)
     {
-        if (elementType.IsInHierarchy() || elementType.GetSkipNavigations().Any() || elementType.GetNavigations().Any(n => n.IsEagerLoaded))
+        // What the element owns is read with it, a skip navigation is never read unless included (which the rewriter refuses), and a document's
+        // composite key is the `_id` sub-document.
+        if (elementType.IsInHierarchy() && !IsReadableHierarchy(elementType))
         {
             return false;
         }
 
-        var pk = elementType.FindPrimaryKey();
-        return pk != null && pk.Properties.Count(p => !p.IsOwnedTypeKey()) == 1;
+        return elementType.FindPrimaryKey() != null;
     }
+
+    /// <summary>Whether an owned collection's element type is read by the one-pass reader: the whole-entity rules, applied to the element.</summary>
+    public static bool IsEligibleOwnedElement(IEntityType elementType)
+        => elementType.BaseType == null && !elementType.GetDirectlyDerivedTypes().Any() && IsEligible(elementType, [], [], ignoreNonOwned: false);
 
     // ignoreNonOwned: the entity is read by a plan that skips its non-owned navigations (a lookup reference's target and its owned subtree).
     private static bool IsEligible(
-        IEntityType entityType, HashSet<IEntityType> visiting, IReadOnlyCollection<INavigation> lookupCollections, bool ignoreNonOwned)
+        IEntityType entityType, HashSet<IEntityType> visiting, IReadOnlyCollection<INavigation> lookupCollections, bool ignoreNonOwned,
+        bool isRoot = false)
     {
         if (!visiting.Add(entityType))
         {
             return true; // cycle guard
         }
 
-        if (entityType.IsInHierarchy())
+        // The root of a hierarchy is read by one plan holding the properties of every concrete type, which a derived type with navigations of its
+        // own, or an entity reached through a navigation, cannot be.
+        if (entityType.IsInHierarchy() && !(isRoot && IsReadableHierarchy(entityType)))
         {
             return false;
         }
@@ -78,8 +86,10 @@ internal static class StreamingEligibility
             return false;
         }
 
+        // A composite key of a document root is the `_id` sub-document, which the reader descends into; an owned type with more than one key
+        // of its own is not stored that way.
         var nonOwnedKeyProps = pk.Properties.Count(p => !p.IsOwnedTypeKey());
-        if (nonOwnedKeyProps > 1)
+        if (nonOwnedKeyProps > 1 && !entityType.IsDocumentRoot())
         {
             return false;
         }
@@ -108,43 +118,17 @@ internal static class StreamingEligibility
                 continue;
             }
 
-            if (!IsEligible(navigation.TargetEntityType, visiting, lookupCollections, ignoreNonOwned || nonOwned))
+            if (!IsEligible(navigation.TargetEntityType, visiting, lookupCollections, ignoreNonOwned || nonOwned, isRoot: nonOwned))
             {
                 return false;
             }
-
-            // RewriteOwnedNavigation reads an owned reference's sub-document with only single owned references beneath it, so a collection
-            // anywhere below an owned reference stays on the DOM shaper.
-            if (!IsOwnerBackReference(navigation) && !navigation.IsCollection && navigation.TargetEntityType.IsOwned()
-                && OwnsCollectionBelow(navigation.TargetEntityType))
-            {
-                return false;
-            }
-
-            // The rewriter streams owned subtrees inside a collection element (references and collections, to any depth); a
-            // non-owned navigation there has no $lookup plan, so the query uses the DOM shaper.
-            if (navigation.IsCollection && HasNonOwnedNavigation(navigation.TargetEntityType))
-            {
-                return false;
-            }
-        }
-
-        if (entityType.GetSkipNavigations().Any())
-        {
-            return false;
         }
 
         return true;
     }
 
-    // Both walks skip an owned type's navigation back to its owner: it makes the graph cyclic and is not part of the owned subtree.
-    private static bool IsOwnerBackReference(INavigation navigation)
-        => navigation.IsOnDependent && navigation.ForeignKey.IsOwnership;
-
-    private static bool HasNonOwnedNavigation(IEntityType entityType)
-        => entityType.GetNavigations().Any(
-            n => !IsOwnerBackReference(n) && (!n.TargetEntityType.IsOwned() || HasNonOwnedNavigation(n.TargetEntityType)));
-
-    private static bool OwnsCollectionBelow(IEntityType entityType)
-        => entityType.GetNavigations().Any(n => !IsOwnerBackReference(n) && (n.IsCollection || OwnsCollectionBelow(n.TargetEntityType)));
+    // A discriminated hierarchy whose derived types add only properties.
+    private static bool IsReadableHierarchy(IEntityType entityType)
+        => entityType.FindDiscriminatorProperty() != null
+           && entityType.GetDerivedTypes().All(t => !t.GetDeclaredNavigations().Any() && !t.GetDeclaredSkipNavigations().Any());
 }

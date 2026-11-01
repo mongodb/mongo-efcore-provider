@@ -52,7 +52,9 @@ internal static class MongoProjectionStreamingPlanner
     /// <param name="Shaper">A <c>Func&lt;QueryContext, TRow, TResult&gt;</c> run per row by the enumerator.</param>
     /// <param name="RowReader">A <c>Func&lt;QueryContext, IBsonReader, BsonDeserializationContext, TRow&gt;</c> run by the cursor's serializer.</param>
     /// <param name="ResultType">The projection's result type.</param>
-    public sealed record Plan(Type RowType, Delegate Shaper, Delegate RowReader, Type ResultType);
+    /// <param name="TracksEntities">Whether the row reader defers tracking (a tracked query whose projection holds entities): the cursor needs
+    /// <see cref="MongoTrackedProjectionSerializer{TRow}"/>.</param>
+    public sealed record Plan(Type RowType, Delegate Shaper, Delegate RowReader, Type ResultType, bool TracksEntities = false);
 
     private static readonly MethodInfo ReadStartDocumentMethod = typeof(IBsonReader).GetMethod(nameof(IBsonReader.ReadStartDocument))!;
     private static readonly MethodInfo ReadEndDocumentMethod = typeof(IBsonReader).GetMethod(nameof(IBsonReader.ReadEndDocument))!;
@@ -75,12 +77,16 @@ internal static class MongoProjectionStreamingPlanner
     private const string PropertyAtElementName = "GetPropertyValueAtElement";
     private const string ElementName = "GetElementValue";
     private const string KindAwareElementName = "GetKindAwareElementValue";
+    private const string StreamedValueName = "GetStreamedValueAtElement";
+
+    private static readonly MethodInfo StreamedListMethod = typeof(MongoProjectedRowReads).GetMethod(nameof(MongoProjectedRowReads.StreamedList))!;
+    private static readonly MethodInfo StreamedEntityMethod = typeof(MongoProjectedRowReads).GetMethod(nameof(MongoProjectedRowReads.StreamedEntity))!;
 
     /// <summary>
     /// Plans the streaming form of <paramref name="shaperBody"/>, a DOM shaper over <paramref name="bsonDoc"/>, or returns
     /// <see langword="null"/> when it reads the document in any way other than the simple scalar reads.
     /// </summary>
-    public static Plan? TryPlan(Expression shaperBody, ParameterExpression bsonDoc, ParameterExpression queryContext)
+    public static Plan? TryPlan(Expression shaperBody, ParameterExpression bsonDoc, ParameterExpression queryContext, bool trackedQuery = false)
     {
         var collector = new SlotVisitor(bsonDoc, rowParameter: null, valuesType: null, slots: []);
         collector.Visit(shaperBody);
@@ -101,10 +107,28 @@ internal static class MongoProjectionStreamingPlanner
             return null;
         }
 
-        var shaper = Expression.Lambda(rewritten, queryContext, rowParameter).Compile();
-        var rowReader = BuildRowReader(slots, rowType, valuesType);
+        // A tracked query's entity slots were constructed with their tracking deferred: replay it before the shaper reads the row, and read each
+        // entity slot through the remap of any the state manager resolved to an already tracked instance.
+        var tracksEntities = trackedQuery && slots.Any(s => s.IsEntity);
+        if (tracksEntities)
+        {
+            var remap = Expression.Variable(typeof(Dictionary<object, object>), "remap");
+            rewritten = Expression.Block(
+                rewritten.Type,
+                [remap],
+                Expression.Assign(
+                    remap,
+                    Expression.Call(
+                        typeof(MongoProjectedRowReads).GetMethod(nameof(MongoProjectedRowReads.Replay))!,
+                        queryContext,
+                        Expression.Field(rowParameter, nameof(MongoProjectedRow<object>.Deferred)))),
+                new RemapVisitor(remap).Visit(rewritten));
+        }
 
-        return new Plan(rowType, shaper, rowReader, shaperBody.Type);
+        var shaper = Expression.Lambda(rewritten, queryContext, rowParameter).Compile();
+        var rowReader = BuildRowReader(slots, rowType, valuesType, tracksEntities);
+
+        return new Plan(rowType, shaper, rowReader, shaperBody.Type, tracksEntities);
     }
 
     private sealed class Slot(string alias, IBsonSerializer serializer)
@@ -112,6 +136,27 @@ internal static class MongoProjectionStreamingPlanner
         public string Alias { get; } = alias;
         public IBsonSerializer Serializer { get; } = serializer;
         public Type ValueType { get; } = serializer.ValueType;
+
+        /// <summary>An entity read from a sub-document (see <see cref="MongoEntityLeafSerializer{T}"/>): constructed with tracking deferred when the query tracks.</summary>
+        public bool IsEntity { get; } = serializer.GetType().IsGenericType
+                                         && serializer.GetType().GetGenericTypeDefinition() == typeof(MongoEntityLeafSerializer<>);
+    }
+
+    // Routes each entity slot's value through the replay's remap, wherever the rewritten shaper reads it.
+    private sealed class RemapVisitor(ParameterExpression remap) : System.Linq.Expressions.ExpressionVisitor
+    {
+        private static readonly MethodInfo CanonicalMethod = typeof(MongoProjectedRowReads).GetMethod(nameof(MongoProjectedRowReads.Canonical))!;
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.IsGenericMethod && node.Method.GetGenericMethodDefinition() == StreamedEntityMethod)
+            {
+                var type = node.Method.GetGenericArguments()[0];
+                return Expression.Call(CanonicalMethod.MakeGenericMethod(type), remap, node);
+            }
+
+            return base.VisitMethodCall(node);
+        }
     }
 
     /// <summary>
@@ -190,6 +235,10 @@ internal static class MongoProjectionStreamingPlanner
                     serializer = kindSerializer!;
                     break;
 
+                case StreamedValueName when node.Arguments.Count == 4 && TryGetConstant<IBsonSerializer>(node.Arguments, 2, out var streamedSerializer):
+                    serializer = streamedSerializer!;
+                    break;
+
                 default:
                     Ineligible = true;
                     return node;
@@ -215,6 +264,9 @@ internal static class MongoProjectionStreamingPlanner
                     ScalarProjectionMethod.MakeGenericMethod(type, slot.ValueType),
                     state, value, Expression.Constant(alias), Expression.Constant(property!.Property, typeof(Microsoft.EntityFrameworkCore.Metadata.IReadOnlyProperty)),
                     Expression.Constant(property.Serializer is MongoDB.Bson.Serialization.Serializers.BooleanSerializer)),
+                StreamedValueName when type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>) => Expression.Call(
+                    StreamedListMethod.MakeGenericMethod(type.GetGenericArguments()[0]), state, value),
+                StreamedValueName => Expression.Call(StreamedEntityMethod.MakeGenericMethod(type), state, value, node.Arguments[3]),
                 PropertyAtElementName => Expression.Call(
                     PropertyAtElementMethod.MakeGenericMethod(type, slot.ValueType),
                     state, value, Expression.Constant(alias), Expression.Constant(property!.Property, typeof(Microsoft.EntityFrameworkCore.Metadata.IReadOnlyProperty))),
@@ -332,7 +384,7 @@ internal static class MongoProjectionStreamingPlanner
 
     // ---- the cursor-side reader ----
 
-    private static Delegate BuildRowReader(List<Slot> slots, Type rowType, Type valuesType)
+    private static Delegate BuildRowReader(List<Slot> slots, Type rowType, Type valuesType, bool defersTracking)
     {
         var queryContext = Expression.Parameter(typeof(QueryContext), "queryContext");
         var reader = Expression.Parameter(typeof(IBsonReader), "reader");
@@ -346,7 +398,7 @@ internal static class MongoProjectionStreamingPlanner
         for (var i = 0; i < slots.Count; i++)
         {
             cases.Add(Expression.SwitchCase(
-                ReadSlot(slots[i], values[i], states[i], reader, context),
+                ReadSlot(slots[i], values[i], states[i], queryContext, reader, context),
                 Expression.Constant(slots[i].Alias)));
         }
 
@@ -375,18 +427,35 @@ internal static class MongoProjectionStreamingPlanner
                 Expression.LeftShift(Expression.Convert(states[i], typeof(ulong)), Expression.Constant(2 * i)));
         }
 
+        // The deferral brackets the whole row: the entity slots record their tracking as they are constructed, and it is handed to the row.
+        var mongoQueryContext = Expression.Convert(queryContext, typeof(MongoQueryContext));
         var row = Expression.New(
-            rowType.GetConstructor([valuesType, typeof(ulong)])!,
+            rowType.GetConstructor([valuesType, typeof(ulong), typeof(object)])!,
             BuildTupleNew(valuesType, values, 0),
-            packedStates);
+            packedStates,
+            defersTracking
+                ? Expression.Call(
+                    mongoQueryContext,
+                    typeof(MongoQueryContext).GetMethod("EndDeferral", BindingFlags.NonPublic | BindingFlags.Instance)!,
+                    Expression.Constant(null, typeof(object)))
+                : Expression.Constant(null, typeof(object)));
+
+        var steps = new List<Expression>();
+        if (defersTracking)
+        {
+            steps.Add(Expression.Call(
+                mongoQueryContext, typeof(MongoQueryContext).GetMethod("BeginDeferral", BindingFlags.NonPublic | BindingFlags.Instance)!));
+        }
+
+        steps.Add(Expression.Call(reader, ReadStartDocumentMethod));
+        steps.Add(loop);
+        steps.Add(Expression.Call(reader, ReadEndDocumentMethod));
+        steps.Add(row);
 
         var body = Expression.Block(
             rowType,
             values.Cast<ParameterExpression>().Concat(states).Append(name),
-            Expression.Call(reader, ReadStartDocumentMethod),
-            loop,
-            Expression.Call(reader, ReadEndDocumentMethod),
-            row);
+            steps);
 
         return Expression.Lambda(
             typeof(Func<,,,>).MakeGenericType(typeof(QueryContext), typeof(IBsonReader), typeof(BsonDeserializationContext), rowType),
@@ -398,14 +467,22 @@ internal static class MongoProjectionStreamingPlanner
 
     // One element: BSON null is recorded as such (the shaper decides what a null means), anything else is read through the slot's serializer.
     private static Expression ReadSlot(
-        Slot slot, ParameterExpression value, ParameterExpression state, ParameterExpression reader, ParameterExpression context)
+        Slot slot, ParameterExpression value, ParameterExpression state, ParameterExpression queryContext, ParameterExpression reader,
+        ParameterExpression context)
     {
         // As the driver's own Deserialize(context) extension: the nominal type is the serializer's value type. A class-map serializer (a
         // sub-document leaf) needs it to find the actual type.
         var args = Expression.Constant(
             new BsonDeserializationArgs { NominalType = slot.ValueType }, typeof(BsonDeserializationArgs));
         var genericSerializerType = typeof(IBsonSerializer<>).MakeGenericType(slot.ValueType);
-        Expression deserialize = genericSerializerType.IsInstanceOfType(slot.Serializer)
+        var queryContextSerializerType = typeof(IMongoQueryContextSerializer<>).MakeGenericType(slot.ValueType);
+        Expression deserialize = queryContextSerializerType.IsInstanceOfType(slot.Serializer)
+            ? Expression.Call(
+                Expression.Constant(slot.Serializer, queryContextSerializerType),
+                queryContextSerializerType.GetMethod(nameof(IMongoQueryContextSerializer<object>.Deserialize))!,
+                queryContext,
+                context)
+            : genericSerializerType.IsInstanceOfType(slot.Serializer)
             ? Expression.Call(
                 Expression.Constant(slot.Serializer, genericSerializerType),
                 genericSerializerType.GetMethod(

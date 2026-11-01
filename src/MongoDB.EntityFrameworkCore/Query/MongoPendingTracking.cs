@@ -94,6 +94,39 @@ internal sealed class MongoPendingTracking
         return canonical;
     }
 
+    /// <summary>
+    /// As <see cref="Replay"/> for a row with no single result: returns the entities of the row that the state manager resolved to an already
+    /// tracked instance, by the instance the row constructed, or <see langword="null"/> when every entity was tracked as constructed.
+    /// </summary>
+    public Dictionary<object, object>? ReplayWithRemap(MongoQueryContext queryContext)
+    {
+        Dictionary<object, object>? remap = null;
+        foreach (var entity in _entities)
+        {
+            var entry = queryContext.ReplayTryGetEntry(entity.Key, entity.KeyValues, entity.ThrowOnNullKey, out _);
+            if (entry == null && entity.EntityType != null)
+            {
+                entry = queryContext.ReplayStartTracking(entity.EntityType, entity.Instance!, entity.Snapshot);
+            }
+
+            entity.Entry = entry;
+            if (entry != null && entity.Instance != null && !ReferenceEquals(entity.Instance, entry.Entity))
+            {
+                (remap ??= new Dictionary<object, object>(ReferenceEqualityComparer.Instance))[entity.Instance] = entry.Entity;
+            }
+        }
+
+        if (_loaded != null)
+        {
+            foreach (var (instance, navigation) in _loaded)
+            {
+                _entities.Find(e => ReferenceEquals(e.Instance, instance))?.Entry?.SetIsLoaded(navigation);
+            }
+        }
+
+        return remap;
+    }
+
     private sealed class Entity(IKey key, object[] keyValues, bool throwOnNullKey)
     {
         public IKey Key { get; } = key;
