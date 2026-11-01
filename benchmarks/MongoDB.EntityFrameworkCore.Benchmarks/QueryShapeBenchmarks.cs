@@ -18,7 +18,8 @@ namespace MongoDB.EntityFrameworkCore.Benchmarks;
 //   filter      - Where on equality, range, prefix, substring and a 200-value IN list
 //   projection  - one scalar, an anonymous pair, computed members, a DTO, a few members of a 40-property entity
 //   shaping     - top-N, a deep page, Distinct, Concat
-//   grouping    - GroupBy with several accumulators, then ordering and Take over the groups
+//   grouping    - GroupBy: few and many groups (up to one per row), composite and joined keys, many accumulators, a filter before and a
+//                 having after, ordering and paging over the groups, and a list-valued group element
 //   owned       - nested owned references and collections (Orders), filters, projections and counts over them
 //   relations   - reference Include, navigation projection, explicit Join
 //   tracking    - the same selective whole-entity query untracked and tracked
@@ -70,6 +71,11 @@ public class QueryShapeBenchmarks
         public int Rank { get; set; }
         public string Name { get; set; } = "";
         public List<ArticleWithRefs> Articles { get; set; } = new();
+    }
+
+    public sealed class FlatWrap(FlatItem item)
+    {
+        public FlatItem Item { get; } = item;
     }
 
     public sealed class CountRow
@@ -164,6 +170,53 @@ public class QueryShapeBenchmarks
         new("grouping", "GroupByTopThree", c => c.Orders.AsQueryable().GroupBy(o => o.Shipping.Address.City).Select(g => new { City = g.Key, N = g.Count() }).OrderByDescending(x => x.N).ThenBy(x => x.City).Take(3).ToList().Count,
             c => Orders(c).GroupBy(o => o.Shipping.Address.City).Select(g => new { City = g.Key, N = g.Count() }).OrderByDescending(x => x.N).ThenBy(x => x.City).Take(3).ToList().Count),
 
+        // Result-row counts matter for a reader: the first three above return 3-50 rows, which cannot show a per-row cost, so these add
+        // high-cardinality, composite-key, many-accumulator, filtered, having, joined-key and list-valued groupings.
+        new("grouping", "GroupByThousandKeys",
+            c => c.Flat.AsQueryable().GroupBy(f => f.Count % 1000).Select(g => new { g.Key, N = g.Count() }).ToList().Sum(r => r.N),
+            c => Flat(c).GroupBy(f => f.Count % 1000).Select(g => new { g.Key, N = g.Count() }).ToList().Sum(r => r.N)),
+        new("grouping", "GroupByUniqueKey",
+            c => c.Flat.AsQueryable().GroupBy(f => f.Count).Select(g => new { g.Key, Total = g.Sum(x => x.Rate) }).ToList().Count,
+            c => Flat(c).GroupBy(f => f.Count).Select(g => new { g.Key, Total = g.Sum(x => x.Rate) }).ToList().Count),
+        new("grouping", "GroupByCompositeKey",
+            c => c.Flat.AsQueryable().GroupBy(f => new { f.Active, B = f.Count % 100 })
+                .Select(g => new { g.Key.Active, g.Key.B, N = g.Count(), Max = g.Max(x => x.Rate) }).ToList().Sum(r => r.N),
+            c => Flat(c).GroupBy(f => new { f.Active, B = f.Count % 100 })
+                .Select(g => new { g.Key.Active, g.Key.B, N = g.Count(), Max = g.Max(x => x.Rate) }).ToList().Sum(r => r.N)),
+        new("grouping", "GroupByManyAccumulators",
+            c => c.Flat.AsQueryable().GroupBy(f => f.Count % 10)
+                .Select(g => new { g.Key, N = g.Count(), Sum = g.Sum(x => x.Big), Min = g.Min(x => x.Count), Max = g.Max(x => x.Count), Avg = g.Average(x => x.Rate) })
+                .ToList().Sum(r => r.N),
+            c => Flat(c).GroupBy(f => f.Count % 10)
+                .Select(g => new { g.Key, N = g.Count(), Sum = g.Sum(x => x.Big), Min = g.Min(x => x.Count), Max = g.Max(x => x.Count), Avg = g.Average(x => x.Rate) })
+                .ToList().Sum(r => r.N)),
+        new("grouping", "GroupByFiltered",
+            c => c.Flat.AsQueryable().Where(f => f.Active).GroupBy(f => f.Count % 100).Select(g => new { g.Key, N = g.Count() }).ToList().Sum(r => r.N),
+            c => Flat(c).Where(f => f.Active).GroupBy(f => f.Count % 100).Select(g => new { g.Key, N = g.Count() }).ToList().Sum(r => r.N)),
+        new("grouping", "GroupByHaving",
+            c => c.Flat.AsQueryable().GroupBy(f => f.Count % 1000).Where(g => g.Sum(x => x.Rate) > 25_000).Select(g => new { g.Key, Total = g.Sum(x => x.Rate) })
+                .ToList().Count,
+            c => Flat(c).GroupBy(f => f.Count % 1000).Where(g => g.Sum(x => x.Rate) > 25_000).Select(g => new { g.Key, Total = g.Sum(x => x.Rate) })
+                .ToList().Count),
+        new("grouping", "GroupByOwnedHighCardinality",
+            c => c.Orders.AsQueryable().GroupBy(o => o.Shipping.Address.Zip).Select(g => new { g.Key, N = g.Count() }).ToList().Sum(r => r.N),
+            c => Orders(c).GroupBy(o => o.Shipping.Address.Zip).Select(g => new { g.Key, N = g.Count() }).ToList().Sum(r => r.N)),
+        new("grouping", "GroupByJoinedKey",
+            c => c.Articles.AsQueryable().Join(c.Categories.AsQueryable(), a => a.CategoryId, ca => ca.Id, (a, ca) => new { a.Views, ca.Name })
+                .GroupBy(x => x.Name).Select(g => new { g.Key, N = g.Count(), Views = g.Sum(x => x.Views) }).ToList().Sum(r => r.N),
+            c => c.Articles.AsNoTracking().GroupBy(a => a.Category!.Name).Select(g => new { g.Key, N = g.Count(), Views = g.Sum(a => a.Views) })
+                .ToList().Sum(r => r.N)),
+        new("grouping", "GroupByThenOrderPage",
+            c => c.Flat.AsQueryable().GroupBy(f => f.Count % 1000).Select(g => new { g.Key, N = g.Count(), Total = g.Sum(x => x.Rate) })
+                .OrderByDescending(r => r.Total).ThenBy(r => r.Key).Skip(100).Take(100).ToList().Count,
+            c => Flat(c).GroupBy(f => f.Count % 1000).Select(g => new { g.Key, N = g.Count(), Total = g.Sum(x => x.Rate) })
+                .OrderByDescending(r => r.Total).ThenBy(r => r.Key).Skip(100).Take(100).ToList().Count),
+        new("grouping", "GroupByWithElementList",
+            c => c.Flat.AsQueryable().Where(f => f.Count < 2000).GroupBy(f => f.Count % 20).Select(g => new { g.Key, Names = g.Select(x => x.Name).ToList() })
+                .ToList().Sum(r => r.Names.Count),
+            c => Flat(c).Where(f => f.Count < 2000).GroupBy(f => f.Count % 20).Select(g => new { g.Key, Names = g.Select(x => x.Name).ToList() })
+                .ToList().Sum(r => r.Names.Count)),
+
         // ----- owned -----
         new("owned", "OwnedFilter", c => c.Orders.AsQueryable().Where(o => o.Shipping.Carrier == "air" && o.Shipping.Address.Zip > 11000).ToList().Count,
             c => Orders(c).Where(o => o.Shipping.Carrier == "air" && o.Shipping.Address.Zip > 11000).ToList().Count),
@@ -179,6 +232,47 @@ public class QueryShapeBenchmarks
                 .OrderBy(o => o.Shipping.Address.Zip).ThenBy(o => o.Id).Skip(100).Take(100).Select(o => new { o.Code, o.Shipping.Address.City }).ToList().Count,
             c => Orders(c).Where(o => o.Shipping.Address.Zip > 10500 && o.Shipping.Carrier == "air" && o.Code.StartsWith("order-"))
                 .OrderBy(o => o.Shipping.Address.Zip).ThenBy(o => o.Id).Skip(100).Take(100).Select(o => new { o.Code, o.Shipping.Address.City }).ToList().Count),
+
+        // ----- non-scalar projections: sub-documents, arrays, owned and joined entities, nested constructions, whole entity in a construction -----
+        new("nonscalar", "ProjectOwnedReference",
+            c => c.Orders.AsQueryable().Select(o => new { o.Code, o.Shipping }).ToList().Sum(r => r.Shipping.Address.Zip > 0 ? 1 : 0),
+            c => Orders(c).Select(o => new { o.Code, o.Shipping }).ToList().Sum(r => r.Shipping.Address.Zip > 0 ? 1 : 0)),
+        new("nonscalar", "ProjectOwnedCollection",
+            c => c.Orders.AsQueryable().Select(o => new { o.Code, o.Lines }).ToList().Sum(r => r.Lines.Count),
+            c => Orders(c).Select(o => new { o.Code, o.Lines }).ToList().Sum(r => r.Lines.Count)),
+        new("nonscalar", "ProjectOwnedCollectionSelect",
+            c => c.Orders.AsQueryable().Select(o => new { o.Code, Skus = o.Lines.Select(l => l.Sku).ToList() }).ToList().Sum(r => r.Skus.Count),
+            c => Orders(c).Select(o => new { o.Code, Skus = o.Lines.Select(l => l.Sku).ToList() }).ToList().Sum(r => r.Skus.Count)),
+        new("nonscalar", "ProjectNestedConstruction",
+            c => c.Orders.AsQueryable().Select(o => new { o.Code, Where = new { o.Shipping.Address.City, o.Shipping.Address.Zip } }).ToList().Sum(r => r.Where.Zip > 0 ? 1 : 0),
+            c => Orders(c).Select(o => new { o.Code, Where = new { o.Shipping.Address.City, o.Shipping.Address.Zip } }).ToList().Sum(r => r.Where.Zip > 0 ? 1 : 0)),
+        new("nonscalar", "ProjectWholeEntityAndScalar",
+            c => c.Flat.AsQueryable().Select(f => new { Item = f, f.Name.Length }).ToList().Sum(r => r.Length > 0 ? 1 : 0),
+            c => Flat(c).Select(f => new { Item = f, f.Name.Length }).ToList().Sum(r => r.Length > 0 ? 1 : 0)),
+        new("nonscalar", "ProjectWholeEntityAndScalarTracked",
+            c => c.Flat.AsQueryable().Select(f => new { Item = f, f.Name.Length }).ToList().Sum(r => r.Length > 0 ? 1 : 0),
+            c => c.FlatItems.Select(f => new { Item = f, f.Name.Length }).ToList().Sum(r => r.Length > 0 ? 1 : 0)),
+        new("nonscalar", "ProjectJoinedEntityTracked",
+            c => c.Reviews.Aggregate().Lookup<Review, Product, HeadlineBenchmarks.ReviewWithProduct>(c.Products, r => r.ProductId, p => p.Id, rp => rp.Products)
+                .ToList().Count(rp => rp.Products.Count > 0),
+            c => c.Reviews.Select(r => new { r.Stars, r.Product }).ToList().Count(r => r.Product != null)),
+        new("nonscalar", "ProjectCtorWrappedEntity",
+            c => c.Flat.AsQueryable().ToList().Select(f => new FlatWrap(f)).ToList().Count,
+            c => Flat(c).Select(f => new FlatWrap(f)).ToList().Count),
+        new("nonscalar", "ProjectCtorWrappedEntityTracked",
+            c => c.Flat.AsQueryable().ToList().Select(f => new FlatWrap(f)).ToList().Count,
+            c => c.FlatItems.Select(f => new FlatWrap(f)).ToList().Count),
+        new("nonscalar", "ProjectJoinedEntity",
+            c => c.Reviews.Aggregate().Lookup<Review, Product, HeadlineBenchmarks.ReviewWithProduct>(c.Products, r => r.ProductId, p => p.Id, rp => rp.Products)
+                .ToList().Count(rp => rp.Products.Count > 0),
+            c => c.Reviews.AsNoTracking().Select(r => new { r.Stars, r.Product }).ToList().Count(r => r.Product != null)),
+        new("nonscalar", "ProjectCorrelatedMax",
+            c => c.Categories.Aggregate(PipelineDefinition<Category, CountRow>.Create(new[]
+                {
+                    BsonDocument.Parse("{ $lookup: { from: 'Articles', localField: '_id', foreignField: 'CategoryId', as: 'A' } }"),
+                    BsonDocument.Parse("{ $project: { Name: 1, N: { $max: '$A.Views' }, _id: 0 } }")
+                })).ToList().Sum(r => r.N),
+            c => c.Categories.AsNoTracking().Select(x => new { x.Name, N = x.Articles.Max(a => a.Views) }).ToList().Sum(r => r.N)),
 
         // ----- relations -----
         new("relations", "IncludeFiltered", c => c.Orders.Aggregate().Match(o => o.Shipping.Address.Zip < 10500)

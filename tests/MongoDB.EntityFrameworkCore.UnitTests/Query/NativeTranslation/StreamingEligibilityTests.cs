@@ -62,13 +62,14 @@ public class StreamingEligibilityTests
     }
 
     [Fact]
-    public void Entity_WithCompositePrimaryKey_IsNotEligible()
+    public void Entity_WithCompositePrimaryKey_IsEligible()
     {
+        // The key parts are the elements of the `_id` sub-document, which the reader descends into.
         var entityType = GetEntityType<CompositeKeyEntity>(mb =>
         {
             mb.Entity<CompositeKeyEntity>().HasKey(e => new { e.KeyA, e.KeyB });
         });
-        Assert.False(StreamingEligibility.IsEligible(entityType));
+        Assert.True(StreamingEligibility.IsEligible(entityType));
     }
 
     private class OwnedCollectionItem
@@ -226,15 +227,15 @@ public class StreamingEligibilityTests
     }
 
     [Fact]
-    public void Entity_WithOwnedCollectionNavigation_WhoseElementHasNonOwnedNavigation_IsNotEligible()
+    public void Entity_WithOwnedCollectionNavigation_WhoseElementHasNonOwnedNavigation_IsEligible()
     {
-        // Only owned subtrees stream inside an element: a non-owned navigation there has no $lookup plan.
+        // A non-owned navigation of an element is never read unless the shaper includes it, and the rewriter refuses an include it cannot read.
         var entityType = GetEntityType<EntityWithOwnedCollectionOfNonOwnedReference>(mb =>
         {
             mb.Entity<Principal>();
             mb.Entity<EntityWithOwnedCollectionOfNonOwnedReference>().OwnsMany(e => e.Outer, o => o.HasOne(x => x.Principal).WithMany());
         });
-        Assert.False(StreamingEligibility.IsEligible(entityType));
+        Assert.True(StreamingEligibility.IsEligible(entityType));
     }
 
     private class HomeWithNotes
@@ -250,14 +251,14 @@ public class StreamingEligibilityTests
     }
 
     [Fact]
-    public void Entity_WithOwnedReference_WhoseTypeOwnsCollection_IsNotEligible()
+    public void Entity_WithOwnedReference_WhoseTypeOwnsCollection_IsEligible()
     {
-        // RewriteOwnedNavigation reads only single owned references beneath an owned reference.
+        // An owned reference is rewritten like the root, so what it owns (collections included) is read with it.
         var entityType = GetEntityType<EntityWithOwnedReferenceOwningCollection>(mb =>
         {
             mb.Entity<EntityWithOwnedReferenceOwningCollection>().OwnsOne(e => e.Home, h => h.OwnsMany(x => x.Notes));
         });
-        Assert.False(StreamingEligibility.IsEligible(entityType));
+        Assert.True(StreamingEligibility.IsEligible(entityType));
     }
 
     private class EntityWithNestedCollectionAndReferenceOwningCollection
@@ -268,7 +269,7 @@ public class StreamingEligibilityTests
     }
 
     [Fact]
-    public void Entity_WithNestedOwnedCollection_AndOwnedReferenceOwningCollection_IsNotEligible()
+    public void Entity_WithNestedOwnedCollection_AndOwnedReferenceOwningCollection_IsEligible()
     {
         var entityType = GetEntityType<EntityWithNestedCollectionAndReferenceOwningCollection>(mb =>
         {
@@ -276,7 +277,7 @@ public class StreamingEligibilityTests
             e.OwnsMany(x => x.Inner, i => i.OwnsMany(y => y.Nested));
             e.OwnsOne(x => x.Home, h => h.OwnsMany(y => y.Notes));
         });
-        Assert.False(StreamingEligibility.IsEligible(entityType));
+        Assert.True(StreamingEligibility.IsEligible(entityType));
     }
 
     private class ShipWithOwnerBackReference
