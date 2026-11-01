@@ -197,9 +197,13 @@ if (args.Contains("--smoke"))
     return 0;
 }
 
-// Remaining args (--filter, --job, ...) go to BenchmarkDotNet. --extended selects the extended class.
-var bdnArgs = args.Where(a => a != "--extended").ToArray();
+// Remaining args (--filter, --job, ...) go to BenchmarkDotNet. --extended selects the extended class, --single the single-result one, --shapes the query-shape catalogue.
+var bdnArgs = args.Where(a => a is not ("--extended" or "--single" or "--shapes")).ToArray();
 BenchmarkDotNet.Running.BenchmarkSwitcher
-    .FromTypes(args.Contains("--extended") ? new[] { typeof(ExtendedBenchmarks) } : new[] { typeof(HeadlineBenchmarks) })
+    .FromTypes(
+        args.Contains("--extended") ? new[] { typeof(ExtendedBenchmarks) }
+        : args.Contains("--single") ? new[] { typeof(SingleResultBenchmarks) }
+        : args.Contains("--shapes") ? new[] { typeof(QueryShapeBenchmarks) }
+        : new[] { typeof(HeadlineBenchmarks) })
     .Run(bdnArgs);
 return 0;

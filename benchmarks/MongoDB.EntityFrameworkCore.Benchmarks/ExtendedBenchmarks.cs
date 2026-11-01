@@ -24,6 +24,9 @@ public class ExtendedBenchmarks
 
     private DbContextOptions<BenchmarkDbContext> _efOptions = null!;       // DriverLinq (also used for seed/cleanup)
     private DbContextOptions<BenchmarkDbContext> _efOptionsNative = null!;
+    // Pooled: a benchmark op takes a context from the pool and returns it on dispose, as an application using AddDbContextPool does.
+    private IDbContextFactory<BenchmarkDbContext> _driverLinqFactory = null!;
+    private IDbContextFactory<BenchmarkDbContext> _nativeFactory = null!;
     private IMongoCollection<Order> _orderColl = null!;
     private IMongoCollection<WideEntity> _wideColl = null!;
     private IMongoCollection<MediumEntity> _mediumColl = null!;
@@ -57,6 +60,9 @@ public class ExtendedBenchmarks
             .UseMongoDB(_client, _dbName, o => o.UseQueryMode(MongoQueryMode.Native))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;
+
+        _driverLinqFactory = BenchmarkContexts.Pool(_efOptions);
+        _nativeFactory = BenchmarkContexts.Pool(_efOptionsNative);
 
         using (var ctx = new BenchmarkDbContext(_efOptions))
             BenchmarkSeeder.SeedExtended(ctx, AccountN, OrderN, WideN, MediumN);
@@ -162,38 +168,38 @@ public class ExtendedBenchmarks
     [Benchmark] public int ComplexQuery_DriverOnly() => DriverComplexQuery();
 
     [Benchmark] public int ComplexQuery_EF_DriverLinq()
-    { using var ctx = new BenchmarkDbContext(_efOptions); return EfComplexQuery(ctx).Count; }
+    { using var ctx = _driverLinqFactory.CreateDbContext(); return EfComplexQuery(ctx).Count; }
 
     [Benchmark] public int ComplexQuery_EF_Native()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return EfComplexQuery(ctx).Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return EfComplexQuery(ctx).Count; }
 
     // ----- Case B: wide entity (400 props) whole-entity ToList -----
     [Benchmark] public int WideWholeEntity_DriverOnly()
         => _wideColl.AsQueryable().ToList().Count;
 
     [Benchmark] public int WideWholeEntity_EF_DriverLinq()
-    { using var ctx = new BenchmarkDbContext(_efOptions); return ctx.Wides.AsNoTracking().ToList().Count; }
+    { using var ctx = _driverLinqFactory.CreateDbContext(); return ctx.Wides.AsNoTracking().ToList().Count; }
 
     [Benchmark] public int WideWholeEntity_EF_Native()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.Wides.AsNoTracking().ToList().Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return ctx.Wides.AsNoTracking().ToList().Count; }
 
     // ----- Case C: deep owned graph whole-entity ToList -----
     [Benchmark] public int NestedWholeEntity_DriverOnly()
         => _orderColl.AsQueryable().ToList().Count;
 
     [Benchmark] public int NestedWholeEntity_EF_DriverLinq()
-    { using var ctx = new BenchmarkDbContext(_efOptions); return ctx.Orders.AsNoTracking().ToList().Count; }
+    { using var ctx = _driverLinqFactory.CreateDbContext(); return ctx.Orders.AsNoTracking().ToList().Count; }
 
     [Benchmark] public int NestedWholeEntity_EF_Native()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.Orders.AsNoTracking().ToList().Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return ctx.Orders.AsNoTracking().ToList().Count; }
 
     // ----- Case D (new): 40-property entity whole-entity ToList (a realistic width between FlatItem's 5 and WideEntity's 400) -----
     [Benchmark] public int MediumWholeEntity_DriverOnly()
         => _mediumColl.AsQueryable().ToList().Count;
 
     [Benchmark] public int MediumWholeEntity_EF_DriverLinq()
-    { using var ctx = new BenchmarkDbContext(_efOptions); return ctx.Mediums.AsNoTracking().ToList().Count; }
+    { using var ctx = _driverLinqFactory.CreateDbContext(); return ctx.Mediums.AsNoTracking().ToList().Count; }
 
     [Benchmark] public int MediumWholeEntity_EF_Native()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.Mediums.AsNoTracking().ToList().Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return ctx.Mediums.AsNoTracking().ToList().Count; }
 }

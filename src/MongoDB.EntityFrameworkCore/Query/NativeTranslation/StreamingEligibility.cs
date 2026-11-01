@@ -25,13 +25,41 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal static class StreamingEligibility
 {
     /// <summary>
-    /// Eligible: a simple primary key, no TPH hierarchy, no skip navigations, and every navigation's target is
-    /// itself eligible; collection navigations must be owned and their elements' navigations must all be owned.
+    /// Eligible: a simple primary key, no TPH hierarchy, no skip navigations, and every navigation the rewriter reads is itself eligible;
+    /// owned collection navigations' elements must have only owned navigations. A non-owned navigation the rewriter does not read (a
+    /// collection the query does not include, or anything past the first reference hop: the plan skips it, so its document field is
+    /// ignored) does not count, so a bidirectional relationship does not disqualify a query that only includes one side.
     /// </summary>
     public static bool IsEligible(IEntityType entityType)
-        => IsEligible(entityType, new HashSet<IEntityType>());
+        => IsEligible(entityType, new HashSet<IEntityType>(), lookupCollections: [], ignoreNonOwned: false);
 
-    private static bool IsEligible(IEntityType entityType, HashSet<IEntityType> visiting)
+    /// <summary>
+    /// As <see cref="IsEligible(IEntityType)"/> for a query that also includes the non-owned collection navigations in
+    /// <paramref name="lookupCollections"/>, each read from a root-level <c>$lookup</c> array (see
+    /// <see cref="IsEligibleLookupElement"/>).
+    /// </summary>
+    public static bool IsEligible(IEntityType entityType, IReadOnlyCollection<INavigation> lookupCollections)
+        => IsEligible(entityType, new HashSet<IEntityType>(), lookupCollections, ignoreNonOwned: false);
+
+    /// <summary>
+    /// Whether the target of a lookup collection Include can be read as the elements of a root-level <c>$lookup</c> array: a plain entity
+    /// (no hierarchy, no skip navigations, a simple key) with no eager-loaded navigations of its own. Its other navigations are not read
+    /// (the element plan skips them), and a further Include off the element has its own, non-streamable lookup, which the query gate rejects.
+    /// </summary>
+    public static bool IsEligibleLookupElement(IEntityType elementType)
+    {
+        if (elementType.IsInHierarchy() || elementType.GetSkipNavigations().Any() || elementType.GetNavigations().Any(n => n.IsEagerLoaded))
+        {
+            return false;
+        }
+
+        var pk = elementType.FindPrimaryKey();
+        return pk != null && pk.Properties.Count(p => !p.IsOwnedTypeKey()) == 1;
+    }
+
+    // ignoreNonOwned: the entity is read by a plan that skips its non-owned navigations (a lookup reference's target and its owned subtree).
+    private static bool IsEligible(
+        IEntityType entityType, HashSet<IEntityType> visiting, IReadOnlyCollection<INavigation> lookupCollections, bool ignoreNonOwned)
     {
         if (!visiting.Add(entityType))
         {
@@ -60,13 +88,27 @@ internal static class StreamingEligibility
         // throw (see MongoStreamingEntityMaterializerRewriter.RewriteOwnedNavigation).
         foreach (var navigation in entityType.GetNavigations())
         {
-            if (!IsEligible(navigation.TargetEntityType, visiting))
+            // An included lookup collection is read element by element from its $lookup array, not as part of this entity's own graph.
+            if (lookupCollections.Contains(navigation))
             {
-                return false;
+                if (!IsEligibleLookupElement(navigation.TargetEntityType))
+                {
+                    return false;
+                }
+
+                continue;
             }
 
-            // Non-owned navigations stream only as single references ($lookup + $unwind).
-            if (!navigation.TargetEntityType.IsOwned() && navigation.IsCollection)
+            var nonOwned = !navigation.TargetEntityType.IsOwned();
+
+            // The plan skips a non-owned navigation of a lookup target, and a non-owned collection the query does not include: the
+            // document field, if any, is never read, so the navigation does not matter here.
+            if (nonOwned && (ignoreNonOwned || navigation.IsCollection))
+            {
+                continue;
+            }
+
+            if (!IsEligible(navigation.TargetEntityType, visiting, lookupCollections, ignoreNonOwned || nonOwned))
             {
                 return false;
             }

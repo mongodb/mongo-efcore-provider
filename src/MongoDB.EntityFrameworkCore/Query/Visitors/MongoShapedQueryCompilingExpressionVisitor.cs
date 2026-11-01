@@ -207,6 +207,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
                 CreateDomBindingRemover(rootEntityType, mongoQueryExpression),
                 allowStreaming: false,
+                allowProjectionStreaming: true,
                 stripBareProjectionOnFallback: ShouldStripBareProjectionOnFallback(mongoQueryExpression.Select),
                 createFallbackBindingRemover: HasJoinScopeInnerEntityProjectionLeaf(mongoQueryExpression)
                                               || HasDocumentConstructionProjectionLeaf(mongoQueryExpression)
@@ -540,6 +541,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         IEntityType rootEntityType,
         Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor> createBindingRemover,
         bool allowStreaming = true,
+        bool allowProjectionStreaming = false,
         bool stripBareProjectionOnFallback = false,
         Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor>?
             createFallbackBindingRemover = null)
@@ -567,7 +569,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var streaming = allowStreaming
             && nativeFactory != null
             && shapedQueryExpression.ResultCardinality == ResultCardinality.Enumerable
-            && StreamingEligibility.IsEligible(rootEntityType)
+            && StreamingEligibility.IsEligible(rootEntityType, GetStreamingLookupCollections(mongoQueryExpression))
             // A bare join-INNER entity leaf (`Clients.Select(c => c.Company)`) materializes the joined entity, not the root, so
             // the root-typed streaming rewriter has no locals for it: DOM shaper.
             && !mongoQueryExpression.Select.HasBareJoinInnerEntityLeaf
@@ -593,7 +595,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             var contextParameter = Expression.Parameter(typeof(BsonDeserializationContext), "__context");
             try
             {
-                var onePassBody = new MongoStreamingEntityMaterializerRewriter(rootEntityType)
+                var trackedQuery = trackingBehavior is QueryTrackingBehavior.TrackAll
+                    or QueryTrackingBehavior.NoTrackingWithIdentityResolution;
+                var onePassBody = new MongoStreamingEntityMaterializerRewriter(
+                        rootEntityType, trackedQuery, GetStreamingLookupCollections(mongoQueryExpression))
                     .Rewrite(injectedBody, readerParameter, contextParameter);
 
                 var onePassLambda = Expression.Lambda(
@@ -603,16 +608,30 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                     contextParameter);
                 var compiledOnePassShaper = onePassLambda.Compile(); // Func<QueryContext, IBsonReader, BsonDeserializationContext, TResult>
 
-                // The cursor yields the finished TResult, so the QueryingEnumerable shaper is identity. The output
-                // serializer is built per execution (see ExecuteShapedQuery).
+                // An untracked query's cursor yields the finished TResult, so the QueryingEnumerable shaper is identity. A tracked
+                // query's yields MongoMaterializedRow<TResult>: the entity as constructed, plus the tracking left to do when the
+                // enumerator reaches it, which the serializer's static RowShaper does. The output serializer is built per execution
+                // (see ExecuteShapedQuery).
                 var resultType = onePassLambda.ReturnType;
-                var rowParameter = Expression.Parameter(resultType, "row");
-                var identityShaper = Expression.Lambda(
-                    rowParameter, QueryCompilationContext.QueryContextParameter, rowParameter).Compile();
+                Type rowType;
+                object rowShaper;
+                if (trackedQuery)
+                {
+                    rowType = typeof(MongoMaterializedRow<>).MakeGenericType(resultType);
+                    rowShaper = typeof(MongoEntityMaterializerSerializer<>).MakeGenericType(resultType)
+                        .GetField(nameof(MongoEntityMaterializerSerializer<object>.RowShaper))!.GetValue(null)!;
+                }
+                else
+                {
+                    rowType = resultType;
+                    var rowParameter = Expression.Parameter(resultType, "row");
+                    rowShaper = Expression.Lambda(
+                        rowParameter, QueryCompilationContext.QueryContextParameter, rowParameter).Compile();
+                }
 
                 return BuildExecuteCall(
-                    resultType,
-                    Expression.Constant(identityShaper),
+                    rowType,
+                    Expression.Constant(rowShaper),
                     resultType,
                     streaming: true,
                     onePassShaper: Expression.Constant(
@@ -639,6 +658,30 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 domShaperBody.Type,
                 bsonInjector.AllVariables,
                 domShaperBody);
+        }
+
+        // A scalar projection whose shaper reads the document only through simple scalar reads is read straight off the cursor into typed
+        // slots instead of a BsonDocument per row; the same shaper runs per row over the slots. Anything else keeps the DOM shaper.
+        if (allowProjectionStreaming
+            && nativeFactory != null
+            && !useFallbackBindingRemover
+            && bsonInjector.AllVariables.Count == 0
+            && MongoProjectionStreamingPlanner.TryPlan(domShaperBody, bsonDocParameter, QueryCompilationContext.QueryContextParameter)
+                is { } streamingProjection)
+        {
+            return Expression.Call(null,
+                ExecuteProjectedRowsMethodInfo.MakeGenericMethod(
+                    streamingProjection.RowType, rootEntityType.ClrType, streamingProjection.ResultType),
+                QueryCompilationContext.QueryContextParameter,
+                Expression.Constant(rootEntityType),
+                Expression.Constant(_bsonSerializerFactory),
+                Expression.Constant(mongoQueryExpression),
+                Expression.Constant(streamingProjection.Shaper),
+                Expression.Constant(_contextType),
+                Expression.Constant(_threadSafetyChecksEnabled),
+                Expression.Constant(shapedQueryExpression.ResultCardinality),
+                Expression.Constant(nativeFactory, typeof(MongoPipelineFactory)),
+                Expression.Constant(streamingProjection.RowReader));
         }
 
         var shaperLambda = Expression.Lambda(
@@ -1013,8 +1056,29 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // TargetEntityType, not Navigation.TargetEntityType: a navigation-less Join hop is also a streamable
         // reference, and its Navigation is null.
         return referenceLookups.All(lookup =>
-            lookup.IsStreamableReference
-            && !lookup.TargetEntityType.GetNavigations().Any(n => n.IsEagerLoaded));
+            (lookup.IsStreamableReference && !lookup.TargetEntityType.GetNavigations().Any(n => n.IsEagerLoaded))
+            || IsStreamableCollectionLookup(lookup, mongoQueryExpression.CollectionExpression.EntityType));
+    }
+
+    /// <summary>
+    /// A collection Include the streaming reader can read: a plain (no pipeline, not unwound, not renamed) <c>$lookup</c> array at the
+    /// navigation's own alias, off the root entity, whose target is a plain entity (see <see cref="StreamingEligibility.IsEligibleLookupElement"/>).
+    /// Filtered or paged includes (a pipeline), ThenInclude (a prefixed, transitive lookup) and correlated arrays are none of these and stay DOM.
+    /// </summary>
+    private static bool IsStreamableCollectionLookup(LookupExpression lookup, IEntityType rootEntityType)
+        => lookup is { Navigation: { IsCollection: true } navigation, IsCorrelatedArraySource: false, IsNativeCollectionLookup: true }
+           && !navigation.TargetEntityType.IsOwned()
+           && navigation.DeclaringEntityType.IsAssignableFrom(rootEntityType)
+           && StreamingEligibility.IsEligibleLookupElement(navigation.TargetEntityType);
+
+    /// <summary>The collection navigations of the query's streamable collection lookups (see <see cref="IsStreamableCollectionLookup"/>).</summary>
+    private static IReadOnlyCollection<INavigation> GetStreamingLookupCollections(MongoQueryExpression mongoQueryExpression)
+    {
+        var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
+        return mongoQueryExpression.GetStreamingReferenceLookups()
+            .Where(lookup => IsStreamableCollectionLookup(lookup, rootEntityType))
+            .Select(lookup => lookup.Navigation!)
+            .ToList();
     }
 
     internal static (MongoQueryContext, MongoExecutableQuery) TranslateQuery<TEntity>(
@@ -1142,7 +1206,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             GetOnZeroResultsAction(queryExpression));
     }
 
-    // TSource is RawBsonDocument when streaming, otherwise BsonDocument; the one compiled shaper matches it.
+    // TSource is TResult for an untracked one-pass query, MongoMaterializedRow<TResult> for a tracked one, otherwise BsonDocument; the one
+    // compiled shaper matches it.
     private static QueryingEnumerable<TSource, TResult> ExecuteShapedQuery<TSource, TEntity, TResult>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
@@ -1160,7 +1225,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         Func<MongoQueryContext, IBsonSerializer>? outputSerializerFactory =
             onePassShaper is null
                 ? null
-                : qc => new MongoEntityMaterializerSerializer<TResult>(onePassShaper, qc);
+                : typeof(TSource) == typeof(TResult)
+                    ? qc => new MongoUntrackedEntitySerializer<TResult>(onePassShaper, qc)
+                    : qc => new MongoEntityMaterializerSerializer<TResult>(onePassShaper, qc);
 
         var mongoQueryContext = (MongoQueryContext)queryContext;
 
@@ -1178,6 +1245,43 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             threadSafetyChecksEnabled,
             GetOnZeroResultsAction(queryExpression));
     }
+
+    // A native scalar projection read straight off the cursor: the cursor yields TRow (typed slots, see MongoProjectedRow), and the shaper
+    // turns each into the projection's TResult when the enumerator reaches it. The row reader has no per-query state, so the serializer
+    // only needs the query context to defer a malformed row's failure to that row (as for the entity serializers).
+    private static QueryingEnumerable<TRow, TResult> ExecuteProjectedRows<TRow, TEntity, TResult>(
+        QueryContext queryContext,
+        IReadOnlyEntityType entityType,
+        BsonSerializerFactory bsonSerializerFactory,
+        MongoQueryExpression queryExpression,
+        Func<QueryContext, TRow, TResult> shaper,
+        Type contextType,
+        bool threadSafetyChecksEnabled,
+        ResultCardinality resultCardinality,
+        MongoPipelineFactory nativeFactory,
+        Func<QueryContext, IBsonReader, BsonDeserializationContext, TRow> rowReader)
+    {
+        var mongoQueryContext = (MongoQueryContext)queryContext;
+
+        return new QueryingEnumerable<TRow, TResult>(
+            mongoQueryContext,
+            () => TranslateQuery<TEntity>(
+                queryContext, entityType, bsonSerializerFactory, queryExpression, resultCardinality,
+                nativeFactory, streaming: true,
+                (translator, expression) => translator.Translate(expression, resultCardinality),
+                qc => new MongoUntrackedEntitySerializer<TRow>(rowReader, qc)).Item2,
+            shaper,
+            contextType,
+            standAloneStateManager: false,
+            threadSafetyChecksEnabled,
+            GetOnZeroResultsAction(queryExpression));
+    }
+
+    private static readonly MethodInfo ExecuteProjectedRowsMethodInfo =
+        typeof(MongoShapedQueryCompilingExpressionVisitor)
+            .GetTypeInfo()
+            .DeclaredMethods
+            .Single(m => m.Name == nameof(ExecuteProjectedRows));
 
 #if !EF8
     private static readonly MethodInfo MongoBulkExecuteMethodInfo =

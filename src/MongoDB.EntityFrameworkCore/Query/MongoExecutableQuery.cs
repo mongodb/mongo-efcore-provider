@@ -49,13 +49,13 @@ public record MongoExecutableQuery(
     /// <summary>The session for native pipeline execution (the ambient transaction's session, if any).</summary>
     internal IClientSessionHandle? Session { get; init; }
 
-    /// <summary>When true, native rows are RawBsonDocument and materialized by the forward-only streaming reader.</summary>
+    /// <summary>When true, native rows are constructed by the forward-only streaming reader as the driver deserializes them.</summary>
     internal bool Streaming { get; init; }
 
     /// <summary>
     /// The one-pass output serializer. When set (with <see cref="Streaming"/>), <c>MongoClientWrapper.Execute</c>
-    /// passes it to <c>Aggregate</c> so each row deserializes directly into the finished entity. Null for the
-    /// RawBsonDocument streaming fallback and non-streaming paths.
+    /// passes it to <c>Aggregate</c> so each row is constructed directly into its entity during the driver's own
+    /// deserialization; tracking and failures are deferred to the enumerator. Null for the non-streaming paths.
     /// </summary>
     internal IBsonSerializer? OutputSerializer { get; init; }
 }

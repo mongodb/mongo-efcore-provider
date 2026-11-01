@@ -17,6 +17,7 @@ using System;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
@@ -71,7 +72,7 @@ internal static class BsonBinding
         var targetProperty = declaredType.FindProperty(name);
         if (targetProperty != null)
         {
-            return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(targetProperty),
+            return CreateGetPropertyValue(bsonDocExpression, Expression.Constant(new PropertyReadInfo(targetProperty)),
                 targetProperty.IsNullable ? mappedType.MakeNullable() : mappedType);
         }
 
@@ -127,7 +128,7 @@ internal static class BsonBinding
         return CreateGetPropertyValueAtElement(
             bsonDocExpression,
             Expression.Constant(name),
-            Expression.Constant(property),
+            Expression.Constant(new PropertyReadInfo(property)),
             property.IsNullable ? mappedType.MakeNullable() : mappedType);
     }
 
@@ -147,7 +148,7 @@ internal static class BsonBinding
                 property.IsNullable ? mappedType.MakeNullable() : mappedType),
             bsonDocExpression,
             Expression.Constant(name),
-            Expression.Constant(property));
+            Expression.Constant(new PropertyReadInfo(property)));
 
     internal static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
@@ -332,13 +333,13 @@ internal static class BsonBinding
                 property.IsNullable ? mappedType.MakeNullable() : mappedType),
             bsonDocExpression,
             Expression.Constant(path),
-            Expression.Constant(property));
+            Expression.Constant(new PropertyReadInfo(property)));
 
     private static readonly MethodInfo GetPropertyValueAtPathMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetPropertyValueAtPath));
 
-    internal static T? GetPropertyValueAtPath<T>(BsonDocument document, string[] path, IReadOnlyProperty property)
+    internal static T? GetPropertyValueAtPath<T>(BsonDocument document, string[] path, PropertyReadInfo property)
     {
         var current = document;
         for (var i = 0; i < path.Length - 1; i++)
@@ -354,7 +355,7 @@ internal static class BsonBinding
 
                 throw new InvalidOperationException(
                     $"Document element '{string.Join(".", path)}' is missing for required non-nullable property '{
-                        property.Name}'.");
+                        property.Property.Name}'.");
             }
 
             current = segmentDocument;
@@ -391,7 +392,7 @@ internal static class BsonBinding
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetKindAwareElementValueAtPath));
 
-    internal static T? GetPropertyValue<T>(BsonDocument? document, IReadOnlyProperty property)
+    internal static T? GetPropertyValue<T>(BsonDocument? document, PropertyReadInfo property)
     {
         // A null parent document means the owning entity is absent (e.g. a nested optional reference whose $lookup
         // matched nothing). Treat every property as absent so the materializer's null-key check yields a null entity.
@@ -400,16 +401,15 @@ internal static class BsonBinding
             return default;
         }
 
-        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
-        if (TryReadElementValue(document, serializationInfo, out T? value))
+        if (TryReadElementValue(document, property.ElementName, property.ElementPath, property.Serializer, property.NominalType, out T? value))
         {
-            ThrowIfNullForRequired(value, property);
+            ThrowIfNullForRequired(value, property.Property);
             return value;
         }
 
-        if (property.IsNullable) return default;
+        if (property.Property.IsNullable) return default;
 
-        throw new InvalidOperationException(RequiredPropertyMissingMessage(property));
+        throw new InvalidOperationException(RequiredPropertyMissingMessage(property.Property));
     }
 
     /// <summary>
@@ -450,52 +450,44 @@ internal static class BsonBinding
             null,
             GetPropertyValueOrPlaceholderMethodInfo.MakeGenericMethod(resultType),
             bsonDocExpression,
-            Expression.Constant(property, typeof(IReadOnlyProperty)),
+            Expression.Constant(new PropertyReadInfo(property)),
             Expression.Constant(placeholder, resultType));
 
     private static readonly MethodInfo GetPropertyValueOrPlaceholderMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetPropertyValueOrPlaceholder));
 
-    internal static T? GetPropertyValueOrPlaceholder<T>(BsonDocument? document, IReadOnlyProperty property, T placeholder)
+    internal static T? GetPropertyValueOrPlaceholder<T>(BsonDocument? document, PropertyReadInfo property, T placeholder)
     {
         if (document == null)
         {
             return default;
         }
 
-        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
-        if (!TryReadElementValue(document, serializationInfo, out T? value))
+        if (!TryReadElementValue(document, property.ElementName, property.ElementPath, property.Serializer, property.NominalType, out T? value))
         {
             return placeholder;
         }
 
-        ThrowIfNullForRequired(value, property);
+        ThrowIfNullForRequired(value, property.Property);
         return value;
     }
 
-    internal static T? GetPropertyValueAtElement<T>(BsonDocument document, string elementName, IReadOnlyProperty property)
+    internal static T? GetPropertyValueAtElement<T>(BsonDocument document, string elementName, PropertyReadInfo property)
     {
-        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
-
         // Intentionally drop any ElementPath from the source serialization info: in a projection the
         // value lives at the flat alias name in the projected document, not at the property's original
         // (possibly nested, e.g. ["_id", name] for a composite key) path. Re-introducing the path here
         // would break aliased projections of composite-key parts.
-        var projectedSerializationInfo = new BsonSerializationInfo(
-            elementName,
-            serializationInfo.Serializer,
-            serializationInfo.NominalType);
-
-        if (TryReadElementValue(document, projectedSerializationInfo, out T? value))
+        if (TryReadElementValue(document, elementName, null, property.Serializer, property.NominalType, out T? value))
         {
-            ThrowIfNullForRequired(value, property);
+            ThrowIfNullForRequired(value, property.Property);
             return value;
         }
 
-        if (property.IsNullable) return default;
+        if (property.Property.IsNullable) return default;
 
-        throw new InvalidOperationException($"Document element '{elementName}' is missing for required non-nullable property '{property.Name}'.");
+        throw new InvalidOperationException($"Document element '{elementName}' is missing for required non-nullable property '{property.Property.Name}'.");
     }
 
     /// <summary>
@@ -506,33 +498,27 @@ internal static class BsonBinding
     /// required leaf (e.g. <c>string</c>) reads <see langword="null"/> for a missing element, deliberately mirroring
     /// the driver.
     /// </summary>
-    internal static T? GetScalarProjectionValueAtElement<T>(BsonDocument document, string elementName, IReadOnlyProperty property)
+    internal static T? GetScalarProjectionValueAtElement<T>(BsonDocument document, string elementName, PropertyReadInfo property)
     {
-        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
-
         // As GetPropertyValueAtElement: the value lives at the flat alias, not the property's original element path.
-        var projectedSerializationInfo = new BsonSerializationInfo(
-            elementName,
-            serializationInfo.Serializer,
-            serializationInfo.NominalType);
-
+        //
         // Check the RAW element: for a value-typed T the deserialized value is never null, so a post-read null check
         // can't see an explicit BSON null (driver-LINQ throws FormatException for it). Except through the driver's
         // BooleanSerializer, which reads null as false, as driver-LINQ did (this mirrors the driver; a value-converted
         // bool has a ValueConverterSerializer, not a BooleanSerializer, so it takes the throwing branch; see
         // MongoAggregationExpressionRenderer.DriverReadsNullAsDefault).
-        if (!property.IsNullable && document.TryGetValue(elementName, out var raw) && raw.IsBsonNull
-            && serializationInfo.Serializer is not BooleanSerializer)
+        if (!property.Property.IsNullable && document.TryGetValue(elementName, out var raw) && raw.IsBsonNull
+            && property.Serializer is not BooleanSerializer)
         {
             throw new InvalidOperationException(
-                $"Document element '{elementName}' is null for required non-nullable property '{property.Name}'.");
+                $"Document element '{elementName}' is null for required non-nullable property '{property.Property.Name}'.");
         }
 
-        return TryReadElementValue(document, projectedSerializationInfo, out T? value) ? value : default;
+        return TryReadElementValue(document, elementName, null, property.Serializer, property.NominalType, out T? value) ? value : default;
     }
 
     internal static T? GetElementValueAtPath<T>(BsonDocument document, string[] path)
-        => ReadElementValueAtPath<T>(document, path, BsonSerializerFactory.CreateTypeSerializer(typeof(T)));
+        => ReadElementValueAtPath<T>(document, path, TypeSerializer<T>.Instance);
 
     // `serializer` is BsonSerializerFactory.CreateTypeSerializer(typeof(T), dateTimeKindSource), built at compile time.
     internal static T? GetKindAwareElementValueAtPath<T>(BsonDocument document, string[] path, IBsonSerializer serializer)
@@ -541,8 +527,7 @@ internal static class BsonBinding
     private static T? ReadElementValueAtPath<T>(BsonDocument document, string[] path, IBsonSerializer serializer)
     {
         var type = typeof(T);
-        var serializationInfo = BsonSerializationInfo.CreateWithPath(path, serializer, type);
-        if (TryReadElementValue(document, serializationInfo, out T? value) || type.IsNullableType())
+        if (TryReadElementValue(document, null, path, serializer, type, out T? value) || type.IsNullableType())
         {
             return value;
         }
@@ -551,7 +536,7 @@ internal static class BsonBinding
     }
 
     internal static T? GetElementValue<T>(BsonDocument document, string elementName)
-        => ReadElementValue<T>(document, elementName, BsonSerializerFactory.CreateTypeSerializer(typeof(T)));
+        => ReadElementValue<T>(document, elementName, TypeSerializer<T>.Instance);
 
     // `serializer` is built at compile time: BsonSerializerFactory.CreateTypeSerializer(typeof(T), dateTimeKindSource),
     // or BsonSerializerFactory.CreateTimeOfDaySerializer for a native TimeOfDay leaf.
@@ -561,8 +546,7 @@ internal static class BsonBinding
     private static T? ReadElementValue<T>(BsonDocument document, string elementName, IBsonSerializer serializer)
     {
         var type = typeof(T);
-        var serializationInfo = new BsonSerializationInfo(elementName, serializer, type);
-        if (TryReadElementValue(document, serializationInfo, out T? value) || type.IsNullableType())
+        if (TryReadElementValue(document, elementName, null, serializer, type, out T? value) || type.IsNullableType())
         {
             return value;
         }
@@ -570,17 +554,23 @@ internal static class BsonBinding
         throw new InvalidOperationException($"Document element '{elementName}' is missing but required.");
     }
 
-    private static bool TryReadElementValue<T>(BsonDocument document, BsonSerializationInfo elementSerializationInfo, out T? value)
+    private static bool TryReadElementValue<T>(
+        BsonDocument document,
+        string? elementName,
+        string[]? elementPath,
+        IBsonSerializer serializer,
+        Type nominalType,
+        out T? value)
     {
         BsonValue? rawValue;
-        if (elementSerializationInfo.ElementPath == null)
+        if (elementPath == null)
         {
-            document.TryGetValue(elementSerializationInfo.ElementName, out rawValue);
+            document.TryGetValue(elementName!, out rawValue);
         }
         else
         {
             rawValue = document;
-            foreach (var node in elementSerializationInfo.ElementPath)
+            foreach (var node in elementPath)
             {
                 var doc = (BsonDocument)rawValue;
                 if (!doc.TryGetValue(node, out rawValue))
@@ -599,11 +589,162 @@ internal static class BsonBinding
 
         if (rawValue != null)
         {
-            value = (T)elementSerializationInfo.DeserializeValue(rawValue);
+            value = TryReadDirect(serializer, rawValue, out T? direct)
+                ? direct
+                : (T)new BsonSerializationInfo(elementName ?? "value", serializer, nominalType).DeserializeValue(rawValue);
             return true;
         }
 
         value = default;
         return false;
     }
+
+    // The serializer for a bare CLR type, resolved once per T instead of per read.
+    private static class TypeSerializer<T>
+    {
+        public static readonly IBsonSerializer Instance = BsonSerializerFactory.CreateTypeSerializer(typeof(T));
+    }
+
+    /// <summary>
+    /// Reads <paramref name="raw"/> without the driver's per-value round trip through a temporary document and reader
+    /// (<see cref="BsonSerializationInfo.DeserializeValue"/>, ~500 B and ~300 ns), when the value is stored exactly as
+    /// <paramref name="serializer"/> writes it by default: a BSON int32 through a default <see cref="Int32Serializer"/>, and so on.
+    /// </summary>
+    /// <remarks>
+    /// Only the exact default combinations qualify; anything else (another BSON type, a non-default representation, a value
+    /// converter, <see cref="DateTime"/>, <see cref="Guid"/>, enums, decimals) returns <see langword="false"/> and takes the
+    /// serializer, so the converting and strict behavior of the driver is unchanged. A BSON null never reaches here.
+    /// </remarks>
+    private static bool TryReadDirect<T>(IBsonSerializer serializer, BsonValue raw, out T? value)
+    {
+        if (typeof(T) == typeof(int))
+        {
+            if (raw is BsonInt32 bsonInt && serializer is Int32Serializer { Representation: BsonType.Int32 })
+            {
+                var v = bsonInt.Value;
+                value = Unsafe.As<int, T>(ref v);
+                return true;
+            }
+        }
+        else if (typeof(T) == typeof(int?))
+        {
+            if (raw is BsonInt32 bsonInt
+                && serializer is NullableSerializer<int> { ValueSerializer: Int32Serializer { Representation: BsonType.Int32 } })
+            {
+                int? v = bsonInt.Value;
+                value = Unsafe.As<int?, T>(ref v);
+                return true;
+            }
+        }
+        else if (typeof(T) == typeof(long))
+        {
+            if (raw is BsonInt64 bsonLong && serializer is Int64Serializer { Representation: BsonType.Int64 })
+            {
+                var v = bsonLong.Value;
+                value = Unsafe.As<long, T>(ref v);
+                return true;
+            }
+        }
+        else if (typeof(T) == typeof(long?))
+        {
+            if (raw is BsonInt64 bsonLong
+                && serializer is NullableSerializer<long> { ValueSerializer: Int64Serializer { Representation: BsonType.Int64 } })
+            {
+                long? v = bsonLong.Value;
+                value = Unsafe.As<long?, T>(ref v);
+                return true;
+            }
+        }
+        else if (typeof(T) == typeof(double))
+        {
+            if (raw is BsonDouble bsonDouble && serializer is DoubleSerializer { Representation: BsonType.Double })
+            {
+                var v = bsonDouble.Value;
+                value = Unsafe.As<double, T>(ref v);
+                return true;
+            }
+        }
+        else if (typeof(T) == typeof(double?))
+        {
+            if (raw is BsonDouble bsonDouble
+                && serializer is NullableSerializer<double> { ValueSerializer: DoubleSerializer { Representation: BsonType.Double } })
+            {
+                double? v = bsonDouble.Value;
+                value = Unsafe.As<double?, T>(ref v);
+                return true;
+            }
+        }
+        else if (typeof(T) == typeof(bool))
+        {
+            if (raw is BsonBoolean bsonBool && serializer is BooleanSerializer)
+            {
+                var v = bsonBool.Value;
+                value = Unsafe.As<bool, T>(ref v);
+                return true;
+            }
+        }
+        else if (typeof(T) == typeof(bool?))
+        {
+            if (raw is BsonBoolean bsonBool && serializer is NullableSerializer<bool> { ValueSerializer: BooleanSerializer })
+            {
+                bool? v = bsonBool.Value;
+                value = Unsafe.As<bool?, T>(ref v);
+                return true;
+            }
+        }
+        else if (typeof(T) == typeof(string))
+        {
+            if (raw is BsonString bsonString && serializer is StringSerializer { Representation: BsonType.String })
+            {
+                value = (T)(object)bsonString.Value;
+                return true;
+            }
+        }
+        else if (typeof(T) == typeof(ObjectId))
+        {
+            if (raw is BsonObjectId bsonObjectId && serializer is ObjectIdSerializer { Representation: BsonType.ObjectId })
+            {
+                var v = bsonObjectId.Value;
+                value = Unsafe.As<ObjectId, T>(ref v);
+                return true;
+            }
+        }
+        else if (typeof(T) == typeof(ObjectId?))
+        {
+            if (raw is BsonObjectId bsonObjectId
+                && serializer is NullableSerializer<ObjectId> { ValueSerializer: ObjectIdSerializer { Representation: BsonType.ObjectId } })
+            {
+                ObjectId? v = bsonObjectId.Value;
+                value = Unsafe.As<ObjectId?, T>(ref v);
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+}
+
+/// <summary>
+/// What a shaper needs to read a mapped property from a document, resolved once when the shaper is compiled and carried as a
+/// constant: the property (for nullability and messages) and its serialization info (element name or path, serializer, nominal type).
+/// </summary>
+internal sealed class PropertyReadInfo
+{
+    public PropertyReadInfo(IReadOnlyProperty property)
+    {
+        Property = property;
+        var info = BsonSerializerFactory.GetPropertySerializationInfo(property);
+        // The driver throws from ElementName when the info has a path (a composite-key part), so read only the one that is set.
+        ElementPath = info.ElementPath?.ToArray();
+        ElementName = ElementPath == null ? info.ElementName : null;
+        Serializer = info.Serializer;
+        NominalType = info.NominalType;
+    }
+
+    public IReadOnlyProperty Property { get; }
+    public string? ElementName { get; }
+    public string[]? ElementPath { get; }
+    public IBsonSerializer Serializer { get; }
+    public Type NominalType { get; }
 }
