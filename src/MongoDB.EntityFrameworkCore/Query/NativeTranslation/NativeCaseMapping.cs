@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 
@@ -40,11 +41,84 @@ internal static class NativeCaseMapping
     /// </summary>
     internal static Expression PeelCaseMapping(Expression leafExpression, bool includeDateTimeToString = false)
     {
-        while (leafExpression is MethodCallExpression call
-               && (IsCaseMappingCall(call) || includeDateTimeToString && IsDateTimeToString(call)))
-            leafExpression = call.Object!;
+        while (true)
+        {
+            switch (leafExpression)
+            {
+                case MethodCallExpression call
+                    when IsCaseMappingCall(call) || includeDateTimeToString && IsDateTimeToString(call) || IsClientStringChainStep(call):
+                    leafExpression = call.Object!;
+                    continue;
 
-        return leafExpression;
+                case BinaryExpression binary when TryMatchClientStringConcat(binary, out var chainSide, out _, out _):
+                    leafExpression = chainSide;
+                    continue;
+            }
+
+            return leafExpression;
+        }
+    }
+
+    // The string instance methods that map a string to a string, with literal arguments, and that a server form would compute differently
+    // from the .NET call only on malformed input (out of range). A step above a case mapping is applied by the client with it.
+    private static readonly System.Collections.Generic.HashSet<string> ClientStringStepNames =
+    [
+        nameof(string.Substring), nameof(string.Trim), nameof(string.TrimStart), nameof(string.TrimEnd), nameof(string.Replace),
+        nameof(string.PadLeft), nameof(string.PadRight), nameof(string.Insert), nameof(string.Remove)
+    ];
+
+    /// <summary>
+    /// True for a string-to-string instance call with literal arguments (<c>Substring(0, 1)</c>, <c>Trim()</c>) whatever its receiver: the shape the
+    /// client form of <see cref="IsClientStringChainStep"/> has once its receiver is bound.
+    /// </summary>
+    internal static bool IsClientStringStepMethod(MethodCallExpression call)
+        => call is { Object.Type: var objectType, Method: { DeclaringType: var declaringType, ReturnType: var returnType } method }
+           && objectType == typeof(string)
+           && declaringType == typeof(string)
+           && returnType == typeof(string)
+           && ClientStringStepNames.Contains(method.Name)
+           && call.Arguments.All(a => a is ConstantExpression);
+
+    /// <summary>
+    /// True for a step (<see cref="IsClientStringStepMethod"/>) applied to a value that holds a case mapping, which runs client-side: the whole chain is
+    /// peeled to the raw receiver the leaf stages, and the client applies each step to the mapped value, null propagated. A step over a receiver with
+    /// no case mapping is an ordinary computed leaf and stays on the server.
+    /// </summary>
+    internal static bool IsClientStringChainStep(MethodCallExpression call)
+        => IsClientStringStepMethod(call) && ContainsCaseMappingCall(call.Object!);
+
+    /// <summary>
+    /// True for <c>mapped + "literal"</c> or <c>"literal" + mapped</c> where <c>mapped</c> holds a case mapping: concatenation with a literal is a step of the
+    /// client chain, null propagated.
+    /// </summary>
+    internal static bool TryMatchClientStringConcat(
+        BinaryExpression binary, out Expression chainSide, out ConstantExpression constantSide, out bool chainIsLeft)
+    {
+        chainSide = null!;
+        constantSide = null!;
+        chainIsLeft = false;
+        if (binary is not { NodeType: ExpressionType.Add, Type: var type, Method: { Name: "Concat", DeclaringType: var declaringType } }
+            || type != typeof(string)
+            || declaringType != typeof(string))
+        {
+            return false;
+        }
+
+        if (binary.Right is ConstantExpression { Type: var rightType } rightConstant && rightType == typeof(string)
+            && ContainsCaseMappingCall(binary.Left))
+        {
+            (chainSide, constantSide, chainIsLeft) = (binary.Left, rightConstant, true);
+            return true;
+        }
+
+        if (binary.Left is ConstantExpression { Type: var leftType } leftConstant && leftType == typeof(string)
+            && ContainsCaseMappingCall(binary.Right))
+        {
+            (chainSide, constantSide, chainIsLeft) = (binary.Right, leftConstant, false);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>True for <c>ToString()</c>/<c>ToString("format")</c> on a <see cref="DateTime"/> (or nullable). No server form matches .NET's culture-sensitive output (driver-LINQ pushes down an ISO <c>$toString</c>, wrong on main), so a leaf stages only the receiver and the call is re-applied client-side, as for <c>DateTimeOffset.ToString</c> (D-TOSTRING).</summary>

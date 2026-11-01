@@ -38,6 +38,42 @@ internal sealed class MongoSelectLowerer
     /// <exception cref="NativeTranslationNotSupportedException">The query contains an unsupported join or lookup shape.</exception>
     public IReadOnlyList<MongoPipelineStage> Lower(MongoQueryExpression query)
     {
+        var stages = LowerStages(query);
+        KeepClientFilteringOnlyWhereNothingDependsOnIt(stages);
+        return stages;
+    }
+
+    // A required reference whose lookup found nothing is dropped by the cursor, after the whole pipeline ran. That is the same set of rows
+    // as dropping it at the lookup only if every stage after it leaves the row count alone and does not read the lookup's output: nothing but
+    // further lookups. Otherwise (a Skip/Take after the Include, a Count, a set operation, a projection) the server keeps filtering.
+    private static void KeepClientFilteringOnlyWhereNothingDependsOnIt(IReadOnlyList<MongoPipelineStage> stages)
+    {
+        var filtered = stages.OfType<MongoUnwindStage>().Where(stage => stage.ClientFiltered).ToList();
+        if (filtered.Count == 0)
+        {
+            return;
+        }
+
+        var first = stages.ToList().IndexOf(filtered[0]);
+        for (var i = first + 1; i < stages.Count; i++)
+        {
+            if (stages[i] is MongoUnwindStage
+                || stages[i] is MongoLookupStage next && !filtered.Any(stage => next.Lookup.ReadsOutputOf(stage.Lookup)))
+            {
+                continue;
+            }
+
+            foreach (var stage in filtered)
+            {
+                stage.ClientFiltered = false;
+            }
+
+            return;
+        }
+    }
+
+    private IReadOnlyList<MongoPipelineStage> LowerStages(MongoQueryExpression query)
+    {
         var select = query.Select;
         var stages = new List<MongoPipelineStage>();
         var sortFields = new SyntheticSortFieldAllocator(ReservedElementNames(query));
@@ -470,7 +506,10 @@ internal sealed class MongoSelectLowerer
                 // optional); a fixed default would get one wrong. Broader than IsStreamableReference: also admits transitive hops
                 // (localField prefixed by a prior lookup's alias), which IsStreamableReference excludes to keep them off the streaming materializer.
                 stages.Add(new MongoLookupStage(lookup));
-                stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays, lookup.MatchesAtMostOneDocument));
+                stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays, lookup.MatchesAtMostOneDocument)
+                {
+                    ClientFiltered = query.FiltersReferenceLookupsOnClient && lookup.CanBeFilteredOnClient
+                });
             }
             else if (lookup.IsNativeCollectionLookup
                      // A renamed lookup must still be non-ForceUnwind and not DiscriminatorNarrowed, or a TPH-derived collection Include

@@ -94,9 +94,14 @@ internal static class StreamingEligibility
             return false;
         }
 
+        // The root of a hierarchy also reads the owned navigations its derived types declare (a document holds those of one concrete type).
+        var navigations = isRoot
+            ? entityType.GetNavigations().Concat(entityType.GetDerivedTypes().SelectMany(t => t.GetDeclaredNavigations()))
+            : entityType.GetNavigations();
+
         // A required owned reference is still eligible: the rewriter reproduces EF's "required but missing"
         // throw (see MongoStreamingEntityMaterializerRewriter.RewriteOwnedNavigation).
-        foreach (var navigation in entityType.GetNavigations())
+        foreach (var navigation in navigations)
         {
             // An included lookup collection is read element by element from its $lookup array, not as part of this entity's own graph.
             if (lookupCollections.Contains(navigation))
@@ -127,8 +132,19 @@ internal static class StreamingEligibility
         return true;
     }
 
-    // A discriminated hierarchy whose derived types add only properties.
+    // A discriminated hierarchy whose derived types add properties and owned navigations. Two derived types (or a derived type and the root) that
+    // store an owned navigation under one element name would make the fill loop's dispatch ambiguous, so they are not read by one plan.
     private static bool IsReadableHierarchy(IEntityType entityType)
         => entityType.FindDiscriminatorProperty() != null
-           && entityType.GetDerivedTypes().All(t => !t.GetDeclaredNavigations().Any() && !t.GetDeclaredSkipNavigations().Any());
+           && entityType.GetDerivedTypes().All(
+               t => !t.GetDeclaredSkipNavigations().Any() && t.GetDeclaredNavigations().All(n => n.TargetEntityType.IsOwned()))
+           && HasDistinctOwnedElementNames(entityType);
+
+    private static bool HasDistinctOwnedElementNames(IEntityType entityType)
+    {
+        var seen = new HashSet<string>();
+        return entityType.GetNavigations().Concat(entityType.GetDerivedTypes().SelectMany(t => t.GetDeclaredNavigations()))
+            .Where(n => n.TargetEntityType.IsOwned())
+            .All(n => n.TargetEntityType.GetContainingElementName() is not { } name || seen.Add(name));
+    }
 }

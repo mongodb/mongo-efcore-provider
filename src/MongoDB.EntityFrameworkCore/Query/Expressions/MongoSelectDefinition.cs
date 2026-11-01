@@ -259,6 +259,38 @@ internal sealed class MongoSelectDefinition
     public void AddProjection(MongoProjection projection)
         => _projections.Add(projection);
 
+    /// <summary>
+    /// Narrows the projected owned array under <paramref name="alias"/> to <paramref name="elementNames"/> (<see cref="MongoProjection.PrunedElementFields"/>),
+    /// for a shaper that reads nothing else of its elements. Only for an array projected as a whole or already pruned, and only for names a
+    /// per-element <c>$map</c> can address. Returns the projection it replaced, or <see langword="null"/> when it changed nothing.
+    /// </summary>
+    internal MongoProjection? TryNarrowArrayProjection(string alias, IReadOnlyList<string> elementNames)
+    {
+        if (elementNames.Count == 0 || !elementNames.All(MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeProjectionBinder.IsPrunableFieldName))
+        {
+            return null;
+        }
+
+        for (var i = 0; i < _projections.Count; i++)
+        {
+            if (_projections[i].Alias == alias && _projections[i].Expression is MongoElementRefExpression)
+            {
+                var replaced = _projections[i];
+                _projections[i] = replaced with { PrunedElementFields = elementNames };
+                return replaced;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Puts back a projection <see cref="TryNarrowArrayProjection"/> replaced.</summary>
+    internal void RestoreProjection(MongoProjection original)
+    {
+        var index = _projections.FindIndex(p => p.Alias == original.Alias);
+        _projections[index] = original;
+    }
+
     /// <summary>Lets <c>NativeGroupByBinder.TryBindDistinctFromProjection</c> replace the projection with the flattening one.</summary>
     internal void ClearProjections() => _projections.Clear();
 
@@ -716,6 +748,19 @@ internal sealed class MongoSelectDefinition
     internal bool HasClientCaseMappingProjectionLeaf { get; set; }
 
     /// <summary>
+    /// <see langword="true"/> when a <c>Distinct</c> followed a projection with a client case mapping: the server dedups the raw values it holds (a
+    /// refinement of the distinct mapped values), and the client dedups the mapped rows (<see cref="MongoClientOperators.Distinct"/>). Nothing after it can
+    /// run on the server, as the rows it sees are not yet distinct.
+    /// </summary>
+    internal bool ClientDistinct { get; set; }
+
+    /// <summary>
+    /// Set when <c>Contains(item)</c> was applied to a projection with a client case mapping: the rows are the mapped values, and the client looks for the item
+    /// among them (<see cref="MongoClientOperators.Contains"/>).
+    /// </summary>
+    internal ClientContainsTerminal? ClientContains { get; set; }
+
+    /// <summary>
     /// <see langword="true"/> when the committed projection has a row-independent leaf the shaper evaluates client-side
     /// and never projects (<c>NativeProjectionBinder.IsRowIndependentLeaf</c>). A <c>$literal</c>-rendered constant or
     /// parameter is server-side and never sets it.
@@ -1099,3 +1144,6 @@ internal enum NativeRoute
     /// <summary>Native pipeline ending in a keyed <c>$group</c> producing a grouped-aggregate sequence.</summary>
     GroupBy
 }
+
+/// <summary>A client-finished <c>Contains</c>: the item sought, and the shaper of the rows it is sought among.</summary>
+internal sealed record ClientContainsTerminal(System.Linq.Expressions.Expression Item, System.Linq.Expressions.Expression RowShaper);
