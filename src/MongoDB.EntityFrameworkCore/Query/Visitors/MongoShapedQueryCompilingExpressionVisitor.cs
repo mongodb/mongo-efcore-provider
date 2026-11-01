@@ -230,18 +230,21 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 ? shapedQueryExpression.Type.TryGetItemType()!
                 : shapedQueryExpression.Type);
 
-        // Whole-element owned SelectMany: the lowerer emits $unwind + $replaceRoot, so root the shaper at the owned type and force DOM.
+        // Whole-element owned SelectMany: the lowerer emits $unwind + $replaceRoot, so root the shaper at the owned type; each document is one element.
         // Must precede the projectedEntityType == null fallback: FindEntityType returns null for a shared-type owned element, but
         // InnerEntityType (from the navigation) is correct.
         if (mongoQueryExpression.Select.UnwindSource is { WholeElement: true } wholeElementUnwind)
         {
             var elementType = wholeElementUnwind.InnerEntityType;
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, elementType,
-                CreateDomBindingRemover(elementType, mongoQueryExpression),
-                allowStreaming: false);
+                CreateDomBindingRemover(elementType, mongoQueryExpression));
         }
 
-        if (projectedEntityType == null)
+        // An entity the query constructs itself (`Select(o => new Order { Code = o.Code + "!" })`) has the entity's CLR type but is a projection:
+        // it is bound and read as one, not materialized from the document.
+        if (projectedEntityType == null
+            || (mongoQueryExpression.Select.Route == NativeRoute.Projection
+                && shapedQueryExpression.ShaperExpression is MemberInitExpression or NewExpression))
         {
             return VisitProjectedQuery(shapedQueryExpression, rootEntityType, mongoQueryExpression);
         }
@@ -250,7 +253,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // native pipeline returns (the driver pushes the Select down as `_v`), so strip that Select on fallback.
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
             CreateDomBindingRemover(rootEntityType, mongoQueryExpression),
-            allowProjectionStreaming: mongoQueryExpression.Select.HasBareJoinInnerEntityLeaf,
+            allowProjectionStreaming: true,
+            allowWrappedEntityStreaming: true,
             stripBareProjectionOnFallback: mongoQueryExpression.Select.HasBareJoinInnerEntityLeaf);
     }
 
@@ -359,6 +363,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
                 CreateDomBindingRemover(rootEntityType, mongoQueryExpression),
                 allowStreaming: false,
+                allowProjectionStreaming: true,
                 allowWrappedEntityStreaming: true);
         }
 
@@ -633,6 +638,16 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor>?
             createFallbackBindingRemover = null)
     {
+        _shaperIncludes = IncludedNavigationFinder.Find(shapedQueryExpression.ShaperExpression);
+
+        // An Include of a keyless entity has no key to join on: the DOM path reports it.
+        if (rootEntityType.FindPrimaryKey() == null && _shaperIncludes.Count > 0)
+        {
+            allowStreaming = false;
+            allowProjectionStreaming = false;
+            allowWrappedEntityStreaming = false;
+        }
+
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
         var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
         var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
@@ -685,12 +700,17 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                     or QueryTrackingBehavior.NoTrackingWithIdentityResolution;
                 // A reference a document must have (a required navigation to a collection the lookup matches by `_id`): the reader drops a row
                 // whose lookup found nothing, so the pipeline need not filter on the server (see MongoUnwindStage.ClientFiltered).
-                var requiredReferences = mongoQueryExpression.GetStreamingReferenceLookups()
-                    .Where(lookup => lookup.CanBeFilteredOnClient)
-                    .Select(lookup => lookup.Navigation!)
-                    .ToList();
+                // A ThenInclude reads its parent's lookup, which the cursor must then see unwound by the server: it filters nothing itself.
+                var thenIncludeReferences = GetStreamingThenIncludeReferences(mongoQueryExpression);
+                var requiredReferences = thenIncludeReferences.Count > 0
+                    ? []
+                    : mongoQueryExpression.GetStreamingReferenceLookups()
+                        .Where(lookup => lookup.CanBeFilteredOnClient)
+                        .Select(lookup => lookup.Navigation!)
+                        .ToList();
                 var rewriter = new MongoStreamingEntityMaterializerRewriter(
-                    rootEntityType, trackedQuery, GetStreamingLookupCollections(mongoQueryExpression), requiredReferences);
+                    rootEntityType, trackedQuery, GetStreamingLookupCollections(mongoQueryExpression), requiredReferences,
+                    thenIncludeReferences, GetStreamingCollectionAliases(mongoQueryExpression), GetStreamingNestedAliases(mongoQueryExpression));
                 var onePassBody = rewriter.Rewrite(injectedBody, readerParameter, contextParameter);
 
                 var onePassLambda = Expression.Lambda(
@@ -774,8 +794,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         if (allowWrappedEntityStreaming
             && nativeFactory != null
             && !useFallbackBindingRemover
-            && TryBuildWrappedEntityPlan(
-                    shapedQueryExpression, mongoQueryExpression, rootEntityType, injectedBody, trackingBehavior)
+            && TryBuildWrappedEntityPlan(mongoQueryExpression, rootEntityType, injectedBody, trackingBehavior)
                 is { } wrappedPlan)
         {
             return BuildProjectedRowsCall(wrappedPlan);
@@ -906,8 +925,6 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 isDropped ?? Expression.Constant(null, typeof(Func<,>).MakeGenericType(rowType, typeof(bool))));
     }
 
-    // The one-pass form of a whole entity wrapped in client code: the cursor yields the entity (or, tracked, the entity with its deferred
-    // tracking), and the shaper replays the tracking and runs the wrapper around the resulting entity.
     // Whether two entity shapers of one type read the same document: a joined entity of the root's own type (a self-reference such as
     // `e.Manager`) is another entity, not another use of this one. The document each reads is what its shaper assigns to its document variable.
     private static bool ReadsSameDocument(Expression shaper, Expression other)
@@ -929,8 +946,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                && Microsoft.EntityFrameworkCore.Query.ExpressionEqualityComparer.Instance.Equals(source, otherSource);
     }
 
+    // The one-pass form of a whole entity wrapped in client code: the cursor yields the entity (or, tracked, the entity with its deferred
+    // tracking), and the shaper replays the tracking and runs the wrapper around the resulting entity.
     private MongoProjectionStreamingPlanner.Plan? TryBuildWrappedEntityPlan(
-        ShapedQueryExpression shapedQueryExpression,
         MongoQueryExpression mongoQueryExpression,
         IEntityType rootEntityType,
         Expression injectedBody,
@@ -947,8 +965,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         locator.Visit(injectedBody);
 
         // The wrapper may use the entity more than once (`new Dto(c) { City = c.City }`), each use its own materializer block. This route has
-        // no `$project` and no lookups, so every one of them reads the row's own document: one entity serves them all. The block that
-        // carries the Includes (at most one may) is the entity; the others are only less complete views of it.
+        // no `$project`, so (ReadsSameDocument) every one of them reads the row's own document: one entity serves them all. The block that
+        // carries the Includes (at most one may) is the entity; the others are only less complete views of it. A ThenInclude the rewriter is
+        // not given the plans for throws NativeTranslationNotSupportedException below, and the query keeps the DOM shaper.
         if (locator.Found.Count == 0
             || locator.Found.Any(found => found.Type != locator.Found[0].Type)
             || locator.Found.Count(found => found is IncludeExpression) > 1
@@ -967,7 +986,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         try
         {
             onePass = new MongoStreamingEntityMaterializerRewriter(
-                    rootEntityType, tracked, GetStreamingLookupCollections(mongoQueryExpression))
+                    rootEntityType, tracked, GetStreamingLookupCollections(mongoQueryExpression), collectionAliases: GetStreamingCollectionAliases(mongoQueryExpression))
                 .Rewrite(entityShaper, reader, context);
         }
         catch (NativeTranslationNotSupportedException)
@@ -979,7 +998,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         Type rowType;
         Expression readerBody;
         Expression entityOfRow;
-        var row = Expression.Parameter(typeof(object), "row");
+        ParameterExpression row;
         if (tracked)
         {
             rowType = typeof(MongoMaterializedRow<>).MakeGenericType(entityType);
@@ -989,14 +1008,14 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             readerBody = Expression.Block(
                 rowType,
                 [entity],
-                Expression.Call(mongoQueryContext, typeof(MongoQueryContext).GetMethod("BeginDeferral", BindingFlags.NonPublic | BindingFlags.Instance)!),
+                Expression.Call(mongoQueryContext, typeof(MongoQueryContext).GetMethod(nameof(MongoQueryContext.BeginDeferral), BindingFlags.NonPublic | BindingFlags.Instance)!),
                 Expression.Assign(entity, onePass),
                 Expression.New(
                     rowType.GetConstructor([entityType, typeof(object)])!,
                     entity,
                     Expression.Call(
                         mongoQueryContext,
-                        typeof(MongoQueryContext).GetMethod("EndDeferral", BindingFlags.NonPublic | BindingFlags.Instance)!,
+                        typeof(MongoQueryContext).GetMethod(nameof(MongoQueryContext.EndDeferral), BindingFlags.NonPublic | BindingFlags.Instance)!,
                         Expression.Convert(entity, typeof(object)))));
 
             var rowShaper = typeof(MongoEntityMaterializerSerializer<>).MakeGenericType(entityType)
@@ -1349,16 +1368,16 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             mode);
 
     /// <summary>
-    /// Streaming gate (not native-vs-driver): whether every join is a single-level reference lookup the streaming
-    /// reader can read from a root-level <c>_lookup_&lt;Nav&gt;</c> field. Collection includes, filtered includes
-    /// and nested lookups stay on DOM; do not admit collection lookups here.
+    /// Streaming gate (not native-vs-driver): whether every pending lookup is one the streaming reader reads (a reference from a root-level
+    /// <c>_lookup_&lt;Nav&gt;</c> field, a collection Include's array, a ThenInclude) or one it can skip because no shaper reads it
+    /// (<see cref="IsUnreadLookup"/>). A lookup that is neither stays on DOM.
     /// <para>
     /// Also not streamable when the looked-up target has an eager-loaded (e.g. owned) navigation of its own:
     /// <c>MongoStreamingEntityMaterializerRewriter</c> would throw, whereas DOM handles it and lets the shape
     /// succeed under NativeOnly.
     /// </para>
     /// </summary>
-    private static bool AllPendingLookupsAreStreamable(MongoQueryExpression mongoQueryExpression)
+    private bool AllPendingLookupsAreStreamable(MongoQueryExpression mongoQueryExpression)
     {
         var referenceLookups = mongoQueryExpression.GetStreamingReferenceLookups();
 
@@ -1372,7 +1391,159 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // reference, and its Navigation is null.
         return referenceLookups.All(lookup =>
             lookup.IsStreamableReference
-            || IsStreamableCollectionLookup(lookup, mongoQueryExpression.CollectionExpression.EntityType));
+            || IsFlattenedCollectionJoin(lookup)
+            || IsStreamableCollectionLookup(lookup, mongoQueryExpression.CollectionExpression.EntityType)
+            || IsStreamableThenIncludeLookup(lookup, referenceLookups)
+            || IsUnreadLookup(lookup));
+    }
+
+    /// <summary>
+    /// A <c>$lookup</c> that is in the pipeline for the query's own sake and that no shaper reads: a join (<c>ForceUnwind</c>: it contributes rows and a
+    /// document under its alias the whole-entity reader skips, including a hop onto an earlier join's output), or an array a predicate, ordering or
+    /// aggregate uses (a correlated keyed array, the unfiltered array behind a <c>Count</c>). An Include is never one of these: a reference or collection
+    /// the shaper includes is one of the shapes above, or the reader declines it.
+    /// </summary>
+    private bool IsUnreadLookup(LookupExpression lookup)
+        => (lookup.ForceUnwind && !(lookup.Navigation is { } navigation && _shaperIncludes.Contains(navigation)))
+           || lookup.IsBareCountSizeSource
+           || (lookup.IsCorrelatedArraySource && !lookup.ForceUnwind);
+
+    // The navigations the query's shaper includes, found when the shaper is compiled.
+    private HashSet<INavigationBase> _shaperIncludes = [];
+
+    private sealed class IncludedNavigationFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        private readonly HashSet<INavigationBase> _found = [];
+
+        public static HashSet<INavigationBase> Find(Expression shaper)
+        {
+            var finder = new IncludedNavigationFinder();
+            finder.Visit(shaper);
+            return finder._found;
+        }
+
+        protected override Expression VisitExtension(Expression node)
+        {
+            if (node is IncludeExpression { Navigation: { } navigation })
+            {
+                _found.Add(navigation);
+            }
+
+            return base.VisitExtension(node);
+        }
+    }
+
+    /// <summary>
+    /// A <c>ThenInclude</c> the streaming reader can read off a streamable reference Include (<c>Include(d =&gt; d.Order).ThenInclude(o =&gt; o.Customer)</c>):
+    /// <list type="bullet">
+    /// <item>a reference with a lookup of its own at the document's root, whose key is a field of its parent's target
+    /// (<c>_lookup_Order.CustomerID</c>), or</item>
+    /// <item>a collection read from an array inside its parent's target (<c>_lookup_Customer._lookup_Orders</c>).</item>
+    /// </list>
+    /// Either is plain (no pipeline, not unwound) and sits at the alias its navigation names, under its parent's alias; the parent is itself streamable.
+    /// </summary>
+    private static bool IsStreamableThenIncludeLookup(LookupExpression lookup, IReadOnlyList<LookupExpression> all)
+        => FindThenIncludeParent(lookup, all) != null;
+
+    private static LookupExpression? FindThenIncludeParent(LookupExpression lookup, IReadOnlyList<LookupExpression> all)
+    {
+        if (lookup.Navigation is not { } navigation
+            || lookup.IsCorrelatedArraySource
+            || lookup.HasPipeline
+            || navigation.TargetEntityType.IsOwned()
+            || !StreamingEligibility.IsEligibleLookupElement(navigation.TargetEntityType))
+        {
+            return null;
+        }
+
+        var alias = LookupExpression.GetLookupAlias(navigation);
+        foreach (var parent in all)
+        {
+            if (parent == lookup || parent.Navigation is not { IsCollection: false } parentNavigation)
+            {
+                continue;
+            }
+
+            if (!(navigation.DeclaringEntityType.IsAssignableFrom(parentNavigation.TargetEntityType)
+                  || IsOwnedWithin(navigation.DeclaringEntityType, parentNavigation.TargetEntityType))
+                || !(parent.IsStreamableReference || IsStreamableThenIncludeLookup(parent, all)))
+            {
+                continue;
+            }
+
+            if (navigation.IsCollection
+                    ? !lookup.ForceUnwind && lookup.As == parent.As + "." + alias
+                    : IsLookupAliasOf(lookup.As, alias) && lookup.LocalField.StartsWith(parent.As + ".", StringComparison.Ordinal))
+            {
+                return parent;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// A join onto a collection navigation (<c>Customers.Join(Orders, …)</c>): the <c>$lookup</c> is unwound, so each row carries one joined document under
+    /// its alias. The whole-entity shaper reads the root document only and skips that element; a join's inner entity that a query returns is read as a
+    /// projection leaf instead (<c>HasBareJoinInnerEntityLeaf</c>), never by this shaper.
+    /// </summary>
+    private static bool IsFlattenedCollectionJoin(LookupExpression lookup)
+        => lookup is { Navigation.IsCollection: true, ForceUnwind: true, HasPipeline: false, IsCorrelatedArraySource: false };
+
+    // The alias a navigation's lookup has, or that with the suffix `AddLookup` gives a second lookup of the same navigation (`_lookup_Leaf_1`).
+    private static bool IsLookupAliasOf(string actual, string alias)
+        => actual == alias
+           || (actual.StartsWith(alias + "_", StringComparison.Ordinal) && actual.Length > alias.Length + 1
+               && actual.AsSpan(alias.Length + 1).IndexOfAnyExceptInRange('0', '9') < 0);
+
+    /// <summary>The alias of each ThenInclude reference whose lookup is not at its navigation's own alias, by its parent reference.</summary>
+    internal static IReadOnlyDictionary<(INavigation Parent, INavigation Nested), string> GetStreamingNestedAliases(MongoQueryExpression mongoQueryExpression)
+    {
+        var lookups = mongoQueryExpression.GetStreamingReferenceLookups();
+        var aliases = new Dictionary<(INavigation, INavigation), string>();
+        foreach (var lookup in lookups)
+        {
+            if (lookup.Navigation is { IsCollection: false } navigation
+                && !lookup.IsStreamableReference
+                && FindThenIncludeParent(lookup, lookups) is { Navigation: { } parent }
+                && lookup.As != LookupExpression.GetLookupAlias(navigation))
+            {
+                aliases[(parent, navigation)] = lookup.As;
+            }
+        }
+
+        return aliases;
+    }
+
+    // Whether `owned` is owned, through a chain of owned references, by `owner` (a ThenInclude through an owned navigation: `b.Address.Region`).
+    private static bool IsOwnedWithin(IEntityType owned, IEntityType owner)
+    {
+        for (var current = owned; current.IsOwned();)
+        {
+            if (current.FindOwnership() is not { IsUnique: true, PrincipalEntityType: var principal })
+            {
+                return false;
+            }
+
+            if (owner.IsAssignableFrom(principal))
+            {
+                return true;
+            }
+
+            current = principal;
+        }
+
+        return false;
+    }
+
+    private static IReadOnlyCollection<INavigation> GetStreamingThenIncludeReferences(MongoQueryExpression mongoQueryExpression)
+    {
+        var lookups = mongoQueryExpression.GetStreamingReferenceLookups();
+        return lookups
+            .Where(lookup => lookup.Navigation is { IsCollection: false } && !lookup.IsStreamableReference
+                             && FindThenIncludeParent(lookup, lookups) != null)
+            .Select(lookup => lookup.Navigation!)
+            .ToList();
     }
 
     /// <summary>
@@ -1381,7 +1552,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// Filtered or paged includes (a pipeline), ThenInclude (a prefixed, transitive lookup) and correlated arrays are none of these and stay DOM.
     /// </summary>
     private static bool IsStreamableCollectionLookup(LookupExpression lookup, IEntityType rootEntityType)
-        => lookup is { Navigation: { IsCollection: true } navigation, IsCorrelatedArraySource: false }
+        => lookup is { Navigation: { IsCollection: true } navigation, IsCorrelatedArraySource: false, ForceUnwind: false }
            && IsPlainOrPagedOrNestedCollectionArray(lookup, navigation)
            && !navigation.TargetEntityType.IsOwned()
            && navigation.DeclaringEntityType.IsAssignableFrom(rootEntityType)
@@ -1392,16 +1563,36 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     // (a discriminator narrowing, a correlated reducer, a filtered join) stay on the DOM shaper.
     private static bool IsPlainOrPagedOrNestedCollectionArray(LookupExpression lookup, INavigation navigation)
         => lookup.IsNativeCollectionLookup
+           // The Include's array renamed to leave the plain alias to an unfiltered array a Count reads.
+           || (lookup.RenamedToAvoidJoinCollision && !lookup.HasPipeline)
            || (!lookup.ForceUnwind
-               && lookup.As == LookupExpression.GetLookupAlias(navigation)
-               && lookup.PipelineKind is LookupPipelineKind.FilteredInclude or LookupPipelineKind.NestedInclude);
+               && (lookup.As == LookupExpression.GetLookupAlias(navigation) || lookup.RenamedToAvoidJoinCollision)
+               && lookup.PipelineKind is LookupPipelineKind.FilteredInclude or LookupPipelineKind.NestedInclude or LookupPipelineKind.DiscriminatorNarrowed);
 
-    /// <summary>The collection navigations of the query's streamable collection lookups (see <see cref="IsStreamableCollectionLookup"/>).</summary>
-    private static IReadOnlyCollection<INavigation> GetStreamingLookupCollections(MongoQueryExpression mongoQueryExpression)
+    /// <summary>The alias each streamable collection Include's array sits under, where it is not the navigation's own (see <see cref="LookupExpression.RenamedToAvoidJoinCollision"/>).</summary>
+    internal static IReadOnlyDictionary<INavigation, string> GetStreamingCollectionAliases(MongoQueryExpression mongoQueryExpression)
     {
         var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
-        return mongoQueryExpression.GetStreamingReferenceLookups()
-            .Where(lookup => IsStreamableCollectionLookup(lookup, rootEntityType))
+        var aliases = new Dictionary<INavigation, string>();
+        foreach (var lookup in mongoQueryExpression.GetStreamingReferenceLookups())
+        {
+            if (IsStreamableCollectionLookup(lookup, rootEntityType) && lookup.As != LookupExpression.GetLookupAlias(lookup.Navigation!))
+            {
+                aliases[lookup.Navigation!] = lookup.As;
+            }
+        }
+
+        return aliases;
+    }
+
+    /// <summary>The collection navigations of the query's streamable collection lookups (see <see cref="IsStreamableCollectionLookup"/>).</summary>
+    internal static IReadOnlyCollection<INavigation> GetStreamingLookupCollections(MongoQueryExpression mongoQueryExpression)
+    {
+        var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
+        var lookups = mongoQueryExpression.GetStreamingReferenceLookups();
+        return lookups
+            .Where(lookup => IsStreamableCollectionLookup(lookup, rootEntityType)
+                             || (lookup.Navigation is { IsCollection: true } && FindThenIncludeParent(lookup, lookups) != null))
             .Select(lookup => lookup.Navigation!)
             .ToList();
     }

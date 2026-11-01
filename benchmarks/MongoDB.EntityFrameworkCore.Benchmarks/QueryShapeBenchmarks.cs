@@ -21,6 +21,7 @@ namespace MongoDB.EntityFrameworkCore.Benchmarks;
 //   grouping    - GroupBy: few and many groups (up to one per row), composite and joined keys, many accumulators, a filter before and a
 //                 having after, ordering and paging over the groups, and a list-valued group element
 //   owned       - nested owned references and collections (Orders), filters, projections and counts over them
+//   nonscalar   - projections of sub-documents, arrays, owned and joined entities, nested constructions and a whole entity in a construction
 //   relations   - reference Include, navigation projection, explicit Join
 //   tracking    - the same selective whole-entity query untracked and tracked
 //   includes    - collection Include (untracked, tracked, filtered, ThenInclude), several reference Includes, Include under paging and
@@ -35,7 +36,6 @@ public class QueryShapeBenchmarks
 
     private static readonly int[] InList = Enumerable.Range(0, 200).Select(i => i * 50).ToArray();
 
-    // The hand-written $lookup targets of the Include / navigation shapes: the driver has no Include.
     public sealed class OrderWithAccounts
     {
         public ObjectId Id { get; set; }
