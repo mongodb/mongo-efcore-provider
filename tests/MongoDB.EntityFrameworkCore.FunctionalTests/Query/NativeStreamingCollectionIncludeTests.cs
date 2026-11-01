@@ -329,11 +329,11 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     // ---- Shapes that stay on the DOM shaper ----------------------------------------------------------
 
     [Fact]
-    public void Then_include_stays_on_the_dom_shaper_and_builds_the_same_graph()
+    public void Then_include_of_a_reference_off_a_collection_streams_and_builds_the_same_graph()
     {
         using (var db = Seed(MongoQueryMode.NativeOnly))
         {
-            AssertDom(db.Categories.AsNoTracking().Include(c => c.Articles).ThenInclude(a => a.Author));
+            AssertStreams(db.Categories.AsNoTracking().Include(c => c.Articles).ThenInclude(a => a.Author));
         }
 
         var results = NativeModeAssert.NativeAndParity(mode =>
@@ -348,6 +348,54 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
         });
 
         Assert.Equal(["c1:[a1/ann,a2/bob,a3/ann]", "c2:[a4/bob]", "c3:[]"], results);
+    }
+
+    [Fact]
+    public void Sorted_and_paged_include_streams_and_matches_driver_linq()
+    {
+        using (var db = Seed(MongoQueryMode.NativeOnly))
+        {
+            AssertStreams(db.Categories.AsNoTracking().Include(c => c.Articles.OrderByDescending(a => a.Views).Take(2)));
+        }
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            var (_, db) = SeedBlog(mode);
+            using (db)
+            {
+                return db.Categories.AsNoTracking().Include(c => c.Articles.OrderByDescending(a => a.Views).Take(2)).OrderBy(c => c.Id).ToList()
+                    .Select(c => $"{c.Name}:[{string.Join(',', c.Articles.Select(a => a.Title))}]")
+                    .ToList();
+            }
+        });
+
+        Assert.Equal(["c1:[a3,a2]", "c2:[a4]", "c3:[]"], results);
+    }
+
+    [Fact]
+    public void Tracked_then_include_tracks_every_entity_once_and_shares_the_referenced_instance()
+    {
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            var (_, db) = SeedBlog(mode);
+            using (db)
+            {
+                var categories = db.Categories.Include(c => c.Articles).ThenInclude(a => a.Author).OrderBy(c => c.Id).ToList();
+                var authors = categories.SelectMany(c => c.Articles).Where(a => a.Author != null).Select(a => a.Author!).Distinct().Count();
+                return new List<string>
+                {
+                    $"entries={db.ChangeTracker.Entries().Count()}",
+                    $"authors={authors}",
+                    string.Join(
+                        ';',
+                        categories.Select(c => $"{c.Name}:[{string.Join(',', c.Articles.OrderBy(a => a.Id).Select(a => $"{a.Title}/{a.Author?.Name}"))}]")),
+                };
+            }
+        });
+
+        // Three categories, four articles, two distinct authors shared by the articles.
+        Assert.Equal("entries=9", results[0]);
+        Assert.Equal("authors=2", results[1]);
     }
 
     [Fact]
