@@ -492,6 +492,26 @@ internal static class BsonBinding
         return value;
     }
 
+    /// <summary>
+    /// Create the expression which reads a looked-up reference's document as <see langword="null"/> when it holds no key, which is what
+    /// <c>$lookup</c> leaves for a parent that matched nothing but holds a lookup of its own (see <see cref="ReferenceDocumentOrNull"/>).
+    /// </summary>
+    internal static MethodCallExpression CreateReferenceDocumentOrNull(Expression bsonDocExpression, IReadOnlyProperty keyProperty)
+    {
+        var key = new PropertyReadInfo(keyProperty);
+        return Expression.Call(null, ReferenceDocumentOrNullMethodInfo, bsonDocExpression, Expression.Constant(key.ElementPath?[0] ?? key.ElementName));
+    }
+
+    private static readonly MethodInfo ReferenceDocumentOrNullMethodInfo
+        = typeof(BsonBinding).GetMethod(nameof(ReferenceDocumentOrNull), BindingFlags.Static | BindingFlags.NonPublic)!;
+
+    /// <summary>
+    /// A nested <c>$lookup</c> (a collection ThenInclude) under an optional reference that matched nothing still creates the reference's
+    /// document to hold its array: a placeholder with no key. No document stored in a collection lacks its key, so it is no match.
+    /// </summary>
+    internal static BsonDocument? ReferenceDocumentOrNull(BsonDocument? document, string keyElementName)
+        => document != null && document.Contains(keyElementName) ? document : null;
+
     internal static T? GetPropertyValueAtElement<T>(BsonDocument document, string elementName, PropertyReadInfo property)
     {
         // Intentionally drop any ElementPath from the source serialization info: in a projection the

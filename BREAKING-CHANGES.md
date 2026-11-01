@@ -36,6 +36,8 @@ These calls now return `null` for a null or missing operand, as other EF Core pr
 
 Calls inside predicate lambdas (`Where`, `Any`, `All`, `Count`, `First`/`Single`/`Last` with a predicate, ...) are not rewritten: the empty string cannot surface as data there, and rewriting would defeat the index-friendly forms the driver renders for comparisons such as `ToUpper() == "X"`.
 
+One consequence is visible through a predicate: the native query translator treats a null or missing string as not equal to `""` (as SQL does), so `Where(x => x.S.Substring(0, 0) == "")` no longer keeps rows whose `S` is null or missing, where `MongoQueryMode.DriverLinq` still does.
+
 #### Why
 
 The old behavior silently turned null data into an empty string.
@@ -107,6 +109,24 @@ The previous result was wrong: the query returned rows that its own `Where` excl
 #### Mitigations
 
 If your application depended on the unfiltered result, remove the `Where` from the join's inner source and filter after the join, or apply the filter you actually want explicitly. Queries that already filtered the inner source correctly (for example by filtering after the join) are unaffected.
+
+### A `null` or missing value for a required property of a composite-key entity now throws
+
+#### Old behavior
+
+An entity with a composite primary key whose stored document held `null` (or no element) for a required (non-nullable) property was materialized with the property left at its default.
+
+#### New behavior
+
+Such an entity is read like any other entity, so the read throws `InvalidOperationException` ("Document element is null for required non-nullable property ..."), as it already did for entities with a single-property key.
+
+#### Why
+
+The data contradicts the model, and reading it silently hid that.
+
+#### Mitigations
+
+Make the property nullable, or fix the stored documents.
 
 ### A missing or `null` embedded array now materializes as an empty collection, not `null`
 

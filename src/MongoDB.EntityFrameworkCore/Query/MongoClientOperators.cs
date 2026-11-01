@@ -38,6 +38,7 @@ internal static class MongoClientOperators
     public static ClientContainsEnumerable<T> Contains<T>(QueryContext queryContext, IEnumerable<T> source, Func<QueryContext, T> item)
         => new(queryContext, source, item);
 
+    /// <summary>The current value of the query parameter named <paramref name="parameterName"/>.</summary>
     public static T ParameterValue<T>(QueryContext queryContext, string parameterName)
 #if EF8 || EF9
         => (T)queryContext.ParameterValues[parameterName]!;
