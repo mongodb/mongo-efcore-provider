@@ -96,6 +96,32 @@ public class NativeJoinInnerEntityProjectionTests(TemporaryDatabaseFixture datab
         }
     }
 
+    [Fact]
+    public void A_tracked_join_inner_read_twice_streams_and_is_one_instance()
+    {
+        var suffix = Seed();
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = Db(mode, suffix);
+            var rows = db.Articles.AsTracking().Join(db.Categories, a => a.CategoryId, c => c.Id, (a, c) => new { A = c, B = c })
+                .OrderBy(x => x.A.Id).ToList();
+            return new List<string>
+            {
+                string.Join(",", rows.Select(r => r.A.Name + "/" + r.B.Name)),
+                $"same={rows.All(r => ReferenceEquals(r.A, r.B))}",
+                $"entries={db.ChangeTracker.Entries().Count()}",
+            };
+        });
+
+        Assert.Equal("c1/c1,c1/c1,c2/c2", results[0]);
+        Assert.Equal("same=True", results[1]);
+        Assert.Equal("entries=2", results[2]);
+
+        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        AssertStreams(streaming.Articles.AsTracking().Join(streaming.Categories, a => a.CategoryId, c => c.Id, (a, c) => new { A = c, B = c }));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

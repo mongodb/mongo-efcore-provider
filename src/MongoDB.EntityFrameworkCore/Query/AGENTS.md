@@ -60,7 +60,7 @@ Scope, joins, grouping:
   (the lowerer places a chain's paging after every `$lookup`). A bare INNER entity leaf (`HasBareJoinInnerEntityLeaf`)
   is not the whole-entity streaming shape (that rewriter is typed by the root entity); it is read as a projection leaf instead,
   the inner document under its join level's prefix (`StreamedCollectionSubstituter.TryStreamJoinInner`, which also serves the inner
-  entity beside other projected values). An Include on the inner entity keeps the DOM. A construction whose members are ALL whole-entity
+  entity beside other projected values). A reference Include on the inner entity keeps the DOM (see below). A construction whose members are ALL whole-entity
   inner leaves stages each level whole; `BindResultMember` rebinds each shaper with `alias: null` so a sibling
   `o1.o2` is the same instance.
 - **A required reference Include is filtered by the cursor, not the server** (`LookupExpression.CanBeFilteredOnClient`,
@@ -71,6 +71,42 @@ Scope, joins, grouping:
   document form) and returns `default` for a row whose reference is absent, which `QueryingEnumerable` skips (`isDropped`). The lowerer keeps
   the server `$match` + `$set` when any stage after the first such lookup is not a further lookup/unwind (paging, sort or `Where` over
   the join, set operations, a count), because those depend on the dropped rows. Dropped rows must record no tracking.
+- **ThenInclude off a reference Include is streamed** (`IsStreamableThenIncludeLookup`, `LookupReferencePlan.AtRoot`). A further reference is a
+  `$lookup` of its own at the document's ROOT (`_lookup_Customer`, `localField` `_lookup_Order.CustomerID`), so the root fill loop reads it and
+  the parent target's materializer uses it. A collection is an array INSIDE its parent's document (`_lookup_Customer._lookup_Notes`) and is
+  streamed only under a REQUIRED parent: under an optional one that matched nothing, `$lookup` still creates the parent document to hold the
+  array, a joined entity with no key (the DOM shaper reads it as no reference: `BsonBinding.ReferenceDocumentOrNull`). Nested plans hang only off the reference the shaper includes (two
+  navigations to one type must not claim each other's lookup), and the cursor filters no row when a ThenInclude is present.
+- **Collection lookups the streaming shaper does not read.** A Join onto a collection navigation is a flattened `$lookup` (`IsFlattenedCollectionJoin`):
+  the whole-entity shaper ignores it, and the joined entity it returns is read as a projection leaf (`TryStreamEntityLeaf`'s collection-navigation
+  branch). A ThenInclude collection under an optional parent that matched nothing leaves a key-less placeholder document, which the reader reads as
+  no match (`BuildLookupReferenceDescent`, `tolerateNoKey`). The array of a correlated subquery, or of a collection navigation, projected beside other
+  values is read into a `List<T>` of entities (`TryStreamEntityCollection`, `MongoEntityListSerializer`); a tracked query's elements are remapped to the
+  instances the state manager tracks (`CanonicalList`). An element that includes a collection reads it from the `_lookup_<Nav>` array inside the element
+  (`BuildRootEntityReader(readIncludedCollections: true)`), like a ThenInclude collection.
+- **Lookups no shaper reads do not block streaming** (`IsUnreadLookup`): an explicit join (`ForceUnwind`) whose navigation the shaper does not include, the
+  unfiltered array behind a `Count` (`IsBareCountSizeSource`) and a correlated keyed array only a predicate uses. A join lookup whose navigation IS included
+  (two ThenIncludes through one type: `_lookup_Leaf`, `_lookup_Leaf_1`) is not skipped, because the reader would fill both branches from one array. A
+  collection Include renamed to leave its plain alias to such an array (`RenamedToAvoidJoinCollision`) is read from the alias it was given
+  (`GetStreamingCollectionAliases`); filtered, paged and discriminator-narrowed Includes only change which elements the array holds.
+- **A dotted projection alias is a path of sub-documents.** The projection row reader descends one level per segment (`BuildNameLoop`), so an owned collection
+  under owned references (`b.Home.Notes`) and a nested construction's scalars (`GetPropertyValueAtPath`, `GetElementValueAtPath`) are slots like any other.
+  An owned array read both whole and through a fused element `Select` is read whole, the `Select` re-applied (one element is read once).
+- **A collection Include on a join's inner entity** is the array inside the joined document and streams with it; a REFERENCE Include on it is a `$lookup`
+  of its own at the root, which a single-document reader cannot see, so it keeps the DOM. A whole-element `SelectMany` over an owned collection streams: its
+  documents are the elements, with no owner document to take keys from.
+- **A reference or collection Include on an entity that is a slot of its own** (a join's inner entity, the root beside other values) is done by the row reader
+  once both slots are read (`MongoStreamedIncludeExpression`, `MongoIncludeFixups` while the row's tracking is deferred): the including entity's tracking is replayed
+  AFTER the entities it includes (`MongoQueryContext.TrackAfterIncluded`), which is what makes the state manager wire the graph. A root's own included
+  collection is an array inside its document and is read by its reader, not by this. One entity read twice in an untracked projection is two instances, so the
+  row reader copies the sub-document and reads each slot from the copy (`ReadSlotsFromCopy`); a tracked query reads it once.
+- **ThenInclude through an owned navigation** (`Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region)`) is the same root-level lookup
+  as any ThenInclude reference (`IsOwnedWithin`); two ThenIncludes of one navigation under different parents, or through itself (`Parent.Parent`), have lookups
+  `_lookup_Leaf`, `_lookup_Leaf_1`, which the reader finds by parent (`GetStreamingNestedAliases`).
+- **An entity with no `$project` is the row's whole document** (`WholeRowAlias`): a client method over it, or a conditional beside its own lookups. The row reader
+  copies the document, reads that slot from one copy and every other slot (the lookups inside it) from a second. Anything else the shaper needs of the
+  document is read from the lookups it holds; the polymorphic storage conflicts that cannot be read by one plan (sibling derived types storing one element
+  differently, or owning different navigations under one element name) stay on the DOM.
 - **Filter joins before a reference Include** (`TryAdmitFilterJoins`): extra joins are admitted only when each is a
   resolved, flattened, eligible reference join and the Where that created them left its predicate (and later
   paging/Distinct) in `PostJoinOps`. A REQUIRED navigation's inner join can drop rows the page counted and stays

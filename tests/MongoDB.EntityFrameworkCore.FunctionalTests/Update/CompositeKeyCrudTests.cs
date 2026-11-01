@@ -18,6 +18,8 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Update;
 
@@ -142,6 +144,34 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture database)
         var expectedOrdered = actualOrdered.OrderBy(e => e.Id1).ThenBy(e => e.Id2).ToList();
 
         Assert.Equal(expectedOrdered, actualOrdered);
+    }
+
+    [Fact]
+    public void Should_throw_for_a_null_required_property_of_a_composite_key_entity()
+    {
+        var collection = database.CreateCollection<Entity>();
+        {
+            using var db = SingleEntityDbContext.Create(collection, builder =>
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
+            db.Entities.Add(new Entity { Id1 = "key", Id2 = 1 });
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, builder =>
+                builder.Entity<Entity>().HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
+
+            // MongoQueryMode.DriverLinq still leaves the property at its default.
+            if (TestQueryMode.Current == MongoQueryMode.DriverLinq)
+            {
+                Assert.Null(db.Entities.Single().Data);
+            }
+            else
+            {
+                var exception = Assert.Throws<InvalidOperationException>(() => db.Entities.ToList());
+                Assert.Contains("'Data'", exception.Message);
+            }
+        }
     }
 
     private class Entity

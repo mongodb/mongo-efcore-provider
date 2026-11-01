@@ -598,6 +598,16 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     var valueExpression =
                         CreateGetValueExpression(innerAccessExpression, fieldName, fieldRequired, parameterExpression.Type);
 
+                    // A collection ThenInclude under an optional reference that matched nothing leaves a key-less placeholder document for the
+                    // reference, which is no reference.
+                    if (parameterExpression.Type == typeof(BsonDocument)
+                        && projectionExpression is EntityProjectionExpression { ParentAccessExpression: ObjectAccessExpression { Navigation: { IsCollection: false } referenceNavigation } access }
+                        && IsCrossCollectionAccess(access)
+                        && referenceNavigation.TargetEntityType.FindPrimaryKey() is { } referenceKey)
+                    {
+                        valueExpression = BsonBinding.CreateReferenceDocumentOrNull(valueExpression, referenceKey.Properties[0]);
+                    }
+
                     return Expression.MakeBinary(ExpressionType.Assign, binaryExpression.Left, valueExpression);
                 }
 

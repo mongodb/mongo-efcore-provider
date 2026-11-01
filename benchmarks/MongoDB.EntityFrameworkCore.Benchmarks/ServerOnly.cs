@@ -11,8 +11,8 @@ namespace MongoDB.EntityFrameworkCore.Benchmarks;
 internal static class ServerOnly
 {
     // --server-only-articles: the MultipleReferenceIncludes pipelines (two reference Includes off Articles) timed on the server alone, as raw
-    // documents: the driver's two plain lookups, the provider's lookup + $match + $set per reference, and the lookup + $match form that leaves
-    // each reference as a one-element array.
+    // documents: the driver's two plain lookups, the lookup + $match + $set per reference the provider emitted before a required reference was
+    // filtered on the cursor, and the lookup + $match form that leaves each reference as a one-element array.
     public static int RunArticles()
     {
         var conn = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
@@ -47,7 +47,7 @@ internal static class ServerOnly
             }
 
             Time("driver: lookup, lookup", () => Raw([Lookup("Categories", "CategoryId", "Categories"), Lookup("Authors", "AuthorId", "Authors")]));
-            Time("provider: (lookup, $match, $set) x2", () => Raw([
+            Time("former provider: (lookup, $match, $set) x2", () => Raw([
                 Lookup("Authors", "AuthorId", "_lookup_Author"), Match("_lookup_Author"), First("_lookup_Author"),
                 Lookup("Categories", "CategoryId", "_lookup_Category"), Match("_lookup_Category"), First("_lookup_Category")]));
             Time("(lookup, $match) x2, arrays kept", () => Raw([

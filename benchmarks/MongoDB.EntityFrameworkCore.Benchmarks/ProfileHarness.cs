@@ -9,8 +9,10 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.Benchmarks;
 
 // Steady-state loop for attaching dotnet-trace / dotnet-counters, and for fixed-cost and scaling runs.
-//   --profile <shape> <config> [--seconds N] [--rows N] [--warmup N] [--nopool]
-// config: driver | driverlinq | native. Prints one machine-readable PROFILE line.
+//   --profile <shape> <config> [--seconds N] [--rows N] [--warmup N] [--minops N] [--nopool] [--connstr] [--print-commands]
+//                              [--threadsafety] [--alloc-types] [--alloc-top N]
+// shape: any QueryShapeBenchmarks.AllShapes name, or one of the extended shapes below. config: driver | driverlinq | native.
+// EF's thread-safety checks are off unless --threadsafety is given. Prints one machine-readable PROFILE line.
 // rows applies to FlatItems and Reviews (products fixed at 100). Extended shapes use the headline-sized data
 // (orders 10,000, wides 5,000, accounts 200) unless --rows is given, in which case orders and wides = rows.
 internal static class ProfileHarness

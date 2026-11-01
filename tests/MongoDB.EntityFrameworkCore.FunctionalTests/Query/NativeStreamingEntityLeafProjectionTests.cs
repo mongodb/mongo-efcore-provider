@@ -341,6 +341,32 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
         AssertCursorIsNotDocument(streaming.Entities.AsNoTracking().Select(o => new Wrapped(o) { Code = o.Code }));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_constructed_entity_with_a_computed_member_streams(bool tracked)
+    {
+        var collection = SeedOrders("Constructed" + tracked);
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode, OrderModel);
+            var query = tracked ? db.Entities.AsTracking() : db.Entities.AsNoTracking();
+            var rows = query.OrderBy(o => o.Id).Select(o => new Order { Code = o.Code + "!" }).ToList();
+            return new List<string>
+            {
+                string.Join(",", rows.Select(r => r.Code + (r.Shipping == null ? "-" : "S"))),
+                $"entries={db.ChangeTracker.Entries<Order>().Count()}",
+            };
+        });
+
+        Assert.Equal("one!-,two!-,three!-,four!-,five!-", results[0]);
+        Assert.Equal("entries=0", results[1]);
+
+        using var streaming = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        AssertStreams(streaming.Entities.AsNoTracking().Select(o => new Order { Code = o.Code + "!" }));
+    }
+
     private class Marker
     {
         public int Tag { get; set; } = 7;

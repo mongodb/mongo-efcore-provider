@@ -38,9 +38,9 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// materialized via a single forward <see cref="IBsonReader"/> pass into typed locals instead of a <see cref="BsonDocument"/> DOM.
 /// </summary>
 /// <remarks>
-/// Handles flat entities, reference owned sub-documents (recursively), and owned collections whose element has no navigation
-/// of its own (see <see cref="BuildFillLoop"/>). A non-owned collection navigation, or an owned collection element with a further
-/// navigation, is rejected upstream by <see cref="StreamingEligibility"/> and surfaces here as <see cref="NativeTranslationNotSupportedException"/>.
+/// Handles flat entities, owned sub-documents and collections (recursively), discriminated hierarchies, and the non-owned collections and
+/// references the query includes, read from their root-level <c>$lookup</c> fields (see <see cref="BuildFillLoop"/>). What
+/// <see cref="StreamingEligibility"/> or the plan cannot read surfaces here as <see cref="NativeTranslationNotSupportedException"/>.
 /// EF's construction/tracking blocks are reused verbatim, with <c>ValueBufferTryReadValue</c> reads redirected to the typed locals
 /// and the <see cref="MaterializationContext"/> source replaced by <see cref="ValueBuffer.Empty"/>; <see cref="IncludeExpression"/>
 /// structure (and navigation fixup) is preserved.
@@ -56,7 +56,14 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
     // The root's non-owned collection navigations the query includes, each read from its root-level `_lookup_<Nav>` $lookup array. The
     // query gate admits only these (see MongoShapedQueryCompilingExpressionVisitor.AllPendingLookupsAreStreamable).
-    private readonly IReadOnlyCollection<INavigation> _lookupCollections;
+    private IReadOnlyCollection<INavigation> _lookupCollections;
+
+    // Where a ThenInclude reference's lookup is not at its navigation's own alias: two references to one type each ThenInclude the same navigation
+    // (`Primary.Leaf`, `Secondary.Leaf`), so the second's lookup is `_lookup_Leaf_1`. Keyed by the parent reference and the nested one.
+    private readonly IReadOnlyDictionary<(INavigation Parent, INavigation Nested), string> _nestedAliases;
+
+    // Where a collection Include's array is not at its navigation's own alias (renamed so a Count's unfiltered array keeps that one).
+    private readonly IReadOnlyDictionary<INavigation, string> _collectionAliases;
 
     // The collection navigations the shaper actually includes (an IncludeExpression), found when Rewrite starts. A lookup collection the query
     // only uses in a predicate or a count has an array in the document but nothing to build from it: it is skipped like any unread element.
@@ -72,7 +79,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
     private void FindIncludes(Expression expression)
     {
-        var finder = new IncludedCollectionFinder();
+        var finder = new IncludeFinder();
         finder.Visit(expression);
         _includedCollections = finder.Collections;
         _includedReferences = finder.References;
@@ -88,18 +95,62 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     // returns no entity for it (see Rewrite).
     private readonly IReadOnlyCollection<INavigation> _requiredReferences;
 
+    // The reference navigations of the root's lookup targets (and theirs) that the query includes with ThenInclude. Each is a `$lookup` of its own at
+    // the document's root, matched on the key its parent's target holds (`_lookup_Order.CustomerID`), so the document holds it beside its parent's
+    // lookup, not inside it; the materializer of the parent's target uses it all the same.
+    private readonly IReadOnlyCollection<INavigation> _nestedReferences;
+
+    // The non-owned navigations being planned, outermost first: a navigation is planned once along a path, so a cycle of them (Customer.Orders and
+    // Order.Customer, a self-referential Employee.Manager) ends where it would repeat. See BuildPlan.
+    private readonly PlanChain _planChain = new();
+
+    // The navigations on the path being planned, with how often each may repeat on it: once, plus once for each ThenInclude of it that has a
+    // lookup of its own (`Parent.Parent` is two lookups of one navigation, `_lookup_Parent` and `_lookup_Parent_1`). A cycle still ends.
+    private sealed class PlanChain
+    {
+        private readonly Dictionary<INavigation, int> _counts = [];
+
+        public IReadOnlyDictionary<(INavigation Parent, INavigation Nested), string> NestedAliases { get; set; } =
+            new Dictionary<(INavigation, INavigation), string>();
+
+        public bool Contains(INavigation navigation)
+            => _counts.GetValueOrDefault(navigation) >= 1 + NestedAliases.Keys.Count(key => key.Nested == navigation);
+
+        public bool Add(INavigation navigation)
+        {
+            if (Contains(navigation))
+            {
+                return false;
+            }
+
+            _counts[navigation] = _counts.GetValueOrDefault(navigation) + 1;
+            return true;
+        }
+
+        public void Remove(INavigation navigation) => _counts[navigation]--;
+    }
+
     // No BsonSerializerFactory dependency: each property's serializer is baked into the expression tree at
     // compile time via the static BsonSerializerFactory.GetPropertySerializationInfo (see BuildTypedRead).
     public MongoStreamingEntityMaterializerRewriter(
         IEntityType rootEntityType,
         bool trackedQuery,
         IReadOnlyCollection<INavigation>? lookupCollections = null,
-        IReadOnlyCollection<INavigation>? requiredReferences = null)
+        IReadOnlyCollection<INavigation>? requiredReferences = null,
+        IReadOnlyCollection<INavigation>? nestedReferences = null,
+        IReadOnlyDictionary<INavigation, string>? collectionAliases = null,
+        IReadOnlyDictionary<(INavigation Parent, INavigation Nested), string>? nestedAliases = null)
     {
+        _nestedAliases = nestedAliases ?? new Dictionary<(INavigation, INavigation), string>();
+        _planChain.NestedAliases = _nestedAliases;
+        _collectionAliases = collectionAliases ?? new Dictionary<INavigation, string>();
         _rootEntityType = rootEntityType;
         _trackedQuery = trackedQuery;
+        // An owned type read as the document itself (a whole element of an unwound owned collection) has no owner document to take its keys from.
+        _ownerKeysAbsent = rootEntityType.IsOwned();
         _lookupCollections = lookupCollections ?? [];
         _requiredReferences = requiredReferences ?? [];
+        _nestedReferences = nestedReferences ?? [];
     }
 
     /// <summary>
@@ -184,6 +235,12 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         public required INavigation Navigation { get; init; }
         public required EntityPlan Target { get; init; }
         public required string ElementName { get; init; }
+
+        /// <summary>
+        /// Whether the element sits at the root of the document although the plan hangs off another lookup's target: a ThenInclude reference.
+        /// The target that owns the plan builds its materializer from it, but the document's root fill loop reads it.
+        /// </summary>
+        public bool AtRoot { get; init; }
     }
 
     /// <summary>
@@ -237,7 +294,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         var rewrittenBody = RewriteMaterializer(injectedBody, rootPlan);
 
-        var fillLoop = BuildFillLoop(rootPlan);
+        var fillLoop = BuildFillLoop(rootPlan, isDocumentRoot: true);
 
         var allLocals = new List<ParameterExpression> { _nameIndex };
         var initializers = new List<Expression>();
@@ -388,10 +445,19 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// <summary>
     /// Builds a reader of the whole root entity held as a sub-document of the row (<c>new { Item = f, f.Name.Length }</c>): the rewriter's
     /// ordinary one-document materializer, as a lambda over the query context, the reader (positioned at the sub-document) and its context.
-    /// <paramref name="leafExpression"/> is the injected shaper of the entity. Untracked queries only.
+    /// <paramref name="leafExpression"/> is the injected shaper of the entity.
     /// </summary>
-    public LambdaExpression BuildRootEntityReader(Expression leafExpression)
+    public LambdaExpression BuildRootEntityReader(Expression leafExpression, bool readIncludedCollections = false)
     {
+        // An entity read from a document of its own that the shaper includes collections of (the elements of a correlated subquery's list, each
+        // holding its nested `$lookup` arrays) reads them like a root's included collections.
+        if (readIncludedCollections && _lookupCollections.Count == 0)
+        {
+            var finder = new IncludeFinder();
+            finder.Visit(leafExpression);
+            _lookupCollections = finder.Collections.OfType<INavigation>().Where(n => !n.TargetEntityType.IsOwned()).ToList();
+        }
+
         var reader = Expression.Parameter(typeof(IBsonReader), "__reader");
         var context = Expression.Parameter(typeof(BsonDeserializationContext), "__context");
         var body = Rewrite(leafExpression, reader, context);
@@ -470,8 +536,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
            && ownership.Properties.Contains(property);
 
     /// <summary>
-    /// Builds a plan for <paramref name="entityType"/> (recursively for owned navigations). Rejects a non-owned collection navigation
-    /// with <see cref="NativeTranslationNotSupportedException"/>; a non-owned navigation inside an owned collection element is rejected earlier by <see cref="StreamingEligibility"/>.
+    /// Builds a plan for <paramref name="entityType"/> (recursively for owned navigations, and for the lookup collections and references the
+    /// query includes). A navigation with nothing to read it from throws <see cref="NativeTranslationNotSupportedException"/>.
     /// </summary>
     private EntityPlan BuildPlan(
         IEntityType entityType,
@@ -480,7 +546,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         bool allowLookupReferences = true,
         bool readIncludedReferences = false,
         bool isRootPlan = false,
-        bool onlyIncluded = false)
+        bool onlyIncluded = false,
+        bool readNestedReferences = false,
+        INavigation? lookupParent = null)
     {
         var locals = new Dictionary<IProperty, ParameterExpression>();
         var requiredPresence = new Dictionary<IProperty, ParameterExpression>();
@@ -506,7 +574,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             }
         }
 
-        // The properties of the derived types of a hierarchy's root. Eligibility admits only derived types without navigations.
+        // The properties of the derived types of a hierarchy's root. Eligibility admits derived types whose navigations are owned.
         var derivedProperties = new List<IProperty>();
         var derivedPresence = new Dictionary<IProperty, ParameterExpression>();
         if (isRootPlan)
@@ -554,7 +622,37 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 // RewriteLookupReferenceNavigation rejects it and falls back to the DOM path.
                 // The element of an included lookup collection reads the references and collections the shaper includes off it (ThenInclude);
                 // any other non-owned navigation of it is not read.
+                if (readNestedReferences
+                    && !navigation.IsCollection
+                    && _nestedReferences.Contains(navigation)
+                    && _includedReferences.Contains(navigation)
+                    && !_planChain.Contains(navigation))
+                {
+                    _planChain.Add(navigation);
+                    var nestedPresent = Expression.Variable(typeof(bool), "__present_lookup_" + target.ShortName());
+                    var nestedTarget = BuildPlan(
+                        target, nestedPresent, new Dictionary<IProperty, ParameterExpression>(),
+                        allowLookupReferences: false, isRootPlan: true, onlyIncluded: true, readNestedReferences: true, lookupParent: navigation);
+                    _planChain.Remove(navigation);
+                    lookupReferences.Add(new LookupReferencePlan
+                    {
+                        Navigation = navigation,
+                        Target = nestedTarget,
+                        ElementName = lookupParent != null && _nestedAliases.TryGetValue((lookupParent, navigation), out var nestedAlias)
+                            ? nestedAlias
+                            : LookupExpression.GetLookupAlias(navigation),
+                        AtRoot = true
+                    });
+                    continue;
+                }
+
+                // A collection of a lookup target is read from its array inside the target's document (`_lookup_Customer` holds `_lookup_Orders`).
+                var nestedCollection = readNestedReferences
+                                       && navigation.IsCollection
+                                       && _lookupCollections.Contains(navigation)
+                                       && _includedCollections.Contains(navigation);
                 if (!allowLookupReferences
+                    && !nestedCollection
                     && !(readIncludedReferences
                          && (navigation.IsCollection ? _includedCollections : _includedReferences).Contains(navigation)))
                 {
@@ -574,28 +672,45 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                         continue;
                     }
 
+                    if (!_planChain.Add(navigation))
+                    {
+                        continue;
+                    }
+
                     // Elements are independent instances: their own fresh locals scope (like a lookup reference's target), no further
                     // non-owned recursion, and no present flag (presence is per array element).
                     var lookupElement = BuildPlan(
                         target, present: null, new Dictionary<IProperty, ParameterExpression>(), allowLookupReferences: false,
                         readIncludedReferences: true, isRootPlan: true, onlyIncluded: true);
+                    _planChain.Remove(navigation);
                     ownedCollections.Add(new CollectionPlan
                     {
                         Navigation = navigation,
                         Element = lookupElement,
                         Counter = Expression.Variable(typeof(int), "__counter_" + target.ShortName()),
                         List = Expression.Variable(typeof(List<>).MakeGenericType(target.ClrType), "__list_" + target.ShortName()),
-                        LookupElementName = LookupExpression.GetLookupAlias(navigation)
+                        LookupElementName = _collectionAliases.TryGetValue(navigation, out var renamed) && !readNestedReferences
+                            ? renamed
+                            : LookupExpression.GetLookupAlias(navigation)
                     });
                     continue;
                 }
 
                 // The joined target is an independent instance: it gets its own fresh locals scope, not the root's (critical for
                 // self-referential references sharing IProperty keys). No further non-owned recursion.
+                if (!_planChain.Add(navigation))
+                {
+                    continue;
+                }
+
                 var lookupPresent = Expression.Variable(typeof(bool), "__present_lookup_" + target.ShortName());
                 var lookupTarget = BuildPlan(
                     target, lookupPresent, new Dictionary<IProperty, ParameterExpression>(),
-                    allowLookupReferences: false, isRootPlan: true, onlyIncluded: true);
+                    allowLookupReferences: false, isRootPlan: true, onlyIncluded: true,
+                    // Only the reference the shaper includes has the ThenInclude: another navigation to the same type (Primary/Secondary) must
+                    // not claim the nested lookup's element.
+                    readNestedReferences: _includedReferences.Contains(navigation), lookupParent: navigation);
+                _planChain.Remove(navigation);
                 lookupReferences.Add(new LookupReferencePlan
                 {
                     Navigation = navigation,
@@ -629,7 +744,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             }
 
             var childPresent = Expression.Variable(typeof(bool), "__present_" + target.ShortName());
-            var child = BuildPlan(target, childPresent, allLocals, allowLookupReferences, onlyIncluded: onlyIncluded);
+            var child = BuildPlan(
+                target, childPresent, allLocals, allowLookupReferences, onlyIncluded: onlyIncluded, readNestedReferences: readNestedReferences,
+                lookupParent: lookupParent);
             ownedNavigations.Add((navigation, child));
         }
 
@@ -700,7 +817,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// <summary>
     /// Builds the forward name-dispatch fill loop for one document level (reader already after <c>ReadStartDocument</c>).
     /// </summary>
-    private Expression BuildFillLoop(EntityPlan plan)
+    private Expression BuildFillLoop(EntityPlan plan, bool isDocumentRoot = false, bool tolerateNoKey = false)
     {
         var entries = new List<(string ElementName, Expression Body)>();
         var compositeKeyParts = new List<(string ElementName, Expression Body)>();
@@ -748,7 +865,11 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             entries.Add((elementName, BuildNullGuardedDescent(child)));
         }
 
-        foreach (var lookup in plan.LookupReferences)
+        // A ThenInclude reference is a lookup of its own at the document's root: read there, not inside its parent's target.
+        var lookups = isDocumentRoot
+            ? plan.LookupReferences.Where(lookup => !lookup.AtRoot).Concat(AtRootLookups(plan))
+            : plan.LookupReferences.Where(lookup => !lookup.AtRoot);
+        foreach (var lookup in lookups)
         {
             // The joined sub-document is a root-level `_lookup_<Nav>` element. Same null-guarded descent as an owned reference, keyed by
             // the lookup alias; BSON Null (no $lookup match) -> present = false -> null navigation.
@@ -810,11 +931,14 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     Expression.Assign(collection.List, Expression.New(collection.List.Type))));
         }
 
+        // A joined document always has its key. One without it is not a document at all: where a ThenInclude's parent matched nothing, `$lookup`
+        // still creates the parent to hold the array. Nothing of it is required then (see BuildLookupReferenceDescent).
+        var keyPresent = tolerateNoKey ? KeyPresentFlag(plan) : null;
         foreach (var (property, presenceFlag) in plan.RequiredPresence)
         {
             body.Add(
                 Expression.IfThen(
-                    Expression.Not(presenceFlag),
+                    keyPresent == null ? Expression.Not(presenceFlag) : Expression.AndAlso(keyPresent, Expression.Not(presenceFlag)),
                     Expression.Throw(
                         Expression.New(
                             InvalidOperationExceptionCtor,
@@ -824,12 +948,25 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         return Expression.Block(body);
     }
 
-    // A part of a composite primary key of a document root (an owned type's key is read from the owner, never stored on the element).
+    // The presence flag of the entity's first primary key property: set when its element was read, including `_id` parts of a composite key.
+    private static ParameterExpression? KeyPresentFlag(EntityPlan plan)
+        => plan.EntityType.FindPrimaryKey() is { } key
+           && plan.RequiredPresence.TryGetValue(key.Properties[0], out var flag)
+            ? flag
+            : null;
+
+    private static IEnumerable<LookupReferencePlan> AtRootLookups(EntityPlan plan)
+        => plan.LookupReferences.SelectMany(
+                lookup => lookup.AtRoot ? new[] { lookup }.Concat(AtRootLookups(lookup.Target)) : AtRootLookups(lookup.Target))
+            .Concat(plan.OwnedNavigations.SelectMany(owned => AtRootLookups(owned.Item2)));
+
+    // A part of a composite primary key the type stores itself: a document root's, or an owned type's own key properties (a key part that is the
+    // owner's, a shadow owner key, is read from the owner and never stored on the element).
     private static bool IsCompositeKeyPart(IProperty property)
         => property.IsPrimaryKey()
+           && !property.IsOwnedTypeKey()
            && property.DeclaringType is IEntityType { } entityType
-           && entityType.IsDocumentRoot()
-           && entityType.FindPrimaryKey()?.Properties.Count > 1;
+           && entityType.FindPrimaryKey()?.Properties.Count(p => !p.IsOwnedTypeKey()) > 1;
 
     // Descends into the `_id` sub-document of a composite key and fills the locals of its parts. A BSON null `_id` leaves them unset, so a
     // required part is reported missing as it was when the element was absent.
@@ -882,8 +1019,14 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 }
 
                 var index = entries.FindIndex(e => e.ElementName == name);
+                if (index < 0)
+                {
+                    throw new NativeTranslationNotSupportedException(
+                        $"Property '{property.DeclaringType.DisplayName()}.{property.Name}' shares the element '{name}' with a key part.");
+                }
+
                 var firstLocal = plan.Locals[first];
-                var copy = new List<Expression> { entries[index].Body, Expression.Assign(local, firstLocal.ConvertIfRequired(local.Type)) };
+                var copy = new List<Expression> { entries[index].Body, Expression.Assign(local, firstLocal) };
                 if (presenceFlag != null)
                 {
                     copy.Add(Expression.Assign(presenceFlag, Expression.Constant(true)));
@@ -904,12 +1047,13 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         }
     }
 
-    // Two properties read from one element: the same CLR type, nullability and serializer, so one read answers for both.
+    // Two properties read from one element: the same CLR type, nullability and serializer (including its representation), so one read answers for both.
     private static bool StoredAlike(IProperty first, IProperty second)
         => first.ClrType == second.ClrType
            && first.IsNullable == second.IsNullable
-           && BsonSerializerFactory.GetPropertySerializationInfo(first).Serializer.GetType()
-           == BsonSerializerFactory.GetPropertySerializationInfo(second).Serializer.GetType();
+           && Equals(
+               BsonSerializerFactory.GetPropertySerializationInfo(first).Serializer,
+               BsonSerializerFactory.GetPropertySerializationInfo(second).Serializer);
 
     private static readonly MethodInfo ReadNameIndexMethod =
         typeof(MongoElementNameDecoder).GetMethod(nameof(MongoElementNameDecoder.ReadIndex))!;
@@ -1000,7 +1144,11 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     hasDocument,
                     Expression.Block(
                         Expression.Call(_reader, ReadStartDocumentMethod),
-                        BuildFillLoop(plan),
+                        BuildFillLoop(plan, tolerateNoKey: true),
+                        // A document with no key is the placeholder a ThenInclude's `$lookup` leaves for an unmatched parent: no match.
+                        KeyPresentFlag(plan) is { } keyFlag
+                            ? Expression.Assign(plan.Present!, keyFlag)
+                            : Expression.Empty(),
                         Expression.Call(_reader, ReadEndDocumentMethod),
                         // A lookup that matches at most one document leaves nothing more in the array; skip whatever is there regardless.
                         // (An empty array has already reported its end, which cannot be read again.)
@@ -1242,7 +1390,15 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     {
         foreach (var collection in parent.OwnedCollections)
         {
-            if (collection.Navigation == navigation || collection.Navigation.Name == navigation.Name)
+            if (collection.Navigation == navigation)
+            {
+                return collection;
+            }
+        }
+
+        foreach (var collection in parent.OwnedCollections)
+        {
+            if (collection.Navigation.Name == navigation.Name)
             {
                 return collection;
             }
@@ -1291,8 +1447,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// <summary>
     /// Rewrites a non-owned single reference navigation. The joined entity comes from the root-level <c>_lookup_&lt;Nav&gt;</c> field and is
     /// materialized from the target plan's own locals (PK read as a normal field, own tracking). The block has the same EF shape as an owned
-    /// reference; its <c>bsonDocN == null</c> guard becomes <c>!present</c> (false on BSON Null, i.e. no match). Nested includes (ThenInclude)
-    /// are not yet streamable.
+    /// reference; its <c>bsonDocN == null</c> guard becomes <c>!present</c> (false on BSON Null, i.e. no match).
     /// </summary>
     private Expression RewriteLookupReferenceNavigation(
         Expression navExpression,
@@ -1313,9 +1468,25 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             Expression.Convert(rewrittenBlock, resultType));
     }
 
-    // Collects the collection navigations of every IncludeExpression in a shaper (an IncludeExpression is an extension node, so the base
+    /// <summary>Whether a shaper includes a non-owned reference, which is a <c>$lookup</c> of its own beside the document and not part of it.</summary>
+    public static bool IncludesNonOwnedReference(Expression expression)
+    {
+        var finder = new IncludeFinder();
+        finder.Visit(expression);
+        return finder.References.Any(n => !n.TargetEntityType.IsOwned());
+    }
+
+    /// <summary>The navigations a shaper includes, as a stable text: two leaves of one entity with equal signatures are read the same way.</summary>
+    public static string IncludeSignature(Expression expression)
+    {
+        var finder = new IncludeFinder();
+        finder.Visit(expression);
+        return string.Join(",", finder.All.Select(n => n.DeclaringType.ShortName() + "." + n.Name).OrderBy(n => n, StringComparer.Ordinal));
+    }
+
+    // Collects the navigations of every IncludeExpression in a shaper, by kind (an IncludeExpression is an extension node, so the base
     // visitor walks into its entity and navigation expressions).
-    private sealed class IncludedCollectionFinder : System.Linq.Expressions.ExpressionVisitor
+    private sealed class IncludeFinder : System.Linq.Expressions.ExpressionVisitor
     {
         public HashSet<INavigationBase> Collections { get; } = [];
 
@@ -1350,7 +1521,15 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     {
         foreach (var lookup in parent.LookupReferences)
         {
-            if (lookup.Navigation == navigation || lookup.Navigation.Name == navigation.Name)
+            if (lookup.Navigation == navigation)
+            {
+                return lookup;
+            }
+        }
+
+        foreach (var lookup in parent.LookupReferences)
+        {
+            if (lookup.Navigation.Name == navigation.Name)
             {
                 return lookup;
             }
@@ -1364,7 +1543,15 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     {
         foreach (var (nav, child) in parent.OwnedNavigations)
         {
-            if (nav == navigation || nav.Name == navigation.Name)
+            if (nav == navigation)
+            {
+                return child;
+            }
+        }
+
+        foreach (var (nav, child) in parent.OwnedNavigations)
+        {
+            if (nav.Name == navigation.Name)
             {
                 return child;
             }
@@ -1531,12 +1718,13 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     return local.ConvertIfRequired(node.Type);
                 }
 
-                // EF constructs the instance only when every key it reads is non-null, so the stand-in is a boxed default; a key type
-                // whose default is null (a string) has none.
+                // EF constructs the instance only when every key it reads is non-null, so the stand-in is a boxed default; a string key has the
+                // empty string, which is all the construction asks of it (an untracked shadow key is never stored on the instance).
                 if (_ownerKeysAbsent && (property.IsOwnedTypeKey() || IsShadowOwnerForeignKey(property))
-                    && property.IsShadowProperty() && property.ClrType.IsValueType)
+                    && property.IsShadowProperty() && (property.ClrType.IsValueType || property.ClrType == typeof(string)))
                 {
-                    return Expression.Convert(Expression.Default(property.ClrType), node.Type);
+                    return Expression.Convert(
+                        property.ClrType == typeof(string) ? Expression.Constant(string.Empty) : Expression.Default(property.ClrType), node.Type);
                 }
 
                 throw new NativeTranslationNotSupportedException(

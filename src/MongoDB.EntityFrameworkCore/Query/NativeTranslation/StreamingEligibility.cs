@@ -25,8 +25,9 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal static class StreamingEligibility
 {
     /// <summary>
-    /// Eligible: a simple primary key, no TPH hierarchy, no skip navigations, and every navigation the rewriter reads is itself eligible;
-    /// owned collection navigations' elements must have only owned navigations. A non-owned navigation the rewriter does not read (a
+    /// Eligible: a primary key (a composite key of a document root is the `_id` sub-document, which the reader descends into), no TPH
+    /// hierarchy, and every navigation the rewriter reads is itself eligible; owned collection navigations' elements must have only owned
+    /// navigations. A non-owned navigation the rewriter does not read (a
     /// collection the query does not include, or anything past the first reference hop: the plan skips it, so its document field is
     /// ignored) does not count, so a bidirectional relationship does not disqualify a query that only includes one side.
     /// </summary>
@@ -42,9 +43,9 @@ internal static class StreamingEligibility
         => IsEligible(entityType, new HashSet<IEntityType>(), lookupCollections, ignoreNonOwned: false, isRoot: true);
 
     /// <summary>
-    /// Whether the target of a lookup collection Include can be read as the elements of a root-level <c>$lookup</c> array: a plain entity
-    /// (no hierarchy, no skip navigations, a simple key) with no eager-loaded navigations of its own. Its other navigations are not read
-    /// (the element plan skips them), and a further Include off the element has its own, non-streamable lookup, which the query gate rejects.
+    /// Whether the target of a lookup collection Include can be read as the elements of a root-level <c>$lookup</c> array: an entity with a
+    /// key whose hierarchy, if any, is readable by one plan. What the element owns is read with it; its other navigations are not read (the
+    /// element plan skips them) unless the query gate accepts a further Include off the element.
     /// </summary>
     public static bool IsEligibleLookupElement(IEntityType elementType)
     {
@@ -72,24 +73,18 @@ internal static class StreamingEligibility
             return true; // cycle guard
         }
 
-        // The root of a hierarchy is read by one plan holding the properties of every concrete type, which a derived type with navigations of its
-        // own, or an entity reached through a navigation, cannot be.
+        // The root of a hierarchy is read by one plan holding the properties of every concrete type; a type in the middle of one, or a derived
+        // type that owns navigations the plan cannot tell apart, cannot be.
         if (entityType.IsInHierarchy() && !(isRoot && IsReadableHierarchy(entityType)))
         {
             return false;
         }
 
         // Owned collection elements' composite key is resolved by the rewriter from the owner / loop counter; only non-owned keys count.
+        // A keyless root (a view or query type) has nothing to track or to key by: it is only ever read. A navigation of it that the query
+        // includes is refused by the translator, and one it does not include is not read.
         var pk = entityType.FindPrimaryKey();
-        if (pk == null)
-        {
-            return false;
-        }
-
-        // A composite key of a document root is the `_id` sub-document, which the reader descends into; an owned type with more than one key
-        // of its own is not stored that way.
-        var nonOwnedKeyProps = pk.Properties.Count(p => !p.IsOwnedTypeKey());
-        if (nonOwnedKeyProps > 1 && !entityType.IsDocumentRoot())
+        if (pk == null && !(isRoot && !entityType.IsOwned()))
         {
             return false;
         }

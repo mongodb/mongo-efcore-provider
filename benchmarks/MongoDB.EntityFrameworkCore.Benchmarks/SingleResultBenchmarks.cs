@@ -10,7 +10,7 @@ namespace MongoDB.EntityFrameworkCore.Benchmarks;
 
 // Queries that return one row: First/Single/FirstOrDefault (the native pipeline adds $limit 1 / $limit 2) and an enumerable query limited
 // to one row. With one row the per-query fixed cost (context, compiled-query lookup, pipeline build, round trip) dominates, so these show
-// what the per-row work of the one-pass materializer, and its error handling, costs when there is nothing to amortize it over.
+// what the per-row work of the one-pass materializer costs when there is nothing to amortize it over.
 // Same three configs as HeadlineBenchmarks; run with --single.
 [Config(typeof(BenchmarkConfig))]
 public class SingleResultBenchmarks
