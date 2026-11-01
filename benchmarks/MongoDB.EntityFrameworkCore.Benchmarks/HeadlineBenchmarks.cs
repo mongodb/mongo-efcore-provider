@@ -21,6 +21,9 @@ public class HeadlineBenchmarks
 
     private DbContextOptions<BenchmarkDbContext> _efOptionsDriverLinq = null!;
     private DbContextOptions<BenchmarkDbContext> _efOptionsNative = null!;
+    // Pooled: a benchmark op takes a context from the pool and returns it on dispose, as an application using AddDbContextPool does.
+    private IDbContextFactory<BenchmarkDbContext> _driverLinqFactory = null!;
+    private IDbContextFactory<BenchmarkDbContext> _nativeFactory = null!;
     private IMongoCollection<FlatItem> _flatColl = null!;
     private IMongoCollection<Review> _reviewColl = null!;
     private IMongoCollection<Product> _productColl = null!;
@@ -43,6 +46,9 @@ public class HeadlineBenchmarks
             .UseMongoDB(_client, _dbName, o => o.UseQueryMode(MongoQueryMode.Native))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;
+
+        _driverLinqFactory = BenchmarkContexts.Pool(_efOptionsDriverLinq);
+        _nativeFactory = BenchmarkContexts.Pool(_efOptionsNative);
 
         // Seed using DriverLinq options (seeding is writes, unaffected by query mode).
         using (var ctx = new BenchmarkDbContext(_efOptionsDriverLinq))
@@ -136,60 +142,60 @@ public class HeadlineBenchmarks
         => _flatColl.AsQueryable().Where(f => f.Active).ToList().Count;
 
     [Benchmark] public int WhereToList_EF_DriverLinq()
-    { using var ctx = new BenchmarkDbContext(_efOptionsDriverLinq); return ctx.FlatItems.AsNoTracking().Where(f => f.Active).ToList().Count; }
+    { using var ctx = _driverLinqFactory.CreateDbContext(); return ctx.FlatItems.AsNoTracking().Where(f => f.Active).ToList().Count; }
 
     [Benchmark] public int WhereToList_EF_Native()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.FlatItems.AsNoTracking().Where(f => f.Active).ToList().Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return ctx.FlatItems.AsNoTracking().Where(f => f.Active).ToList().Count; }
 
     // ----- whole-entity ToList() -----
     [Benchmark] public int WholeEntityToList_DriverOnly()
         => _flatColl.AsQueryable().ToList().Count;
 
     [Benchmark] public int WholeEntityToList_EF_DriverLinq_NoTracking()
-    { using var ctx = new BenchmarkDbContext(_efOptionsDriverLinq); return ctx.FlatItems.AsNoTracking().ToList().Count; }
+    { using var ctx = _driverLinqFactory.CreateDbContext(); return ctx.FlatItems.AsNoTracking().ToList().Count; }
 
     [Benchmark] public int WholeEntityToList_EF_DriverLinq_Tracked()
-    { using var ctx = new BenchmarkDbContext(_efOptionsDriverLinq); return ctx.FlatItems.ToList().Count; }
+    { using var ctx = _driverLinqFactory.CreateDbContext(); return ctx.FlatItems.ToList().Count; }
 
     [Benchmark] public int WholeEntityToList_EF_Native_NoTracking()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.FlatItems.AsNoTracking().ToList().Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return ctx.FlatItems.AsNoTracking().ToList().Count; }
 
     [Benchmark] public int WholeEntityToList_EF_Native_Tracked()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.FlatItems.ToList().Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return ctx.FlatItems.ToList().Count; }
 
     // ----- OrderBy(x => x.Count).Take(100).ToList() -----
     [Benchmark] public int OrderByTake_DriverOnly()
         => _flatColl.AsQueryable().OrderBy(f => f.Count).Take(100).ToList().Count;
 
     [Benchmark] public int OrderByTake_EF_DriverLinq()
-    { using var ctx = new BenchmarkDbContext(_efOptionsDriverLinq); return ctx.FlatItems.AsNoTracking().OrderBy(f => f.Count).Take(100).ToList().Count; }
+    { using var ctx = _driverLinqFactory.CreateDbContext(); return ctx.FlatItems.AsNoTracking().OrderBy(f => f.Count).Take(100).ToList().Count; }
 
     [Benchmark] public int OrderByTake_EF_Native()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.FlatItems.AsNoTracking().OrderBy(f => f.Count).Take(100).ToList().Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return ctx.FlatItems.AsNoTracking().OrderBy(f => f.Count).Take(100).ToList().Count; }
 
     // ----- Reviews.Include(r => r.Product).ToList() -----
     [Benchmark] public int ReferenceInclude_DriverOnly()
         => DriverReviewInclude();
 
     [Benchmark] public int ReferenceInclude_EF_DriverLinq()
-    { using var ctx = new BenchmarkDbContext(_efOptionsDriverLinq); return ctx.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count; }
+    { using var ctx = _driverLinqFactory.CreateDbContext(); return ctx.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count; }
 
     [Benchmark] public int ReferenceInclude_EF_Native()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return ctx.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count; }
 
     // ----- Async twins (new): most applications call ToListAsync -----
     [Benchmark] public async Task<int> WhereToList_DriverOnly_Async()
         => (await MongoQueryable.ToListAsync(_flatColl.AsQueryable().Where(f => f.Active))).Count;
 
     [Benchmark] public async Task<int> WhereToList_EF_Native_Async()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return (await EntityFrameworkQueryableExtensions.ToListAsync(ctx.FlatItems.AsNoTracking().Where(f => f.Active))).Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return (await EntityFrameworkQueryableExtensions.ToListAsync(ctx.FlatItems.AsNoTracking().Where(f => f.Active))).Count; }
 
     [Benchmark] public async Task<int> WholeEntityToList_DriverOnly_Async()
         => (await MongoQueryable.ToListAsync(_flatColl.AsQueryable())).Count;
 
     [Benchmark] public async Task<int> WholeEntityToList_EF_Native_NoTracking_Async()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return (await EntityFrameworkQueryableExtensions.ToListAsync(ctx.FlatItems.AsNoTracking())).Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return (await EntityFrameworkQueryableExtensions.ToListAsync(ctx.FlatItems.AsNoTracking())).Count; }
 
     [Benchmark] public async Task<int> ReferenceInclude_EF_Native_Async()
-    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return (await EntityFrameworkQueryableExtensions.ToListAsync(ctx.Reviews.AsNoTracking().Include(r => r.Product))).Count; }
+    { using var ctx = _nativeFactory.CreateDbContext(); return (await EntityFrameworkQueryableExtensions.ToListAsync(ctx.Reviews.AsNoTracking().Include(r => r.Product))).Count; }
 }

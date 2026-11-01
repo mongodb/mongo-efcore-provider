@@ -13,7 +13,14 @@
 * limitations under the License.
 */
 
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.ExceptionServices;
+using Microsoft.EntityFrameworkCore.ChangeTracking.Internal;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
+using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query;
@@ -40,4 +47,234 @@ public class MongoQueryContext : QueryContext
     /// The <see cref="IMongoClientWrapper"/> this query should be executed using.
     /// </summary>
     public virtual IMongoClientWrapper MongoClient { get; }
+
+    // The native one-pass materializer constructs rows while the driver deserializes a whole batch, but a row that fails to materialize
+    // must only fail the query if the enumerator reaches it. The serializer yields an empty slot for it and records the failure here, by
+    // the row's position; the enumerator counts the rows it reads and raises the failure at that position. Almost always empty.
+    private Queue<(long Ordinal, ExceptionDispatchInfo Error)>? _rowFailures;
+    private long _rowsDeserialized;
+    private long _rowsRead;
+
+    /// <summary>Starts counting the rows of a native one-pass execution.</summary>
+    internal void ResetRowFailures()
+    {
+        _rowFailures?.Clear();
+        _rowsDeserialized = 0;
+        _rowsRead = 0;
+    }
+
+    /// <summary>The serializer constructed the next row.</summary>
+    internal void RowDeserialized() => _rowsDeserialized++;
+
+    /// <summary>The serializer could not construct the next row: its slot is empty and <paramref name="error"/> is raised if it is read.</summary>
+    internal void RowFailed(ExceptionDispatchInfo error)
+        => (_rowFailures ??= new()).Enqueue((_rowsDeserialized++, error));
+
+    /// <summary>The enumerator is about to read the next row: raises the failure recorded for it, if there is one.</summary>
+    internal void ThrowIfRowFailed()
+    {
+        if (_rowFailures is { Count: > 0 } failures && failures.Peek().Ordinal == _rowsRead)
+        {
+            failures.Dequeue().Error.Throw();
+        }
+
+        _rowsRead++;
+    }
+
+    // While set, the native one-pass materializer is constructing a row inside the driver's batch deserialization: tracking is recorded,
+    // not performed (see MongoPendingTracking).
+    private bool _deferring;
+
+    // The full record, once a row needs one: more than one tracked entity, shadow values, or an include to mark loaded.
+    private MongoPendingTracking? _pending;
+
+    // Until then the row's single entity is held here, so the common flat row allocates nothing to track.
+    private IKey? _inlineKey;
+    private object[]? _inlineKeyValues;
+    private bool _inlineThrowOnNullKey;
+    private IEntityType? _inlineEntityType;
+    private object? _inlineInstance;
+
+    private MongoSimpleTracking? _lastSimple;
+    private Dictionary<IEntityType, MongoSimpleTracking>? _simpleByType;
+
+    /// <summary>
+    /// Starts deferring the tracking of the row being materialized: until <see cref="EndDeferral"/>, EF's identity lookup and
+    /// <c>StartTracking</c> calls are recorded rather than performed.
+    /// </summary>
+    internal void BeginDeferral()
+    {
+        _deferring = true;
+        _pending = null;
+        ClearInline();
+    }
+
+    /// <summary>
+    /// Stops deferring and returns what must happen when the enumerator reaches the row: <see langword="null"/> if nothing was recorded,
+    /// a shared <see cref="MongoSimpleTracking"/> for a plain single-entity row, otherwise the row's <see cref="MongoPendingTracking"/>.
+    /// </summary>
+    /// <param name="result">The instance the row's materializer returned.</param>
+    internal object? EndDeferral(object? result)
+    {
+        object? deferred;
+        if (_pending != null)
+        {
+            deferred = _pending;
+        }
+        else if (_inlineKey == null)
+        {
+            deferred = null;
+        }
+        else if (_inlineEntityType != null && ReferenceEquals(_inlineInstance, result))
+        {
+            deferred = GetSimple(_inlineKey, _inlineEntityType);
+        }
+        else
+        {
+            // A lookup that never started tracking, or an entity that is not the row's result: keep the full record.
+            deferred = Promote();
+        }
+
+        _deferring = false;
+        _pending = null;
+        ClearInline();
+        return deferred;
+    }
+
+    /// <summary>Stops deferring and discards whatever the failed row recorded.</summary>
+    internal void AbandonDeferral()
+    {
+        _deferring = false;
+        _pending = null;
+        ClearInline();
+    }
+
+    /// <summary>Records an include's <c>SetIsLoaded</c> for replay when its entity's tracking is deferred.</summary>
+    internal void RecordLoaded(object entity, INavigation navigation)
+        => (_pending ?? Promote()).RecordLoaded(entity, navigation);
+
+    /// <inheritdoc />
+    public override InternalEntityEntry? TryGetEntry(IKey key, object[] keyValues, bool throwOnNullKey, out bool hasNullKey)
+    {
+        if (!_deferring)
+        {
+            return base.TryGetEntry(key, keyValues, throwOnNullKey, out hasNullKey);
+        }
+
+        // A null key part is answered by EF itself (it throws, or reports hasNullKey, and finds nothing); nothing else is looked up now,
+        // because the row is only tracked, and so only resolved against what is tracked, when the enumerator reaches it.
+        if (Array.IndexOf(keyValues, null) >= 0)
+        {
+            return base.TryGetEntry(key, keyValues, throwOnNullKey, out hasNullKey);
+        }
+
+        if (_pending == null && _inlineKey == null)
+        {
+            _inlineKey = key;
+            _inlineKeyValues = keyValues;
+            _inlineThrowOnNullKey = throwOnNullKey;
+        }
+        else
+        {
+            (_pending ?? Promote()).Begin(key, keyValues, throwOnNullKey);
+        }
+
+        hasNullKey = false;
+        return null;
+    }
+
+#if EF8
+    /// <inheritdoc />
+    public override InternalEntityEntry StartTracking(IEntityType entityType, object entity, ValueBuffer valueBuffer)
+    {
+        if (!_deferring)
+        {
+            return base.StartTracking(entityType, entity, valueBuffer);
+        }
+
+        DeferTracking(entityType, entity, valueBuffer.IsEmpty, valueBuffer);
+        return null!;
+    }
+
+    internal static ValueBuffer EmptyShadowValues => ValueBuffer.Empty;
+
+    internal InternalEntityEntry ReplayStartTracking(IEntityType entityType, object entity, ValueBuffer valueBuffer)
+        => base.StartTracking(entityType, entity, valueBuffer);
+
+    private void DeferTracking(IEntityType entityType, object entity, bool noShadowValues, ValueBuffer shadowValues)
+#else
+    /// <inheritdoc />
+    public override InternalEntityEntry StartTracking(IEntityType entityType, object entity, in ISnapshot snapshot)
+    {
+        if (!_deferring)
+        {
+            return base.StartTracking(entityType, entity, snapshot);
+        }
+
+        DeferTracking(entityType, entity, ReferenceEquals(snapshot, Snapshot.Empty), snapshot);
+        return null!;
+    }
+
+    internal static ISnapshot EmptyShadowValues => Snapshot.Empty;
+
+    internal InternalEntityEntry ReplayStartTracking(IEntityType entityType, object entity, ISnapshot snapshot)
+        => base.StartTracking(entityType, entity, snapshot);
+
+    private void DeferTracking(IEntityType entityType, object entity, bool noShadowValues, ISnapshot shadowValues)
+#endif
+    {
+        if (_pending == null && _inlineKey != null && _inlineEntityType == null && noShadowValues)
+        {
+            _inlineEntityType = entityType;
+            _inlineInstance = entity;
+            return;
+        }
+
+        (_pending ?? Promote()).Complete(entityType, entity, shadowValues);
+    }
+
+    // Moves the row's inline record, if any, into a full MongoPendingTracking.
+    private MongoPendingTracking Promote()
+    {
+        var pending = _pending = new MongoPendingTracking();
+        if (_inlineKey != null)
+        {
+            pending.Begin(_inlineKey, _inlineKeyValues!, _inlineThrowOnNullKey);
+            if (_inlineEntityType != null)
+            {
+                pending.Complete(_inlineEntityType, _inlineInstance!, EmptyShadowValues);
+            }
+
+            ClearInline();
+        }
+
+        return pending;
+    }
+
+    private void ClearInline()
+    {
+        _inlineKey = null;
+        _inlineKeyValues = null;
+        _inlineEntityType = null;
+        _inlineInstance = null;
+    }
+
+    private MongoSimpleTracking GetSimple(IKey key, IEntityType entityType)
+    {
+        if (_lastSimple is { } last && last.EntityType == entityType)
+        {
+            return last;
+        }
+
+        _simpleByType ??= [];
+        if (!_simpleByType.TryGetValue(entityType, out var simple))
+        {
+            _simpleByType[entityType] = simple = new MongoSimpleTracking(key, entityType);
+        }
+
+        return _lastSimple = simple;
+    }
+
+    internal InternalEntityEntry? ReplayTryGetEntry(IKey key, object[] keyValues, bool throwOnNullKey, out bool hasNullKey)
+        => base.TryGetEntry(key, keyValues, throwOnNullKey, out hasNullKey);
 }

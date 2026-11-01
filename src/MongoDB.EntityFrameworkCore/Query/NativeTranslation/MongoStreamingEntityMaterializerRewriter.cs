@@ -49,10 +49,28 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 {
     private readonly IEntityType _rootEntityType;
 
+    // Whether the query tracks its results (TrackAll or NoTrackingWithIdentityResolution). The rows are constructed while the driver
+    // deserializes the batch but tracked only when read, so include fix-ups must leave the wiring to the state manager (see
+    // MongoPendingTracking) instead of setting navigations on entities that may turn out to be duplicates.
+    private readonly bool _trackedQuery;
+
+    // The root's non-owned collection navigations the query includes, each read from its root-level `_lookup_<Nav>` $lookup array. The
+    // query gate admits only these (see MongoShapedQueryCompilingExpressionVisitor.AllPendingLookupsAreStreamable).
+    private readonly IReadOnlyCollection<INavigation> _lookupCollections;
+
+    // The collection navigations the shaper actually includes (an IncludeExpression), found when Rewrite starts. A lookup collection the query
+    // only uses in a predicate or a count has an array in the document but nothing to build from it: it is skipped like any unread element.
+    private HashSet<INavigationBase> _includedCollections = [];
+
     // No BsonSerializerFactory dependency: each property's serializer is baked into the expression tree at
     // compile time via the static BsonSerializerFactory.GetPropertySerializationInfo (see BuildTypedRead).
-    public MongoStreamingEntityMaterializerRewriter(IEntityType rootEntityType)
-        => _rootEntityType = rootEntityType;
+    public MongoStreamingEntityMaterializerRewriter(
+        IEntityType rootEntityType, bool trackedQuery, IReadOnlyCollection<INavigation>? lookupCollections = null)
+    {
+        _rootEntityType = rootEntityType;
+        _trackedQuery = trackedQuery;
+        _lookupCollections = lookupCollections ?? [];
+    }
 
     private static readonly MethodInfo ReadStartDocumentMethod =
         typeof(IBsonReader).GetMethod(nameof(IBsonReader.ReadStartDocument))!;
@@ -123,8 +141,10 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// A plan for an owned <em>collection</em> navigation: the element plan, a 1-based loop <see cref="Counter"/> local supplying the
+    /// A plan for a <em>collection</em> navigation: the element plan, a 1-based loop <see cref="Counter"/> local supplying the
     /// synthesized ordinal key, and a <see cref="List"/> accumulator local. Element locals are declared once and reassigned per iteration.
+    /// An owned collection's array is the navigation's own element; a non-owned one (<see cref="LookupElementName"/> set) is the root-level
+    /// <c>_lookup_&lt;Nav&gt;</c> array a <c>$lookup</c> produced, whose elements are whole entities with ordinary keys and their own locals scope.
     /// </summary>
     private sealed class CollectionPlan
     {
@@ -132,6 +152,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         public required EntityPlan Element { get; init; }
         public required ParameterExpression Counter { get; init; }
         public required ParameterExpression List { get; init; }
+
+        /// <summary>The root-level element name of a non-owned collection's <c>$lookup</c> array; <see langword="null"/> for an owned collection.</summary>
+        public string? LookupElementName { get; init; }
 
         // The rewritten per-element construction expression, set by RewriteMaterializer and consumed by BuildFillLoop for `list.Add(...)`.
         public Expression? ElementConstructor { get; set; }
@@ -161,6 +184,10 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         _reader = readerParameter;
         _context = contextParameter;
         var resultType = injectedBody.Type;
+
+        var includeFinder = new IncludedCollectionFinder();
+        includeFinder.Visit(injectedBody);
+        _includedCollections = includeFinder.Collections;
 
         var rootPlan = BuildPlan(_rootEntityType, present: null, new Dictionary<IProperty, ParameterExpression>());
 
@@ -232,13 +259,31 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     continue;
                 }
 
-                // A non-owned navigation is streamable only as a single reference backed by a cross-collection $lookup + $unwind (a root-level
-                // `_lookup_<Nav>` element whose primary key is a normal field). A non-owned collection is not streamable.
+                // A non-owned navigation is streamable as a single reference backed by a cross-collection $lookup + $unwind (a root-level
+                // `_lookup_<Nav>` element whose primary key is a normal field), or, when the query includes it, as a collection backed by a
+                // plain $lookup (the same root-level element, an array of such entities). Any other non-owned collection is not streamable.
                 if (navigation.IsCollection)
                 {
-                    throw new NativeTranslationNotSupportedException(
-                        $"Streaming materialization of navigation '{entityType.DisplayName()}.{navigation.Name}' is not supported "
-                        + "(non-owned collection navigation).");
+                    // A collection the shaper does not include is not read: either it has no array in the document, or it has one only
+                    // because the query uses it in a predicate or a count, and the fill loop skips an element it has no entry for.
+                    if (!_lookupCollections.Contains(navigation) || !_includedCollections.Contains(navigation))
+                    {
+                        continue;
+                    }
+
+                    // Elements are independent instances: their own fresh locals scope (like a lookup reference's target), no further
+                    // non-owned recursion, and no present flag (presence is per array element).
+                    var lookupElement = BuildPlan(
+                        target, present: null, new Dictionary<IProperty, ParameterExpression>(), allowLookupReferences: false);
+                    ownedCollections.Add(new CollectionPlan
+                    {
+                        Navigation = navigation,
+                        Element = lookupElement,
+                        Counter = Expression.Variable(typeof(int), "__counter_" + target.ShortName()),
+                        List = Expression.Variable(typeof(List<>).MakeGenericType(target.ClrType), "__list_" + target.ShortName()),
+                        LookupElementName = LookupExpression.GetLookupAlias(navigation)
+                    });
+                    continue;
                 }
 
                 // The joined target is an independent instance: it gets its own fresh locals scope, not the root's (critical for
@@ -380,7 +425,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         foreach (var collection in plan.OwnedCollections)
         {
-            var elementName = collection.Navigation.TargetEntityType.GetContainingElementName()
+            var elementName = collection.LookupElementName
+                              ?? collection.Navigation.TargetEntityType.GetContainingElementName()
                               ?? throw new NativeTranslationNotSupportedException(
                                   $"Owned collection '{collection.Navigation.DeclaringEntityType.DisplayName()}.{collection.Navigation.Name}' has no element name.");
 
@@ -621,7 +667,10 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         var includeCall = MongoIncludeFixups.CreateIncludeCall(
             navigation, entityEntryExpression, instanceVariable, concreteEntityTypeVariable, relatedEntityExpression,
-            setLoaded);
+            setLoaded,
+            _trackedQuery
+                ? Expression.Convert(QueryCompilationContext.QueryContextParameter, typeof(MongoQueryContext))
+                : null);
 
         var expressions = new List<Expression>(entityBlock.Expressions);
         var trailing = expressions[^1];
@@ -800,6 +849,23 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             Expression.Not(lookup.Target.Present!),
             Expression.Constant(null, conditional.Type),
             Expression.Convert(rewrittenBlock, conditional.Type));
+    }
+
+    // Collects the collection navigations of every IncludeExpression in a shaper (an IncludeExpression is an extension node, so the base
+    // visitor walks into its entity and navigation expressions).
+    private sealed class IncludedCollectionFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        public HashSet<INavigationBase> Collections { get; } = [];
+
+        protected override Expression VisitExtension(Expression node)
+        {
+            if (node is IncludeExpression { Navigation: { IsCollection: true } navigation })
+            {
+                Collections.Add(navigation);
+            }
+
+            return base.VisitExtension(node);
+        }
     }
 
     private static readonly ConstructorInfo InvalidOperationExceptionCtor =

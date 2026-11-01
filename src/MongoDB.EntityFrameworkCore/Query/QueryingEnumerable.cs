@@ -179,9 +179,10 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 #endif
 
                 // Initialize the state manager before creating the cursor: on the one-pass streaming path the
-                // driver materializes the first batch during Execute, so a tracked query would otherwise NRE.
-                // Harmless for the DOM / driver-LINQ paths, which materialize later.
+                // driver constructs the first batch during Execute and may consult it (a null key part), so a
+                // tracked query would otherwise NRE. Harmless for the DOM / driver-LINQ paths, which materialize later.
                 _queryContext.InitializeStateManager(_standAloneStateManager);
+                _queryContext.ResetRowFailures();
 
                 try
                 {
@@ -202,6 +203,12 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
 
             if (hasNext)
             {
+                // A row the native one-pass serializer could not materialize is an empty slot: raise its failure now that it is read.
+                if (_executableQuery?.Streaming == true)
+                {
+                    _queryContext.ThrowIfRowFailed();
+                }
+
                 // A null source row (e.g. SingleOrDefault/FirstOrDefault with no match, returned as a
                 // single null by the scalar path) must not be passed to the entity shaper, which would
                 // dereference a null BsonDocument. Yield default(TTarget); a projected identity shaper
