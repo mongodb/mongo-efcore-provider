@@ -115,7 +115,8 @@ public class MongoClientWrapper : IMongoClientWrapper
                 Debug.Assert(executableQuery.OutputSerializer != null, "Streaming native path requires output serializer.");
 
                 // The output serializer runs the compiled EF materializer off the cursor's IBsonReader, so the
-                // cursor yields shaped T instances in one pass (no intermediate BsonDocument).
+                // cursor yields constructed rows in one pass (no intermediate BsonDocument or copy). The driver reads
+                // a whole batch at once, so tracking is left to the enumerator, which replays it as each row is read.
                 var entityCollection = Database.GetCollection<BsonDocument>(executableQuery.CollectionNamespace.CollectionName);
                 PipelineDefinition<BsonDocument, BsonDocument> basePipe = loggedStages;
                 var typedPipeline = basePipe.As((IBsonSerializer<T>)executableQuery.OutputSerializer);

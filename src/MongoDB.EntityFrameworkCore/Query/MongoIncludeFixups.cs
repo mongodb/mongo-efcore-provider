@@ -66,7 +66,8 @@ internal static class MongoIncludeFixups
         Action<TIncludingEntity, TIncludedEntity> fixup,
         bool _,
         bool notifyLazyLoader,
-        bool notifyInverseLazyLoader)
+        bool notifyInverseLazyLoader,
+        MongoQueryContext? deferredTracking)
     {
         if (entity == null
             || !navigation.DeclaringEntityType.IsAssignableFrom(entityType))
@@ -74,7 +75,16 @@ internal static class MongoIncludeFixups
             return;
         }
 
-        if (entry == null)
+        if (entry == null && deferredTracking != null)
+        {
+            // A tracked row still being constructed: the state manager wires the graph when the row is tracked, and marks the
+            // navigation loaded; only the latter is recorded.
+            if (relatedEntity == null)
+            {
+                deferredTracking.RecordLoaded(entity, navigation);
+            }
+        }
+        else if (entry == null)
         {
             var includingEntity = (TIncludingEntity)entity;
             if (notifyLazyLoader)
@@ -114,7 +124,8 @@ internal static class MongoIncludeFixups
         Action<TIncludingEntity, TIncludedEntity> fixup,
         bool setLoaded,
         bool notifyLazyLoader,
-        bool notifyInverseLazyLoader)
+        bool notifyInverseLazyLoader,
+        MongoQueryContext? deferredTracking)
     {
         if (entity == null
             || !navigation.DeclaringEntityType.IsAssignableFrom(entityType))
@@ -122,7 +133,15 @@ internal static class MongoIncludeFixups
             return;
         }
 
-        if (entry == null)
+        if (entry == null && deferredTracking != null)
+        {
+            // See IncludeReference: the related entities are fixed up by the state manager when the row is tracked.
+            if (setLoaded)
+            {
+                deferredTracking.RecordLoaded(entity, navigation);
+            }
+        }
+        else if (entry == null)
         {
             var includingEntity = (TIncludingEntity)entity;
             if (notifyLazyLoader)
@@ -169,7 +188,8 @@ internal static class MongoIncludeFixups
     /// <summary>
     /// Builds the fix-up call for an <c>Include</c> of <paramref name="navigation"/>:
     /// <c>if (navigation.DeclaringEntityType.IsAssignableFrom(concreteEntityType)) IncludeReference|IncludeCollection(...)</c>,
-    /// choosing <c>IncludeCollection</c> for a collection navigation.
+    /// choosing <c>IncludeCollection</c> for a collection navigation. <paramref name="deferredTracking"/> is the query context of a tracked
+    /// native one-pass row, whose tracking is deferred (see <see cref="MongoPendingTracking"/>), or <see langword="null"/>.
     /// </summary>
     public static Expression CreateIncludeCall(
         INavigation navigation,
@@ -177,7 +197,8 @@ internal static class MongoIncludeFixups
         Expression instance,
         Expression concreteEntityType,
         Expression relatedEntity,
-        bool setLoaded)
+        bool setLoaded,
+        Expression? deferredTracking = null)
     {
         var includingClrType = navigation.DeclaringEntityType.ClrType;
         var relatedEntityClrType = navigation.TargetEntityType.ClrType;
@@ -201,7 +222,8 @@ internal static class MongoIncludeFixups
                 Expression.Constant(fixup),
                 Expression.Constant(setLoaded),
                 Expression.Constant(HasLazyLoader(navigation)),
-                Expression.Constant(inverseNavigation != null && HasLazyLoader(inverseNavigation))));
+                Expression.Constant(inverseNavigation != null && HasLazyLoader(inverseNavigation)),
+                deferredTracking ?? Expression.Constant(null, typeof(MongoQueryContext))));
     }
 
     /// <summary>
