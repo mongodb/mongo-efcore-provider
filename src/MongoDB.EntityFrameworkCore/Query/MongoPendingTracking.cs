@@ -55,6 +55,21 @@ internal sealed class MongoPendingTracking
         _open = null;
     }
 
+    /// <summary>
+    /// Moves the record of <paramref name="instance"/> after the others. An entity that includes others is tracked after them (their fix-up to it is
+    /// done as it is tracked), as the one-pass materializer of a whole entity builds it after the elements it includes.
+    /// </summary>
+    public void MoveToEnd(object instance)
+    {
+        var index = _entities.FindIndex(e => ReferenceEquals(e.Instance, instance));
+        if (index >= 0 && index < _entities.Count - 1)
+        {
+            var entity = _entities[index];
+            _entities.RemoveAt(index);
+            _entities.Add(entity);
+        }
+    }
+
     /// <summary>An include whose navigation EF would have marked loaded on the (then tracked) entry.</summary>
     public void RecordLoaded(object entity, INavigation navigation)
         => (_loaded ??= []).Add((entity, navigation));

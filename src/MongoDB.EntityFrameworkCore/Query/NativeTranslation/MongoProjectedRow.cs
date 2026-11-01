@@ -142,6 +142,15 @@ internal static class MongoProjectedRowReads
     }
 
     /// <summary>
+    /// <see cref="BsonBinding.GetPropertyValueAtPath{T}"/>: <see cref="PropertyAtElement"/> at a dotted alias, where a sub-document along the path
+    /// that is absent (or not a document) reads <see langword="default"/> when <typeparamref name="T"/> can hold it.
+    /// </summary>
+    public static T? PropertyAtPath<T, TValue>(int state, TValue? value, string alias, IReadOnlyProperty property)
+        => state == MongoProjectedRowState.Missing && typeof(T).IsNullableType()
+            ? default
+            : PropertyAtElement<T, TValue>(state, value, alias, property);
+
+    /// <summary>
     /// Replays the tracking a row deferred, as EF would have done it entity by entity while materializing, and returns what to substitute for
     /// an entity of the row that the state manager resolved to one already tracked (<see langword="null"/> when none was).
     /// </summary>
@@ -158,10 +167,27 @@ internal static class MongoProjectedRowReads
         where T : class
         => remap != null && value != null ? (T)remap.Resolve(value) : value;
 
+    /// <summary>The list of entities the cursor read, each element replaced by the tracked one when the state manager resolved it to one.</summary>
+    public static List<T> CanonicalList<T>(MongoEntityRemap? remap, List<T> list)
+        where T : class
+    {
+        if (remap != null)
+        {
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (list[i] is { } element)
+                {
+                    list[i] = (T)remap.Resolve(element);
+                }
+            }
+        }
+
+        return list;
+    }
+
     /// <summary>A collection the cursor read into a list: an absent or null array reads as an empty collection, as the DOM shaper normalizes it.</summary>
-    public static System.Collections.Generic.List<TElement> StreamedList<TElement>(
-        int state, System.Collections.Generic.List<TElement>? value)
-        => state == MongoProjectedRowState.Present ? value! : new System.Collections.Generic.List<TElement>();
+    public static List<TElement> StreamedList<TElement>(int state, List<TElement>? value)
+        => state == MongoProjectedRowState.Present ? value! : new List<TElement>();
 
     /// <summary>
     /// An entity the cursor read from a sub-document: a null or absent one reads as <c>null</c>, or throws <paramref name="missingMessage"/> when the

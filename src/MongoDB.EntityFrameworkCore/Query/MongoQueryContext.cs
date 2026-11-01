@@ -124,6 +124,15 @@ public class MongoQueryContext : QueryContext
         return deferred;
     }
 
+    /// <summary>Has the deferred tracking of <paramref name="entity"/> replayed after that of the entities it includes (see <see cref="MongoPendingTracking.MoveToEnd"/>).</summary>
+    internal void TrackAfterIncluded(object? entity)
+    {
+        if (entity != null)
+        {
+            _pending?.MoveToEnd(entity);
+        }
+    }
+
     /// <summary>Records an include's <c>SetIsLoaded</c> for replay when its entity's tracking is deferred.</summary>
     internal void RecordLoaded(object entity, INavigation navigation)
         => (_pending ?? Promote()).RecordLoaded(entity, navigation);
