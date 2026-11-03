@@ -86,6 +86,10 @@ public static class QueryableEncryptionSchemaGenerator
 
         foreach (var navigation in entityType.GetNavigations())
         {
+            // Only walk owner-to-dependent navigations. An owned type's dependent-to-principal
+            // (WithOwner) navigation targets an owned owner when nested, which would recurse forever.
+            if (navigation.IsOnDependent) continue;
+
             var targetEntityType = navigation.TargetEntityType;
             if (targetEntityType.IsOwned())
             {
