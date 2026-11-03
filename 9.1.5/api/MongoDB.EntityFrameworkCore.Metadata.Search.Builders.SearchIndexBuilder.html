@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Class SearchIndexBuilder | MongoDB EF Core Provider API Reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Class SearchIndexBuilder | MongoDB EF Core Provider API Reference ">
+      
+      <meta name="description" content="Model building fluent API for use in  that builds a MongoDB full-text search index.">
+      <link rel="icon" href="../favicon.ico">
+      <link rel="stylesheet" href="../public/docfx.min.css">
+      <link rel="stylesheet" href="../public/main.css">
+      <meta name="docfx:navrel" content="">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/mongodb/mongo-efcore-provider/new/main/apiSpec/new?filename=MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder.md&amp;value=---%0Auid%3A%20MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./../public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="../index.html">
+            <img id="logo" class="svg" src="../images/mongodb-logo.svg" alt="">
+            
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+      <div class="toc-offcanvas">
+        <div class="offcanvas-md offcanvas-start" tabindex="-1" id="tocOffcanvas" aria-labelledby="tocOffcanvasLabel">
+          <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="tocOffcanvasLabel">Table of Contents</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#tocOffcanvas" aria-label="Close"></button>
+          </div>
+          <div class="offcanvas-body">
+            <nav class="toc" id="toc"></nav>
+          </div>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="actionbar">
+          <button class="btn btn-lg border-0 d-md-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#tocOffcanvas" aria-controls="tocOffcanvas" aria-expanded="false" aria-label="Show table of contents">
+            <i class="bi bi-list"></i>
+          </button>
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder">
+
+
+
+  <h1 id="MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder" data-uid="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder" class="text-break">
+Class SearchIndexBuilder  <a class="header-action link-secondary" title="View source" href="https://github.com/mongodb/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Search/Builders/SearchIndexBuilder.cs/#L32"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="MongoDB.html">MongoDB</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.html">EntityFrameworkCore</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.html">Metadata</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.html">Search</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.html">Builders</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>MongoDB.EntityFrameworkCore.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>Model building fluent API for use in <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.onmodelcreating">OnModelCreating(ModelBuilder)</a> that builds a MongoDB full-text search index.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public class SearchIndexBuilder</code></pre>
+  </div>
+
+
+
+
+  <dl class="typelist inheritance">
+    <dt>Inheritance</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object">object</a></div>
+      <div><span class="xref">SearchIndexBuilder</span></div>
+    </dd>
+  </dl>
+
+
+  <dl class="typelist derived">
+    <dt>Derived</dt>
+    <dd>
+      <div><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder-1.html">SearchIndexBuilder&lt;TEntity&gt;</a></div>
+    </dd>
+  </dl>
+
+  <dl class="typelist inheritedMembers">
+    <dt>Inherited Members</dt>
+    <dd>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object)">object.Equals(object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object-system-object)">object.Equals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gethashcode">object.GetHashCode()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gettype">object.GetType()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.memberwiseclone">object.MemberwiseClone()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.referenceequals">object.ReferenceEquals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.tostring">object.ToString()</a>
+    </div>
+  </dd></dl>
+
+
+
+
+  <h2 id="MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>For more information about search indexes, see <a href="https://www.mongodb.com/docs/atlas/atlas-search/index-definitions/">https://www.mongodb.com/docs/atlas/atlas-search/index-definitions/</a></p>
+</div>
+
+  <h2 class="section" id="constructors">Constructors
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.-ctor.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder__ctor_MongoDB_EntityFrameworkCore_Metadata_Search_Definitions_SearchIndexDefinition_">SearchIndexBuilder(SearchIndexDefinition)</a></dt>
+    <dd><p>Model building fluent API for use in <a class="xref" href="https://learn.microsoft.com/dotnet/api/microsoft.entityframeworkcore.dbcontext.onmodelcreating">OnModelCreating(ModelBuilder)</a> that builds a MongoDB full-text search index.</p>
+</dd>
+  </dl>
+
+  <h2 class="section" id="properties">Properties
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexDefinition.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexDefinition">IndexDefinition</a></dt>
+    <dd><p>The <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Definitions.SearchIndexDefinition.html">SearchIndexDefinition</a> defining the index being built.</p>
+</dd>
+  </dl>
+
+  <h2 class="section" id="methods">Methods
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.AddCustomAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_AddCustomAnalyzer_System_String_">AddCustomAnalyzer(string)</a></dt>
+    <dd><p>Adds and defines a custom search analyzer to the index. The custom analyzer is used by passing its name to any of the
+methods that accept an analyzer name, such as <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.UseAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_UseAnalyzer_System_String_">UseAnalyzer(string)</a> and <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.UseSearchAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_UseSearchAnalyzer_System_String_">UseSearchAnalyzer(string)</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.AddCustomAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_AddCustomAnalyzer_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_AnalyzerSearchIndexBuilder__">AddCustomAnalyzer(string, Action&lt;AnalyzerSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Adds and defines a custom search analyzer to the index. The custom analyzer is used by passing its name to any of the
+methods that accept an analyzer name, such as <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.UseAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_UseAnalyzer_System_String_">UseAnalyzer(string)</a> and <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.UseSearchAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_UseSearchAnalyzer_System_String_">UseSearchAnalyzer(string)</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.AddSynonyms.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_AddSynonyms_System_String_MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_System_String_">AddSynonyms(string, BuiltInSearchAnalyzer, string)</a></dt>
+    <dd><p>Adds a collection to the index that contains synonym definitions.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.AddSynonyms.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_AddSynonyms_System_String_System_String_System_String_">AddSynonyms(string, string, string)</a></dt>
+    <dd><p>Adds a collection to the index that contains synonym definitions.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.AddTypeSet.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_AddTypeSet_System_String_">AddTypeSet(string)</a></dt>
+    <dd><p>Adds a custom type set definition to this index. Type sets define how to dynamically index members. To use the type
+set, pass the defined type set name to <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IsDynamicWithTypeSet.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IsDynamicWithTypeSet_System_String_">IsDynamicWithTypeSet(string)</a> at the top level or on an embedded (nested)
+document or array of documents.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.AddTypeSet.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_AddTypeSet_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TypeSetSearchIndexBuilder__">AddTypeSet(string, Action&lt;TypeSetSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Adds a custom type set definition to this index. Type sets define how to dynamically index members. To use the type
+set, pass the defined type set name to <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IsDynamicWithTypeSet.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IsDynamicWithTypeSet_System_String_">IsDynamicWithTypeSet(string)</a> at the top level or on an embedded (nested)
+document or array of documents.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.ExcludeFromIndex.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_ExcludeFromIndex_System_String_">ExcludeFromIndex(string)</a></dt>
+    <dd><p>Excludes the given member from being indexed.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.HasPartitions.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_HasPartitions_System_Int32_">HasPartitions(int)</a></dt>
+    <dd><p>Specifies the number of sub-indexes to create if the document count exceeds two billion. The following values are valid:
+1, 2, 4. If omitted, defaults to 1. To use index partitions, you must have search nodes deployed in your cluster.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsAutoComplete.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsAutoComplete_System_String_">IndexAsAutoComplete(string)</a></dt>
+    <dd><p>Indexes the given member for auto-completion. That is, tokens are generated for prefix substrings such that the results
+can be used to show all possible auto-completions for that substring.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsAutoComplete.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsAutoComplete_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_AutoCompleteSearchIndexBuilder__">IndexAsAutoComplete(string, Action&lt;AutoCompleteSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member for auto-completion. That is, tokens are generated for prefix substrings such that the results
+can be used to show all possible auto-completions for that substring.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsBoolean.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsBoolean_System_String_">IndexAsBoolean(string)</a></dt>
+    <dd><p>Indexes the given member for boolean values.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsBoolean.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsBoolean_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_BooleanSearchIndexBuilder__">IndexAsBoolean(string, Action&lt;BooleanSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member for boolean values.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsDate.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsDate_System_String_">IndexAsDate(string)</a></dt>
+    <dd><p>Indexes the given member for date values.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsDate.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsDate_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_DateSearchIndexBuilder__">IndexAsDate(string, Action&lt;DateSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member for date values.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsEmbedded.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsEmbedded_System_String_">IndexAsEmbedded(string)</a></dt>
+    <dd><p>Indexes the given member as an embedded (nested) document. Further indexing can then be configured on members of this
+embedded document.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsEmbedded.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsEmbedded_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_NestedSearchIndexBuilder__">IndexAsEmbedded(string, Action&lt;NestedSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member as an embedded (nested) document. Further indexing can then be configured on members of this
+embedded document.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsEmbeddedArray.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsEmbeddedArray_System_String_">IndexAsEmbeddedArray(string)</a></dt>
+    <dd><p>Indexes the given member as an embedded (nested) array of documents. Further indexing can then be configured on members of
+this documents in the embedded array.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsEmbeddedArray.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsEmbeddedArray_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_NestedSearchIndexBuilder__">IndexAsEmbeddedArray(string, Action&lt;NestedSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member as an embedded (nested) array of documents. Further indexing can then be configured on members of
+this documents in the embedded array.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsGeo.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsGeo_System_String_">IndexAsGeo(string)</a></dt>
+    <dd><p>Indexes the given member for geographic points and shape coordinates.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsGeo.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsGeo_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_GeoSearchIndexBuilder__">IndexAsGeo(string, Action&lt;GeoSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member for geographic points and shape coordinates.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsNumber.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsNumber_System_String_">IndexAsNumber(string)</a></dt>
+    <dd><p>Indexes the given member for numbers.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsNumber.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsNumber_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_NumberSearchIndexBuilder__">IndexAsNumber(string, Action&lt;NumberSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member for numbers.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsObjectId.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsObjectId_System_String_">IndexAsObjectId(string)</a></dt>
+    <dd><p>Indexes the given member for <span class="xref">MongoDB.Bson.ObjectId</span>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsObjectId.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsObjectId_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_ObjectIdSearchIndexBuilder__">IndexAsObjectId(string, Action&lt;ObjectIdSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member for <span class="xref">MongoDB.Bson.ObjectId</span>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsString.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsString_System_String_">IndexAsString(string)</a></dt>
+    <dd><p>Indexes the given member for strings.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsString.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsString_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_StringSearchIndexBuilder__">IndexAsString(string, Action&lt;StringSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member for strings.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsToken.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsToken_System_String_">IndexAsToken(string)</a></dt>
+    <dd><p>Indexes the given member as tokens. That is, the entire value is included as a searchable token. This kind of index
+is required for sorting.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsToken.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsToken_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenSearchIndexBuilder__">IndexAsToken(string, Action&lt;TokenSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member as tokens. That is, the entire value is included as a searchable token. This kind of index
+is required for sorting.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsUuid.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsUuid_System_String_">IndexAsUuid(string)</a></dt>
+    <dd><p>Indexes the given member for UUIDs, including <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.guid">Guid</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IndexAsUuid.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IndexAsUuid_System_String_System_Action_MongoDB_EntityFrameworkCore_Metadata_Search_Builders_UuidSearchIndexBuilder__">IndexAsUuid(string, Action&lt;UuidSearchIndexBuilder&gt;)</a></dt>
+    <dd><p>Indexes the given member for UUIDs, including <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.guid">Guid</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IsDynamic.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IsDynamic_System_Boolean_">IsDynamic(bool)</a></dt>
+    <dd><p>Configures this index as &quot;dynamic&quot;, meaning that all properties will be indexed automatically using the default search
+index type set. When dynamic, properties are indexed as boolean, date, 32 and 64-bit integer, double precision floating
+point number, objectID, string, or UUID.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.IsDynamicWithTypeSet.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_IsDynamicWithTypeSet_System_String_">IsDynamicWithTypeSet(string)</a></dt>
+    <dd><p>Configures this index as &quot;dynamic&quot;, meaning that all properties will be indexed automatically using the type set with
+the given name. The type set must be defined and added to the index using <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.AddTypeSet.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_AddTypeSet_System_String_">AddTypeSet(string)</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.StoreAllSource.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_StoreAllSource_System_Boolean_">StoreAllSource(bool)</a></dt>
+    <dd><p>Configures storing all indexed fields in the document. Note that storing full documents might significantly impact
+performance during indexing and querying. Consider only storing some fields using <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.StoreSourceFor.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_StoreSourceFor_System_String_System_Boolean_">StoreSourceFor(string, bool)</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.StoreSourceFor.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_StoreSourceFor_System_String_System_Boolean_">StoreSourceFor(string, bool)</a></dt>
+    <dd><p>Configures storing or excluding source for the given field or property.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.UseAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_UseAnalyzer_MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_">UseAnalyzer(BuiltInSearchAnalyzer)</a></dt>
+    <dd><p>Configures the built-in analyzer (defined by <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.BuiltInSearchAnalyzer.html">BuiltInSearchAnalyzer</a>) to use by default for this index.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.UseAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_UseAnalyzer_System_String_">UseAnalyzer(string)</a></dt>
+    <dd><p>Configures the name of the analyzer to use by default for this index. This must be the name of a built-in analyzer (but
+consider using <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.UseAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_UseAnalyzer_MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_">UseAnalyzer(BuiltInSearchAnalyzer)</a> instead) or a custom analyzer defined in this index
+with <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.AddCustomAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_AddCustomAnalyzer_System_String_">AddCustomAnalyzer(string)</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.UseSearchAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_UseSearchAnalyzer_MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_">UseSearchAnalyzer(BuiltInSearchAnalyzer)</a></dt>
+    <dd><p>Configures the built-in search analyzer (defined by <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.BuiltInSearchAnalyzer.html">BuiltInSearchAnalyzer</a>) to use by default for this index.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.UseSearchAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_UseSearchAnalyzer_System_String_">UseSearchAnalyzer(string)</a></dt>
+    <dd><p>Configures the name of the search analyzer to use by default for this index. This must be the name of a built-in analyzer
+(but consider using <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.UseSearchAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_UseSearchAnalyzer_MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_">UseSearchAnalyzer(BuiltInSearchAnalyzer)</a> instead) or a custom analyzer defined in this
+index with <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.SearchIndexBuilder.AddCustomAnalyzer.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_SearchIndexBuilder_AddCustomAnalyzer_System_String_">AddCustomAnalyzer(string)</a>.</p>
+</dd>
+  </dl>
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          &copy; 2023 MongoDB, Inc.
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
