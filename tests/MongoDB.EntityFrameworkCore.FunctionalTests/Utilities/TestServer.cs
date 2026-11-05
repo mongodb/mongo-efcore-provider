@@ -132,9 +132,10 @@ public abstract class TestServer : IAsyncLifetime
     public bool SupportsBinDataToStringConversion
         => ServerVersion >= new SemanticVersion(8, 0, 0);
 
-    // Before MongoDB 8.0, $dateAdd over pre-epoch dates returns a result one second off.
+    // Through MongoDB 8.0.34 (the last 8.0 release), $dateAdd over pre-epoch dates returns a result one second off; it is
+    // correct on the 9.0 pre-release server. The major version is compared because a 9.0.0 pre-release sorts below 9.0.0.
     public bool SupportsPreEpochDateAdd
-        => ServerVersion >= new SemanticVersion(8, 0, 0);
+        => ServerVersion.Major >= 9;
 
     public static bool SupportsAtlas
     {
