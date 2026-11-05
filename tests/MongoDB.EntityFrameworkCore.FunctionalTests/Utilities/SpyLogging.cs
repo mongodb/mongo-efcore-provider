@@ -14,7 +14,10 @@
  */
 
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Extensions.Logging;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
@@ -42,6 +45,29 @@ internal class SpyLoggerProvider : ILoggerProvider
         var key = eventId.Name[..eventId.Name.LastIndexOf('.')];
         var logger = Assert.Single(Loggers, s => s.Key == key).Value;
         return Assert.Single(logger.Records, log => log.EventId == eventId && log.Exception == null).Message;
+    }
+
+    /// <summary>
+    /// Asserts the executed MQL contains <paramref name="expected"/>, reporting the actual pipeline on failure.
+    /// </summary>
+    public void AssertExecutedMqlContains(string expected)
+    {
+        var actual = GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.True(actual.Contains(expected), $"Expected to find '{expected}' in:\n{actual}");
+    }
+
+    /// <summary>
+    /// The plural of <see cref="GetLogMessageByEventId"/>, in source order, for a test that runs several queries on
+    /// one context.
+    /// </summary>
+    public IReadOnlyList<string> GetLogMessagesByEventId(EventId eventId)
+    {
+        var key = eventId.Name[..eventId.Name.LastIndexOf('.')];
+        var logger = Assert.Single(Loggers, s => s.Key == key).Value;
+        return logger.Records
+            .Where(log => log.EventId == eventId && log.Exception == null)
+            .Select(log => log.Message)
+            .ToList();
     }
 }
 

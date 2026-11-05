@@ -30,7 +30,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// entity's scalars from that field. Translates and reproduces on all supported EF versions, so this
 /// is not version-guarded.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class ShadowPropertyFlatJoinProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

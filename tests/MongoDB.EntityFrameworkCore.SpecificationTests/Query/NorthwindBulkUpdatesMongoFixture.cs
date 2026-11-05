@@ -61,19 +61,9 @@ public class NorthwindBulkUpdatesMongoFixture<TModelCustomizer> : NorthwindBulkU
     protected override bool ShouldLogCategory(string logCategory)
         => logCategory == DbLoggerCategory.Query.Name;
 
-    // EF's BulkUpdatesAsserter wraps every AssertDelete/AssertUpdate in a transaction that is rolled
-    // back, so the shared Northwind seed is left unchanged across the repeated (sync + async) runs.
-    // The transaction is begun on one context and the bulk operation is executed on a *second*
-    // context; this hook enlists that second context in the same MongoDB session so DeleteMany /
-    // UpdateMany participate in — and are rolled back with — the outer transaction. Both contexts
-    // are built against the shared TestServer.Client, so the session handle is valid across them
-    // (CurrentTransaction's internal setter is reachable here via InternalsVisibleTo). The bulk
-    // executor reads the session from Database.CurrentTransaction (see PrepareBulk in
-    // MongoShapedQueryCompilingExpressionVisitor).
-    //
-    // NOTE: this requires a transaction-capable deployment (replica set / mongos). Against a
-    // standalone mongod the BeginTransactionAsync in the asserter will throw, and these tests fail
-    // at setup rather than asserting anything meaningful.
+    // The asserter begins a rolled-back transaction on one context and runs the bulk operation on a second;
+    // enlist the second in the same session so DeleteMany/UpdateMany roll back with it (the executor reads
+    // Database.CurrentTransaction; see PrepareBulk). Requires a transaction-capable deployment (replica set / mongos).
     public override void UseTransaction(DatabaseFacade facade, IDbContextTransaction transaction)
         => ((MongoTransactionManager)facade.GetService<IDbContextTransactionManager>()).CurrentTransaction = transaction;
 

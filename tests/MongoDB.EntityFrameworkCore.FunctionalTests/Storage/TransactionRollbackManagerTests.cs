@@ -18,7 +18,6 @@ using MongoDB.Bson;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
-[XUnitCollection("StorageTests")]
 public class TransactionRollbackManagerTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

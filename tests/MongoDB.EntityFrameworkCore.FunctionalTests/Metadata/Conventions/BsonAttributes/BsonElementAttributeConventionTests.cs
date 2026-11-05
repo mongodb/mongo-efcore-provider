@@ -19,7 +19,6 @@ using MongoDB.Driver;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Metadata.Conventions.BsonAttributes;
 
-[XUnitCollection("ConventionsTests")]
 public class BsonElementAttributeConventionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

@@ -49,4 +49,22 @@ public static class MongoQueryExpressionTests
 
         Assert.Equal(expectedEntityType, actual.CollectionExpression.EntityType);
     }
+
+    [Fact]
+    public static void GetUnusedLookupAlias_suffixes_past_every_registered_lookup_and_join_alias()
+    {
+        using var db = new QueryDbContext();
+        var entityType = db.Model.GetEntityTypes().First();
+        var query = new MongoQueryExpression(entityType);
+
+        Assert.Equal("_lookup_Orders_include", query.GetUnusedLookupAlias("_lookup_Orders_include"));
+
+        query.AddLookup(new LookupExpression(entityType, "Products", "_id", "_id", "_lookup_Orders_include", forceUnwind: true));
+        query.AddJoin(entityType, isLeftOuter: false).Alias = "_lookup_Orders_include_1";
+
+        Assert.Equal("_lookup_Orders_include_2", query.GetUnusedLookupAlias("_lookup_Orders_include"));
+
+        // An earlier registration of the same lookup keeps sharing its alias.
+        Assert.Equal("_lookup_Orders_include", query.GetUnusedLookupAlias("_lookup_Orders_include", l => l.From == "Products"));
+    }
 }

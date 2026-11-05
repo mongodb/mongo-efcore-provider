@@ -24,7 +24,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// visits that clobbered a single projection-mapping slot, so the second operand silently overwrote
 /// the first (e.g. Age * Score materialised as Score * Score).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class MixedProjectionArithmeticTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

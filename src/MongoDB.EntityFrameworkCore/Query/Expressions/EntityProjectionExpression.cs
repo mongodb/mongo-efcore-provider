@@ -87,7 +87,6 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
             }
             else
             {
-                // Cross-collection navigation: use lookup alias as the field name
                 var lookupAlias = LookupExpression.GetLookupAlias(navigation);
                 expression = navigation.IsCollection
                     ? new ObjectArrayProjectionExpression(navigation, ParentAccessExpression, lookupAlias)
@@ -164,7 +163,6 @@ internal sealed class EntityProjectionExpression : EntityTypedExpression, IPrint
             return BindNavigation(navigation);
         }
 
-        // Entity member not found
         propertyBase = null;
         return null;
     }

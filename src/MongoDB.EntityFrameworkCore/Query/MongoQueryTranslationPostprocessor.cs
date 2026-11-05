@@ -16,6 +16,7 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
@@ -33,6 +34,15 @@ public class MongoQueryTranslationPostprocessor(
         if (query is ShapedQueryExpression { QueryExpression: MongoQueryExpression queryExpression })
         {
             queryExpression.ApplyProjection();
+
+            // A DateTime the native pipeline would compute from a Local-kind property (AddDays, .Date, a ternary
+            // mixing kinds) has no property serializer to read it back through, so native would return the wrong
+            // Kind and instant. Checked once translation is complete, across every binder that populates the
+            // projection, terminal aggregate or set-op operands.
+            if (NativeDateTimeKindReadBack.HasUnreproducibleReadBack(queryExpression.Select))
+            {
+                queryExpression.Select.MarkNotNativelyRepresentable();
+            }
         }
 
         return query;

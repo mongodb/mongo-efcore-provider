@@ -30,9 +30,8 @@ public class MongoQueryableMethodTranslatingExpressionVisitorTests
 
     private static readonly IQueryable<Customer> Source = new Customer[0].AsQueryable();
 
-    // Reads the OrderBy/ThenBy/... spine of an expression tree, outermost-in, and returns it in
-    // chronological (source-to-outermost) order as (method name, argument count) pairs. Argument
-    // count distinguishes the 2-arg (key selector only) and 3-arg (key selector + IComparer) overloads.
+    // Returns the OrderBy/ThenBy/... spine in source-to-outermost order as (method name, argument count); the
+    // count distinguishes the IComparer overloads.
     private static List<(string Name, int ArgCount)> GetOrderingChainShape(Expression expression)
     {
         var shape = new List<(string, int)>();
@@ -69,8 +68,8 @@ public class MongoQueryableMethodTranslatingExpressionVisitorTests
     [Fact]
     public void Keeps_two_independent_OrderBy_calls_on_the_same_key()
     {
-        // .OrderBy().OrderByDescending() (as opposed to .OrderBy().ThenByDescending()) is two
-        // independent orderings - the second entirely supersedes the first - so both must be kept.
+        // OrderBy().OrderByDescending() is two independent orderings (the second supersedes the first), so both
+        // are kept.
         var query = Source.OrderBy(c => c.Name).OrderByDescending(c => c.Name);
 
         var result = MongoQueryableMethodTranslatingExpressionVisitor.ElideRedundantOrderings(query.Expression);
@@ -83,9 +82,8 @@ public class MongoQueryableMethodTranslatingExpressionVisitorTests
     [Fact]
     public void Mid_chain_OrderBy_resets_duplicate_tracking()
     {
-        // The second OrderByDescending starts a fresh ordering, so the ThenBy(Name) directly under it
-        // is a duplicate of *that* ordering (and is elided), while the first ThenBy(Name) - a duplicate
-        // of the original OrderBy - is also elided; the two survivors are the resetting pair.
+        // The second OrderByDescending starts a fresh ordering; each ThenBy(Name) duplicates the ordering it
+        // follows and is elided, leaving the resetting pair.
         var query = Source.OrderBy(c => c.Name).ThenBy(c => c.Name)
             .OrderByDescending(c => c.Name).ThenBy(c => c.Name);
 
@@ -138,9 +136,8 @@ public class MongoQueryableMethodTranslatingExpressionVisitorTests
     [Fact]
     public void Does_not_elide_a_repeated_computed_key_selector()
     {
-        // c.Name.Length is a two-hop computed key (Name, then Length) - EF materializes each such
-        // ordering into its own uniquely-named projected field, so repeating it never collides and
-        // must not be elided, unlike a direct single-hop property access.
+        // A two-hop computed key is materialized into its own uniquely-named field, so repeating it must not be
+        // elided, unlike a single-hop property access.
         var query = Source.OrderBy(c => c.Name.Length).ThenBy(c => c.Name.Length);
 
         var result = MongoQueryableMethodTranslatingExpressionVisitor.ElideRedundantOrderings(query.Expression);

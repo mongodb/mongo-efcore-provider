@@ -663,4 +663,51 @@ public static class MongoPropertyExtensions
         && (property.ValueGenerated & ValueGenerated.OnAdd) != 0
         && property.GetElementName().Length == 0
         && property.FindContainingPrimaryKey() is { Properties.Count: > 1 };
+
+    /// <summary>
+    /// Returns a value indicating whether the property was declared to be stored in a form that orders and compares like its .NET value,
+    /// so that relational comparisons, sorting and <c>Min</c>/<c>Max</c> can run on the server.
+    /// </summary>
+    /// <param name="property">The <see cref="IReadOnlyProperty"/> to check.</param>
+    /// <returns><see langword="true"/> if the property was declared order-preserving, <see langword="false"/> if not.</returns>
+    public static bool IsOrderPreservingStorage(this IReadOnlyProperty property)
+        => property[MongoAnnotationNames.OrderPreservingStorage] is true;
+
+    /// <summary>
+    /// Declares that the property is stored in a form that orders and compares like its .NET value.
+    /// </summary>
+    /// <param name="property">The <see cref="IMutableProperty"/> to configure.</param>
+    /// <param name="orderPreserving"><see langword="true"/> to declare the stored form order-preserving, <see langword="false"/> to remove the declaration.</param>
+    public static void SetOrderPreservingStorage(this IMutableProperty property, bool orderPreserving)
+    {
+        if (orderPreserving)
+        {
+            property.SetAnnotation(MongoAnnotationNames.OrderPreservingStorage, true);
+        }
+        else
+        {
+            property.RemoveAnnotation(MongoAnnotationNames.OrderPreservingStorage);
+        }
+    }
+
+    /// <summary>
+    /// Declares that the property is stored in a form that orders and compares like its .NET value.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to configure.</param>
+    /// <param name="orderPreserving"><see langword="true"/> to declare the stored form order-preserving, <see langword="false"/> to remove the declaration.</param>
+    /// <param name="fromDataAnnotation"><see langword="true"/> if the configuration was specified using a data annotation, <see langword="false"/> if not.</param>
+    public static void SetOrderPreservingStorage(
+        this IConventionProperty property,
+        bool orderPreserving,
+        bool fromDataAnnotation = false)
+        => property.SetOrRemoveAnnotation(
+            MongoAnnotationNames.OrderPreservingStorage, orderPreserving ? true : null, fromDataAnnotation);
+
+    /// <summary>
+    /// Gets the <see cref="ConfigurationSource" /> of the order-preserving storage declaration for the property when targeting MongoDB.
+    /// </summary>
+    /// <param name="property">The <see cref="IConventionProperty"/> to obtain the declaration's source for.</param>
+    /// <returns>The <see cref="ConfigurationSource" /> the declaration was specified by, or <see langword="null"/> if there is none.</returns>
+    public static ConfigurationSource? GetOrderPreservingStorageConfigurationSource(this IConventionProperty property)
+        => property.FindAnnotation(MongoAnnotationNames.OrderPreservingStorage)?.GetConfigurationSource();
 }

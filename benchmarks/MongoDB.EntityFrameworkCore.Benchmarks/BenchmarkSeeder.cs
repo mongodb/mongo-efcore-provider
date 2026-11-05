@@ -40,7 +40,44 @@ public static class BenchmarkSeeder
         ctx.SaveChanges();
     }
 
-    public static void SeedExtended(BenchmarkDbContext ctx, int accountCount, int orderCount, int wideCount)
+    // Categories hold articleCount / categoryCount articles each; every article has one author out of authorCount.
+    public static void SeedIncludes(BenchmarkDbContext ctx, int categoryCount, int authorCount, int articleCount)
+    {
+        ctx.Database.EnsureCreated();
+
+        var categories = new List<Category>(categoryCount);
+        for (var i = 0; i < categoryCount; i++)
+        {
+            var category = new Category { Rank = i, Name = "category-" + i };
+            categories.Add(category);
+            ctx.Categories.Add(category);
+        }
+
+        var authors = new List<Author>(authorCount);
+        for (var i = 0; i < authorCount; i++)
+        {
+            var author = new Author { Name = "author-" + i };
+            authors.Add(author);
+            ctx.Authors.Add(author);
+        }
+
+        ctx.SaveChanges();
+
+        for (var i = 0; i < articleCount; i++)
+        {
+            ctx.Articles.Add(new Article
+            {
+                Title = "article-" + i,
+                Views = i,
+                CategoryId = categories[i % categories.Count].Id,
+                AuthorId = authors[i % authors.Count].Id
+            });
+        }
+
+        ctx.SaveChanges();
+    }
+
+    public static void SeedExtended(BenchmarkDbContext ctx, int accountCount, int orderCount, int wideCount, int mediumCount = 0)
     {
         ctx.Database.EnsureCreated();
 
@@ -85,6 +122,11 @@ public static class BenchmarkSeeder
         for (var i = 0; i < wideCount; i++)
         {
             ctx.Wides.Add(new WideEntity().Fill(i));
+        }
+
+        for (var i = 0; i < mediumCount; i++)
+        {
+            ctx.Mediums.Add(new MediumEntity().Fill(i));
         }
         ctx.SaveChanges();
     }

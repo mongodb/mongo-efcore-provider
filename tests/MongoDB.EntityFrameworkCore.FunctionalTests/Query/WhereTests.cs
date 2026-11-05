@@ -61,7 +61,7 @@ public class WhereTests(ReadOnlySampleGuidesFixture database)
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains(
-            "{ \"$match\" : { \"$expr\" : { \"$ne\" : [{ \"$indexOfCP\" : [\"$name\", \"a\"] }, -1] } } }",
+            "{ \"$match\" : { \"$expr\" : { \"$ne\" : [{ \"$indexOfCP\" : [\"$name\", { \"$literal\" : \"a\" }] }, -1] } } }",
             message);
     }
 
@@ -163,8 +163,8 @@ public class WhereTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Where_nullable_int_equals_mismatched_numeric_type_returns_no_results()
     {
-        // EF-221: e.ReportsTo.Equals(longPrm) used to throw InvalidCastException instead of returning
-        // false (the correct plain-C# result for a boxed-type mismatch) - see MongoEFToLinqTranslatingExpressionVisitor.
+        // Equals with a mismatched boxed numeric type must return false (as in plain C#), not throw
+        // InvalidCastException; see MongoEFToLinqTranslatingExpressionVisitor.
         ulong prm = 1655;
         var results = _db.Moons.Where(m => m.yearOfDiscovery.Equals(prm)).ToArray();
         Assert.Empty(results);

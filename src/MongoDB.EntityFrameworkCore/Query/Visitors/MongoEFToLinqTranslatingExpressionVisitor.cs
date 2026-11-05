@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -31,6 +32,7 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -47,6 +49,19 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     private static readonly MethodInfo MqlFieldMethodInfo =
         typeof(Mql).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Single(m => m.Name == nameof(Mql.Field) && m.GetParameters().Length == 3);
+
+    /// <summary>
+    /// <c>Mql.Field&lt;TSource, TField&gt;(source, elementName, serializer)</c>: reads <paramref name="elementName"/> off
+    /// <paramref name="source"/> as <paramref name="fieldType"/> with <paramref name="serializer"/>.
+    /// </summary>
+    private static MethodCallExpression MqlField(
+        Expression source, Type fieldType, string? elementName, IBsonSerializer serializer)
+        => Expression.Call(
+            null,
+            MqlFieldMethodInfo.MakeGenericMethod(source.Type, fieldType),
+            source,
+            Expression.Constant(elementName),
+            Expression.Constant(serializer));
 
     // DateTimeOffset members whose translation is rewritten below to work around the driver not
     // implementing IBsonDocumentSerializer on DateTimeOffsetSerializer (CSHARP-5296 / EF-218).
@@ -78,34 +93,35 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     private readonly Dictionary<IEntityType, Expression> _innerSources;
     private EntityQueryRootExpression? _foundEntityQueryRootExpression;
 
-    // When forceUnwind lookups stand in for a Join chain that StripJoinForLookup did not actually remove,
-    // the Join survives in the translated tree and is rendered natively by the driver; emitting the
-    // forceUnwind $lookup/$unwind stages on top is then both redundant and (for scalar terminals) invalid.
-    // Set false in that case so AppendLookupStages skips them. Defaults true (lookups are appended).
+    // Cleared when StripJoinForLookup did not actually remove the Join: the driver then renders it natively, and emitting the forceUnwind
+    // $lookup/$unwind stages on top is redundant and (for scalar terminals) invalid. Defaults true.
     private bool _appendForceUnwindLookups = true;
 
-    // Lookups this EXECUTION must emit immediately above the join chain's base source, because
-    // StripJoinForLookup reattached user-composed operators that read their output fields. Held here, not
-    // written back onto the shared (compile-time) LookupExpression objects. See IsInjectedEarly.
-    private readonly HashSet<LookupExpression> _injectAfterBaseSourceLookups = [];
+    // Lookups this execution emits below the pipeline tail because StripJoinForLookup reattached operators above them that read their
+    // output fields. Held per execution, not written onto the shared compile-time LookupExpressions. See IsInjectedEarly.
+    private readonly HashSet<LookupExpression> _injectedEarlyLookups = [];
 
-    // The base-source node those lookups are emitted above: the expression the innermost join was applied
-    // to, i.e. everything the user composed BELOW the joins. One-shot - cleared when Visit reaches it.
-    private Expression? _injectAfterBaseSource;
+    // Set by StripJoinForLookup when it reattached a bare Inner leaf Select (`Select(ti => ti.Inner)`) that is still the query's element (an
+    // operator EF doesn't hoist, e.g. Distinct, sits above it). The driver wraps it as `{ _v: ... }` but the entity shaper reads
+    // `_lookup_<Nav>`, so Translate re-presents it there.
+    private string? _bareInnerJoinLeafAlias;
+
+    // Where each group is emitted, keyed by reference on the node it goes immediately above. One-shot: Visit removes the entry before
+    // recursing. An operator interleaved between two joins gets one entry per boundary (Skip/Take lands between their $lookups).
+    private readonly Dictionary<Expression, List<LookupExpression>> _injectAboveNodeLookups =
+        new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
-    /// Verifies <see cref="_injectAfterBaseSource"/> was reached during the translation walk. Should be
-    /// unreachable — the node comes from the tree this visitor is about to walk — but if it isn't, the
-    /// lookups in <see cref="_injectAfterBaseSourceLookups"/> would silently never be emitted, since
-    /// <c>IsInjectedEarly</c> also excludes them from <c>AppendLookupStages</c>. Fails loudly instead of
-    /// letting that surface as silent wrong data.
+    /// Verifies every node in <see cref="_injectAboveNodeLookups"/> was reached during the walk. Should be
+    /// unreachable, but otherwise the lookups (also excluded from <c>AppendLookupStages</c>) would vanish and
+    /// the query would silently return unjoined rows.
     /// </summary>
-    private void AssertBaseSourceInjectionFired()
+    private void AssertAllEarlyLookupInjectionsFired()
     {
-        if (_injectAfterBaseSource != null)
+        if (_injectAboveNodeLookups.Count > 0)
         {
             throw new InvalidOperationException(
-                "The join base source recorded for early $lookup injection was never reached while "
+                "A join node recorded for early $lookup injection was never reached while "
                 + "translating the query. This is an internal error in the MongoDB EF Core provider; "
                 + "please report it with the query that produced it.");
         }
@@ -123,6 +139,52 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         _bsonSerializerFactory = bsonSerializerFactory;
         _pendingLookups = pendingLookups ?? Array.Empty<LookupExpression>();
         _innerSources = innerSources ?? new Dictionary<IEntityType, Expression>();
+
+        // This bridge peels a join to a flat $lookup + $unwind and drops the join's inner source, and with it any filter on it (M22). A lookup
+        // with an InnerPredicate can only be honored by the native renderer, so refuse rather than return unfiltered rows. Reached from
+        // explicit DriverLinq and from a Native-mode fallback after a late native decline.
+        if (_pendingLookups.FirstOrDefault(l => l.IsJoinWithNativeOnlyInnerFilter) is { } filteredJoinLookup)
+        {
+            throw new NativeTranslation.NativeTranslationNotSupportedException(
+                $"The join onto '{filteredJoinLookup.TargetEntityType.DisplayName()}' filters its inner side, which the "
+                + "driver-LINQ translation would silently drop, returning unfiltered rows. Only the native translator "
+                + "honors it; use MongoQueryMode.Native or NativeOnly, or filter after the join.");
+        }
+
+        // The sort, skip or limit of an element stage belongs to a projected list or first element (`c.Orders.OrderBy(..).ToList()`), which
+        // EmitLookupStages renders natively and copies to the leaf's alias. Stages with no leaf behind them have nothing that reads the array,
+        // so the list would come back empty or unfiltered.
+        if (_pendingLookups.FirstOrDefault(l => l.HasElementStagesWithoutLeaf) is { } nativeOnlyArray)
+        {
+            throw new NativeTranslation.NativeTranslationNotSupportedException(
+                $"The projected collection of '{nativeOnlyArray.TargetEntityType.DisplayName()}' entities is only supported by the "
+                + "native translator; the driver-LINQ translation would return an empty or unfiltered list. "
+                + "Use MongoQueryMode.Native or NativeOnly.");
+        }
+
+        // An element leaf's array is copied to the member's projection alias in the whole document the shaper reads; an alias that is also a
+        // stored field of the root would overwrite what another leaf (or the whole entity) reads from it.
+        if (_pendingLookups.Any(l => l.ElementLeafAliases.Count > 0)
+            && source.Type.TryGetItemType() is { } rootClrType
+            && FindEntityType(rootClrType) is { } rootEntityType)
+        {
+            var storedNames = rootEntityType.GetProperties().Select(p => p.GetElementName())
+                .Concat(rootEntityType.GetNavigations().Where(n => n.IsEmbedded()).Select(n => n.TargetEntityType.GetContainingElementName()))
+                .ToHashSet();
+
+            foreach (var lookup in _pendingLookups)
+            {
+                foreach (var alias in lookup.ElementLeafAliases)
+                {
+                    if (alias.Contains('.') || storedNames.Contains(alias))
+                    {
+                        throw new NativeTranslation.NativeTranslationNotSupportedException(
+                            $"The projected collection '{alias}' has the same name as a stored field of '{rootEntityType.DisplayName()}', "
+                            + "which the driver-LINQ translation would overwrite. Rename the projection member, or use MongoQueryMode.Native or NativeOnly.");
+                    }
+                }
+            }
+        }
     }
 
     private int _predicateDepth;
@@ -152,6 +214,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// </summary>
     public Expression TranslateProjected(Expression? efQueryExpression)
     {
+        if (efQueryExpression != null)
+            StageBridgeOwnedLookups(efQueryExpression);
+
         GuardAgainstMultiBranchNavigationCount(efQueryExpression);
 
         if (efQueryExpression == null)
@@ -159,21 +224,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return AppendLookupStages(_source);
         }
 
-        // For explicit Join queries with pending lookups, strip the join and use $lookup instead.
-        // Otherwise rewrite any Include-generated LeftJoin into Queryable.Join + LeftJoinResult so the
-        // driver's pipeline translator (which has no LeftJoin translator) accepts it.
+        // Explicit Join with pending lookups: strip the join and use $lookup; otherwise rewrite an Include-generated LeftJoin into
+        // Queryable.Join + LeftJoinResult (the driver has no LeftJoin translator). No GuardAgainstUnstrippableForceUnwindJoin here: it would
+        // break a correct fallback (e.g. a nested-aggregate GroupBy ReattachComposedOperator can't rebuild). A mixed projection's shaper does
+        // have a pre-built shape (UsesDriverJoinFields): a known, unguarded gap.
         Expression expressionToTranslate;
         if (_pendingLookups.Count > 0)
         {
             var stripped = StripJoinForLookup(efQueryExpression);
             GuardAgainstUnstrippableMultiJoin(stripped, efQueryExpression, isEntityShaped: false);
             expressionToTranslate = stripped ?? efQueryExpression;
-            // forceUnwind lookups stand in for an explicit Join chain that StripJoinForLookup removed.
-            // When the strip did not fire (e.g. the join is buried under OrderBy/terminal operators the
-            // stripper doesn't recurse through), the Join survives in the translated tree and the driver
-            // renders it natively - appending the forceUnwind $lookup/$unwind stages on top would both be
-            // redundant and, for a scalar-cardinality terminal (Any/All/Count), try to wrap the scalar
-            // result in AppendStage. Skip them in that case.
+            // See AppendLookupStages' forceUnwind rule: skip them when the strip did not fire (the driver renders the Join natively).
             _appendForceUnwindLookups = stripped != null;
         }
         else
@@ -181,15 +242,26 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             expressionToTranslate = RewriteLeftJoins(efQueryExpression, convertExplicitJoins: false);
         }
 
+        SetStoredOrderingQueryRoots(efQueryExpression, expressionToTranslate);
         var query = Visit(expressionToTranslate)!;
-        AssertBaseSourceInjectionFired();
+        AssertAllEarlyLookupInjectionsFired();
         return AppendLookupStages(query);
     }
 
+    /// <param name="efQueryExpression">The captured EF method chain to rewrite as driver-LINQ.</param>
+    /// <param name="resultCardinality">The query's result cardinality.</param>
+    /// <param name="guardUnstrippableForceUnwindJoin">
+    /// Whether to apply <see cref="GuardAgainstUnstrippableForceUnwindJoin"/>; <see langword="false"/> for the bulk id-document path, which has
+    /// no shaper to mismatch (and skips <see cref="RepresentBareInnerJoinLeaf"/>).
+    /// </param>
     public MethodCallExpression Translate(
         Expression? efQueryExpression,
-        ResultCardinality resultCardinality)
+        ResultCardinality resultCardinality,
+        bool guardUnstrippableForceUnwindJoin = true)
     {
+        if (efQueryExpression != null)
+            StageBridgeOwnedLookups(efQueryExpression);
+
         GuardAgainstMultiBranchNavigationCount(efQueryExpression);
 
         if (efQueryExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
@@ -198,17 +270,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return ApplyAsSerializer(source, BsonDocumentSerializer.Instance, typeof(BsonDocument));
         }
 
-        // For explicit Join queries with pending lookups (forceUnwind), strip the join
-        // and let AppendLookupStages handle it. For Include LeftJoins, strip the outer Select
-        // and let the driver handle the LeftJoin natively.
+        // Explicit Join with pending forceUnwind lookups: strip the join, AppendLookupStages replaces it. Include
+        // LeftJoin: strip the outer Select and let the driver handle the LeftJoin natively.
         var expressionToTranslate = efQueryExpression;
         if (_pendingLookups.Any(l => l.ForceUnwind))
         {
             var stripped = StripJoinForLookup(efQueryExpression);
-            GuardAgainstUnstrippableMultiJoin(stripped, efQueryExpression, isEntityShaped: true);
+            if (guardUnstrippableForceUnwindJoin)
+            {
+                GuardAgainstUnstrippableForceUnwindJoin(stripped, efQueryExpression);
+            }
             expressionToTranslate = stripped ?? efQueryExpression;
-            // See TranslateProjected: only emit the forceUnwind lookups when they actually replaced a
-            // stripped Join chain. If the strip did not fire the Join survives and the driver renders it.
             _appendForceUnwindLookups = stripped != null;
         }
         else if (_innerSources.Count > 0)
@@ -216,16 +288,18 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             expressionToTranslate = StripOuterSelectForJoin(efQueryExpression) ?? efQueryExpression;
         }
 
+        SetStoredOrderingQueryRoots(efQueryExpression, expressionToTranslate);
         var query = (MethodCallExpression)Visit(expressionToTranslate)!;
-        AssertBaseSourceInjectionFired();
+        AssertAllEarlyLookupInjectionsFired();
 
         if (resultCardinality == ResultCardinality.Enumerable)
         {
-            var withLookups = AppendLookupStages(query);
+            var withLookups = RepresentBareInnerJoinLeaf(AppendLookupStages(query), guardUnstrippableForceUnwindJoin);
             return ApplyAsSerializer(withLookups, BsonDocumentSerializer.Instance, typeof(BsonDocument));
         }
 
-        var withLookupsSingle = AppendLookupStages(query.Arguments[0]);
+        var withLookupsSingle = RepresentBareInnerJoinLeaf(
+            AppendLookupStages(query.Arguments[0]), guardUnstrippableForceUnwindJoin);
         var documentQueryableSource = ApplyAsSerializer(withLookupsSingle, BsonDocumentSerializer.Instance, typeof(BsonDocument));
 
         return Expression.Call(
@@ -233,6 +307,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             query.Method.GetGenericMethodDefinition().MakeGenericMethod(typeof(BsonDocument)),
             documentQueryableSource);
     }
+
+    /// <summary>
+    /// Moves the driver's <c>_v</c>-wrapped bare Inner leaf value back under the <c>_lookup_&lt;Nav&gt;</c> field the
+    /// entity shaper reads (see <see cref="_bareInnerJoinLeafAlias"/>). A missing value (a left join's unmatched
+    /// row) stays missing and shapes as <see langword="null"/>. Skipped for the bulk id-document path
+    /// (<paramref name="hasEntityShaper"/> <see langword="false"/>), which reads no entity.
+    /// </summary>
+    private Expression RepresentBareInnerJoinLeaf(Expression query, bool hasEntityShaper)
+        => hasEntityShaper && _bareInnerJoinLeafAlias is { } alias
+            ? AppendBsonStage(query, new BsonDocument("$project", new BsonDocument { { alias, "$_v" }, { "_id", 0 } }))
+            : query;
 
     private static MethodCallExpression ApplyAsSerializer(
         Expression query,
@@ -255,18 +340,16 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     public override Expression? Visit(Expression? expression)
     {
-        // Join-replacing $lookup/$unwind stages go directly above the innermost join's base source, so
-        // anything composed BELOW the joins (Skip/Take/Distinct) still runs first.
-        if (_injectAfterBaseSource != null && ReferenceEquals(expression, _injectAfterBaseSource))
+        // Emit the join-replacing $lookup/$unwind stages directly above the recorded node, so operators composed below the joins run first and
+        // reattached operators above see the flattened lookup fields. See _injectAboveNodeLookups.
+        if (expression != null && _injectAboveNodeLookups.Remove(expression, out var lookupsHere))
         {
-            _injectAfterBaseSource = null; // One-shot: stops the recursive Visit below re-entering here.
-            var translatedBaseSource = Visit(expression)!;
-            return EmitLookupStages(translatedBaseSource, _pendingLookups.Where(_injectAfterBaseSourceLookups.Contains));
+            var translatedNode = Visit(expression)!;
+            return EmitLookupStages(translatedNode, lookupsHere);
         }
 
         switch (expression)
         {
-            // Replace materialization collection expression with the actual nav property in order for Mql.Exists etc. to work.
             case MaterializeCollectionNavigationExpression materializeCollectionNavigationExpression:
                 var subQuery = Visit(materializeCollectionNavigationExpression.Subquery);
                 if (subQuery is MethodCallExpression mce && IsAsQueryableMethod(mce.Method))
@@ -277,7 +360,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 return subQuery;
 
 #if EF8 || EF9
-            // Replace the QueryContext parameter values with constant values for this execution.
             case ParameterExpression parameterExpression:
                 if (parameterExpression.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
                     == true)
@@ -308,7 +390,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 var translatedOfTypeCall = Expression.Call(null, ofTypeCall.Method, Visit(ofTypeCall.Arguments[0])!);
                 return ApplyAsSerializer(translatedOfTypeCall, resultSerializer, resultType);
 
-            // Rewrite instance entity.Equals(other) to key comparisons (e.g. composite key entities)
             case MethodCallExpression { Method.Name: nameof(object.Equals), Object: not null, Arguments.Count: 1 } instanceEqualsCall:
                 _storedFormOperands.Add(instanceEqualsCall.Object!.RemoveConvert());
                 _storedFormOperands.Add(instanceEqualsCall.Arguments[0].RemoveObjectConvert().RemoveConvert());
@@ -319,19 +400,16 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 if (instanceRewrite != null)
                     return instanceRewrite;
 
-                // Plain C# returns false here (e.g. ((int?)1).Equals((ulong)2)); left untouched, the driver's
-                // Equals translator instead tries to serialize the RHS with the LHS's serializer and throws
-                // (EF-221). Fold to the correct constant instead.
-                if (IsAlwaysFalseAcrossTypeMismatch(instanceEqualsCall.Object!, instanceEqualsCall.Arguments[0]))
+                // Plain C# returns false here (e.g. ((int?)1).Equals((ulong)2)); the driver's Equals translator
+                // would instead serialize the RHS with the LHS's serializer and throw. Fold to false.
+                if (ExpressionExtensionMethods.IsAlwaysFalseAcrossTypeMismatch(instanceEqualsCall.Object!, instanceEqualsCall.Arguments[0]))
                     return Expression.Constant(false);
 
                 break;
 
-            // Replace object.Equals(Property(p, "propName"), ConstantExpression) elements generated by EF's Find.
             case MethodCallExpression { Method.Name: nameof(object.Equals), Object: null, Arguments.Count: 2 } methodCallExpression:
                 _storedFormOperands.Add(methodCallExpression.Arguments[0].RemoveObjectConvert().RemoveConvert());
                 _storedFormOperands.Add(methodCallExpression.Arguments[1].RemoveObjectConvert().RemoveConvert());
-                // Check for entity equality before visiting (composite keys use Equals instead of ==)
                 var entityRewrite = TryRewriteEntityEquality(
                     methodCallExpression.Arguments[0].RemoveObjectConvert(),
                     methodCallExpression.Arguments[1].RemoveObjectConvert(),
@@ -348,9 +426,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     return Expression.Equal(left.RemoveObjectConvert(), right.RemoveObjectConvert());
                 }
 
-                // Same mismatched-type fold as the instance-call case above (EF-221): object.Equals(a, b)
-                // with genuinely incompatible simple types (e.g. int vs ulong) is always false in plain C#.
-                if (AreMismatchedExactEqualityTypes(
+                if (ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(
                         Nullable.GetUnderlyingType(left.Type) ?? left.Type,
                         Nullable.GetUnderlyingType(right.Type) ?? right.Type))
                     return Expression.Constant(false);
@@ -360,7 +436,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 right = right.ConvertIfRequired(parameters[1].ParameterType);
                 return Expression.Call(null, method, left, right);
 
-            // Replace EF-generated Property(p, "propName") with Property(p.propName) or Mql.Field(p, "propName", serializer)
             case MethodCallExpression methodCallExpression
                 when methodCallExpression.Method.IsEFPropertyMethod()
                      && methodCallExpression.Arguments[1] is ConstantExpression propertyNameExpression:
@@ -371,19 +446,15 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 var entityType = _queryContext.Context.Model.FindEntityType(source.Type);
                 if (entityType != null)
                 {
-                    // Try an EF property
                     var efProperty = entityType.FindProperty(propertyName);
                     if (efProperty != null)
                     {
                         var doc = source;
 
-                        // Composite keys need to go via the _id document
                         var isCompositeKeyAccess = efProperty.IsPrimaryKey() && entityType.FindPrimaryKey()?.Properties.Count > 1;
                         if (isCompositeKeyAccess)
                         {
-                            var mqlFieldDoc = MqlFieldMethodInfo.MakeGenericMethod(source.Type, typeof(BsonValue));
-                            doc = Expression.Call(null, mqlFieldDoc, source, Expression.Constant("_id"),
-                                Expression.Constant(BsonValueSerializer.Instance));
+                            doc = MqlField(source, typeof(BsonValue), "_id", BsonValueSerializer.Instance);
                         }
 
                         if (!ReadStoredForm && StoredValueConversion.RequiresConversion(efProperty)
@@ -393,30 +464,22 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                                 .ConvertIfRequired(methodCallExpression.Method.ReturnType);
                         }
 
-                        var mqlField = MqlFieldMethodInfo.MakeGenericMethod(doc.Type, efProperty.ClrType);
-                        var serializer = BsonSerializerFactory.CreateTypeSerializer(efProperty);
-                        var callExpression = Expression.Call(null, mqlField, doc,
-                            Expression.Constant(efProperty.GetElementName()),
-                            Expression.Constant(serializer));
+                        var callExpression = MqlField(doc, efProperty.ClrType, efProperty.GetElementName(),
+                            BsonSerializerFactory.CreateTypeSerializer(efProperty));
                         return callExpression.ConvertIfRequired(methodCallExpression.Method.ReturnType);
                     }
 
-                    // Try an EF navigation if no property
                     var efNavigation = entityType.FindNavigation(propertyName);
                     if (efNavigation != null)
                     {
-                        var elementName = efNavigation.TargetEntityType.GetContainingElementName();
-                        var mqlField = MqlFieldMethodInfo.MakeGenericMethod(source.Type, efNavigation.ClrType);
-                        var serializer = _bsonSerializerFactory.GetNavigationSerializer(efNavigation);
-                        var callExpression = Expression.Call(null, mqlField, source,
-                            Expression.Constant(elementName),
-                            Expression.Constant(serializer));
+                        var callExpression = MqlField(source, efNavigation.ClrType,
+                            efNavigation.TargetEntityType.GetContainingElementName(),
+                            _bsonSerializerFactory.GetNavigationSerializer(efNavigation));
                         return callExpression.ConvertIfRequired(methodCallExpression.Method.ReturnType);
                     }
                 }
 
-                // Try CLR property
-                // This should not really be required but is kept here for backwards compatibility with any edge cases.
+                // Kept for backwards compatibility with edge cases.
                 var clrProperty = source.Type.GetProperties().FirstOrDefault(p => p.Name == propertyName);
                 if (clrProperty != null)
                 {
@@ -427,10 +490,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 var defaultSerializer = BsonSerializer.LookupSerializer(methodCallExpression.Type);
                 if (defaultSerializer != null)
                 {
-                    var mqlField = MqlFieldMethodInfo.MakeGenericMethod(source.Type, methodCallExpression.Type);
-                    var callExpression = Expression.Call(null, mqlField, source,
-                        propertyNameExpression,
-                        Expression.Constant(defaultSerializer));
+                    var callExpression = MqlField(source, methodCallExpression.Type, propertyName, defaultSerializer);
                     return callExpression.ConvertIfRequired(methodCallExpression.Method.ReturnType);
                 }
 
@@ -449,13 +509,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 return StoredValueConversion.CreateConvertedField(
                     convertedProperty, Visit(convertedSource)!, MqlFieldMethodInfo).ConvertIfRequired(convertedMember.Type);
 
-            // Replace plain entity-property/navigation member access in a JOIN result selector (e.g. a
-            // user's verbatim `(c, o) => new { c.ContactName, o.OrderID }`) with Mql.Field reads that honour
-            // the entity's BSON element names. Single-collection queries don't need this - the root source's
-            // .As(EntitySerializer) already resolves member access correctly - but in a join the driver
-            // synthesizes a result-type serializer for the _outer/_inner shape that does NOT carry EF's
-            // entity serializers, so `o.OrderID` would resolve to a literal "OrderID" field instead of the
-            // PK's "_id". Gated on _innerSources so it only affects join queries.
+            // A JOIN result selector's verbatim entity member access (`(c, o) => new { c.ContactName, o.OrderID }`) becomes Mql.Field reads honoring BSON
+            // element names: the driver synthesizes the _outer/_inner result serializer without EF's entity serializers, so `o.OrderID` would resolve
+            // to a literal "OrderID" field instead of "_id". Gated on _innerSources so single-collection queries are unaffected.
             case MemberExpression memberExpression
                 when _innerSources.Count > 0
                      && memberExpression.Expression != null
@@ -471,39 +527,26 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     {
                         var doc = memberSource;
 
-                        // Composite keys need to go via the _id document
                         var isCompositeKeyAccess = memberProperty.IsPrimaryKey()
                                                    && memberEntityType.FindPrimaryKey()?.Properties.Count > 1;
                         if (isCompositeKeyAccess)
                         {
-                            var mqlFieldDoc = MqlFieldMethodInfo.MakeGenericMethod(memberSource.Type, typeof(BsonValue));
-                            doc = Expression.Call(null, mqlFieldDoc, memberSource, Expression.Constant("_id"),
-                                Expression.Constant(BsonValueSerializer.Instance));
+                            doc = MqlField(memberSource, typeof(BsonValue), "_id", BsonValueSerializer.Instance);
                         }
 
-                        var mqlField = MqlFieldMethodInfo.MakeGenericMethod(doc.Type, memberProperty.ClrType);
-                        var serializer = BsonSerializerFactory.CreateTypeSerializer(memberProperty);
-                        var callExpression = Expression.Call(null, mqlField, doc,
-                            Expression.Constant(memberProperty.GetElementName()),
-                            Expression.Constant(serializer));
+                        var callExpression = MqlField(doc, memberProperty.ClrType, memberProperty.GetElementName(),
+                            BsonSerializerFactory.CreateTypeSerializer(memberProperty));
                         return callExpression.ConvertIfRequired(memberExpression.Type);
                     }
 
                     var memberNavigation = memberEntityType.FindNavigation(memberExpression.Member.Name)!;
-                    var navElementName = memberNavigation.TargetEntityType.GetContainingElementName();
-                    var navMqlField = MqlFieldMethodInfo.MakeGenericMethod(memberSource.Type, memberNavigation.ClrType);
-                    var navSerializer = _bsonSerializerFactory.GetNavigationSerializer(memberNavigation);
-                    var navCall = Expression.Call(null, navMqlField, memberSource,
-                        Expression.Constant(navElementName),
-                        Expression.Constant(navSerializer));
+                    var navCall = MqlField(memberSource, memberNavigation.ClrType,
+                        memberNavigation.TargetEntityType.GetContainingElementName(),
+                        _bsonSerializerFactory.GetNavigationSerializer(memberNavigation));
                     return navCall.ConvertIfRequired(memberExpression.Type);
                 }
 
-            // Rewrite DateTimeOffset.DateTime/.Year/.Date/etc member access into a UTC-field +
-            // Offset-field reconstruction that the driver's own DateTime member translator can
-            // then handle natively. Works around CSHARP-5296: the driver's DateTimeOffsetSerializer
-            // does not implement IBsonDocumentSerializer, so member access directly off a
-            // DateTimeOffset-typed expression fails in the driver's LINQ translator. See EF-218.
+            // Rebuild DateTimeOffset.DateTime/.Year/.Date/etc from the UTC and Offset fields so the driver's DateTime translator works (CSHARP-5296).
             case MemberExpression { Expression: { } dateTimeOffsetSource } dateTimeOffsetMember
                 when dateTimeOffsetSource.Type == typeof(DateTimeOffset)
                      && DateTimeOffsetComponentMembers.Contains(dateTimeOffsetMember.Member.Name):
@@ -521,29 +564,21 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                             + "'.UtcDateTime' instead, or evaluate on the client.");
                     }
 
-                    var dtoDocMethod = MqlFieldMethodInfo.MakeGenericMethod(dtoDocSource.Type, typeof(BsonValue));
-                    var dtoDoc = Expression.Call(null, dtoDocMethod, dtoDocSource,
-                        Expression.Constant(dtoElementName), Expression.Constant(BsonValueSerializer.Instance));
-
-                    var utcFieldMethod = MqlFieldMethodInfo.MakeGenericMethod(typeof(BsonValue), typeof(DateTime));
-                    var utcField = Expression.Call(null, utcFieldMethod, dtoDoc,
-                        Expression.Constant("DateTime"), Expression.Constant(DateTimeSerializer.Instance));
+                    var dtoDoc = MqlField(dtoDocSource, typeof(BsonValue), dtoElementName, BsonValueSerializer.Instance);
+                    var utcField = MqlField(dtoDoc, typeof(DateTime), "DateTime", DateTimeSerializer.Instance);
 
                     if (dateTimeOffsetMember.Member.Name == nameof(DateTimeOffset.UtcDateTime))
                     {
                         return utcField;
                     }
 
-                    var offsetFieldMethod = MqlFieldMethodInfo.MakeGenericMethod(typeof(BsonValue), typeof(int));
-                    var offsetField = Expression.Call(null, offsetFieldMethod, dtoDoc,
-                        Expression.Constant("Offset"), Expression.Constant(Int32Serializer.Instance));
+                    var offsetField = MqlField(dtoDoc, typeof(int), "Offset", Int32Serializer.Instance);
 
                     var localDateTime = Expression.Call(utcField, DateTimeAddMinutesMethodInfo,
                         Expression.Convert(offsetField, typeof(double)));
 
-                    // NOTE: the "DateTime" sub-field is millisecond-truncated (sub-ms ticks lost vs. client-side
-                    // eval via "Ticks"), and the reconstructed Kind is always Utc, not Unspecified - don't call
-                    // .ToLocalTime() on it.
+                    // The "DateTime" sub-field is millisecond-truncated, and the reconstructed Kind is always Utc —
+                    // don't call .ToLocalTime() on it.
                     return dateTimeOffsetMember.Member.Name is nameof(DateTimeOffset.DateTime)
                         ? localDateTime
                         : Expression.MakeMemberAccess(localDateTime, typeof(DateTime).GetProperty(dateTimeOffsetMember.Member.Name)!);
@@ -551,7 +586,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
                 break;
 
-            // Handle method call to VectorQuery
             case MethodCallExpression methodCallExpression
                 when methodCallExpression.IsVectorSearch():
                 return ProcessVectorSearch(methodCallExpression);
@@ -559,11 +593,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             case MethodCallExpression methodCallExpression:
                 return VisitMethodCall(methodCallExpression);
 
-            // Unwrap include expressions.
             case IncludeExpression includeExpression:
                 return Visit(includeExpression.EntityExpression);
 
-            // Replace the root with the MongoDB LINQ V3 provider source.
             case EntityQueryRootExpression entityQueryRootExpression:
                 if (_foundEntityQueryRootExpression == null)
                 {
@@ -571,7 +603,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     return InjectAfterRootLookupStages(_source);
                 }
 
-                // Check inner sources first (handles self-joins where outer and inner are the same type)
                 if (_innerSources.TryGetValue(entityQueryRootExpression.EntityType, out var innerSource))
                 {
                     return innerSource;
@@ -600,95 +631,29 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             var limit = ParamValue<int>(4);
             var options = ParamValue<VectorQueryOptions?>(5);
 
-            var concreteOptions = options ?? new();
-
-            if (concreteOptions is { NumberOfCandidates: not null, Exact: true })
-            {
-                throw new InvalidOperationException(
-                    "The option 'Exact' is set to 'true' on a call to 'VectorQuery', indicating an exact nearest neighbour (ENN) search, and the number of candidates has also been set. Either 'NumberOfCandidates' or 'Exact' can be set, but not both.");
-            }
-
-            var members = propertyExpression.GetMemberAccess<MemberInfo>();
             var entityType = _queryContext.Context.Model.FindEntityType(_source.Type.TryGetItemType()!);
-            var memberMetadata = entityType?.FindMember(members[0].Name);
 
-            if (memberMetadata == null)
-            {
-                throw new InvalidOperationException(
-                    $"Could not create a vector query for '{(entityType?.ClrType ?? _source.Type).ShortDisplayName()}.{members[0].Name}'. Make sure the entity type is included in the EF Core model and that the property or field is mapped.");
-            }
+            // Resolve is reflection-free so its exceptions surface unwrapped, identical to the native path.
+            // See VectorSearchStageBuilder.
+            var resolved = VectorSearchStageBuilder.Resolve(
+                entityType, _source.Type, propertyExpression, options, _queryContext.QueryLogger);
 
-            foreach (var memberInfo in members.Skip(1))
-            {
-                memberMetadata = (memberMetadata as INavigation)?.TargetEntityType.FindMember(memberInfo.Name);
-            }
+            AdditionalState[MongoExecutableQuery.VectorQueryProperty] = resolved.Member;
+            AdditionalState[MongoExecutableQuery.VectorQueryIndexName] = resolved.Options.IndexName!;
 
-            AdditionalState[MongoExecutableQuery.VectorQueryProperty] = memberMetadata!;
-
-            var vectorIndexesInModel = memberMetadata?.DeclaringType.ContainingEntityType
-                .GetIndexes().Where(i => i.GetVectorIndexOptions() != null && i.Properties[0] == memberMetadata).ToList();
-
-            if (concreteOptions.IndexName == null)
-            {
-                // Index to use was not specified in the query. Throw or warn if there is anything but one index in the model.
-                if (vectorIndexesInModel == null || vectorIndexesInModel.Count == 0)
-                {
-                    ThrowForBadOptions(
-                        "the vector index for this query could not be found. Use 'HasIndex' on the EF model builder to specify the index, or " +
-                        "specify the index name in the call to 'VectorQuery' if indexes are being managed outside of EF Core.");
-                }
-
-                if (vectorIndexesInModel!.Count > 1)
-                {
-                    ThrowForBadOptions(
-                        "multiple vector indexes are defined for this property in the EF Core model. Specify the index to use in the call to 'VectorSearch'.");
-                }
-
-                // There is only one index and none was specified, so use that index.
-                concreteOptions = concreteOptions with { IndexName = vectorIndexesInModel[0].Name };
-            }
-            else
-            {
-                // Index to use was specified in the query. Throw or warn if it doesn't match any index in the model.
-                if (vectorIndexesInModel == null || vectorIndexesInModel.All(i => i.Name != concreteOptions.IndexName))
-                {
-                    _queryContext.QueryLogger.VectorSearchNeedsIndex((IProperty)memberMetadata!);
-                }
-                // Index name in query already matches, so just continue.
-            }
-
-            AdditionalState[MongoExecutableQuery.VectorQueryIndexName] = concreteOptions.IndexName!;
-
-            var searchOptionsType = typeof(VectorSearchOptions<>).MakeGenericType(entityType!.ClrType);
-            var searchOptions = Activator.CreateInstance(searchOptionsType)!;
-
-            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.IndexName))!.SetValue(searchOptions,
-                concreteOptions.IndexName);
-            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.NumberOfCandidates))!.SetValue(searchOptions,
-                concreteOptions.NumberOfCandidates);
-            searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.Exact))!.SetValue(searchOptions,
-                concreteOptions.Exact);
-
+            object? filterDefinition = null;
             if (preFilterExpression != null)
             {
-                var convertedExpression = Activator.CreateInstance(
-                    typeof(ExpressionFilterDefinition<>).MakeGenericType(entityType.ClrType),
+                filterDefinition = Activator.CreateInstance(
+                    typeof(ExpressionFilterDefinition<>).MakeGenericType(entityType!.ClrType),
                     Visit(preFilterExpression));
-
-                searchOptionsType.GetProperty(nameof(VectorSearchOptions<object>.Filter))!.SetValue(searchOptions,
-                    convertedExpression);
             }
 
-            var vectorSearchPipelineStage = typeof(PipelineStageDefinitionBuilder)
-                .GetTypeInfo().GetDeclaredMethods(nameof(PipelineStageDefinitionBuilder.VectorSearch))
-                .Single(mi =>
-                    mi.GetParameters()[0].ParameterType.IsGenericType
-                    && mi.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == typeof(Expression<>))
-                .MakeGenericMethod(entityType.ClrType, memberMetadata!.ClrType)
-                .Invoke(null, [propertyExpression, queryVector, limit, searchOptions]);
+            var vectorSearchPipelineStage = VectorSearchStageBuilder.CreateStage(
+                entityType!, propertyExpression, resolved, filterDefinition, queryVector!, limit);
 
             var appendStageMethod = typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!
-                .MakeGenericMethod(entityType.ClrType, entityType.ClrType);
+                .MakeGenericMethod(entityType!.ClrType, entityType.ClrType);
 
             var serializerType = typeof(IBsonSerializer<>).MakeGenericType(entityType.ClrType);
 
@@ -699,23 +664,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 Expression.Constant(vectorSearchPipelineStage),
                 Expression.Constant(null, serializerType));
 
-            return Expression.Call(
-                null,
-                appendStageMethod,
-                vectorSource,
-                Expression.New(
-                    typeof(BsonDocumentPipelineStageDefinition<,>)
-                        .MakeGenericType(entityType.ClrType, entityType.ClrType)
-                        .GetConstructor([typeof(BsonDocument), serializerType])!,
-                    Expression.Constant(AddScoreField),
-                    Expression.Constant(null, serializerType)),
-                Expression.Constant(null, serializerType));
-
-            void ThrowForBadOptions(string reason)
-            {
-                throw new InvalidOperationException(
-                    $"A vector query for '{entityType!.DisplayName()}.{members[0].Name}' could not be executed because {reason}");
-            }
+            return AppendRawStage(vectorSource, entityType.ClrType, AddScoreField);
 
 #if EF8 || EF9
             TValue? ParamValue<TValue>(int index)
@@ -737,7 +686,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         doc = null!;
         elementName = null!;
 
-        // Unwrap Nullable<DateTimeOffset>.Value.
         if (expression is MemberExpression { Member.Name: "Value" } valueMember
             && Nullable.GetUnderlyingType(valueMember.Expression!.Type) == typeof(DateTimeOffset))
         {
@@ -805,39 +753,120 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     private static readonly MethodInfo EFPropertyMethodInfo =
         typeof(EF).GetMethod(nameof(EF.Property))!;
 
+    // Uses the shared constant, not a literal: MongoSelectLowerer requires this stage to be byte-identical to
+    // the one MongoPipelineFactory renders for the native path.
     private static readonly BsonDocument AddScoreField =
-        new("$addFields", new BsonDocument { { "__score", new BsonDocument("$meta", "vectorSearchScore") } });
+        new("$addFields",
+            new BsonDocument
+            {
+                { MongoVectorSearchScoreStage.ScoreField, new BsonDocument("$meta", "vectorSearchScore") }
+            });
 
-    // Types whose Equals(object) requires an exact runtime-type match, i.e. no cross-type equality.
-    private static readonly HashSet<Type> ExactTypeEqualityTypes =
-    [
-        typeof(bool), typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
-        typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double),
-        typeof(decimal), typeof(char), typeof(string), typeof(Guid), typeof(DateTime),
-        typeof(DateTimeOffset), typeof(TimeSpan)
-    ];
-
-    /// <summary>
-    /// True when <paramref name="receiver"/>.Equals(<paramref name="argument"/>) is guaranteed to return
-    /// <see langword="false"/> at runtime because the two sides are known-different simple types with no
-    /// cross-type equality (e.g. <c>((int?)1).Equals((ulong)2)</c>).
-    /// </summary>
-    private static bool IsAlwaysFalseAcrossTypeMismatch(Expression receiver, Expression argument)
+    protected override Expression VisitMember(MemberExpression node)
     {
-        var receiverType = Nullable.GetUnderlyingType(receiver.Type) ?? receiver.Type;
-        var argumentType = argument.RemoveObjectConvert().Type;
-        argumentType = Nullable.GetUnderlyingType(argumentType) ?? argumentType;
+        ThrowIfComputedFromStoredValue(node);
 
-        return AreMismatchedExactEqualityTypes(receiverType, argumentType);
+        // A server-side date part (Hour, Date, Year, ...) of a Local-kind DateTime property is extracted from the stored
+        // UTC instant, but the entity materializes as local time, so the value would silently disagree (EF-459).
+        if (IsServerDatePart(node, out var receiver))
+        {
+            ThrowIfLocalKindDateTime(receiver, node.Member.Name);
+        }
+
+        return base.VisitMember(node);
     }
 
-    /// <summary>
-    /// True when <paramref name="left"/> and <paramref name="right"/> are different <see cref="ExactTypeEqualityTypes"/>
-    /// members, so equality between them is always false. Scoped to that set rather than any mismatched
-    /// types, since an arbitrary type's <c>Equals(object)</c> override could compare across types.
-    /// </summary>
-    private static bool AreMismatchedExactEqualityTypes(Type left, Type right)
-        => left != right && ExactTypeEqualityTypes.Contains(left) && ExactTypeEqualityTypes.Contains(right);
+    protected override Expression VisitUnary(UnaryExpression node)
+    {
+        ThrowIfComputedFromStoredValue(node);
+        return base.VisitUnary(node);
+    }
+
+    protected override Expression VisitConditional(ConditionalExpression node)
+    {
+        ThrowIfComputedFromStoredValue(node);
+        return base.VisitConditional(node);
+    }
+
+    // A DateTime member (Hour, Date, Year, ...) the server computes from the stored instant; Kind is not stored.
+    private static bool IsServerDatePart(MemberExpression node, [NotNullWhen(true)] out Expression? receiver)
+    {
+        receiver = node.Expression;
+        return receiver != null
+               && node.Member.DeclaringType == typeof(DateTime)
+               && node.Member.Name != nameof(DateTime.Kind);
+    }
+
+    // Calendar arithmetic (AddYears/AddMonths/AddDays): unlike hour-and-smaller adds, it depends on the time zone.
+    private static bool IsCalendarAdd(MethodCallExpression node, [NotNullWhen(true)] out Expression? receiver)
+    {
+        receiver = node.Object;
+        return receiver != null
+               && node.Method.DeclaringType == typeof(DateTime)
+               && node.Method.Name is nameof(DateTime.AddYears) or nameof(DateTime.AddMonths) or nameof(DateTime.AddDays);
+    }
+
+    // Throws when `expression` is, or is computed from, a DateTime property configured HasDateTimeKind(Local). The
+    // property test is NativeTranslation.NativeDateTimeKindReadBack.IsKindSensitive, shared with the native translator's decline.
+    private void ThrowIfLocalKindDateTime(Expression expression, string operation)
+    {
+        if (FindLocalKindProperty(expression) is { } property)
+        {
+            throw new InvalidOperationException(
+                $"'{operation}' over the Local-kind DateTime property '{property.DeclaringType.DisplayName()}.{property.Name}' "
+                + "cannot be translated to a MongoDB query: the server evaluates it in UTC, so the result would differ from "
+                + "the local time the property materializes as. Server-side date arithmetic on a property configured with "
+                + "HasDateTimeKind(DateTimeKind.Local) is not supported; use a Utc-kind property or evaluate the date part "
+                + "on the client, for example after AsEnumerable().");
+        }
+    }
+
+    // The pass-through node set (casts, .Date, AddXxx, ??, ?:) mirrors the native translator's walker over the
+    // MongoExpression tree, NativeTranslation.NativeDateTimeKindReadBack.ReferencesKindSensitiveProperty; change the two
+    // together.
+    private IProperty? FindLocalKindProperty(Expression? expression)
+    {
+        switch (expression)
+        {
+            case UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked or ExpressionType.TypeAs } convert:
+                return FindLocalKindProperty(convert.Operand);
+
+            case MemberExpression { Expression: { } inner, Member.Name: "Value" or nameof(DateTime.Date) }
+                when Nullable.GetUnderlyingType(inner.Type) == typeof(DateTime) || inner.Type == typeof(DateTime):
+                return FindLocalKindProperty(inner);
+
+            case MethodCallExpression { Object: { } target } call
+                when call.Method.DeclaringType == typeof(DateTime) && call.Method.Name.StartsWith("Add", StringComparison.Ordinal):
+                return FindLocalKindProperty(target);
+
+            case BinaryExpression { NodeType: ExpressionType.Coalesce } coalesce:
+                return FindLocalKindProperty(coalesce.Left) ?? FindLocalKindProperty(coalesce.Right);
+
+            case ConditionalExpression conditional:
+                return FindLocalKindProperty(conditional.IfTrue) ?? FindLocalKindProperty(conditional.IfFalse);
+
+            case MethodCallExpression { Method: var method, Arguments: [{ } source, ConstantExpression { Value: string name }, ..] }
+                when method.IsEFPropertyMethod():
+                return FindLocalKindProperty(source.Type, name);
+
+            case MemberExpression { Expression: { } owner, Member: PropertyInfo propertyInfo }:
+                return FindLocalKindProperty(owner.Type, propertyInfo.Name);
+
+            default:
+                return null;
+        }
+    }
+
+    private IProperty? FindLocalKindProperty(Type entityClrType, string propertyName)
+    {
+        foreach (var entityType in _queryContext.Context.Model.FindEntityTypes(entityClrType))
+        {
+            if (entityType.FindProperty(propertyName) is { } property && NativeTranslation.NativeDateTimeKindReadBack.IsKindSensitive(property))
+                return property;
+        }
+
+        return null;
+    }
 
     protected override Expression VisitMethodCall(MethodCallExpression node)
     {
@@ -851,6 +880,38 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             MarkJoinKeyOperands(node.Arguments[3].UnwrapLambdaFromQuote().Body);
         }
 
+        // The driver's partial evaluator folds a call with no query-source operands (Random.Next, Guid.NewGuid) into a
+        // single constant, giving every row the same value. Refuse rather than return silently wrong rows.
+        NonDeterministicCalls.ThrowIfNonDeterministic(node);
+
+        // A sort key or aggregate over a property whose stored form orders differently (EF-337); see the StoredOrdering
+        // partial.
+        ThrowIfOrderingOrAggregateOverStoredOrdering(node);
+        ThrowIfComputedFromStoredValue(node);
+
+        // Calendar arithmetic (day/month/year) over a Local-kind DateTime property is evaluated by the server in UTC.
+        if (IsCalendarAdd(node, out var addReceiver))
+        {
+            ThrowIfLocalKindDateTime(addReceiver, node.Method.Name);
+        }
+
+        // The driver renders a DateTimeOffset as its stored {DateTime, Ticks, Offset} sub-document, so ToString would
+        // silently yield BSON JSON (EF-217). A top-level projected call is evaluated client-side before reaching
+        // here (MongoProjectionBindingExpressionVisitor); anything else cannot be translated, so fail loudly.
+        if (MongoProjectionBindingExpressionVisitor.IsDateTimeOffsetToString(node))
+        {
+            throw new InvalidOperationException(
+                "DateTimeOffset.ToString() cannot be translated to a MongoDB query: the server has no equivalent of the .NET "
+                + "formatting. Project the DateTimeOffset and call ToString() on the client, for example after AsEnumerable().");
+        }
+
+        ThrowIfDateTimeOffsetConcatenation(node);
+
+        ThrowIfLocalKindGroupKeyDateOperation(node);
+
+        // The driver renders g.Key inside a $group accumulator as the input document's _id; see the GroupingKey partial.
+        node = RewriteGroupingKeyReferencesInElementLambdas(node);
+
         if (node.Method.Name == nameof(Enumerable.Contains))
         {
             // list.Contains(e.Price) is an equality test on the stored form too.
@@ -862,14 +923,18 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 return rewrite;
         }
 
-        // A projected/filtered cross-collection collection-navigation Count, lowered by EF Core to
-        // Queryable.Count(Queryable.Where(DbSet<Target>(), fkPredicate)). Rewrite it to a client-side
-        // Enumerable.Count over Mql.Field(outerDoc, "_lookup_<Nav>", navSerializer); the driver renders
-        // this as a server-side { $size: "$_lookup_<Nav>" } reading the array materialized by the
-        // InjectAfterRoot $lookup.
+        // A projected/filtered cross-collection navigation Count (EF lowers it to
+        // Queryable.Count(Queryable.Where(DbSet<Target>(), fkPredicate))): rewrite to Enumerable.Count over
+        // Mql.Field(outerDoc, "_lookup_<Nav>", navSerializer), which the driver renders as a server-side $size.
         if (TryRewriteCollectionNavigationCount(node, out var sizeRewrite))
         {
             return sizeRewrite;
+        }
+
+        // The other terminal operators (and a predicated Count) over the same correlation: Sum, Min, Max, Average, Any, All, Count(pred).
+        if (TryRewriteReferencedCollectionOperator(node, out var referencedOperatorRewrite))
+        {
+            return referencedOperatorRewrite;
         }
 
         var zeroTakeRewrite = TryRewriteZeroTake(node);
@@ -878,10 +943,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return zeroTakeRewrite;
         }
 
-        // A bare/unfiltered embedded (owned) collection-navigation Count, e.g. `b.Posts.Count`, lowered by
-        // EF Core to Queryable.Count(Queryable.AsQueryable(EF.Property(shaper, "Posts"))). See
-        // TryRewriteEmbeddedCollectionNavigationCount for why this needs a null/missing-safe normalization
-        // the driver's own rendering of a bare Count (a server-side $size) doesn't provide.
+        // Bare embedded-collection Count (`b.Posts.Count`); see TryRewriteEmbeddedCollectionNavigationCount.
         if (TryRewriteEmbeddedCollectionNavigationCount(node, out var embeddedCountRewrite))
         {
             return embeddedCountRewrite;
@@ -978,12 +1040,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                or nameof(string.ToUpperInvariant) or nameof(string.ToLowerInvariant) or nameof(string.Substring);
 
     /// <summary>
-    /// Rewrites <c>source.Take(0)</c> (constant or parameterized) into <c>source.Where(_ => false)</c>.
-    /// The driver's <c>AstLimitStage</c> rejects a limit of 0 (EF-254) — a MongoDB <c>$limit</c> stage of 0
-    /// is meaningless server-side, so the driver's guard is correct and shouldn't be relaxed. The provider
-    /// already knows the concrete count by translation time (EF query parameters are resolved to constants
-    /// upstream of this visitor), so it can short-circuit to the equivalent empty-result shape itself
-    /// without ever emitting <c>$limit</c>.
+    /// Rewrites <c>source.Take(0)</c> (constant or parameterized) into <c>source.Where(_ => false)</c>, since
+    /// the driver rejects <c>$limit: 0</c>. Parameters are already resolved to constants by this point.
     /// </summary>
     private Expression? TryRewriteZeroTake(MethodCallExpression node)
     {
@@ -1006,19 +1064,30 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             Expression.Quote(falsePredicate)));
     }
 
+    private static bool IsQueryableOrEnumerable(MethodInfo method)
+        => method.DeclaringType == typeof(Queryable) || method.DeclaringType == typeof(Enumerable);
+
+    private static bool IsBareQueryableCount(MethodCallExpression node)
+        => node.Method.DeclaringType == typeof(Queryable)
+           && node.Arguments.Count == 1
+           && node.Method.Name is nameof(Queryable.Count) or nameof(Queryable.LongCount);
+
+    private static MethodInfo GetEnumerableCountMethod(MethodCallExpression countCall, Type elementType)
+        => (countCall.Method.Name == nameof(Queryable.LongCount)
+                ? EnumerableMethods.LongCountWithoutPredicate
+                : EnumerableMethods.CountWithoutPredicate)
+            .MakeGenericMethod(elementType);
+
     /// <summary>
     /// Rewrites a bare embedded (owned) collection-navigation <c>Count</c>/<c>LongCount</c> (e.g.
-    /// <c>b.Posts.Count</c>) into <c>Enumerable.Count</c> over a <c>??</c>-normalized array read — needed
-    /// because the driver's bare-Count translation is a server-side <c>$size</c>, which throws on a
-    /// missing or null array (unlike a predicated Count, translated as null-tolerant <c>$map</c>/<c>$sum</c>).
+    /// <c>b.Posts.Count</c>) into <c>Enumerable.Count</c> over a <c>??</c>-normalized array read, because the
+    /// driver renders a bare Count as <c>$size</c>, which throws on a missing or null array.
     /// </summary>
     private bool TryRewriteEmbeddedCollectionNavigationCount(MethodCallExpression node, out Expression result)
     {
         result = null!;
 
-        if (node.Method.DeclaringType != typeof(Queryable)
-            || node.Arguments.Count != 1
-            || node.Method.Name is not (nameof(Queryable.Count) or nameof(Queryable.LongCount)))
+        if (!IsBareQueryableCount(node))
         {
             return false;
         }
@@ -1032,9 +1101,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return false;
         }
 
-        // Narrow to genuinely embedded (owned) collection navigations only: AsQueryable(...) also shows
-        // up wrapping other enumerable sources (e.g. an IGrouping in a GroupBy/Union pipeline) that are
-        // not a document field read at all, so rewriting unconditionally miscompiles those shapes.
+        // Embedded collection navigations only: AsQueryable(...) also wraps non-field sources (e.g. an
+        // IGrouping), which rewriting would miscompile.
         if (asQueryableCall.Arguments[0] is not MethodCallExpression efPropertyCall
             || !efPropertyCall.Method.IsEFPropertyMethod()
             || efPropertyCall.Arguments[1] is not ConstantExpression { Value: string propertyName }
@@ -1052,10 +1120,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return false;
         }
 
-        var countMethod = (node.Method.Name == nameof(Queryable.LongCount)
-                ? EnumerableLongCountMethod
-                : EnumerableCountMethod)
-            .MakeGenericMethod(elementType);
+        var countMethod = GetEnumerableCountMethod(node, elementType);
 
         var emptyCollection = Expression.Constant(CreateEmptyCollection(fieldAccess!.Type, elementType), fieldAccess.Type);
         var normalizedFieldAccess = Expression.Coalesce(fieldAccess, emptyCollection);
@@ -1088,6 +1153,23 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         new(StringComparer.Ordinal) { "Union", "Concat", "Except", "Intersect" };
 
     /// <summary>
+    /// Defence in depth for the whole-entity path (<see cref="Translate"/>; not the bulk path, not
+    /// <see cref="TranslateProjected"/>). With a <c>ForceUnwind</c> lookup pending, the shaper is pre-built
+    /// (<see cref="Expressions.MongoQueryExpression.UsesDriverJoinFields"/>) for the flat
+    /// <c>_lookup_&lt;Nav&gt;</c> shape whether or not <see cref="StripJoinForLookup"/> succeeds. If a strip
+    /// fails, this throws <see cref="InvalidOperationException"/> rather than letting the shaper hit a confusing
+    /// BSON-materialization error.
+    /// </summary>
+    private void GuardAgainstUnstrippableForceUnwindJoin(Expression? stripped, Expression efQueryExpression)
+    {
+        if (stripped == null && _pendingLookups.Any(l => l.ForceUnwind))
+        {
+            throw new InvalidOperationException(
+                Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(efQueryExpression.Print()));
+        }
+    }
+
+    /// <summary>
     /// A projected collection-navigation count is materialized by a single <c>$lookup</c> injected right
     /// after the root source. Under a set operation (e.g. <c>Union</c>) where more than one branch reads
     /// the looked-up collection, the non-leading branch becomes a <c>$unionWith</c> sub-pipeline that does
@@ -1098,7 +1180,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// </summary>
     private void GuardAgainstMultiBranchNavigationCount(Expression? efQueryExpression)
     {
-        if (efQueryExpression == null || !_pendingLookups.Any(l => l.InjectAfterRoot))
+        if (efQueryExpression == null
+            || !(_pendingLookups.Any(l => l.InjectAfterRoot || l.IsBridgeReadableArray) || _bridgeOwnedLookups.Count > 0))
         {
             return;
         }
@@ -1107,8 +1190,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         finder.Visit(efQueryExpression);
         if (finder.HasMultiBranchNavigationCount)
         {
-            // Fail as a standard EF Core translation failure (the message AssertTranslationFailed expects)
-            // rather than letting a broken pipeline reach the server.
             throw new InvalidOperationException(
                 Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(efQueryExpression.Print()));
         }
@@ -1163,11 +1244,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
             if (SetOperationMethodNames.Contains(node.Method.Name)
-                && (node.Method.DeclaringType == typeof(Queryable)
-                    || node.Method.DeclaringType == typeof(Enumerable)))
+                && IsQueryableOrEnumerable(node.Method))
             {
                 var branchesWithCount = node.Arguments.Count(ContainsNavigationCount);
                 if (branchesWithCount >= 2)
+                {
+                    HasMultiBranchNavigationCount = true;
+                }
+
+                // Any other terminal over a referenced collection (Sum, Any, Count(pred), ...) reads a root-level array a `$unionWith`
+                // sub-pipeline cannot see, which the server rejects at run time; fail at translation instead, as it always did.
+                if (node.Arguments.Any(ContainsOtherReferencedTerminal))
                 {
                     HasMultiBranchNavigationCount = true;
                 }
@@ -1176,44 +1263,34 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return base.VisitMethodCall(node);
         }
 
+        private static bool ContainsOtherReferencedTerminal(Expression expression)
+            => ExpressionSearch.Contains(
+                expression,
+                node => node is MethodCallExpression call
+                        && !IsBareQueryableCount(call)
+                        && call.Method.DeclaringType == typeof(Queryable)
+                        && ReferencedCollectionTerminalOperators.Contains(call.Method.Name)
+                        && call.Arguments.Count >= 1
+                        && TryFindCorrelationBase(call.Arguments[0], out _, out _));
+
         private static bool ContainsNavigationCount(Expression expression)
-        {
-            var finder = new NavigationCountFinder();
-            finder.Visit(expression);
-            return finder.Found;
-        }
+            => ExpressionSearch.Contains(expression, node => node is MethodCallExpression call && IsNavigationCount(call));
 
-        private sealed class NavigationCountFinder : System.Linq.Expressions.ExpressionVisitor
-        {
-            public bool Found { get; private set; }
-
-            protected override Expression VisitMethodCall(MethodCallExpression node)
-            {
-                if (node.Method.DeclaringType == typeof(Queryable)
-                    && node.Arguments.Count == 1
-                    && node.Method.Name is nameof(Queryable.Count) or nameof(Queryable.LongCount)
-                    && node.Arguments[0] is MethodCallExpression
-                    {
-                        Method: { Name: nameof(Queryable.Where), DeclaringType: var d },
-                        Arguments: [EntityQueryRootExpression, _]
-                    }
-                    && d == typeof(Queryable))
-                {
-                    Found = true;
-                }
-
-                return base.VisitMethodCall(node);
-            }
-        }
+        private static bool IsNavigationCount(MethodCallExpression node)
+            => IsBareQueryableCount(node)
+               && node.Arguments[0] is MethodCallExpression
+               {
+                   Method: { Name: nameof(Queryable.Where), DeclaringType: var d },
+                   Arguments: [EntityQueryRootExpression, _]
+               }
+               && d == typeof(Queryable);
     }
 
     private bool TryRewriteCollectionNavigationCount(MethodCallExpression node, out Expression result)
     {
         result = null!;
 
-        if (node.Method.DeclaringType != typeof(Queryable)
-            || node.Arguments.Count != 1
-            || node.Method.Name is not (nameof(Queryable.Count) or nameof(Queryable.LongCount)))
+        if (!IsBareQueryableCount(node))
         {
             return false;
         }
@@ -1228,9 +1305,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return false;
         }
 
-        // Resolve the InjectAfterRoot $lookup registered by the projection binder for this navigation
-        // (matched by target entity type). The multi-branch set-operation case is rejected earlier by
-        // GuardAgainstMultiBranchNavigationCount, so here we only need the matching lookup to exist.
+        // Match the InjectAfterRoot $lookup by target entity type. The multi-branch set-operation case is rejected
+        // earlier by GuardAgainstMultiBranchNavigationCount.
         var targetEntityType = rootExpression.EntityType;
         var lookup = _pendingLookups.FirstOrDefault(
             l => l.InjectAfterRoot && l.TargetEntityType == targetEntityType);
@@ -1239,12 +1315,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return false;
         }
 
-        // InjectAfterRoot is only ever set for navigation-derived lookups (collection-count
-        // projections), so a matched lookup here always carries a real navigation.
         var navigation = lookup.Navigation!;
 
-        // Extract the outer document reference from the FK predicate: the parameter that is NOT the inner
-        // Where lambda's parameter (e.g. the `c` in `o0 => c.CustomerID == o0.CustomerID`).
         var predicate = predicateArg.UnwrapLambdaFromQuote();
         var innerParam = predicate.Parameters[0];
         var outerReference = FindOuterReference(predicate.Body, innerParam);
@@ -1253,33 +1325,35 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return false;
         }
 
+        // Matching by target type says nothing about THIS predicate: only the exact FK correlation of the lookup's own navigation may read its
+        // array; any other Count(Where(...)) over that type is left alone. Re-verified here, not trusted to the binder that staged the lookup.
+        var outerParameter = outerReference.RemoveConvert();
+        while (outerParameter is MemberExpression { Expression: { } outerReceiver })
+        {
+            outerParameter = outerReceiver.RemoveConvert();
+        }
+
+        if (outerParameter is not ParameterExpression
+            || !NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelatedCollection(
+                predicate.Body, navigation.DeclaringEntityType, outerParameter, targetEntityType, requireEmbedded: false,
+                out var matchedNavigation)
+            || matchedNavigation != navigation)
+        {
+            return false;
+        }
+
         var visitedOuter = Visit(outerReference)!;
 
-        // Mql.Field<TOuter, TNav>(outerDoc, "_lookup_<Nav>", navSerializer) reads the looked-up array.
         var navClrType = navigation.ClrType;
-        var mqlField = MqlFieldMethodInfo.MakeGenericMethod(visitedOuter.Type, navClrType);
-        var navSerializer = _bsonSerializerFactory.GetNavigationSerializer(navigation);
-        var fieldAccess = Expression.Call(null, mqlField, visitedOuter,
-            Expression.Constant(lookup.As),
-            Expression.Constant(navSerializer));
+        var fieldAccess = MqlField(
+            visitedOuter, navClrType, lookup.As, _bsonSerializerFactory.GetNavigationSerializer(navigation));
 
         var elementType = navClrType.TryGetItemType() ?? navigation.TargetEntityType.ClrType;
-        var countMethod = (node.Method.Name == nameof(Queryable.LongCount)
-                ? EnumerableLongCountMethod
-                : EnumerableCountMethod)
-            .MakeGenericMethod(elementType);
+        var countMethod = GetEnumerableCountMethod(node, elementType);
 
         result = Expression.Call(null, countMethod, fieldAccess);
         return true;
     }
-
-    private static readonly MethodInfo EnumerableCountMethod =
-        typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(m => m.Name == nameof(Enumerable.Count) && m.GetParameters().Length == 1);
-
-    private static readonly MethodInfo EnumerableLongCountMethod =
-        typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(m => m.Name == nameof(Enumerable.LongCount) && m.GetParameters().Length == 1);
 
     /// <summary>
     /// Find the outer-entity reference in an FK-equality predicate body — the sub-expression rooted at a
@@ -1301,7 +1375,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         protected override Expression VisitParameter(ParameterExpression node)
         {
-            if (Found == null && node != innerParam)
+            // A query parameter (a captured variable, `__cutoff_0`) is a value, not the outer entity the predicate correlates with.
+            if (Found == null && node != innerParam && !NativeTranslation.NativeQueryParameter.TryGetQueryParameterName(node, out _))
             {
                 Found = node;
             }
@@ -1317,15 +1392,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         if (node is { Object: not null, Arguments.Count: 1 })
         {
-            // Instance: list.Contains(item)
             collectionExpr = node.Object;
             itemExpr = node.Arguments[0];
         }
         else if (node.Object == null && node.Arguments.Count == 2
-                 && (node.Method.DeclaringType == typeof(Enumerable)
-                     || node.Method.DeclaringType == typeof(Queryable)))
+                 && IsQueryableOrEnumerable(node.Method))
         {
-            // Static: Enumerable/Queryable.Contains(source, item)
             collectionExpr = node.Arguments[0];
             itemExpr = node.Arguments[1];
         }
@@ -1399,6 +1471,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     protected override Expression VisitBinary(BinaryExpression node)
     {
+        ThrowIfRelationalComparisonOverStoredOrdering(node);
+        ThrowIfComputedFromStoredValue(node);
+        ThrowIfDateTimeOffsetConcatenation(node);
+
         if (node.NodeType is ExpressionType.Equal or ExpressionType.NotEqual)
         {
             _storedFormOperands.Add(node.Left.RemoveConvert());
@@ -1428,7 +1504,28 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             }
         }
 
-        return base.VisitBinary(node);
+        var visited = base.VisitBinary(node);
+
+        // A relational comparison of a nullable aggregate over a referenced collection (`c.Orders.Max(o => (int?)o.Total) < 650`): the
+        // aggregation dialect orders null below every number, so the empty group would match where C# answers false.
+        if (node.NodeType is ExpressionType.LessThan or ExpressionType.LessThanOrEqual or ExpressionType.GreaterThan
+                or ExpressionType.GreaterThanOrEqual
+            && visited is BinaryExpression comparison)
+        {
+            var guarded = (Expression)comparison;
+            foreach (var operand in new[] { comparison.Left, comparison.Right })
+            {
+                if (_nullableReferencedAggregates.Contains(operand.RemoveConvert()))
+                {
+                    guarded = Expression.AndAlso(
+                        Expression.NotEqual(operand, Expression.Constant(null, operand.Type)), guarded);
+                }
+            }
+
+            return guarded;
+        }
+
+        return visited;
     }
 
     // DateTimeOffset.DateTime/.Date are rewritten to a UTC-labelled wall-clock value (UTC field + stored offset).
@@ -1459,6 +1556,20 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 return convert.Update(operand);
             default:
                 return expression;
+        }
+    }
+
+    // `"a" + x.Dto`, `string.Concat(x.Dto, ...)`: the driver renders the operand as $toString over the stored
+    // {DateTime, Ticks, Offset} sub-document, silently yielding BSON JSON (EF-217). A top-level projected call is not
+    // client-evaluated (unlike DateTimeOffset.ToString()), so fail loudly in every position.
+    private static void ThrowIfDateTimeOffsetConcatenation(Expression node)
+    {
+        if (MongoProjectionBindingExpressionVisitor.IsDateTimeOffsetConcatenation(node))
+        {
+            throw new InvalidOperationException(
+                "Concatenating a DateTimeOffset into a string cannot be translated to a MongoDB query: the server has no "
+                + "equivalent of the .NET formatting. Project the DateTimeOffset and build the string on the client, for "
+                + "example after AsEnumerable().");
         }
     }
 
@@ -1572,7 +1683,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         if (properties == null)
             return null;
 
-        // Item is constant
         var constantValue = TryEvaluateToConstant(item);
         if (constantValue != null)
         {
@@ -1591,7 +1701,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 isQueryable ? Expression.Quote(lambda) : lambda);
         }
 
-        // Collection is constant
         var constantCollection = TryEvaluateToConstant(collection);
         if (constantCollection is System.Collections.IEnumerable enumerable)
         {
@@ -1664,7 +1773,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return _queryContext.Parameters[queryParam.Name];
 #endif
 
-        // Fallback: try to compile and evaluate the expression (handles MemberInitExpression, nested closures, etc.)
         try
         {
             var lambda = Expression.Lambda<Func<object>>(Expression.Convert(expression, typeof(object)));

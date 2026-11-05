@@ -27,12 +27,10 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// These tests assert ROW COUNTS, not MQL — the wrong MQL is indistinguishable from a legitimately
 /// unfiltered query.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class Ef369MultiJoinComposedTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
 #if !EF8 && !EF9
-    // ---- SHAPE 1..: composed Where over a ThenInclude (the reported bug) ----
     [Fact]
     public void ThenInclude_with_composed_nav_Where()
     {

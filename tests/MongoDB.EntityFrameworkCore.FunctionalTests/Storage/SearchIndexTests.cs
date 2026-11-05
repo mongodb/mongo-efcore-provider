@@ -25,7 +25,6 @@ using MongoDB.EntityFrameworkCore.Metadata.Search.Builders;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Storage;
 
-[XUnitCollection("StorageTests")]
 public class SearchIndexTests(AtlasTemporaryDatabaseFixture database)
     : IClassFixture<AtlasTemporaryDatabaseFixture>
 {
