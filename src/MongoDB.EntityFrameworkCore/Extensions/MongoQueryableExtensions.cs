@@ -14,11 +14,13 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Metadata;
 
 // ReSharper disable once CheckNamespace (extensions should be in the EF Core namespace for discovery)
@@ -35,6 +37,28 @@ public static class MongoQueryableExtensions
         = typeof(MongoQueryableExtensions)
             .GetTypeInfo().GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(VectorSearch));
+
+    // One marker method per mode rather than a mode argument: EF turns a constant argument into a query parameter, which
+    // would hide the mode from the compiled-query cache key. The method identity is part of the key.
+    private static readonly Dictionary<MethodInfo, MongoQueryMode> QueryModeMarkers
+        = typeof(MongoQueryableExtensions)
+            .GetTypeInfo().GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Where(mi => mi.Name.StartsWith("QueryModeMarker", StringComparison.Ordinal))
+            .ToDictionary(mi => mi, mi => Enum.Parse<MongoQueryMode>(mi.Name["QueryModeMarker".Length..]));
+
+    internal static bool TryGetWithQueryProvider(this MethodCallExpression methodCallExpression, out MongoQueryMode queryMode)
+    {
+        var method = methodCallExpression.Method;
+        if (method.DeclaringType == typeof(MongoQueryableExtensions)
+            && method.IsGenericMethod
+            && QueryModeMarkers.TryGetValue(method.GetGenericMethodDefinition(), out queryMode))
+        {
+            return true;
+        }
+
+        queryMode = default;
+        return false;
+    }
 
     internal static bool IsVectorSearch(this MethodCallExpression methodCallExpression) =>
         methodCallExpression.Method.DeclaringType == typeof(MongoQueryableExtensions)
@@ -145,4 +169,53 @@ public static class MongoQueryableExtensions
                     Expression.Constant(options, typeof(VectorQueryOptions?))
                 ]));
     }
+
+    /// <summary>
+    /// Sets the <see cref="MongoQueryMode"/> used to translate this query, overriding the mode configured for the context
+    /// with <see cref="MongoDbContextOptionsBuilder.UseQueryMode"/>, in either direction. For example, a query can run through
+    /// the driver's LINQ provider while the rest of the context uses native translation, or can require native translation
+    /// with <see cref="MongoQueryMode.NativeOnly"/> while the rest of the context allows fallback.
+    /// </summary>
+    /// <remarks>
+    /// This method is only available on a <see cref="DbSet{TEntity}"/>, so it is applied at the root of the query. If a query
+    /// has several roots, such as a join, <c>WithQueryProvider</c> can be used on more than one of them only if
+    /// they specify the same mode.
+    /// </remarks>
+    /// <typeparam name="TEntity">The type of the entity.</typeparam>
+    /// <param name="source">The <see cref="DbSet{TEntity}"/> at the root of the query.</param>
+    /// <param name="queryMode">The <see cref="MongoQueryMode"/> to use for this query.</param>
+    /// <returns>An <see cref="IQueryable{TEntity}"/> that will be translated using <paramref name="queryMode"/>.</returns>
+    public static IQueryable<TEntity> WithQueryProvider<TEntity>(this DbSet<TEntity> source, MongoQueryMode queryMode)
+        where TEntity : class
+        => WithQueryProvider((IQueryable<TEntity>)source, queryMode);
+
+    private static IQueryable<TEntity> WithQueryProvider<TEntity>(this IQueryable<TEntity> source, MongoQueryMode queryMode)
+        where TEntity : class
+    {
+        Check.IsEfQueryProvider(source);
+
+        var marker = queryMode switch
+        {
+            MongoQueryMode.Native => nameof(QueryModeMarkerNative),
+            MongoQueryMode.DriverLinq => nameof(QueryModeMarkerDriverLinq),
+            MongoQueryMode.NativeOnly => nameof(QueryModeMarkerNativeOnly),
+            _ => throw new ArgumentOutOfRangeException(nameof(queryMode), queryMode, null)
+        };
+
+        var method = typeof(MongoQueryableExtensions)
+            .GetMethod(marker, BindingFlags.Static | BindingFlags.NonPublic)!
+            .MakeGenericMethod(typeof(TEntity));
+
+        // Place the marker in the tree; it is consumed when the query is compiled.
+        return source.Provider.CreateQuery<TEntity>(Expression.Call(instance: null, method: method, source.Expression));
+    }
+
+    private static IQueryable<TEntity> QueryModeMarkerNative<TEntity>(this IQueryable<TEntity> source) => Marker(source);
+
+    private static IQueryable<TEntity> QueryModeMarkerDriverLinq<TEntity>(this IQueryable<TEntity> source) => Marker(source);
+
+    private static IQueryable<TEntity> QueryModeMarkerNativeOnly<TEntity>(this IQueryable<TEntity> source) => Marker(source);
+
+    private static IQueryable<TEntity> Marker<TEntity>(IQueryable<TEntity> source)
+        => throw new InvalidOperationException($"{nameof(WithQueryProvider)} can only be used in a query run by the MongoDB EF Core provider.");
 }

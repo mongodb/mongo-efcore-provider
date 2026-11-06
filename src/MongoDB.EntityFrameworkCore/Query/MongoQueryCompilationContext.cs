@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,13 +40,22 @@ public class MongoQueryCompilationContext(QueryCompilationContextDependencies de
     public Expression? OriginalExpression { get; internal set; }
 
     /// <summary>
-    /// The <see cref="MongoQueryMode"/> that controls how LINQ queries are translated for this compilation.
+    /// The <see cref="MongoQueryMode"/> that controls how LINQ queries are translated for this compilation. This is the
+    /// context-wide mode unless the query specified its own with <c>WithQueryProvider</c>.
     /// </summary>
-    public MongoQueryMode QueryMode { get; } = queryMode;
+    public MongoQueryMode QueryMode { get; internal set; } = queryMode;
 
     /// <inheritdoc/>
     public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression query)
     {
+        // A WithQueryProvider marker is consumed here, before the query is captured, so that neither translation nor the
+        // driver-LINQ fallback (which executes the captured chain) ever sees it.
+        query = WithQueryProviderExtractor.Extract(query, out var mode);
+        if (mode != null)
+        {
+            QueryMode = mode.Value;
+        }
+
         OriginalExpression = query;
         return base.CreateQueryExecutor<TResult>(query);
     }
