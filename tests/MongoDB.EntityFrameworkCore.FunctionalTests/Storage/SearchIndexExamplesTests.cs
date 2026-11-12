@@ -4742,7 +4742,38 @@ public class SearchIndexExamplesTests(AtlasTemporaryDatabaseFixture database)
                     """)
             ]);
         });
+
+        // WaitForSearchIndexesAsync only waits for the index itself. A synonym mapping syncs separately from its
+        // source collection, so wait for the mapping to be ready before the test queries with it (#33).
+        await WaitForSynonymMappingAsync(bsonCollection, "plot", "toilet", "my_synonyms");
+
         return bsonCollection;
+    }
+
+    private static async Task WaitForSynonymMappingAsync(
+        IMongoCollection<BsonDocument> collection, string path, string query, string synonymMapping)
+    {
+        var timeout = TimeSpan.FromMinutes(2);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        while (true)
+        {
+            try
+            {
+                await collection.Aggregate()
+                    .Search(Builders<BsonDocument>.Search.Text(path, query, new() { Synonyms = synonymMapping }))
+                    .Limit(1)
+                    .ToListAsync();
+                return;
+            }
+            catch (MongoCommandException e)
+                when (e.Message.Contains("is not ready to service queries", StringComparison.Ordinal)
+                      && stopwatch.Elapsed < timeout)
+            {
+                // E.g. synonym mapping "my_synonyms" is in state SYNC_ENQUEUED and is not ready to service queries.
+                await Task.Delay(TimeSpan.FromSeconds(1));
+            }
+        }
     }
 
     private async Task<IMongoCollection<BsonDocument>> PrepareCarsDatabase(SingleEntityDbContext<Car> db)
