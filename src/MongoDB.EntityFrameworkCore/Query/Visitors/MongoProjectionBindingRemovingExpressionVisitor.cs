@@ -753,9 +753,12 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         return (navigation.TargetEntityType, navDocumentExpression);
     }
 
-    private static readonly MethodInfo MqlFieldMethodInfo =
-        typeof(Mql).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(m => m.Name == nameof(Mql.Field) && m.GetParameters().Length == 3);
+    private static readonly MethodInfo MqlFieldMethodInfo = GetMqlFieldMethodDefinition();
+
+    private static MethodInfo GetMqlFieldMethodDefinition()
+        => ((MethodCallExpression)((Expression<Func<object, string, MongoDB.Bson.Serialization.IBsonSerializer<object>, object>>)
+            ((document, fieldName, serializer) => Mql.Field(document, fieldName, serializer))).Body)
+            .Method.GetGenericMethodDefinition();
 
     protected readonly record struct ResolvedFieldAccess(
         IProperty? Property,

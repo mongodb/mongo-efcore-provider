@@ -44,9 +44,22 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     // keeps working where converting it would not (the driver cannot render decimal.MinValue/MaxValue constants).
     private readonly HashSet<Expression> _storedFormOperands = new(ReferenceEqualityComparer.Instance);
 
-    private static readonly MethodInfo MqlFieldMethodInfo =
-        typeof(Mql).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(m => m.Name == nameof(Mql.Field) && m.GetParameters().Length == 3);
+    private static readonly MethodInfo MqlFieldMethodInfo = GetMqlFieldMethodDefinition();
+
+    private static MethodInfo GetMqlFieldMethodDefinition()
+        => ((MethodCallExpression)((Expression<Func<object, string, IBsonSerializer<object>, object>>)
+            ((document, fieldName, serializer) => Mql.Field(document, fieldName, serializer))).Body)
+            .Method.GetGenericMethodDefinition();
+
+    private static readonly MethodInfo VectorSearchPipelineStageMethodInfo =
+        GetVectorSearchPipelineStageMethodDefinition();
+
+    private static MethodInfo GetVectorSearchPipelineStageMethodDefinition()
+        => ((MethodCallExpression)((Expression<Func<Expression<Func<object, object>>, QueryVector, int,
+            VectorSearchOptions<object>, PipelineStageDefinition<object, object>>>)
+            ((field, queryVector, limit, options) =>
+                PipelineStageDefinitionBuilder.VectorSearch<object, object>(field, queryVector, limit, options))).Body)
+            .Method.GetGenericMethodDefinition();
 
     // DateTimeOffset members whose translation is rewritten below to work around the driver not
     // implementing IBsonDocumentSerializer on DateTimeOffsetSerializer (CSHARP-5296 / EF-218).
@@ -679,11 +692,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     convertedExpression);
             }
 
-            var vectorSearchPipelineStage = typeof(PipelineStageDefinitionBuilder)
-                .GetTypeInfo().GetDeclaredMethods(nameof(PipelineStageDefinitionBuilder.VectorSearch))
-                .Single(mi =>
-                    mi.GetParameters()[0].ParameterType.IsGenericType
-                    && mi.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == typeof(Expression<>))
+            var vectorSearchPipelineStage = VectorSearchPipelineStageMethodInfo
                 .MakeGenericMethod(entityType.ClrType, memberMetadata!.ClrType)
                 .Invoke(null, [propertyExpression, queryVector, limit, searchOptions]);
 
@@ -1273,13 +1282,31 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return true;
     }
 
-    private static readonly MethodInfo EnumerableCountMethod =
-        typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(m => m.Name == nameof(Enumerable.Count) && m.GetParameters().Length == 1);
+    private static readonly MethodInfo EnumerableCountMethod = GetEnumerableCountMethodDefinition();
 
-    private static readonly MethodInfo EnumerableLongCountMethod =
-        typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(m => m.Name == nameof(Enumerable.LongCount) && m.GetParameters().Length == 1);
+    private static MethodInfo GetEnumerableCountMethodDefinition()
+        => ((MethodCallExpression)((Expression<Func<IEnumerable<object>, int>>)
+            (source => source.Count())).Body).Method.GetGenericMethodDefinition();
+
+    private static readonly MethodInfo EnumerableLongCountMethod = GetEnumerableLongCountMethodDefinition();
+
+    private static MethodInfo GetEnumerableLongCountMethodDefinition()
+        => ((MethodCallExpression)((Expression<Func<IEnumerable<object>, long>>)
+            (source => source.LongCount())).Body).Method.GetGenericMethodDefinition();
+
+    private static readonly MethodInfo QueryableAnyWithPredicateMethod = GetQueryableAnyWithPredicateMethodDefinition();
+
+    private static MethodInfo GetQueryableAnyWithPredicateMethodDefinition()
+        => ((MethodCallExpression)((Expression<Func<IQueryable<object>, Expression<Func<object, bool>>, bool>>)
+            ((source, predicate) => source.Any(predicate))).Body)
+            .Method.GetGenericMethodDefinition();
+
+    private static readonly MethodInfo EnumerableAnyWithPredicateMethod = GetEnumerableAnyWithPredicateMethodDefinition();
+
+    private static MethodInfo GetEnumerableAnyWithPredicateMethodDefinition()
+        => ((MethodCallExpression)((Expression<Func<IEnumerable<object>, Func<object, bool>, bool>>)
+            ((source, predicate) => source.Any(predicate))).Body)
+            .Method.GetGenericMethodDefinition();
 
     /// <summary>
     /// Find the outer-entity reference in an FK-equality predicate body — the sub-expression rooted at a
@@ -1388,9 +1415,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             Expression.Equal(selector.Body, item, liftToNull: false, method: null),
             selector.Parameters[0]);
 
-        var anySource = isQueryable ? typeof(Queryable) : typeof(Enumerable);
-        var anyMethod = anySource.GetMethods()
-            .First(m => m.Name == nameof(Enumerable.Any) && m.GetParameters().Length == 2)
+        var anyMethod = (isQueryable ? QueryableAnyWithPredicateMethod : EnumerableAnyWithPredicateMethod)
             .MakeGenericMethod(elementType);
 
         return Expression.Call(null, anyMethod, selectCall.Arguments[0],
@@ -1582,9 +1607,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
             var isQueryable = collection.Type.IsGenericType
                               && collection.Type.GetGenericTypeDefinition() == typeof(IQueryable<>);
-            var anySource = isQueryable ? typeof(Queryable) : typeof(Enumerable);
-            var anyMethod = anySource.GetMethods()
-                .First(m => m.Name == nameof(Enumerable.Any) && m.GetParameters().Length == 2)
+            var anyMethod = (isQueryable ? QueryableAnyWithPredicateMethod : EnumerableAnyWithPredicateMethod)
                 .MakeGenericMethod(elementType);
 
             return Expression.Call(null, anyMethod, collection,
@@ -1691,7 +1714,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return Expression.Constant(value, property.ClrType);
     }
 
-    private static readonly MethodInfo AsMethodInfo = typeof(MongoQueryable)
-        .GetMethods()
-        .First(mi => mi is { Name: nameof(MongoQueryable.As), IsPublic: true, IsStatic: true } && mi.GetParameters().Length == 2);
+    private static readonly MethodInfo AsMethodInfo = GetAsMethodDefinition();
+
+    private static MethodInfo GetAsMethodDefinition()
+        => ((MethodCallExpression)((Expression<Func<IQueryable<object>, IBsonSerializer<object>, IQueryable<object>>>)
+            ((source, serializer) => MongoQueryable.As(source, serializer))).Body)
+            .Method.GetGenericMethodDefinition();
 }

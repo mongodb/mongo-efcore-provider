@@ -35,8 +35,12 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// </summary>
 internal static class StoredValueConversion
 {
-    private static readonly MethodInfo ConvertMethod = typeof(Mql).GetMethods()
-        .Single(m => m.Name == nameof(Mql.Convert) && m.GetParameters().Length == 2);
+    private static readonly MethodInfo ConvertMethod = GetConvertMethodDefinition();
+
+    private static MethodInfo GetConvertMethodDefinition()
+        => ((MethodCallExpression)((Expression<Func<string, object>>)
+            (value => Mql.Convert<string, object>(value, new ConvertOptions<object>()))).Body)
+            .Method.GetGenericMethodDefinition();
 
     /// <summary>The server-side types <c>$convert</c> can produce from a string for a CLR numeric type.</summary>
     private static bool IsConvertibleNumeric(Type type)
