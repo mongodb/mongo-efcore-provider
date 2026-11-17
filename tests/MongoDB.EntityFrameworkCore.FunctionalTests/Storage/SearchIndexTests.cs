@@ -4154,15 +4154,68 @@ public class SearchIndexTests(AtlasTemporaryDatabaseFixture database)
         Assert.Equal("search", index["type"].AsString);
         Assert.Equal("READY", index["status"].AsString);
         Assert.True(index["queryable"].AsBoolean);
-        Assert.Equal(0, index["latestVersion"].AsInt32);
+        // Newer Atlas Search servers report "latestDefinitionVersion": { version, createdAt };
+        // older ones report a plain "latestVersion" number.
+        var latestVersion = index.TryGetValue("latestDefinitionVersion", out var definitionVersion)
+            ? definitionVersion["version"].AsInt32
+            : index["latestVersion"].AsInt32;
+        Assert.Equal(0, latestVersion);
 
         if (expectedDocument != null)
         {
-            var document = index["latestDefinition"].ToJson(new JsonWriterSettings { Indent = true });
-            Assert.Equal(expectedDocument, document, ignoreLineEndingDifferences: true);
+            // Newer Atlas Search servers omit properties that equal their default, no longer preserve the order
+            // of keys or of list entries such as include/exclude, so compare canonicalized documents.
+            var expected = Canonicalize(BsonDocument.Parse(expectedDocument)).ToJson(IndentedJson);
+            var actual = Canonicalize(index["latestDefinition"]).ToJson(IndentedJson);
+            Assert.Equal(expected, actual, ignoreLineEndingDifferences: true);
         }
 
         return index;
+    }
+
+    private static readonly JsonWriterSettings IndentedJson = new() { Indent = true };
+
+    // Search index definition properties and the default value the server may omit them for.
+    private static readonly (string Name, BsonValue Default)[] ServerDefaults =
+    [
+        ("concatenateAll", false), ("concatenateNumbers", false), ("concatenateWords", false),
+        ("foldDiacritics", true), ("generateNumberParts", true), ("ignoreCase", true), ("ignoreKeywords", false),
+        ("indexDoubles", true), ("indexIntegers", true), ("indexOptions", "offsets"), ("indexShapes", false),
+        ("max", 255), ("maxGrams", 15), ("minGrams", 2), ("norms", "include"), ("originalTokens", "omit"),
+        ("preserveOriginal", false), ("representation", "double"), ("splitOnCaseChange", true),
+        ("splitOnNumerics", true), ("stemEnglishPossessive", true), ("store", true),
+        ("termNotInBounds", "omit"), ("tokenization", "edgeGram")
+    ];
+
+    private static bool IsSameValue(BsonValue a, BsonValue b)
+        => a.IsNumeric && b.IsNumeric ? a.ToDouble() == b.ToDouble() : a.Equals(b);
+
+    private static BsonValue Canonicalize(BsonValue value)
+    {
+        switch (value)
+        {
+            case BsonDocument document:
+                var result = new BsonDocument();
+                foreach (var element in document.Elements.OrderBy(e => e.Name, StringComparer.Ordinal))
+                {
+                    if (ServerDefaults.Any(d => d.Name == element.Name && IsSameValue(d.Default, element.Value)))
+                    {
+                        continue;
+                    }
+
+                    result.Add(element.Name, Canonicalize(element.Value));
+                }
+
+                return result;
+            case BsonArray array:
+                var items = array.Select(Canonicalize).ToList();
+                // Scalar lists (e.g. include/exclude paths) are sets; lists of documents keep their order.
+                return new BsonArray(items.All(i => i is not (BsonDocument or BsonArray))
+                    ? items.OrderBy(i => i.ToJson(), StringComparer.Ordinal)
+                    : items);
+            default:
+                return value.IsNumeric && !value.IsDouble && !value.IsDecimal128 ? value.ToInt64() : value;
+        }
     }
 
     private class Cat
