@@ -5,6 +5,9 @@ DOTNET_SDK_PATH=./.dotnet
 mkdir -p "$DOTNET_SDK_PATH"
 
 if [[ $OS =~ [Ww]indows.* ]]; then
+  # From .NET 11 the installer prefers .tar.gz on Windows whenever a `tar` is on PATH. On Evergreen that is
+  # GNU tar, which treats `C:\...` as a remote host ("Cannot connect to C: resolve failed"), so force .zip.
+  export DOTNET_INSTALL_SKIP_TAR=1
   echo "Downloading Windows .NET SDK installer into $DOTNET_SDK_PATH folder..."
   curl -Lfo "$DOTNET_SDK_PATH"/dotnet-install.ps1 https://dot.net/v1/dotnet-install.ps1
   echo "Installing .NET 10.0 SDK..."
