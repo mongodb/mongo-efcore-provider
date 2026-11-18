@@ -135,7 +135,8 @@ public abstract class AutoEncryptionTestsBase(TemporaryDatabaseFixture database)
             BloodType = "AB-",
             Doctor = "Emmett Grey",
             Sequence = 10,
-            Balance = 456.78m,
+            // Must be exactly representable as a double: tests store Balance as BsonType.Double and newer drivers on .NET 11 reject lossy decimal->double.
+            Balance = 456.75m,
             BillingNumber = 12345,
             BloodPressureReadings = [new BloodPressureReading { Diastolic = 120, Systolic = 80 }],
             ExternalRef = Guid.NewGuid(),

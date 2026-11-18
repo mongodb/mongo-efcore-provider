@@ -9,6 +9,8 @@ if [[ $OS =~ [Ww]indows.* ]]; then
   curl -Lfo "$DOTNET_SDK_PATH"/dotnet-install.ps1 https://dot.net/v1/dotnet-install.ps1
   echo "Installing .NET 10.0 SDK..."
   powershell.exe "$DOTNET_SDK_PATH"/dotnet-install.ps1 -Version 10.0.104 -InstallDir "$DOTNET_SDK_PATH" -NoPath
+  echo "Installing .NET 11.0 SDK (test projects target net11.0)..."
+  powershell.exe "$DOTNET_SDK_PATH"/dotnet-install.ps1 -Version 11.0.100 -InstallDir "$DOTNET_SDK_PATH" -NoPath
   echo "Installing .NET 9.0 runtime..."
   powershell.exe "$DOTNET_SDK_PATH"/dotnet-install.ps1 -Channel 9.0 -InstallDir "$DOTNET_SDK_PATH" -NoPath -Runtime dotnet
   echo "Installing .NET 8.0 runtime..."
@@ -18,8 +20,17 @@ else
   curl -Lfo "$DOTNET_SDK_PATH"/dotnet-install.sh https://dot.net/v1/dotnet-install.sh
   echo "Installing .NET 10.0 SDK..."
   bash "$DOTNET_SDK_PATH"/dotnet-install.sh --version 10.0.104 --install-dir "$DOTNET_SDK_PATH" --no-path
+  echo "Installing .NET 11.0 SDK (test projects target net11.0)..."
+  bash "$DOTNET_SDK_PATH"/dotnet-install.sh --version 11.0.100 --install-dir "$DOTNET_SDK_PATH" --no-path
   echo "Installing .NET 9.0 runtime..."
   bash "$DOTNET_SDK_PATH"/dotnet-install.sh --channel 9.0 --install-dir "$DOTNET_SDK_PATH" --no-path --runtime dotnet
   echo "Installing .NET 8.0 runtime..."
   bash "$DOTNET_SDK_PATH"/dotnet-install.sh --channel 8.0 --install-dir "$DOTNET_SDK_PATH" --no-path --runtime dotnet
+fi
+
+echo "Installed .NET SDKs:"
+"$DOTNET_SDK_PATH"/dotnet --list-sdks
+if ! "$DOTNET_SDK_PATH"/dotnet --list-sdks | grep -q "^11\.0\.100 "; then
+  echo "ERROR: .NET SDK 11.0.100 was not found in $DOTNET_SDK_PATH after installation"
+  exit 1
 fi
