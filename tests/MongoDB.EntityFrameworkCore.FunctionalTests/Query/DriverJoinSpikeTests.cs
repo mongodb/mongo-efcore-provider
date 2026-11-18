@@ -23,7 +23,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Spike tests to verify the MongoDB C# driver's LINQ provider generates $lookup
 /// for Join and GroupJoin operations. These tests use the driver directly (no EF).
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class DriverJoinSpikeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

@@ -1,0 +1,124 @@
+/* Copyright 2023-present MongoDB Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+using System.Collections.Generic;
+using System.Linq;
+using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore.Infrastructure; // IsEFPropertyMethod()
+
+namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+
+/// <summary>
+/// Resolves which logical scope a transparent-identifier member chain (e.g. <c>ti.Outer.Inner</c>) refers to,
+/// for <c>SelectMany</c>'s <c>TransparentIdentifier</c> and <c>Join</c>'s (possibly user-named) result selector.
+/// Resolution is by parameter identity, never member name alone (see <c>Query/AGENTS.md</c>).
+/// </summary>
+internal static class MongoTransparentScopeResolver
+{
+    /// <summary>The hop names of EF Core's <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c>: <c>[outerHop, innerHop]</c>.</summary>
+    internal static readonly IReadOnlyList<string> TransparentIdentifierHops = ["Outer", "Inner"];
+
+    /// <summary>
+    /// Peels member accesses named from <paramref name="hopNames"/> down to <paramref name="rootParam"/> and resolves the scope.
+    /// With <paramref name="sourceCount"/> chained scopes, level <c>k</c> is <c>(sourceCount - k)</c> leading
+    /// <c>hopNames[0]</c> hops plus one trailing <c>hopNames[1]</c>; the root is <paramref name="sourceCount"/> leading hops.
+    /// <paramref name="scopeIndex"/> is <c>0</c> for the root, else <c>k</c> (1-based). <see langword="false"/> for any other shape.
+    /// </summary>
+    internal static bool TryResolveScopeDepth(
+        Expression? scopeAccess, ParameterExpression rootParam, IReadOnlyList<string> hopNames, int sourceCount,
+        out int scopeIndex)
+    {
+        scopeIndex = -1;
+        var outerHop = hopNames[0];
+        var innerHop = hopNames[1];
+
+        var path = new List<string>();
+        var current = scopeAccess;
+        while (current is MemberExpression { Member.Name: { } name } hop && (name == outerHop || name == innerHop))
+        {
+            path.Add(name);
+            current = hop.Expression;
+        }
+
+        if (current != rootParam || path.Count == 0 || path.Count > sourceCount)
+            return false;
+
+        path.Reverse(); // now ordered outward-from-root: path[0] is the first hop off rootParam.
+
+        if (path[^1] == innerHop && path.Take(path.Count - 1).All(h => h == outerHop))
+        {
+            scopeIndex = sourceCount - path.Count + 1;
+            return true;
+        }
+
+        if (path.Count == sourceCount && path.All(h => h == outerHop))
+        {
+            scopeIndex = 0;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Rewrites scope-rooted member accesses onto the per-scope synthetic parameter, recording the single scope
+    /// (or flagging <see cref="CrossScope"/>). Non-scope-rooted members are left untouched.
+    /// </summary>
+    internal sealed class ScopeRerootingVisitor(
+        ParameterExpression rootParam, IReadOnlyList<string> hopNames, int sourceCount, ParameterExpression[] scopeParams)
+        : ExpressionVisitor
+    {
+        public int? ResolvedScope { get; private set; }
+        public bool CrossScope { get; private set; }
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (TryResolveScopeDepth(node.Expression, rootParam, hopNames, sourceCount, out var scope))
+            {
+                // A declaring-type mismatch would make MakeMemberAccess throw; leave it unrewritten so the caller's guard declines.
+                if (node.Member.DeclaringType?.IsAssignableFrom(scopeParams[scope].Type) != true)
+                {
+                    return base.VisitMember(node);
+                }
+
+                if (ResolvedScope is { } prior && prior != scope)
+                    CrossScope = true;
+                ResolvedScope = scope;
+                return Expression.MakeMemberAccess(scopeParams[scope], node.Member);
+            }
+
+            return base.VisitMember(node);
+        }
+
+        // EF.Property(<bare scope access>, "Shadow"): the receiver is the scope itself, so VisitMember never sees it;
+        // re-root it onto the scope's synthetic parameter or the root parameter survives and the leaf declines.
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.IsEFPropertyMethod()
+                && node.Arguments is [var receiver, ConstantExpression { Value: string } propertyName]
+                && receiver.RemoveConvert() is MemberExpression bareScope
+                && TryResolveScopeDepth(bareScope, rootParam, hopNames, sourceCount, out var scope)
+                && node.Method.GetParameters()[0].ParameterType.IsAssignableFrom(scopeParams[scope].Type))
+            {
+                if (ResolvedScope is { } prior && prior != scope)
+                    CrossScope = true;
+                ResolvedScope = scope;
+                return Expression.Call(node.Method, scopeParams[scope], propertyName);
+            }
+
+            return base.VisitMethodCall(node);
+        }
+    }
+}

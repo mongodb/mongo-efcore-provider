@@ -17,10 +17,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
 
-[XUnitCollection("MappingTests")]
 public class DiscriminatorTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -130,6 +130,16 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
 
         {
             using var db = SingleEntityDbContext.Create(collection, configuration);
+            var customer = Assert.Single(db.Entities.OfType<KeyedCustomer>());
+            Assert.Equal("Customer 1", customer.Name);
+
+            var order = Assert.Single(db.Entities.OfType<KeyedOrder>());
+            Assert.Equal("Order 1", order.OrderReference);
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, configuration,
+                optionsBuilderAction: b => new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly));
             var customer = Assert.Single(db.Entities.OfType<KeyedCustomer>());
             Assert.Equal("Customer 1", customer.Name);
 

@@ -64,7 +64,7 @@ public class BsonBindingTests
         var property = entity.GetProperty(nameof(TestEntity.IntProperty));
         var document = BsonDocument.Parse("{ IntProperty: 12 }");
 
-        var value = BsonBinding.GetPropertyValue<int>(document, property);
+        var value = BsonBinding.GetPropertyValue<int>(document, new PropertyReadInfo(property));
 
         Assert.Equal(12, value);
     }
@@ -81,7 +81,7 @@ public class BsonBindingTests
         var property = entity.GetProperty(nameof(TestEntity.IntProperty));
         var document = BsonDocument.Parse("{ property: 12 }");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => BsonBinding.GetPropertyValue<int>(document, property));
+        var ex = Assert.Throws<InvalidOperationException>(() => BsonBinding.GetPropertyValue<int>(document, new PropertyReadInfo(property)));
         Assert.Contains("IntProperty", ex.Message);
     }
 
@@ -97,10 +97,37 @@ public class BsonBindingTests
         var property = entity.GetProperty(nameof(TestEntity.NullableProperty));
 
         var document = BsonDocument.Parse("{ somevalue: 12 }");
-        var value = BsonBinding.GetPropertyValue<int?>(document, property);
+        var value = BsonBinding.GetPropertyValue<int?>(document, new PropertyReadInfo(property));
 
         Assert.Null(value);
     }
+
+    private static BsonArray? GetBsonArray(BsonDocument document, string name)
+    {
+        var parameter = System.Linq.Expressions.Expression.Parameter(typeof(BsonDocument));
+        var call = BsonBinding.CreateGetBsonArray(parameter, name);
+        return System.Linq.Expressions.Expression.Lambda<Func<BsonDocument, BsonArray?>>(call, parameter).Compile()(document);
+    }
+
+    [Fact]
+    public void Get_bson_array_walks_a_dotted_name_as_a_path()
+    {
+        var document = BsonDocument.Parse("{ Home: { Notes: [1, 2] } }");
+
+        Assert.Equal(2, GetBsonArray(document, "Home.Notes")!.Count);
+    }
+
+    [Fact]
+    public void Get_bson_array_falls_back_to_a_dotted_literal_key()
+    {
+        var document = BsonDocument.Parse("{ 'a.b': [1, 2, 3] }");
+
+        Assert.Equal(3, GetBsonArray(document, "a.b")!.Count);
+    }
+
+    [Fact]
+    public void Get_bson_array_returns_null_when_neither_path_nor_literal_key_exists()
+        => Assert.Null(GetBsonArray(BsonDocument.Parse("{ a: { c: [1] } }"), "a.b"));
 
     public class TestEntity
     {

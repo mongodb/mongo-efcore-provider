@@ -61,4 +61,31 @@ internal sealed class JoinInfo(IEntityType innerEntityType, bool isLeftOuter)
     /// target type alone.
     /// </summary>
     public LookupExpression? Lookup { get; set; }
+
+    /// <summary>
+    /// Whether this join alone satisfies the native join-scope requirements; a chain is eligible only when every join is.
+    /// </summary>
+    public bool IsNativelyEligible { get; set; }
+
+    /// <summary>
+    /// Whether this join is a left-outer join over a reference navigation, which neither drops nor multiplies rows.
+    /// <see langword="false"/> when no <see cref="Lookup"/> was resolved (fail closed).
+    /// </summary>
+    internal bool IsRowCountPreserving => IsLeftOuter && Lookup is { Navigation.IsCollection: false };
+
+    /// <summary>
+    /// Whether paging written BEFORE this join must stay ahead of its <c>$lookup</c> rather than be deferred past it:
+    /// the join can multiply rows (a collection or navigation-less join) or drop them (an inner join onto an optional
+    /// or principal-side reference). Deferred, it would page the joined rows, not the outer rows.
+    /// </summary>
+    /// <remarks>
+    /// The one inner join that may still defer is a required dependent-side reference: only dangling data can drop a
+    /// row, an accepted divergence (pinned by
+    /// <c>Paging_after_a_dangling_required_reference_dereference_pages_the_joined_result_under_NativeOnly</c>).
+    /// </remarks>
+    internal bool PagingBeforeItMustStayAhead
+        // A filtered inner drops rows however the foreign key is declared.
+        => Lookup is { HasInnerPredicate: true }
+           || Lookup?.Navigation is not { IsCollection: false } navigation
+           || (!IsLeftOuter && !(navigation.IsOnDependent && navigation.ForeignKey.IsRequired));
 }

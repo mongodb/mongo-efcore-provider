@@ -22,12 +22,9 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-352: reading a shadow property via <c>EF.Property&lt;T&gt;(...)</c> inside a client-side
-/// cross-collection join projection must materialise the stored value, not null. The explicit
-/// LINQ <c>join</c> translates on all supported EF versions (EF8/EF9/EF10), and the defect
-/// reproduced on all three, so these tests are not version-guarded.
+/// EF-352: reading a shadow property via <c>EF.Property&lt;T&gt;(...)</c> inside a client-side cross-collection join
+/// projection must materialise the stored value, not null. Not version-guarded: the defect reproduced on EF8/EF9/EF10.
 /// </summary>
-[XUnitCollection("QueryTests")]
 public class ShadowPropertyJoinProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {

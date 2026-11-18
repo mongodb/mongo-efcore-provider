@@ -30,7 +30,6 @@ public class NorthwindDbFunctionsQueryMongoTest
         : base(fixture)
     {
         Fixture.TestMqlLoggerFactory.Clear();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -39,99 +38,108 @@ public class NorthwindDbFunctionsQueryMongoTest
 
     public override async Task Like_literal(bool async)
     {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Like_literal(async))).Message);
+        await base.Like_literal(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^.*M.*$", "options" : "is" } } } }, { "$count" : "v" }
 """);
     }
 
     public override async Task Like_identity(bool async)
     {
         // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Like_identity(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Like_identity(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Like_literal_with_escape(bool async)
     {
         // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Like_literal_with_escape(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Like_literal_with_escape(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Like_all_literals(bool async)
     {
-        // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "The 'Like' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Like_all_literals(async))).InnerException.Message);
+        await base.Like_all_literals(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { } }, { "$count" : "v" }
 """);
     }
 
     public override async Task Like_all_literals_with_escape(bool async)
     {
         // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "The 'Like' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Like_all_literals_with_escape(async))).InnerException.Message);
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Like_all_literals_with_escape(async), typeof(TargetInvocationException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
 #if EF8 || EF9
 
     public override async Task Random_return_less_than_1(bool async)
     {
-        // Fails: translation of Random issue EF-234
+        // EF-255: EF.Functions.Random() has no per-row server-side translation; refuse rather than evaluate it once.
         Assert.Contains(
-            "The 'Random' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Random_return_less_than_1(async))).InnerException.Message);
+            "Random",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_return_less_than_1(async))).Message);
 
-        AssertMql(
-            """
-Orders.
-""");
+        AssertMql();
     }
 
     public override async Task Random_return_greater_than_0(bool async)
     {
-        // Fails: translation of Random issue EF-234
+        // EF-255: EF.Functions.Random() has no per-row server-side translation; refuse rather than evaluate it once.
         Assert.Contains(
-            "The 'Random' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Random_return_greater_than_0(async))).InnerException.Message);
+            "Random",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_return_greater_than_0(async))).Message);
 
-        AssertMql(
-            """
-Orders.
-""");
+        AssertMql();
     }
 
 #endif
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
+
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

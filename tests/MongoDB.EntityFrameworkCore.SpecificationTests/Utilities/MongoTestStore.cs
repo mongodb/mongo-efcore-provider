@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
@@ -38,8 +39,16 @@ public class MongoTestStore : TestStore
     protected override DbContext CreateDefaultContext()
         => throw new NotSupportedException();
 
+    // MONGODB_EF_QUERY_MODE=NativeOnly|DriverLinq (or the alias MONGODB_EF_NATIVE_ONLY=1) flips every spec context
+    // to that MongoQueryMode; see TestQueryMode (the single resolver, shared with the functional suite).
+    //
+    // TODO(EF-417): this switch and the functional Native* parity tests use driver-LINQ as the oracle; retiring the
+    // fallback needs a replacement oracle (in-memory LINQ or pinned result sets).
     public override DbContextOptionsBuilder AddProviderOptions(DbContextOptionsBuilder builder)
-        => builder.UseMongoDB(TestServer.Client, Name);
+        => builder.UseMongoDB(TestServer.Client, Name,
+            TestQueryMode.Current != MongoQueryMode.Native
+                ? o => o.UseQueryMode(TestQueryMode.Current)
+                : null);
 
 #if !EF8
     protected override async Task InitializeAsync(Func<DbContext> createContext, Func<DbContext, Task>? seed,

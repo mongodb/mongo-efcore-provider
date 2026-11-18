@@ -1,0 +1,217 @@
+/* Copyright 2023-present MongoDB Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Storage;
+
+namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+
+/// <summary>
+/// A row of the native one-pass cursor of a scalar projection: the projected document's elements read straight off the cursor into typed
+/// values (a nested <see cref="ValueTuple"/>, one slot per distinct projected alias), instead of into a <see cref="MongoDB.Bson.BsonDocument"/>.
+/// <see cref="States"/> records, two bits per slot, whether the element was missing, BSON null or present, because what that means (a default,
+/// a throw, an empty value) is decided when the shaper reads the slot, as it was when it read the document.
+/// </summary>
+/// <remarks>
+/// The driver collects a batch's rows in a <see cref="List{T}"/> it creates without a capacity, so the row's size is paid about twice per row as
+/// the list grows: the states are a <see cref="uint"/> when the projection has at most 16 slots (a <see cref="ulong"/> up to 32), and a row with no
+/// tracking to defer is this type, not <see cref="MongoTrackedProjectedRow{TValues, TStates}"/>.
+/// </remarks>
+/// <typeparam name="TValues">The nested value tuple of the slot types, in slot order.</typeparam>
+/// <typeparam name="TStates">The packed states, <see cref="uint"/> or <see cref="ulong"/>.</typeparam>
+internal readonly struct MongoProjectedRow<TValues, TStates>(TValues values, TStates states)
+{
+    public readonly TValues Values = values;
+
+    public readonly TStates States = states;
+}
+
+/// <summary>
+/// A <see cref="MongoProjectedRow{TValues, TStates}"/> of a tracked query whose projection holds entities, plus the tracking the row deferred.
+/// </summary>
+internal readonly struct MongoTrackedProjectedRow<TValues, TStates>(TValues values, TStates states, object? deferred)
+{
+    public readonly TValues Values = values;
+
+    public readonly TStates States = states;
+
+    /// <summary>
+    /// The <see cref="MongoPendingTracking"/> the row recorded while the driver deserialized it (see <see cref="MongoQueryContext.BeginDeferral"/>),
+    /// replayed when the enumerator reaches the row.
+    /// </summary>
+    public readonly object? Deferred = deferred;
+}
+
+internal static class MongoProjectedRowState
+{
+    public const int Missing = 0;
+    public const int Null = 1;
+    public const int Present = 2;
+
+    /// <summary>The state of slot <paramref name="slot"/>: <see cref="Missing"/>, <see cref="Null"/> or <see cref="Present"/>.</summary>
+    public static int StateOf(ulong states, int slot) => (int)((states >> (2 * slot)) & 3UL);
+
+    /// <summary>Whether slot <paramref name="slot"/> is missing or BSON null (the shaper's <c>IsElementAbsentOrNull</c> test).</summary>
+    public static bool IsAbsentOrNull(ulong states, int slot) => StateOf(states, slot) != Present;
+
+    /// <summary>Whether slot <paramref name="slot"/> is missing (the shaper's <c>IsElementAbsent</c> test; an explicit null is present).</summary>
+    public static bool IsAbsent(ulong states, int slot) => StateOf(states, slot) == Missing;
+
+    /// <summary>Whether <paramref name="type"/> is a streamed projection row (tracked or not).</summary>
+    public static bool IsRowType(Type type)
+        => type.IsGenericType
+           && type.GetGenericTypeDefinition() is var definition
+           && (definition == typeof(MongoProjectedRow<,>) || definition == typeof(MongoTrackedProjectedRow<,>));
+}
+
+/// <summary>
+/// What the shaper does with a slot of a <see cref="MongoProjectedRow{TValues, TStates}"/>. Each method is the behavior of the <see cref="BsonBinding"/>
+/// read it replaces, given the element's state and value in place of the document, so a projection reads exactly as it did from a
+/// <see cref="MongoDB.Bson.BsonDocument"/> (including every error message).
+/// </summary>
+internal static class MongoProjectedRowReads
+{
+    // The serializer yields TValue; the shaper asked for T (the same type, or its nullable form), as the BsonBinding casts did.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static T? As<T, TValue>(TValue? value)
+        => typeof(T) == typeof(TValue) ? Unsafe.As<TValue?, T?>(ref value) : (T?)(object?)value;
+
+    /// <summary><see cref="BsonBinding.GetScalarProjectionValueAtElement{T}"/>: a missing element reads <c>default</c>, an explicit null of a required property throws.</summary>
+    public static T? ScalarProjection<T, TValue>(
+        int state, TValue? value, string alias, IReadOnlyProperty property, bool nullReadsAsDefault)
+    {
+        if (state == MongoProjectedRowState.Present)
+        {
+            return As<T, TValue>(value);
+        }
+
+        if (state == MongoProjectedRowState.Null && !property.IsNullable && !nullReadsAsDefault)
+        {
+            throw new InvalidOperationException(
+                $"Document element '{alias}' is null for required non-nullable property '{property.Name}'.");
+        }
+
+        return default;
+    }
+
+    /// <summary><see cref="BsonBinding.GetPropertyValueAtElement{T}"/>: a missing or null element of a required property throws.</summary>
+    public static T? PropertyAtElement<T, TValue>(int state, TValue? value, string alias, IReadOnlyProperty property)
+    {
+        T? result;
+        if (state == MongoProjectedRowState.Present)
+        {
+            result = As<T, TValue>(value);
+        }
+        else if (state == MongoProjectedRowState.Null)
+        {
+            result = default;
+        }
+        else
+        {
+            if (property.IsNullable)
+            {
+                return default;
+            }
+
+            throw new InvalidOperationException(
+                $"Document element '{alias}' is missing for required non-nullable property '{property.Name}'.");
+        }
+
+        if (result == null && !property.IsNullable)
+        {
+            throw new InvalidOperationException(BsonBinding.RequiredPropertyNullMessage(property));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// <see cref="BsonBinding.GetPropertyValueAtPath{T}"/>: <see cref="PropertyAtElement"/> at a dotted alias, where a sub-document along the path
+    /// that is absent (or not a document) reads <see langword="default"/> when <typeparamref name="T"/> can hold it.
+    /// </summary>
+    public static T? PropertyAtPath<T, TValue>(int state, TValue? value, string alias, IReadOnlyProperty property)
+        => state == MongoProjectedRowState.Missing && typeof(T).IsNullableType()
+            ? default
+            : PropertyAtElement<T, TValue>(state, value, alias, property);
+
+    /// <summary>
+    /// Replays the tracking a row deferred, as EF would have done it entity by entity while materializing, and returns what to substitute for
+    /// an entity of the row that the state manager resolved to one already tracked (<see langword="null"/> when none was).
+    /// </summary>
+    public static MongoEntityRemap? Replay(QueryContext queryContext, object? deferred)
+        => deferred switch
+        {
+            MongoSimpleRowTracking simple => simple.ReplayWithRemap((MongoQueryContext)queryContext),
+            MongoPendingTracking pending => pending.ReplayWithRemap((MongoQueryContext)queryContext),
+            _ => null
+        };
+
+    /// <summary>The instance to hand the shaper for an entity slot: the tracked one when the row's own instance lost to it.</summary>
+    public static T? Canonical<T>(MongoEntityRemap? remap, T? value)
+        where T : class
+        => remap != null && value != null ? (T)remap.Resolve(value) : value;
+
+    /// <summary>The list of entities the cursor read, each element replaced by the tracked one when the state manager resolved it to one.</summary>
+    public static List<T> CanonicalList<T>(MongoEntityRemap? remap, List<T> list)
+        where T : class
+    {
+        if (remap != null)
+        {
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (list[i] is { } element)
+                {
+                    list[i] = (T)remap.Resolve(element);
+                }
+            }
+        }
+
+        return list;
+    }
+
+    /// <summary>A collection the cursor read into a list: an absent or null array reads as an empty collection, as the DOM shaper normalizes it.</summary>
+    public static List<TElement> StreamedList<TElement>(int state, List<TElement>? value)
+        => state == MongoProjectedRowState.Present ? value! : new List<TElement>();
+
+    /// <summary>
+    /// An entity the cursor read from a sub-document: a null or absent one reads as <c>null</c>, or throws <paramref name="missingMessage"/> when the
+    /// DOM shaper's read of it was required.
+    /// </summary>
+    public static T? StreamedEntity<T>(int state, T? value, string? missingMessage)
+        where T : class
+        => state == MongoProjectedRowState.Present
+            ? value
+            : missingMessage == null ? null : throw new InvalidOperationException(missingMessage);
+
+    /// <summary><see cref="BsonBinding.GetElementValue{T}"/> and its kind-aware sibling: null reads <c>default</c>, a missing element throws unless <typeparamref name="T"/> can hold absence.</summary>
+    public static T? Element<T, TValue>(int state, TValue? value, string alias)
+    {
+        if (state == MongoProjectedRowState.Present)
+        {
+            return As<T, TValue>(value);
+        }
+
+        if (state == MongoProjectedRowState.Null || typeof(T).IsNullableType())
+        {
+            return default;
+        }
+
+        throw new InvalidOperationException($"Document element '{alias}' is missing but required.");
+    }
+}
