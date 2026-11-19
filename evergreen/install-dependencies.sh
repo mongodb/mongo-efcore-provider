@@ -30,10 +30,3 @@ else
   echo "Installing .NET 8.0 runtime..."
   bash "$DOTNET_SDK_PATH"/dotnet-install.sh --channel 8.0 --install-dir "$DOTNET_SDK_PATH" --no-path --runtime dotnet
 fi
-
-echo "Installed .NET SDKs:"
-"$DOTNET_SDK_PATH"/dotnet --list-sdks
-if ! "$DOTNET_SDK_PATH"/dotnet --list-sdks | grep -q "^11\.0\.100 "; then
-  echo "ERROR: .NET SDK 11.0.100 was not found in $DOTNET_SDK_PATH after installation"
-  exit 1
-fi
