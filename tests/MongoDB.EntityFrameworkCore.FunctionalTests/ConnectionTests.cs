@@ -50,7 +50,7 @@ public class ConnectionTests : IClassFixture<TemporaryDatabaseFixture>
         var mongoUrl = new MongoUrlBuilder(Fixture.TestServer.ConnectionString) { DatabaseName = databaseName };
 
         var optionsBuilder = StartOptions()
-            .UseMongoDB(mongoUrl.ToString());
+            .UseMongoDB(mongoUrl.ToMongoUrl().Url);
 
         using var context = new TestContext<BasicEntity>(optionsBuilder.Options, collectionName);
 
@@ -60,6 +60,21 @@ public class ConnectionTests : IClassFixture<TemporaryDatabaseFixture>
         var database = client.GetDatabase(databaseName);
         var collections = database.ListCollectionNames().ToList();
         Assert.Contains(collectionName, collections);
+    }
+
+    [Fact]
+    public void Connection_string_built_with_database_name_preserves_credentials()
+    {
+        // Driver 3.14.1+ redacts credentials in MongoUrlBuilder.ToString(), so the
+        // string handed to UseMongoDB must come from ToMongoUrl().Url instead.
+        var mongoUrl = new MongoUrlBuilder("mongodb://user:s3cret@localhost:27017") { DatabaseName = "db" };
+
+        var unredacted = MongoUrl.Create(mongoUrl.ToMongoUrl().Url);
+        Assert.Equal("user", unredacted.Username);
+        Assert.Equal("s3cret", unredacted.Password);
+
+        // ToString() is for display only: it redacts the password.
+        Assert.DoesNotContain("s3cret", mongoUrl.ToString());
     }
 
     [Fact]
