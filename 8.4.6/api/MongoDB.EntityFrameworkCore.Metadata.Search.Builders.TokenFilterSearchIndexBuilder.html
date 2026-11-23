@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Class TokenFilterSearchIndexBuilder | MongoDB EF Core Provider API Reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Class TokenFilterSearchIndexBuilder | MongoDB EF Core Provider API Reference ">
+      
+      <meta name="description" content="Model building fluent API called from  that configures token filters for a custom analyzer definition.">
+      <link rel="icon" href="../favicon.ico">
+      <link rel="stylesheet" href="../public/docfx.min.css">
+      <link rel="stylesheet" href="../public/main.css">
+      <meta name="docfx:navrel" content="">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/mongodb/mongo-efcore-provider/new/main/apiSpec/new?filename=MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder.md&amp;value=---%0Auid%3A%20MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./../public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="../index.html">
+            <img id="logo" class="svg" src="../images/mongodb-logo.svg" alt="">
+            
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+      <div class="toc-offcanvas">
+        <div class="offcanvas-md offcanvas-start" tabindex="-1" id="tocOffcanvas" aria-labelledby="tocOffcanvasLabel">
+          <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="tocOffcanvasLabel">Table of Contents</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#tocOffcanvas" aria-label="Close"></button>
+          </div>
+          <div class="offcanvas-body">
+            <nav class="toc" id="toc"></nav>
+          </div>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="actionbar">
+          <button class="btn btn-lg border-0 d-md-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#tocOffcanvas" aria-controls="tocOffcanvas" aria-expanded="false" aria-label="Show table of contents">
+            <i class="bi bi-list"></i>
+          </button>
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder">
+
+
+
+  <h1 id="MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder" data-uid="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder" class="text-break">
+Class TokenFilterSearchIndexBuilder  <a class="header-action link-secondary" title="View source" href="https://github.com/mongodb/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Search/Builders/TokenFilterSearchIndexBuilder.cs/#L31"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="MongoDB.html">MongoDB</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.html">EntityFrameworkCore</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.html">Metadata</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.html">Search</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.html">Builders</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>MongoDB.EntityFrameworkCore.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>Model building fluent API called from <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.AnalyzerSearchIndexBuilder.html">AnalyzerSearchIndexBuilder</a> that configures token filters for a custom
+analyzer definition.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public class TokenFilterSearchIndexBuilder</code></pre>
+  </div>
+
+
+
+
+  <dl class="typelist inheritance">
+    <dt>Inheritance</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object">object</a></div>
+      <div><span class="xref">TokenFilterSearchIndexBuilder</span></div>
+    </dd>
+  </dl>
+
+
+
+  <dl class="typelist inheritedMembers">
+    <dt>Inherited Members</dt>
+    <dd>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object)">object.Equals(object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object-system-object)">object.Equals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gethashcode">object.GetHashCode()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gettype">object.GetType()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.memberwiseclone">object.MemberwiseClone()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.referenceequals">object.ReferenceEquals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.tostring">object.ToString()</a>
+    </div>
+  </dd></dl>
+
+
+
+
+  <h2 id="MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>For more information about token filters, see
+<a href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/">https://www.mongodb.com/docs/atlas/atlas-search/analyzers/token-filters/</a>.</p>
+</div>
+
+  <h2 class="section" id="constructors">Constructors
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.-ctor.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder__ctor_MongoDB_EntityFrameworkCore_Metadata_Search_Definitions_SearchIndexAnalyzerDefinition_">TokenFilterSearchIndexBuilder(SearchIndexAnalyzerDefinition)</a></dt>
+    <dd><p>Model building fluent API called from <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.AnalyzerSearchIndexBuilder.html">AnalyzerSearchIndexBuilder</a> that configures token filters for a custom
+analyzer definition.</p>
+</dd>
+  </dl>
+
+  <h2 class="section" id="methods">Methods
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddAsciiFoldingFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddAsciiFoldingFilter_System_Nullable_System_Boolean__">AddAsciiFoldingFilter(bool?)</a></dt>
+    <dd><p>Adds the &quot;asciiFolding&quot; token filter to the custom analyzer being defined. This filter converts alphabetic, numeric, and
+symbolic Unicode characters that are not in the Basic Latin Unicode block to their ASCII equivalents, if available.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddDaitchMokotoffSoundexFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddDaitchMokotoffSoundexFilter_System_Nullable_System_Boolean__">AddDaitchMokotoffSoundexFilter(bool?)</a></dt>
+    <dd><p>Adds the &quot;daitchMokotoffSoundex&quot; token filter to the custom analyzer being defined. This filter creates tokens for words
+that sound the same based on the Daitch-Mokotoff Soundex phonetic algorithm. This filter can generate multiple encodings
+for each input, where each encoded token is a six-digit number.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddEdgeGramFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddEdgeGramFilter_System_Int32_System_Int32_System_Nullable_System_Boolean__">AddEdgeGramFilter(int, int, bool?)</a></dt>
+    <dd><p>Adds the &quot;edgeGram&quot; token filter to the custom analyzer being defined. This filter tokenizes input from the left side, or
+&quot;edge&quot;, of a text input into n-grams of configured sizes.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddEnglishPossessiveFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddEnglishPossessiveFilter">AddEnglishPossessiveFilter()</a></dt>
+    <dd><p>Adds the &quot;englishPossessive&quot; token filter to the custom analyzer being defined. This filter removes possessives
+(trailing 's) from words.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddFlattenGraphFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddFlattenGraphFilter">AddFlattenGraphFilter()</a></dt>
+    <dd><p>Adds the &quot;flattenGraph&quot; token filter to the custom analyzer being defined. This filter transforms a token filter graph
+into a flat form suitable for indexing. If you use <a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddWordDelimiterGraphFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddWordDelimiterGraphFilter_System_Nullable_MongoDB_EntityFrameworkCore_Metadata_Search_WordDelimiterOptions__System_Collections_Generic_IEnumerable_System_String__">AddWordDelimiterGraphFilter(WordDelimiterOptions?, IEnumerable&lt;string&gt;?)</a>, then add this filter after
+adding that filter.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddIcuFoldingFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddIcuFoldingFilter">AddIcuFoldingFilter()</a></dt>
+    <dd><p>Adds the &quot;icuFolding&quot; token filter to the custom analyzer being defined. This filter applies character folding from
+Unicode Technical Report #30 such as accent removal, case folding, canonical duplicates folding, and many others
+detailed in the report.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddIcuNormalizerFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddIcuNormalizerFilter_System_Nullable_MongoDB_EntityFrameworkCore_Metadata_Search_IcuNormalizationForm__">AddIcuNormalizerFilter(IcuNormalizationForm?)</a></dt>
+    <dd><p>Adds the &quot;icuNormalizer&quot; token filter to the custom analyzer being defined. This filter normalizes tokens using a
+standard Unicode Normalization Mode.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddKStemmingFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddKStemmingFilter">AddKStemmingFilter()</a></dt>
+    <dd><p>Adds the &quot;kStemming&quot; token filter to the custom analyzer being defined. This filter combines algorithmic stemming with
+a built-in dictionary for the english language to stem words. It expects lowercase text and doesn't modify uppercase text.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddKeywordRepeatFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddKeywordRepeatFilter">AddKeywordRepeatFilter()</a></dt>
+    <dd><p>Adds the &quot;keywordRepeat&quot; token filter to the custom analyzer being defined. This filter emits each incoming token twice,
+as a keyword and as a non-keyword.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddLengthFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddLengthFilter_System_Nullable_System_Int32__System_Nullable_System_Int32__">AddLengthFilter(int?, int?)</a></dt>
+    <dd><p>Adds the &quot;length&quot; token filter to the custom analyzer being defined. This filter removes tokens that are too short or
+too long.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddLowercaseFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddLowercaseFilter">AddLowercaseFilter()</a></dt>
+    <dd><p>Adds the &quot;lowercase&quot; token filter to the custom analyzer being defined. This filter normalizes token text to lowercase.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddNGramFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddNGramFilter_System_Int32_System_Int32_System_Nullable_System_Boolean__">AddNGramFilter(int, int, bool?)</a></dt>
+    <dd><p>Adds the &quot;nGram&quot; token filter to the custom analyzer being defined. This filter tokenizes input into n-grams of
+configured sizes. You can't use the nGram token filter in synonym or autocomplete mapping definitions.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddPorterStemmingFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddPorterStemmingFilter">AddPorterStemmingFilter()</a></dt>
+    <dd><p>Adds the &quot;porterStemming&quot; token filter to the custom analyzer being defined. This filter uses the porter stemming
+algorithm to remove the common morphological and inflectional suffixes from words in English. It expects lowercase
+text and doesn't work as expected for uppercase text.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddRegexFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddRegexFilter_System_String_System_String_MongoDB_EntityFrameworkCore_Metadata_Search_RegexTokenFilterMatches_">AddRegexFilter(string, string, RegexTokenFilterMatches)</a></dt>
+    <dd><p>Adds the &quot;regex&quot; token filter to the custom analyzer being defined. This filter applies a regular expression with Java
+regex syntax to each token, replacing matches with a specified string.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddRemoveDuplicatesFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddRemoveDuplicatesFilter">AddRemoveDuplicatesFilter()</a></dt>
+    <dd><p>Adds the &quot;removeDuplicates&quot; token filter to the custom analyzer being defined. This filter removes consecutive duplicate
+tokens, which are tokens for the same term in the same position.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddReverseFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddReverseFilter">AddReverseFilter()</a></dt>
+    <dd><p>Adds the &quot;reverse&quot; token filter to the custom analyzer being defined. This filter reverses each string token.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddShingleFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddShingleFilter_System_Int32_System_Int32_">AddShingleFilter(int, int)</a></dt>
+    <dd><p>Adds the &quot;shingle&quot; token filter to the custom analyzer being defined. This filter constructs shingles (token n-grams)
+from a series of tokens. You can't use the shingle token filter in synonym or autocomplete mapping definitions.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddSnowballStemmingFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddSnowballStemmingFilter_MongoDB_EntityFrameworkCore_Metadata_Search_SnowballStemmerName_">AddSnowballStemmingFilter(SnowballStemmerName)</a></dt>
+    <dd><p>Adds the &quot;snowballStemming&quot; token filter to the custom analyzer being defined. This filter filters Stems tokens using a
+Snowball-generated stemmer.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddSpanishPluralStemmingFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddSpanishPluralStemmingFilter">AddSpanishPluralStemmingFilter()</a></dt>
+    <dd><p>Adds the &quot;spanishPluralStemming&quot; token filter to the custom analyzer being defined. This filter stems spanish plural words.
+It expects lowercase text.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddStempelFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddStempelFilter">AddStempelFilter()</a></dt>
+    <dd><p>Adds the &quot;stempel&quot; token filter to the custom analyzer being defined. This filter uses Lucene's default Polish stemmer
+table to stem words in the Polish language. It expects lowercase text.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddStopWordFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddStopWordFilter_System_Collections_Generic_IEnumerable_System_String__System_Nullable_System_Boolean__">AddStopWordFilter(IEnumerable&lt;string&gt;, bool?)</a></dt>
+    <dd><p>Adds the &quot;stopword&quot; token filter to the custom analyzer being defined. This filter removes tokens that correspond to the
+specified stop words. This token filter doesn't analyze the specified stop words.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddTrimFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddTrimFilter">AddTrimFilter()</a></dt>
+    <dd><p>Adds the &quot;trim&quot; token filter to the custom analyzer being defined. This filter trims leading and trailing whitespace
+from tokens.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.Builders.TokenFilterSearchIndexBuilder.AddWordDelimiterGraphFilter.html#MongoDB_EntityFrameworkCore_Metadata_Search_Builders_TokenFilterSearchIndexBuilder_AddWordDelimiterGraphFilter_System_Nullable_MongoDB_EntityFrameworkCore_Metadata_Search_WordDelimiterOptions__System_Collections_Generic_IEnumerable_System_String__">AddWordDelimiterGraphFilter(WordDelimiterOptions?, IEnumerable&lt;string&gt;?)</a></dt>
+    <dd><p>Adds the &quot;wordDelimiterGraph&quot; token filter to the custom analyzer being defined. This filter splits tokens into
+sub-tokens based on configured rules.</p>
+</dd>
+  </dl>
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          &copy; 2023 MongoDB, Inc.
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
