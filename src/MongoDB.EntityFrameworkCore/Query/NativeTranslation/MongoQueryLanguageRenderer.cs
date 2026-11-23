@@ -119,7 +119,7 @@ internal sealed class MongoQueryLanguageRenderer
 
         var op = binary.Operator switch
         {
-            MongoBinaryOperator.Equal => null,              // bare { field: value }
+            MongoBinaryOperator.Equal => "$eq",
             MongoBinaryOperator.NotEqual => "$ne",
             MongoBinaryOperator.LessThan => "$lt",
             MongoBinaryOperator.LessThanOrEqual => "$lte",
@@ -129,10 +129,18 @@ internal sealed class MongoQueryLanguageRenderer
                 $"Unsupported comparison operator '{binary.Operator}'.")
         };
 
-        return op is null
-            ? new BsonDocument(elementName, value)
-            : new BsonDocument(elementName, new BsonDocument(op, value));
+        return new BsonDocument(elementName, new BsonDocument(op, value));
     }
+
+    /// <summary>
+    /// <c>{ path: { $eq: value } }</c>. Every query-dialect equality uses this form, never the bare
+    /// <c>{ path: value }</c> shorthand: the server reads a bare document whose first key starts with "$" as an
+    /// operator expression, so a parameter serialized to <c>{ "$ne": "x" }</c> (a dictionary, an <c>object</c>, a
+    /// custom serializer) would become a filter. <c>$eq</c> takes its operand as a value whatever it is, matches
+    /// exactly as the shorthand does (arrays, null) and uses the same indexes.
+    /// </summary>
+    internal static BsonDocument Eq(string path, BsonValue value)
+        => new(path, new BsonDocument("$eq", value));
 
     // The null forms ({ path: null } / { path: { $ne: null } }) also match an array that CONTAINS null, so over a path
     // that may hold an array they render through $expr instead.
@@ -144,7 +152,7 @@ internal sealed class MongoQueryLanguageRenderer
         {
             MongoFieldPresence.Exists => new BsonDocument(presence.Path, new BsonDocument("$exists", true)),
             MongoFieldPresence.Missing => new BsonDocument(presence.Path, new BsonDocument("$exists", false)),
-            MongoFieldPresence.NullOrMissing => new BsonDocument(presence.Path, BsonNull.Value),
+            MongoFieldPresence.NullOrMissing => Eq(presence.Path, BsonNull.Value),
             _ => new BsonDocument(presence.Path, new BsonDocument("$ne", BsonNull.Value))
         };
 
@@ -165,7 +173,7 @@ internal sealed class MongoQueryLanguageRenderer
     private static BsonDocument RenderLookupNullCheck(MongoLookupNullCheckExpression node)
         => node.IsNotNull
             ? new BsonDocument(node.LookupAlias, new BsonDocument("$ne", BsonNull.Value))
-            : new BsonDocument(node.LookupAlias, BsonNull.Value);
+            : Eq(node.LookupAlias, BsonNull.Value);
 
     private static BsonDocument RenderNumericTypeBracket(MongoNumericTypeBracketExpression bracket)
         => new BsonDocument(bracket.Field.ElementName, new BsonDocument("$type", "number"));
@@ -180,17 +188,10 @@ internal sealed class MongoQueryLanguageRenderer
         // operators instead of inverting them.
         if (unary.Operand is MongoBinaryExpression comparison && IsQueryNativeComparison(comparison))
         {
+            // Every comparison renders as { field: { $op: value } } (Equal included, see Eq), so the operator
+            // document is the $not body as it stands.
             var element = RenderComparison(comparison, placeholders).GetElement(0);
-
-            // Equal renders as a bare value (including the non-'$' parameter sentinel, see
-            // PlaceholderTable.SentinelKey), which must be wrapped in $eq: { $not: <bareValue> } is a server error.
-            var body = element.Value is BsonDocument candidate
-                && candidate.ElementCount > 0
-                && candidate.GetElement(0).Name.StartsWith('$')
-                    ? candidate
-                    : new BsonDocument("$eq", element.Value);
-
-            return new BsonDocument(element.Name, new BsonDocument("$not", body));
+            return new BsonDocument(element.Name, new BsonDocument("$not", element.Value));
         }
 
         if (unary.Operand is not MongoFieldExpression field)
@@ -220,7 +221,7 @@ internal sealed class MongoQueryLanguageRenderer
     {
         var trueValue = MongoValueRenderer.RenderValue(
             new MongoConstantExpression(true, field.Property), placeholders);
-        return new BsonDocument(field.ElementName, trueValue);
+        return Eq(field.ElementName, trueValue);
     }
 
     private BsonDocument RenderIn(MongoInExpression inExpr, PlaceholderTable placeholders)
@@ -230,14 +231,14 @@ internal sealed class MongoQueryLanguageRenderer
         return new BsonDocument(inExpr.Field.ElementName, new BsonDocument(op, array));
     }
 
-    // arrayField.Contains(value) is the implicit element match { field: value }; negation uses $ne, the exact
-    // complement including missing/null.
+    // arrayField.Contains(value) is the implicit element match { field: { $eq: value } } (see Eq); negation uses $ne,
+    // the exact complement including missing/null.
     private BsonDocument RenderArrayContains(MongoArrayContainsExpression contains, PlaceholderTable placeholders)
     {
         var value = MongoValueRenderer.RenderValue(contains.Value, placeholders);
         return contains.Negated
             ? new BsonDocument(contains.Field.ElementName, new BsonDocument("$ne", value))
-            : new BsonDocument(contains.Field.ElementName, value);
+            : Eq(contains.Field.ElementName, value);
     }
 
     // { field: /pattern/s } (negated via $not), matching driver-LINQ. A parameter term becomes a regex placeholder

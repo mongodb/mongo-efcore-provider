@@ -812,7 +812,7 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoConditionalExpression(test, ifTrue, ifFalse);
             }
 
-            // arrayField.Contains(constant) → { field: value }: mirror of the $in arm below, with a stored array receiver.
+            // arrayField.Contains(constant) → { field: { $eq: value } }: mirror of the $in arm below, with a stored array receiver.
             // MongoDB's implicit element match gives the semantics; see MongoArrayContainsExpression for why it isn't a
             // MongoBinaryOperator.Equal (which would mean whole-array equality in the aggregation dialect).
             // Constant items only: a parameterized item would need a placeholder resolved through the element

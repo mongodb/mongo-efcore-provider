@@ -1362,7 +1362,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
         Assert.True(db.Planets.Select(p => p.name).Contains("Saturn"));
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
-        Assert.Contains("\"$match\" : { \"name\" : \"Saturn\" }", message);
+        Assert.Contains("\"$match\" : { \"name\" : { \"$eq\" : \"Saturn\" } }", message);
     }
 
     [Fact]

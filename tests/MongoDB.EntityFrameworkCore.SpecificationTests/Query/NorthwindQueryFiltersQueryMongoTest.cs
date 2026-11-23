@@ -61,7 +61,7 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : "ALFKI" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : { "$eq" : "ALFKI" } } }, { "$limit" : 1 }
 """);
     }
 
@@ -170,11 +170,11 @@ Orders.
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : "BERGS" } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : { "$eq" : "BERGS" } } }
 """,
             //
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : "BLAUS" } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : { "$eq" : "BLAUS" } } }
 """);
     }
 

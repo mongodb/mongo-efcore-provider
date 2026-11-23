@@ -285,7 +285,7 @@ internal static class MongoAggregationExpressionRenderer
 
     // A constant is wrapped only when its BSON would otherwise be evaluated as an expression (string, array,
     // document), so numeric operands stay bare; a parameter's value is only known per execution, so always wrapped.
-    private static BsonValue RenderOperand(MongoExpression node, PlaceholderTable placeholders, string? elementVariable)
+    internal static BsonValue RenderOperand(MongoExpression node, PlaceholderTable placeholders, string? elementVariable = null)
     {
         var rendered = Render(node, placeholders, elementVariable);
         return node is MongoParameterExpression

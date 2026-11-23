@@ -1124,7 +1124,7 @@ OrderDetails.{ "$lookup" : { "from" : "Products", "localField" : "_id.ProductID"
 
         AssertMql(
             """
-Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "México D.F." } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$group" : { "_id" : "$City", "Total" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Total" : "$Total", "_id" : 0 } }
+Customers.{ "$match" : { "ContactTitle" : { "$eq" : "Owner" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "México D.F." } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$group" : { "_id" : "$City", "Total" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Total" : "$Total", "_id" : 0 } }
 """);
     }
 

@@ -76,7 +76,7 @@ public class MongoExpressionNegatorTests
     {
         Assert.True(MongoExpressionNegator.TryNegate(Comparison(MongoBinaryOperator.NotEqual), out var negated));
         Assert.Equal(MongoBinaryOperator.Equal, Assert.IsType<MongoBinaryExpression>(negated).Operator);
-        Assert.Equal(BsonDocument.Parse("{ Rank: 5 }"), RenderOf(negated));
+        Assert.Equal(BsonDocument.Parse("{ Rank: { $eq: 5 } }"), RenderOf(negated));
     }
 
     // Four [Fact]s rather than a [Theory]: MongoBinaryOperator is internal, and a public test method can't expose
@@ -197,7 +197,7 @@ public class MongoExpressionNegatorTests
 
         Assert.True(MongoExpressionNegator.TryNegate(flipped, out var doubleNegated));
         Assert.False(Assert.IsType<MongoArrayContainsExpression>(doubleNegated).Negated);
-        Assert.Equal(BsonDocument.Parse("{ Tags: \"keep\" }"), RenderOf(doubleNegated));
+        Assert.Equal(BsonDocument.Parse("{ Tags: { $eq: \"keep\" } }"), RenderOf(doubleNegated));
     }
 
     // End to end: Posts.All(p => p.Tags.Contains("keep")) →

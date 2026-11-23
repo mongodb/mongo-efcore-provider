@@ -90,11 +90,11 @@ Customers.
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }
 """);
     }
 
@@ -104,11 +104,11 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }, { "$limit" : 1 }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }, { "$limit" : 1 }
 """);
     }
 
@@ -118,11 +118,11 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$limit" : 1 }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }
 """);
     }
 
@@ -132,11 +132,11 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }
 """);
     }
 
@@ -160,11 +160,11 @@ Customers.{ "$match" : { "_id" : { "$in" : ["ANATR"] } } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """);
     }
 
@@ -174,7 +174,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "v" }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }, { "$count" : "v" }
 """);
     }
 
@@ -183,31 +183,31 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "v" }
         await base.Compiled_query_with_max_parameters();
         AssertMql(
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }
+Customers.{ "$match" : { "$or" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }, { "_id" : { "$eq" : "ANTON" } }, { "_id" : { "$eq" : "AROUT" } }, { "_id" : { "$eq" : "BERGS" } }, { "_id" : { "$eq" : "BLAUS" } }, { "_id" : { "$eq" : "BLONP" } }, { "_id" : { "$eq" : "BOLID" } }, { "_id" : { "$eq" : "BONAP" } }, { "_id" : { "$eq" : "BSBEV" } }, { "_id" : { "$eq" : "CACTU" } }, { "_id" : { "$eq" : "CENTC" } }, { "_id" : { "$eq" : "CHOPS" } }, { "_id" : { "$eq" : "CONSH" } }, { "_id" : { "$eq" : "RANDM" } }] } }
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+Customers.{ "$match" : { "$or" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }, { "_id" : { "$eq" : "ANTON" } }, { "_id" : { "$eq" : "AROUT" } }, { "_id" : { "$eq" : "BERGS" } }, { "_id" : { "$eq" : "BLAUS" } }, { "_id" : { "$eq" : "BLONP" } }, { "_id" : { "$eq" : "BOLID" } }, { "_id" : { "$eq" : "BONAP" } }, { "_id" : { "$eq" : "BSBEV" } }, { "_id" : { "$eq" : "CACTU" } }, { "_id" : { "$eq" : "CENTC" } }, { "_id" : { "$eq" : "CHOPS" } }, { "_id" : { "$eq" : "CONSH" } }, { "_id" : { "$eq" : "RANDM" } }] } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "v" }
+Customers.{ "$match" : { "$or" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }, { "_id" : { "$eq" : "ANTON" } }, { "_id" : { "$eq" : "AROUT" } }, { "_id" : { "$eq" : "BERGS" } }, { "_id" : { "$eq" : "BLAUS" } }, { "_id" : { "$eq" : "BLONP" } }, { "_id" : { "$eq" : "BOLID" } }, { "_id" : { "$eq" : "BONAP" } }, { "_id" : { "$eq" : "BSBEV" } }, { "_id" : { "$eq" : "CACTU" } }, { "_id" : { "$eq" : "CENTC" } }, { "_id" : { "$eq" : "CHOPS" } }, { "_id" : { "$eq" : "CONSH" } }, { "_id" : { "$eq" : "RANDM" } }] } }, { "$count" : "v" }
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }
+Customers.{ "$match" : { "$or" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }, { "_id" : { "$eq" : "ANTON" } }, { "_id" : { "$eq" : "AROUT" } }, { "_id" : { "$eq" : "BERGS" } }, { "_id" : { "$eq" : "BLAUS" } }, { "_id" : { "$eq" : "BLONP" } }, { "_id" : { "$eq" : "BOLID" } }, { "_id" : { "$eq" : "BONAP" } }, { "_id" : { "$eq" : "BSBEV" } }, { "_id" : { "$eq" : "CACTU" } }, { "_id" : { "$eq" : "CENTC" } }, { "_id" : { "$eq" : "CHOPS" } }, { "_id" : { "$eq" : "CONSH" } }, { "_id" : { "$eq" : "RANDM" } }] } }
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+Customers.{ "$match" : { "$or" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }, { "_id" : { "$eq" : "ANTON" } }, { "_id" : { "$eq" : "AROUT" } }, { "_id" : { "$eq" : "BERGS" } }, { "_id" : { "$eq" : "BLAUS" } }, { "_id" : { "$eq" : "BLONP" } }, { "_id" : { "$eq" : "BOLID" } }, { "_id" : { "$eq" : "BONAP" } }, { "_id" : { "$eq" : "BSBEV" } }, { "_id" : { "$eq" : "CACTU" } }, { "_id" : { "$eq" : "CENTC" } }, { "_id" : { "$eq" : "CHOPS" } }, { "_id" : { "$eq" : "CONSH" } }, { "_id" : { "$eq" : "RANDM" } }] } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "v" }
+Customers.{ "$match" : { "$or" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }, { "_id" : { "$eq" : "ANTON" } }, { "_id" : { "$eq" : "AROUT" } }, { "_id" : { "$eq" : "BERGS" } }, { "_id" : { "$eq" : "BLAUS" } }, { "_id" : { "$eq" : "BLONP" } }, { "_id" : { "$eq" : "BOLID" } }, { "_id" : { "$eq" : "BONAP" } }, { "_id" : { "$eq" : "BSBEV" } }, { "_id" : { "$eq" : "CACTU" } }, { "_id" : { "$eq" : "CENTC" } }, { "_id" : { "$eq" : "CHOPS" } }, { "_id" : { "$eq" : "CONSH" } }, { "_id" : { "$eq" : "RANDM" } }] } }, { "$count" : "v" }
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }] } }, { "$count" : "v" }
+Customers.{ "$match" : { "$or" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }, { "_id" : { "$eq" : "ANTON" } }, { "_id" : { "$eq" : "AROUT" } }, { "_id" : { "$eq" : "BERGS" } }, { "_id" : { "$eq" : "BLAUS" } }, { "_id" : { "$eq" : "BLONP" } }, { "_id" : { "$eq" : "BOLID" } }, { "_id" : { "$eq" : "BONAP" } }, { "_id" : { "$eq" : "BSBEV" } }, { "_id" : { "$eq" : "CACTU" } }, { "_id" : { "$eq" : "CENTC" } }, { "_id" : { "$eq" : "CHOPS" } }, { "_id" : { "$eq" : "CONSH" } }] } }, { "$count" : "v" }
 """);
     }
 
@@ -217,11 +217,11 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }
 """);
     }
 
@@ -231,11 +231,11 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }
 """);
     }
 
@@ -281,11 +281,11 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }, { "$limit" : 1 }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }, { "$limit" : 1 }
 """);
     }
 
@@ -305,11 +305,11 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }, { "$limit" : 1 }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }, { "$limit" : 1 }
 """);
     }
 
@@ -329,7 +329,7 @@ Customers.{ "$sort" : { "CompanyName" : 1 } }, { "$limit" : 1 }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : null } }
+Customers.{ "$match" : { "_id" : { "$eq" : null } } }
 """);
     }
 
@@ -339,11 +339,11 @@ Customers.{ "$match" : { "_id" : null } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }
 """);
     }
 
@@ -353,11 +353,11 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }
 """);
     }
 
@@ -381,11 +381,11 @@ Customers.
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }
 """);
     }
 
@@ -405,7 +405,7 @@ Customers.{ "$sort" : { "CompanyName" : 1 } }, { "$limit" : 1 }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : null } }
+Customers.{ "$match" : { "_id" : { "$eq" : null } } }
 """);
     }
 
@@ -415,11 +415,11 @@ Customers.{ "$match" : { "_id" : null } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
 """);
     }
 
@@ -470,11 +470,11 @@ Customers.
         base.Query_with_single_parameter_with_include();
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """);
     }
 

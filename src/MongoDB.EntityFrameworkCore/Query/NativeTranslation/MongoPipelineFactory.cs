@@ -424,9 +424,12 @@ internal sealed class MongoPipelineFactory
     private static BsonDocument RenderUnset(MongoUnsetStage stage)
         => new("$unset", new BsonArray(stage.FieldNames));
 
+    // The operand is a value position: a captured "$Name" (Max(x => probe)) would otherwise be read as a field path and
+    // return that field's stored maximum. RenderOperand $literal-wraps parameters and string/array/document constants,
+    // leaving a numeric constant bare (Sum(x => 1) stays { $sum: 1 }).
     private static BsonDocument RenderGroup(MongoGroupAccumulatorStage stage, PlaceholderTable placeholders)
     {
-        var operand = MongoAggregationExpressionRenderer.Render(stage.Operand, placeholders);
+        var operand = MongoAggregationExpressionRenderer.RenderOperand(stage.Operand, placeholders);
         return new BsonDocument("$group", new BsonDocument
         {
             { "_id", BsonNull.Value },

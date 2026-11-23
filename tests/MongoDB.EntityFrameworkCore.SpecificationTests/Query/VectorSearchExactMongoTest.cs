@@ -188,7 +188,7 @@ Books.{ "$vectorSearch" : { "path" : "BinaryReadOnlyMemorySBytes", "limit" : 4, 
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "is_published" : true } }
+Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }, { "$match" : { "is_published" : { "$eq" : true } } }
 """);
     }
 
@@ -218,7 +218,7 @@ Books.{ "$vectorSearch" : { "path" : "Preface.Floats", "limit" : 4, "numCandidat
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "filter" : { "is_published" : true }, "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
+Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsIndex", "filter" : { "is_published" : { "$eq" : true } }, "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 
@@ -228,7 +228,7 @@ Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsInd
 
         AssertMql(
             """
-Books.{ "$vectorSearch" : { "path" : "Doubles", "limit" : 4, "index" : "DoublesIndex", "filter" : { "$and" : [{ "comments" : "Froody" }, { "$or" : [{ "Pages" : { "$gt" : 500 } }, { "is_published" : true }] }] }, "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
+Books.{ "$vectorSearch" : { "path" : "Doubles", "limit" : 4, "index" : "DoublesIndex", "filter" : { "$and" : [{ "comments" : { "$eq" : "Froody" } }, { "$or" : [{ "Pages" : { "$gt" : 500 } }, { "is_published" : { "$eq" : true } }] }] }, "exact" : true, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }, { "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }
 """);
     }
 

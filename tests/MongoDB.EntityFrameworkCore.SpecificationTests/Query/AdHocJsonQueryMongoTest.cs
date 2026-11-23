@@ -82,7 +82,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 4 } }, { "$project" : { "Id" : "$_id", "RequiredReference" : "$RequiredReference", "_id" : "$_id" } }
+            Entities.{ "$match" : { "_id" : { "$eq" : 4 } } }, { "$project" : { "Id" : "$_id", "RequiredReference" : "$RequiredReference", "_id" : "$_id" } }
             """);
     }
 
@@ -97,7 +97,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 5 } }
+            Entities.{ "$match" : { "_id" : { "$eq" : 5 } } }
             """);
     }
 
@@ -135,7 +135,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 6 } }
+            Entities.{ "$match" : { "_id" : { "$eq" : 6 } } }
             """);
     }
 
@@ -168,7 +168,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 2 } }, { "$project" : { "Id" : "$_id", "Number" : "$RequiredReference.Number", "_id" : 0 } }
+            Entities.{ "$match" : { "_id" : { "$eq" : 2 } } }, { "$project" : { "Id" : "$_id", "Number" : "$RequiredReference.Number", "_id" : 0 } }
             """);
     }
 
@@ -178,7 +178,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 4 } }, { "$project" : { "Id" : "$_id", "Number" : "$RequiredReference.Number", "_id" : 0 } }
+            Entities.{ "$match" : { "_id" : { "$eq" : 4 } } }, { "$project" : { "Id" : "$_id", "Number" : "$RequiredReference.Number", "_id" : 0 } }
             """);
     }
 

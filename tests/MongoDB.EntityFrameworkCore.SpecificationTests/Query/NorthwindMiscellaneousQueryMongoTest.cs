@@ -240,7 +240,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI", "City" : "Berlin" } }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" }, "City" : { "$eq" : "Berlin" } } }
             """);
     }
 
@@ -250,7 +250,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
             """);
     }
 
@@ -324,11 +324,11 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "v" }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }, { "$count" : "v" }
             """,
             //
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "v" }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }, { "$count" : "v" }
             """);
     }
 
@@ -370,7 +370,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }, { "$limit" : 2 }
             """);
     }
 
@@ -390,7 +390,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_id" : "$_id" } }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }, { "$project" : { "_id" : "$_id" } }
             """);
     }
 
@@ -400,7 +400,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 10248, "_id.ProductID" : 11 } }
+            OrderDetails.{ "$match" : { "_id.OrderID" : { "$eq" : 10248 }, "_id.ProductID" : { "$eq" : 11 } } }
             """);
     }
 
@@ -410,7 +410,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$and" : [{ "_id" : "ANATR" }, { "_id" : "ANATR" }] } }, { "$project" : { "_id" : "$_id" } }
+            Customers.{ "$match" : { "$and" : [{ "_id" : { "$eq" : "ANATR" } }, { "_id" : { "$eq" : "ANATR" } }] } }, { "$project" : { "_id" : "$_id" } }
             """);
     }
 
@@ -439,7 +439,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_id" : "$_id" } }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ANATR" } } }, { "$project" : { "_id" : "$_id" } }
             """);
     }
 
@@ -449,7 +449,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 10248, "_id.ProductID" : 11 } }
+            OrderDetails.{ "$match" : { "_id.OrderID" : { "$eq" : 10248 }, "_id.ProductID" : { "$eq" : 11 } } }
             """);
     }
 
@@ -1203,7 +1203,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "FRANK" } }, { "$limit" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "v" }
+            Orders.{ "$match" : { "CustomerID" : { "$eq" : "FRANK" } } }, { "$limit" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "v" }
             """);
     }
 
@@ -1374,7 +1374,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "City" : "London", "_lookup_Orders" : { "$elemMatch" : { "EmployeeID" : 1 } } } }
+            Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "City" : { "$eq" : "London" }, "_lookup_Orders" : { "$elemMatch" : { "EmployeeID" : { "$eq" : 1 } } } } }
             """);
     }
 
@@ -1546,7 +1546,7 @@ public class NorthwindMiscellaneousQueryMongoTest
         await base.Join_Where_Count(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$count" : "v" }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$count" : "v" }
             """);
     }
 
@@ -1557,7 +1557,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } }, "_lookup_Orders" : { "$elemMatch" : { "OrderDate" : { "$date" : "1998-01-15T00:00:00Z" } } } } }
+            Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } }, "_lookup_Orders" : { "$elemMatch" : { "OrderDate" : { "$eq" : { "$date" : "1998-01-15T00:00:00Z" } } } } } }
             """);
     }
 
@@ -1613,7 +1613,7 @@ public class NorthwindMiscellaneousQueryMongoTest
         await base.Multiple_joins_Where_Order_Any(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_lookup_Orders._id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$unwind" : { "path" : "$_lookup_OrderDetails", "preserveNullAndEmptyArrays" : false } }, { "$limit" : 1 }
+            Customers.{ "$match" : { "City" : { "$eq" : "London" } } }, { "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_lookup_Orders._id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$unwind" : { "path" : "$_lookup_OrderDetails", "preserveNullAndEmptyArrays" : false } }, { "$limit" : 1 }
             """);
     }
 
@@ -1622,7 +1622,7 @@ public class NorthwindMiscellaneousQueryMongoTest
         await base.Where_join_select(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }
             """);
     }
 
@@ -2448,7 +2448,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }] } }
+            Customers.{ "$match" : { "$or" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }, { "_id" : { "$eq" : "ANTON" } }] } }
             """);
     }
 
@@ -2458,7 +2458,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$and" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }] } }
+            Customers.{ "$match" : { "$and" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }, { "_id" : { "$eq" : "ANTON" } }] } }
             """);
     }
 
@@ -2468,7 +2468,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$and" : [{ "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] }, { "Country" : "Germany" }] } }
+            Customers.{ "$match" : { "$and" : [{ "$or" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }] }, { "Country" : { "$eq" : "Germany" } }] } }
             """);
     }
 
@@ -2478,7 +2478,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$or" : [{ "$and" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] }, { "_id" : "ANTON" }] } }
+            Customers.{ "$match" : { "$or" : [{ "$and" : [{ "_id" : { "$eq" : "ALFKI" } }, { "_id" : { "$eq" : "ANATR" } }] }, { "_id" : { "$eq" : "ANTON" } }] } }
             """);
     }
 
@@ -3050,7 +3050,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$match" : { "CustomerID" : "ALFKI" } }
+            Customers.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$match" : { "CustomerID" : { "$eq" : "ALFKI" } } }
             """);
     }
 
@@ -3129,7 +3129,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Property" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "Property" : "ALFKI" } }
+            Customers.{ "$group" : { "_id" : { "Property" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "Property" : { "$eq" : "ALFKI" } } }
             """);
     }
 
@@ -3217,7 +3217,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10300 } }
+            Orders.{ "$match" : { "_id" : { "$eq" : 10300 } } }
             """);
     }
 
@@ -3655,7 +3655,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "_id" : "ALFKI" } }], "as" : "_lookup_Customer" } }, { "$match" : { "_lookup_Customer.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "_id" : { "$gt" : 690, "$lt" : 710 } } }, { "$limit" : 5 }, { "$count" : "v" }
+            Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }], "as" : "_lookup_Customer" } }, { "$match" : { "_lookup_Customer.0" : { "$exists" : true } } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "_id" : { "$gt" : 690, "$lt" : 710 } } }, { "$limit" : 5 }, { "$count" : "v" }
             """);
     }
 
@@ -3915,7 +3915,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
             """);
     }
 
@@ -4262,7 +4262,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$sort" : { "City" : 1, "_id" : 1 } }
+            Customers.{ "$match" : { "City" : { "$eq" : "London" } } }, { "$sort" : { "City" : 1, "_id" : 1 } }
             """);
     }
 
@@ -4306,11 +4306,11 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Employees.{ "$match" : { "Title" : "Sales Representative" } }
+            Employees.{ "$match" : { "Title" : { "$eq" : "Sales Representative" } } }
             """,
             //
             """
-            Employees.{ "$match" : { "FirstName" : "Steven" } }
+            Employees.{ "$match" : { "FirstName" : { "$eq" : "Steven" } } }
             """);
     }
 
@@ -4399,7 +4399,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Employees.{ "$match" : { "Title" : "Sales Representative" } }
+            Employees.{ "$match" : { "Title" : { "$eq" : "Sales Representative" } } }
             """);
     }
 
@@ -4409,7 +4409,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Employees.{ "$match" : { "Title" : "Sales Representative" } }
+            Employees.{ "$match" : { "Title" : { "$eq" : "Sales Representative" } } }
             """);
     }
 
@@ -4441,7 +4441,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10248 } }
+            Orders.{ "$match" : { "_id" : { "$eq" : 10248 } } }
             """);
     }
 
@@ -4494,7 +4494,7 @@ public class NorthwindMiscellaneousQueryMongoTest
             """,
             //
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 1 }
+            Orders.{ "$match" : { "_id" : { "$eq" : 10248 } } }, { "$limit" : 1 }
             """,
             //
             """
@@ -4535,7 +4535,7 @@ public class NorthwindMiscellaneousQueryMongoTest
             """,
             //
             """
-            Orders.{ "$lookup" : { "from" : "Orders", "localField" : "CustomerID", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : 10248 } }], "as" : "_lookup_Order_CustomerID_CustomerID_f1" } }, { "$match" : { "_lookup_Order_CustomerID_CustomerID_f1.0" : { "$exists" : true } } }
+            Orders.{ "$lookup" : { "from" : "Orders", "localField" : "CustomerID", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$eq" : 10248 } } }], "as" : "_lookup_Order_CustomerID_CustomerID_f1" } }, { "$match" : { "_lookup_Order_CustomerID_CustomerID_f1.0" : { "$exists" : true } } }
             """);
     }
 
@@ -4928,7 +4928,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
             """);
     }
 
@@ -5259,7 +5259,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI", "City" : "Berlin" } }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" }, "City" : { "$eq" : "Berlin" } } }
             """);
     }
 
@@ -5269,7 +5269,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            Customers.{ "$match" : { "_id" : { "$eq" : "ALFKI" } } }
             """);
     }
 
