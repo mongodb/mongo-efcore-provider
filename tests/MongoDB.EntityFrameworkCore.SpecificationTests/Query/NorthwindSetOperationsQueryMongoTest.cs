@@ -51,7 +51,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "México D.F." } } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : { "$eq" : "Owner" } } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -67,7 +67,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "London" } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -77,7 +77,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -87,7 +87,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }
             """);
     }
 
@@ -97,7 +97,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "London" } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -107,7 +107,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "ContactName" : 1 } }, { "$skip" : 1 }, { "$limit" : 1 }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "ContactName" : 1 } }, { "$skip" : 1 }, { "$limit" : 1 }
             """);
     }
 
@@ -117,7 +117,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }
             """);
     }
 
@@ -127,7 +127,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "Region" : 1, "City" : 1 } }, { "$skip" : 0 }, { "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "Region" : 1, "City" : 1 } }, { "$skip" : 0 }, { "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }
             """);
     }
 
@@ -137,7 +137,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "Mannheim" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "Mannheim" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -148,7 +148,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "Berlin" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }] } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "Berlin" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }] } }
             """);
     }
 
@@ -170,7 +170,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "Mannheim" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$sort" : { "_id" : 1 } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "Mannheim" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$sort" : { "_id" : 1 } }
             """);
     }
 
@@ -180,7 +180,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -190,7 +190,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Address" : { "$regularExpression" : { "pattern" : "Hanover", "options" : "s" } } } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Address" : { "$regularExpression" : { "pattern" : "Hanover", "options" : "s" } } } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }
             """);
     }
 
@@ -230,7 +230,7 @@ Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$grou
         await base.Union_Include(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
             """);
     }
 
@@ -239,7 +239,7 @@ Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$grou
         await base.Include_Union(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
             """);
     }
 
@@ -267,7 +267,7 @@ Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$grou
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$group" : { "_id" : "$_id", "Count" : { "$sum" : 1 } } }, { "$project" : { "CustomerID" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$_id", "Count" : { "$sum" : 1 } } }, { "$project" : { "CustomerID" : "$_id", "Count" : "$Count", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "Berlin" } } }, { "$group" : { "_id" : "$_id", "Count" : { "$sum" : 1 } } }, { "$project" : { "CustomerID" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }, { "$group" : { "_id" : "$_id", "Count" : { "$sum" : 1 } } }, { "$project" : { "CustomerID" : "$_id", "Count" : "$Count", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -682,7 +682,7 @@ Orders.{ "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }, { "
         await base.Concat_with_one_side_being_GroupBy_aggregate(async);
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "_lookup_Customer.City" : "Seatte" } }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "OrderDate" : { "$max" : "$OrderDate" } } }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "_lookup_Customer.City" : { "$eq" : "Seatte" } } }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "OrderDate" : { "$max" : "$OrderDate" } } }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
 """);
     }
 
@@ -710,7 +710,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "ContactTitle" : { "$eq" : "Owner" } } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "México D.F." } } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -750,7 +750,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "Berlin" } }] } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }
+            Customers.{ "$match" : { "City" : { "$eq" : "México D.F." } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "Berlin" } } }] } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }
             """);
     }
 
@@ -759,7 +759,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
         await base.Union_nested(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "México D.F." } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "ContactTitle" : { "$eq" : "Owner" } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "México D.F." } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "London" } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -769,7 +769,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_id" : "$_id" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "ContactTitle" : { "$eq" : "Owner" } } }, { "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : { "$eq" : "México D.F." } } }, { "$project" : { "_id" : "$_id" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -778,7 +778,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
         await base.Concat_non_entity(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_id" : "$_id" } }] } }
+            Customers.{ "$match" : { "City" : { "$eq" : "México D.F." } } }, { "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : { "$eq" : "Owner" } } }, { "$project" : { "_id" : "$_id" } }] } }
             """);
     }
 
@@ -807,7 +807,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$group" : { "_id" : { "CompanyName" : { "$ifNull" : ["$CompanyName", null] } } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "México D.F." } } }, { "$group" : { "_id" : { "CompanyName" : { "$ifNull" : ["$CompanyName", null] } } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : { "$eq" : "Owner" } } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -817,7 +817,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$group" : { "_id" : { "CompanyName" : { "$ifNull" : ["$CompanyName", null] } } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "México D.F." } } }, { "$group" : { "_id" : { "CompanyName" : { "$ifNull" : ["$CompanyName", null] } } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : { "$eq" : "Owner" } } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -828,7 +828,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$group" : { "_id" : { "CompanyName" : { "$ifNull" : ["$CompanyName", null] } } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : { "$eq" : "México D.F." } } }, { "$group" : { "_id" : { "CompanyName" : { "$ifNull" : ["$CompanyName", null] } } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : { "$eq" : "Owner" } } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 

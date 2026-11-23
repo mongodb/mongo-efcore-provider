@@ -121,6 +121,17 @@ public class NativeStringDollarLiteralTests(TemporaryDatabaseFixture database) :
             context.Entities.OrderBy(x => x.Order).Select(x => x.Text.TrimEnd('$', 'b')).ToList());
     }
 
+    [Fact]
+    public void Terminal_min_and_max_over_dollar_prefixed_parameter_are_literal()
+    {
+        using var context = CreateContext(nameof(Terminal_min_and_max_over_dollar_prefixed_parameter_are_literal));
+
+        // The single-accumulator $group: an unwrapped "$Text" would aggregate the Text field instead.
+        var term = "$Text";
+        Assert.Equal("$Text", context.Entities.Max(x => term));
+        Assert.Equal("$Text", context.Entities.Min(x => term));
+    }
+
     private SingleEntityDbContext<Row> CreateContext(string testName)
     {
         var collection = database.MongoDatabase.GetCollection<Row>(

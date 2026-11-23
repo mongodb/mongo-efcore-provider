@@ -49,10 +49,14 @@ public class NativeReferencedCollectionPredicateTests(TemporaryDatabaseFixture d
         public int Id { get; set; }
         public int Total { get; set; }
         public string? CustId { get; set; }
+        public Dictionary<string, string>? Labels { get; set; }
         public Cust? Cust { get; set; }
     }
 
+    private static readonly Dictionary<string, string> NeZzz = new() { ["$ne"] = "zzz" };
+
     // A1: 10, 20, 600 | A2: 700 | B1: 30 | C0: none. Order 6 is dangling (ZZ), 7 has no customer.
+    // Only order 1 has Labels ({ color: red }); no stored Labels equals an operator-shaped dictionary.
     private string[] Seed()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -71,7 +75,7 @@ public class NativeReferencedCollectionPredicateTests(TemporaryDatabaseFixture d
         ]);
         database.MongoDatabase.GetCollection<BsonDocument>(names[1]).InsertMany(
         [
-            new BsonDocument { { "_id", 1 }, { "Total", 10 }, { "CustId", "A1" } },
+            new BsonDocument { { "_id", 1 }, { "Total", 10 }, { "CustId", "A1" }, { "Labels", new BsonDocument("color", "red") } },
             new BsonDocument { { "_id", 2 }, { "Total", 20 }, { "CustId", "A1" } },
             new BsonDocument { { "_id", 3 }, { "Total", 600 }, { "CustId", "A1" } },
             new BsonDocument { { "_id", 4 }, { "Total", 700 }, { "CustId", "A2" } },
@@ -200,6 +204,25 @@ public class NativeReferencedCollectionPredicateTests(TemporaryDatabaseFixture d
     [Fact]
     public void Take_then_Where_Any_pages_before_filtering()
         => Assert3(db => SortedIds(db.Set<Cust>().OrderBy(c => c.Id).Take(3).Where(c => c.Orders.Any(o => o.Total > 100))), ["A1", "A2"]);
+
+    // A dictionary parameter whose first key is an operator must be compared as a value inside the lookup's predicate.
+    [Fact]
+    public void Where_Any_with_an_operator_shaped_dictionary_parameter_matches_nothing()
+    {
+        var ne = NeZzz;
+        Assert3(db => SortedIds(db.Set<Cust>().Where(c => c.Orders.Any(o => o.Labels == ne))), []);
+    }
+
+    [Fact]
+    public void Projected_Count_with_an_operator_shaped_dictionary_parameter_counts_nothing()
+    {
+        var ne = NeZzz;
+        var red = new Dictionary<string, string> { ["color"] = "red" };
+        Assert3(db => db.Set<Cust>().OrderBy(c => c.Id)
+                .Select(c => new { c.Id, Ne = c.Orders.Count(o => o.Labels == ne), Red = c.Orders.Count(o => o.Labels == red) })
+                .AsEnumerable().Select(r => $"{r.Id}:{r.Ne}:{r.Red}").ToList(),
+            ["A1:0:1", "A2:0:0", "B1:0:0", "C0:0:0"]);
+    }
 
     private Ctx Create(string[] names, MongoQueryMode mode)
     {

@@ -30,8 +30,10 @@ internal sealed class PlaceholderTable
 {
     /// <summary>The key of a placeholder sentinel document, <c>{ __mongoef_param__: &lt;index&gt; }</c>.</summary>
     /// <remarks>
-    /// Must never start with <c>'$'</c>: <see cref="MongoQueryLanguageRenderer.RenderUnary"/>'s <c>!(x == value)</c> arm treats a
-    /// document whose first key starts with <c>'$'</c> as an operator document, and a sentinel must be a bare value.
+    /// Must never start with <c>'$'</c>: the renderers treat a document whose first key starts with <c>'$'</c> as an
+    /// operator document (for example <c>MongoQueryLanguageRenderer.CombineAnd</c>'s same-field merge), and a sentinel
+    /// stands for a value. What is substituted for it is always in a value position (<c>$eq</c>, <c>$literal</c>, ...),
+    /// so a substituted document is never read as an operator.
     /// </remarks>
     internal const string SentinelKey = "__mongoef_param__";
 

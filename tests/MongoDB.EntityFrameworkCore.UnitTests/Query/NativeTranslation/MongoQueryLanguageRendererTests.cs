@@ -117,10 +117,10 @@ public class MongoQueryLanguageRendererTests
         Assert.Equal(BsonDocument.Parse("{ Age: { $gt: 21, $lt: 65 } }"), rendered);
     }
 
-    // Equal comparison → bare { Age: value } (no $eq wrapper)
+    // Equal comparison → { Age: { $eq: value } }, never the bare shorthand (see MongoQueryLanguageRenderer.Eq)
 
     [Fact]
-    public void Renders_equal_as_bare_value()
+    public void Renders_equal_as_explicit_eq()
     {
         var ageProperty = GetProperty<Customer>("Age");
         var field = new MongoFieldExpression(ageProperty, "Age");
@@ -131,7 +131,7 @@ public class MongoQueryLanguageRendererTests
 
         var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
 
-        Assert.Equal(BsonDocument.Parse("{ Age: 30 }"), rendered);
+        Assert.Equal(BsonDocument.Parse("{ Age: { $eq: 30 } }"), rendered);
     }
 
     // NotEqual → { Age: { $ne: value } }
@@ -213,14 +213,14 @@ public class MongoQueryLanguageRendererTests
     // bare bool field → { Active: true }
 
     [Fact]
-    public void Renders_bare_bool_field_as_true()
+    public void Renders_bare_bool_field_as_eq_true()
     {
         var activeProperty = GetProperty<Customer>("Active");
         var field = new MongoFieldExpression(activeProperty, "Active");
 
         var rendered = new MongoQueryLanguageRenderer().Render(field, new PlaceholderTable());
 
-        Assert.Equal(BsonDocument.Parse("{ Active: true }"), rendered);
+        Assert.Equal(BsonDocument.Parse("{ Active: { $eq: true } }"), rendered);
     }
 
     // Not(bool field) → { Active: { $ne: true } }
@@ -283,7 +283,7 @@ public class MongoQueryLanguageRendererTests
 
         var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
 
-        Assert.Equal(BsonDocument.Parse("{ Age: { $gt: 21 }, Active: true }"), rendered);
+        Assert.Equal(BsonDocument.Parse("{ Age: { $gt: 21 }, Active: { $eq: true } }"), rendered);
     }
 
     // MongoConstantExpression with null ForSerialization (Skip/Take count)
@@ -358,7 +358,7 @@ public class MongoQueryLanguageRendererTests
     // `== null` renders as a bare null value → { Name: null } (matches null or missing)
 
     [Fact]
-    public void Renders_is_null_as_bare_null()
+    public void Renders_is_null_as_eq_null()
     {
         var name = GetProperty<Customer>("Name");
         var pred = new MongoBinaryExpression(MongoBinaryOperator.Equal,
@@ -366,7 +366,7 @@ public class MongoQueryLanguageRendererTests
 
         var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
 
-        Assert.Equal(BsonDocument.Parse("{ Name: null }"), rendered);
+        Assert.Equal(BsonDocument.Parse("{ Name: { $eq: null } }"), rendered);
     }
 
     // MongoInExpression over an inline constant collection → { field: { $in: [...] } }
@@ -652,7 +652,7 @@ public class MongoQueryLanguageRendererTests
 
         var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
 
-        Assert.Equal(BsonDocument.Parse("{ Posts: { $elemMatch: { Heading: 'x' } } }"), rendered);
+        Assert.Equal(BsonDocument.Parse("{ Posts: { $elemMatch: { Heading: { $eq: 'x' } } } }"), rendered);
     }
 
     [Fact]
@@ -677,7 +677,7 @@ public class MongoQueryLanguageRendererTests
 
         var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
 
-        Assert.Equal(BsonDocument.Parse("{ Posts: { $elemMatch: { Heading: 'x', Rank: { $gt: 2 } } } }"), rendered);
+        Assert.Equal(BsonDocument.Parse("{ Posts: { $elemMatch: { Heading: { $eq: 'x' }, Rank: { $gt: 2 } } } }"), rendered);
     }
 
     [Fact]
@@ -694,7 +694,7 @@ public class MongoQueryLanguageRendererTests
 
         var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
 
-        Assert.Equal(BsonDocument.Parse("{ Posts: { $not: { $elemMatch: { Heading: 'x' } } } }"), rendered);
+        Assert.Equal(BsonDocument.Parse("{ Posts: { $not: { $elemMatch: { Heading: { $eq: 'x' } } } } }"), rendered);
     }
 
     [Fact]
@@ -745,7 +745,7 @@ public class MongoQueryLanguageRendererTests
         var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
 
         Assert.Equal(
-            BsonDocument.Parse("{ Posts: { $elemMatch: { Comments: { $elemMatch: { Text: 't' } } } } }"),
+            BsonDocument.Parse("{ Posts: { $elemMatch: { Comments: { $elemMatch: { Text: { $eq: 't' } } } } } }"),
             rendered);
     }
 
@@ -1131,5 +1131,50 @@ public class MongoQueryLanguageRendererTests
             new MongoConstantExpression(DateTime.UtcNow, forSerialization: null), MongoDatePart.Year);
 
         Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(datePart));
+    }
+
+    // An operator-shaped document value (a dictionary, an object, a custom serializer's output) must stay a value:
+    // bare, { Name: { $ne: 'x' } } would be read as an operator and match every row whose Name isn't 'x'.
+    [Fact]
+    public void Equal_with_operator_shaped_document_value_is_compared_as_a_value()
+    {
+        var name = GetProperty<Customer>("Name");
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoFieldExpression(name, "Name"),
+            new MongoConstantExpression(new BsonDocument("$ne", "x"), forSerialization: null));
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ Name: { $eq: { $ne: 'x' } } }"), rendered);
+    }
+
+    [Fact]
+    public void Equal_with_parameter_puts_the_placeholder_under_eq()
+    {
+        var age = GetProperty<Customer>("Age");
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoFieldExpression(age, "Age"),
+            new MongoParameterExpression("p0", age));
+
+        var rendered = Assert.IsType<BsonDocument>(new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable()));
+
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(rendered["Age"]["$eq"], out var index));
+        Assert.Equal(0, index);
+    }
+
+    [Fact]
+    public void Negated_equal_is_not_of_eq()
+    {
+        var age = GetProperty<Customer>("Age");
+        var pred = new MongoUnaryExpression(
+            MongoUnaryOperator.Not,
+            new MongoBinaryExpression(
+                MongoBinaryOperator.Equal, new MongoFieldExpression(age, "Age"), new MongoConstantExpression(30, age)));
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("{ Age: { $not: { $eq: 30 } } }"), rendered);
     }
 }

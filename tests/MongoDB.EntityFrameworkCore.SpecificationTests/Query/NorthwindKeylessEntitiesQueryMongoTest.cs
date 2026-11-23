@@ -36,7 +36,7 @@ Customers.
 
         AssertMql(
             """
-Customers.{ "$match" : { "City" : "London" } }
+Customers.{ "$match" : { "City" : { "$eq" : "London" } } }
 """);
     }
 
@@ -100,7 +100,7 @@ CustomerQueryWithQueryFilter.{ "$match" : { "OrderCount" : { "$gt" : 0 } } }
 
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
+Orders.{ "$match" : { "CustomerID" : { "$eq" : "ALFKI" } } }
 """);
     }
 
@@ -118,7 +118,7 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "_lookup_Customer.City" : "Seattle" } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$set" : { "_lookup_Customer" : { "$arrayElemAt" : ["$_lookup_Customer", 0] } } }, { "$match" : { "_lookup_Customer.City" : { "$eq" : "Seattle" } } }
 """);
     }
 

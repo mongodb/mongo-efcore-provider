@@ -69,7 +69,7 @@ public class NativeVectorSearchStageTests
         """{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsIndex", "queryVector" : [0.33000001311302185, -0.51999998092651367] } }""";
 
     private const string BoolPreFilterBaseline =
-        """{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsIndex", "filter" : { "is_published" : true }, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }""";
+        """{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsIndex", "filter" : { "is_published" : { "$eq" : true } }, "queryVector" : [0.33000001311302185, -0.51999998092651367] } }""";
 
     private const string ScoreBaseline =
         """{ "$addFields" : { "__score" : { "$meta" : "vectorSearchScore" } } }""";
@@ -158,7 +158,7 @@ public class NativeVectorSearchStageTests
         Assert.Equal(3, pipeline.Length);
         Assert.Equal(FloatsBaseline, pipeline[0].ToString());
         Assert.Equal(ScoreBaseline, pipeline[1].ToString());
-        Assert.Equal(BsonDocument.Parse("""{ "$match" : { "Title" : "Action" } }"""), pipeline[2]);
+        Assert.Equal(BsonDocument.Parse("""{ "$match" : { "Title" : { "$eq" : "Action" } } }"""), pipeline[2]);
     }
 
     [Fact]
@@ -222,7 +222,7 @@ public class NativeVectorSearchStageTests
 
         Assert.Equal(BoolPreFilterBaseline, first[0].ToString());
         Assert.Equal(
-            BoolPreFilterBaseline.Replace(""""is_published" : true"""", """"is_published" : false""""),
+            BoolPreFilterBaseline.Replace(""""is_published" : { "$eq" : true }"""", """"is_published" : { "$eq" : false }""""),
             second[0].ToString());
     }
 

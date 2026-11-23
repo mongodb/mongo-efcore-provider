@@ -88,8 +88,8 @@ public class MongoPipelineFactoryTests
         var first = factory.Build(new Dictionary<string, object?> { ["args_0"] = new[] { "ALFKI", "ANATR" } });
         var second = factory.Build(new Dictionary<string, object?> { ["args_0"] = new[] { "OTHER", "ANATR" } });
 
-        Assert.Equal(BsonDocument.Parse("{ $match: { Name: \"ALFKI\" } }"), first[0]);
-        Assert.Equal(BsonDocument.Parse("{ $match: { Name: \"OTHER\" } }"), second[0]);
+        Assert.Equal(BsonDocument.Parse("{ $match: { Name: { $eq: \"ALFKI\" } } }"), first[0]);
+        Assert.Equal(BsonDocument.Parse("{ $match: { Name: { $eq: \"OTHER\" } } }"), second[0]);
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public class MongoPipelineFactoryTests
 
         var result = factory.Build(new Dictionary<string, object?> { ["args_0"] = new[] { "ALFKI", "ANATR" } });
 
-        Assert.Equal(BsonDocument.Parse("{ $match: { Name: \"ANATR\" } }"), result[0]);
+        Assert.Equal(BsonDocument.Parse("{ $match: { Name: { $eq: \"ANATR\" } } }"), result[0]);
     }
 
     // Constant value baked into template — Build with empty dict works
@@ -426,7 +426,7 @@ public class MongoPipelineFactoryTests
 
         var innerPipeline = pipeline[0]["$unionWith"]["pipeline"].AsBsonArray;
         Assert.True(innerPipeline[0].AsBsonDocument.Contains("$match"));
-        Assert.Equal(BsonDocument.Parse("{ $match: { Age: 21 } }"), innerPipeline[0].AsBsonDocument);
+        Assert.Equal(BsonDocument.Parse("{ $match: { Age: { $eq: 21 } } }"), innerPipeline[0].AsBsonDocument);
     }
 
     [Fact]
@@ -981,5 +981,57 @@ public class MongoPipelineFactoryTests
         var idDoc = result[0]["$group"]["_id"].AsBsonDocument;
         Assert.Equal(new BsonDocument("$literal", "$Country"), idDoc["A"]);
         Assert.Equal(new BsonDocument("$literal", "$Region"), idDoc["B"]);
+    }
+
+    // The substituted parameter is a value under $eq, so an operator-shaped document can't become a filter.
+    [Fact]
+    public void Equality_parameter_substituted_with_operator_shaped_document_stays_a_value()
+    {
+        var name = GetProperty<Customer>("Name");
+        var pred = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoFieldExpression(name, "Name"),
+            new MongoParameterExpression("p0", forSerialization: null));
+        var factory = MongoPipelineFactory.Create([new MongoMatchStage(pred)], new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["p0"] = new BsonDocument("$ne", "x") });
+
+        Assert.Equal(BsonDocument.Parse("{ $match: { Name: { $eq: { $ne: 'x' } } } }"), result[0]);
+    }
+
+    // Max(x => probe) with probe = "$Name": unwrapped, the server reads the operand as a field path and returns the
+    // stored maximum of Name.
+    [Theory]
+    [InlineData("$max", false)]
+    [InlineData("$min", false)]
+    [InlineData("$max", true)]
+    public void Terminal_accumulator_parameter_that_looks_like_a_field_path_is_literal_wrapped(string accumulator, bool wrapsOperand)
+    {
+        var stages = new List<MongoPipelineStage>
+        {
+            new MongoGroupAccumulatorStage(
+                accumulator, new MongoParameterExpression("p0", forSerialization: null), "_v", wrapsOperand)
+        };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["p0"] = "$Name" });
+
+        var literal = new BsonDocument("$literal", "$Name");
+        var operand = result[0]["$group"]["_v"][accumulator];
+        Assert.Equal(wrapsOperand ? new BsonDocument(NativeAggregateReadBack.WrappedValueField, literal) : literal, operand);
+    }
+
+    [Fact]
+    public void Terminal_accumulator_numeric_constant_stays_bare()
+    {
+        var stages = new List<MongoPipelineStage>
+        {
+            new MongoGroupAccumulatorStage("$sum", new MongoConstantExpression(1, forSerialization: null), "_v")
+        };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Equal(BsonDocument.Parse("{ $group: { _id: null, _v: { $sum: 1 } } }"), result[0]);
     }
 }

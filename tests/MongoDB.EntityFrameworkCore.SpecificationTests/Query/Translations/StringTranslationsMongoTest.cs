@@ -48,7 +48,7 @@ public class StringTranslationsMongoTest : StringTranslationsTestBase<MongoBasic
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
+BasicTypesEntities.{ "$match" : { "String" : { "$eq" : "Seattle" } } }
 """);
     }
 #pragma warning restore xUnit1024
@@ -69,7 +69,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
+BasicTypesEntities.{ "$match" : { "String" : { "$eq" : "Seattle" } } }
 """);
     }
 
@@ -79,7 +79,7 @@ BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
+BasicTypesEntities.{ "$match" : { "String" : { "$eq" : "Seattle" } } }
 """);
     }
 
@@ -99,7 +99,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
+BasicTypesEntities.{ "$match" : { "String" : { "$eq" : "Seattle" } } }
 """);
     }
 
@@ -377,7 +377,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-NullableBasicTypesEntities.{ "$match" : { "$or" : [{ "String" : null }, { "String" : "" }] } }
+NullableBasicTypesEntities.{ "$match" : { "$or" : [{ "String" : { "$eq" : null } }, { "String" : { "$eq" : "" } }] } }
 """,
             //
             """
@@ -405,7 +405,7 @@ NullableBasicTypesEntities.{ "$project" : { "_v" : { "$and" : [{ "$ne" : [{ "$if
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$or" : [{ "String" : null }, { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "" }] } }] } }
+BasicTypesEntities.{ "$match" : { "$or" : [{ "String" : { "$eq" : null } }, { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "" }] } }] } }
 """);
     }
 
@@ -747,7 +747,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
+BasicTypesEntities.{ "$match" : { "String" : { "$eq" : "Seattle" } } }
 """,
             //
             """
@@ -807,7 +807,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "_id" : 1 } }, { "$limit" : 2 }
+BasicTypesEntities.{ "$match" : { "_id" : { "$eq" : 1 } } }, { "$limit" : 2 }
 """,
             //
             """
@@ -899,7 +899,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle", "$lt" : "Toro
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
+BasicTypesEntities.{ "$match" : { "String" : { "$eq" : "Seattle" } } }
 """,
             //
             """
@@ -959,7 +959,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "_id" : 1 } }, { "$limit" : 2 }
+BasicTypesEntities.{ "$match" : { "_id" : { "$eq" : 1 } } }, { "$limit" : 2 }
 """,
             //
             """

@@ -547,14 +547,14 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         using var nativeOnly = CreateConvContext(collection, MongoQueryMode.NativeOnly, logs);
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => (long)x.Coded == 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
-        Assert.Contains("\"Coded\" : \"2\"", MqlPipeline(logs));
+        Assert.Contains("\"Coded\" : { \"$eq\" : \"2\" }", MqlPipeline(logs));
         Assert.Equal(["q"], nativeLabels);
 
         var uncastLogs = new List<string>();
         using var uncast = CreateConvContext(collection, MongoQueryMode.NativeOnly, uncastLogs);
         var uncastLabels = uncast.Entities.AsNoTracking()
             .Where(x => x.Coded == 2).OrderBy(x => x.Label).Select(x => x.Label).ToList();
-        Assert.Contains("\"Coded\" : \"2\"", MqlPipeline(uncastLogs));
+        Assert.Contains("\"Coded\" : { \"$eq\" : \"2\" }", MqlPipeline(uncastLogs));
         Assert.Equal(nativeLabels, uncastLabels);
 
         // A relational comparison would compare the stored strings ("10" < "2"), so native declines it (EF-337, StoredOrdering);
@@ -624,7 +624,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         using var nativeOnly = CreateScaledContext(collection, MongoQueryMode.NativeOnly, logs);
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => (long)x.Scaled == 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
-        Assert.Contains("\"Scaled\" : 4", MqlPipeline(logs));
+        Assert.Contains("\"Scaled\" : { \"$eq\" : 4 }", MqlPipeline(logs));
         Assert.Equal(["q"], nativeLabels);
 
         using var oracle = CreateScaledContext(collection, MongoQueryMode.Native);
@@ -756,7 +756,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal(["p", "r"], nativeOnlyLabels);
 
         // Discriminator: the constant renders as the string "Active", not the underlying int.
-        Assert.Contains("\"Status\" : \"Active\"", MqlPipeline(logs));
+        Assert.Contains("\"Status\" : { \"$eq\" : \"Active\" }", MqlPipeline(logs));
 
         using var native = CreateEnumContext(collection, MongoQueryMode.Native);
         var nativeLabels = native.Entities.AsNoTracking()

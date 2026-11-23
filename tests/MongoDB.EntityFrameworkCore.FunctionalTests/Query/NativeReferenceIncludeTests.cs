@@ -824,7 +824,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.CarriersCollectionName +
             "\", \"localField\" : \"CarrierId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Carrier\" } }, " +
             "{ \"$set\" : { \"_lookup_Carrier\" : { \"$arrayElemAt\" : [\"$_lookup_Carrier\", 0] } } }, " +
-            "{ \"$match\" : { \"_lookup_Carrier\" : null } }, " +
+            "{ \"$match\" : { \"_lookup_Carrier\" : { \"$eq\" : null } } }, " +
             "{ \"$limit\" : 1 }");
     }
 

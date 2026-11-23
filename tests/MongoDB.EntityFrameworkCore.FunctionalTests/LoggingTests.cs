@@ -81,8 +81,8 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs, l =>
-            l.Contains(_dbName + ".moons.aggregate([{ \"$match\" : { \"$and\" : [{ \"yearOfDiscovery\" : 1949 }, " +
-                       "{ \"yearOfDiscovery\" : { \"$ne\" : 1202 } }] } }, { \"$limit\" : 2 }]"));
+            l.Contains(_dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$eq\" : 1949, \"$ne\" : 1202 } } }, " +
+                       "{ \"$limit\" : 2 }]"));
     }
 
     [Fact]
@@ -192,7 +192,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains(
-            _dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : 2 }])",
+            _dbName + ".moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$eq\" : 1949 } } }, { \"$limit\" : 2 }])",
             message);
     }
 
@@ -259,7 +259,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
-        Assert.Contains("na.moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }, { \"$limit\" : 2 }])",
+        Assert.Contains("na.moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$eq\" : 1949 } } }, { \"$limit\" : 2 }])",
             message);
     }
 
@@ -275,7 +275,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
-        Assert.Contains("na.moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : 1949 } }])",
+        Assert.Contains("na.moons.aggregate([{ \"$match\" : { \"yearOfDiscovery\" : { \"$eq\" : 1949 } } }])",
             message);
     }
 

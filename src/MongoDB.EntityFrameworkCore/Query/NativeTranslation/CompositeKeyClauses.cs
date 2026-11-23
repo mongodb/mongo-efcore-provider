@@ -28,7 +28,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal static class CompositeKeyClauses
 {
     /// <summary>
-    /// One <c>{ "_id.K1": v1, "_id.K2": v2 }</c> clause per non-null entity. Never empty: an empty (or all-null) list
+    /// One <c>{ "_id.K1": { $eq: v1 }, "_id.K2": { $eq: v2 } }</c> clause per non-null entity. Never empty: an empty (or all-null) list
     /// yields one always-false clause, because <c>$or: []</c> and <c>$nor: []</c> are server errors.
     /// </summary>
     internal static BsonArray Build(IEnumerable entities, IReadOnlyList<IProperty> keys)
@@ -46,7 +46,7 @@ internal static class CompositeKeyClauses
                 var coerced = BsonValueSerializer.Coerce(serializer.ValueType, key.GetGetter().GetClrValue(entity));
                 clause.Add(
                     MongoExpressionTranslator.GetPropertyFieldPath(key),
-                    BsonValueSerializer.SerializeNullAware(serializer, coerced));
+                    new BsonDocument("$eq", BsonValueSerializer.SerializeNullAware(serializer, coerced)));
             }
 
             clauses.Add(clause);

@@ -62,6 +62,7 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
         public int Total { get; set; }
         public string? CustId { get; set; }
         public string? Tag { get; set; }
+        public Dictionary<string, string>? Labels { get; set; }
         public Cust? Cust { get; set; }
         public List<Line> Lines { get; set; } = [];
     }
@@ -119,7 +120,10 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
         ]);
         database.MongoDatabase.GetCollection<BsonDocument>(names.Ords).InsertMany(
         [
-            new BsonDocument { { "_id", 1 }, { "Total", 10 }, { "CustId", "A1" }, { "Tag", "Alpha1" } },
+            new BsonDocument
+            {
+                { "_id", 1 }, { "Total", 10 }, { "CustId", "A1" }, { "Tag", "Alpha1" }, { "Labels", new BsonDocument("color", "red") }
+            },
             new BsonDocument { { "_id", 2 }, { "Total", 20 }, { "CustId", "A1" } },
             new BsonDocument { { "_id", 3 }, { "Total", 600 }, { "CustId", "A1" }, { "Tag", "Alpha1" } },
             new BsonDocument { { "_id", 4 }, { "Total", 700 }, { "CustId", "A2" } },
@@ -220,6 +224,22 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
                    select new { c, o }).AsNoTracking().AsEnumerable()
                 .Select(x => $"{x.c.Id}:{x.o.Id}").OrderBy(s => s).ToList(),
             ["A1:1", "B1:5"]);
+
+    // A dictionary parameter whose first key is an operator ({ $ne: "zzz" }) must be compared as a value in the lookup's
+    // inner predicate, not read as an operator that keeps every order. Only order 1 has Labels.
+    [Theory]
+    [InlineData("$ne", "zzz", new string[0])]
+    [InlineData("color", "red", new[] { "A1:1" })]
+    public void Dictionary_parameter_in_the_inner_filter_is_compared_as_a_value(string key, string value, string[] expected)
+    {
+        var labels = new Dictionary<string, string> { [key] = value };
+        AssertModes(
+            db => (from c in db.Set<Cust>()
+                   join o in db.Set<Ord>().Where(o => o.Labels == labels) on c.Id equals o.CustId
+                   select new { c, o }).AsNoTracking().AsEnumerable()
+                .Select(x => $"{x.c.Id}:{x.o.Id}").OrderBy(s => s).ToList(),
+            [.. expected]);
+    }
 
     private static List<string> ParameterizedQuery(Ctx db, int? cutoff)
         => (from c in db.Set<Cust>()
