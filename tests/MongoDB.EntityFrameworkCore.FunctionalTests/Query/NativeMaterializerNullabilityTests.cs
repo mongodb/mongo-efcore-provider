@@ -24,6 +24,7 @@ using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -346,7 +347,6 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
 
     // EF's own message for reading a null through Nullable<T>.Value, which is what EF relational throws for a null
     // behind a non-nullable projected type (upstream Non_nullable_property_through_optional_navigation).
-    private const string NullableObjectMustHaveAValue = "Nullable object must have a value.";
 
     // Native (default) and NativeOnly both run the native pipeline and throw EF's exception. DriverLinq is not asserted:
     // it sends an unguarded $strLenCP/$indexOfCP, which fails server-side on a null string.
@@ -355,7 +355,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
         {
             var exception = Assert.Throws<InvalidOperationException>(() => run(mode));
-            Assert.Equal(NullableObjectMustHaveAValue, exception.Message);
+            NullableValueMessage.AssertIs(exception.Message);
         }
     }
 
@@ -598,7 +598,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
             "Key" => rows.GroupBy(x => x.L).Select(g => new { g.Key, C = g.Count() }).ToList().Select(r => (double)r.Key).ToList(),
             _ => rows.GroupBy(x => x.L + 1).Select(g => new { g.Key, C = g.Count() }).ToList().Select(r => (double)r.Key).ToList()
         });
-        Assert.Equal("Nullable object must have a value.", ex.Message);
+        NullableValueMessage.AssertIs(ex.Message);
     }
 
     // A GroupBy accumulating over the flattened (flagged) alias: $min/$max/$avg of an all-null group would read 0 where EF throws, so the
@@ -673,7 +673,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
             .Concat(context.Entities.Select(e => e.Label!.Length)).Max());
         Assert.True(
             exception is NativeTranslationNotSupportedException
-            || exception is InvalidOperationException { Message: NullableObjectMustHaveAValue },
+            || exception is InvalidOperationException { Message: var nullableMessage } && NullableValueMessage.Is(nullableMessage),
             $"Expected a decline or EF's exception, got {exception?.GetType().Name ?? "a result"}: {exception?.Message}");
     }
 
@@ -767,7 +767,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
                 .ToList());
             Assert.True(
                 exception is NativeTranslationNotSupportedException && mode == MongoQueryMode.NativeOnly
-                || exception is InvalidOperationException { Message: NullableObjectMustHaveAValue }
+                || exception is InvalidOperationException { Message: var nullableMessage } && NullableValueMessage.Is(nullableMessage)
                 || exception is MongoCommandException && mode == MongoQueryMode.Native,
                 $"{mode}: expected a decline or EF's exception, got {exception?.GetType().Name ?? "a result"}: {exception?.Message}");
         }

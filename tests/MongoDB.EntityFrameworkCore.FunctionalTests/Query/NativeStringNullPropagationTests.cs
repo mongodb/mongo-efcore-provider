@@ -451,7 +451,7 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
             foreach (var label in new[] { "null", "missing" })
             {
                 var exception = Assert.Throws<InvalidOperationException>(() => query(db.Entities.Where(x => x.Label == label)));
-                Assert.Equal("Nullable object must have a value.", exception.Message);
+                NullableValueMessage.AssertIs(exception.Message);
             }
 
             Assert.Equal(valueRow, query(db.Entities.Where(x => x.Label == "value")));
@@ -471,7 +471,7 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
         using (var db = CreateContext(SeedWithIndependentNulls(name + "I"), MongoQueryMode.NativeOnly))
         {
             var exception = Assert.Throws<InvalidOperationException>(() => query(db.Entities.OrderBy(x => x.Label)));
-            Assert.Equal("Nullable object must have a value.", exception.Message);
+            NullableValueMessage.AssertIs(exception.Message);
         }
     }
 
@@ -480,7 +480,7 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     {
         using var db = CreateContext(Seed(name), MongoQueryMode.NativeOnly);
         var exception = Assert.Throws<InvalidOperationException>(() => query(db));
-        Assert.Equal("Nullable object must have a value.", exception.Message);
+        NullableValueMessage.AssertIs(exception.Message);
     }
 
     private void AssertDeclines<T>(Func<SingleEntityDbContext<Row>, T> query, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
