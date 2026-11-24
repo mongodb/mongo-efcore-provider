@@ -1752,7 +1752,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         {
             var exception = Assert.Throws<InvalidOperationException>(
                 () => db.Entities.Where(x => x.Label == label).Select(x => new[] { x.I, x.S!.Length }).ToList());
-            Assert.Equal("Nullable object must have a value.", exception.Message);
+            NullableValueMessage.AssertIs(exception.Message);
         }
 
         var row = Assert.Single(db.Entities.Where(x => x.Label == "a").Select(x => new[] { x.I, x.S!.Length }).ToList());
