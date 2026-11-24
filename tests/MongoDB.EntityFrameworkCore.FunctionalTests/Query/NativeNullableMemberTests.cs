@@ -148,7 +148,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             var ex = Assert.Throws<InvalidOperationException>(() =>
                 db.Entities.AsNoTracking().OrderBy(x => x.Title)
                     .Select(x => new {x.Title, V = x.Score!.Value}).ToList());
-            Assert.Contains("Nullable object must have a value", ex.Message);
+            NullableValueMessage.AssertIs(ex.Message);
         }
 
         using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
@@ -364,7 +364,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() => Run(db, shape));
-            Assert.Contains("Nullable object must have a value", ex.Message);
+            NullableValueMessage.AssertIs(ex.Message);
         }
 
         // The oracle throws too (its deserializer can't read BSON null as Int32); exception types legitimately differ.
@@ -399,7 +399,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             var ex = Assert.Throws<InvalidOperationException>(() =>
                 db.Entities.AsNoTracking().OrderBy(x => x.Title)
                     .Select(x => new {x.Title, V = x.Score!.Value + 1}).ToList());
-            Assert.Contains("Nullable object must have a value", ex.Message);
+            NullableValueMessage.AssertIs(ex.Message);
         }
     }
 
@@ -460,7 +460,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() =>
                 db.Entities.AsNoTracking().Select(x => x.Score!.Value + 1).Distinct().ToList());
-            Assert.Contains("Nullable object must have a value", ex.Message);
+            NullableValueMessage.AssertIs(ex.Message);
         }
     }
 

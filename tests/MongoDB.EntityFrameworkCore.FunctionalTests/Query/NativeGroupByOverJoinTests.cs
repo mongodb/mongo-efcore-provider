@@ -1004,7 +1004,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         {
             var exception = Assert.Throws<InvalidOperationException>(() =>
                 (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, L = o.Region.Length }).ToList());
-            Assert.Equal("Nullable object must have a value.", exception.Message);
+            NullableValueMessage.AssertIs(exception.Message);
         }
 
         using (var db = CreateContext(CreateSeed(), MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row) + "M"))

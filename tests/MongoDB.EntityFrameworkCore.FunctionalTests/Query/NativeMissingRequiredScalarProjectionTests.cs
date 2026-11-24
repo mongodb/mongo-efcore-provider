@@ -136,7 +136,7 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() => RunComputed(db, shape, wellFormedOnly: false));
-            Assert.Contains("Nullable object must have a value", ex.Message);
+            NullableValueMessage.AssertIs(ex.Message);
         }
 
         using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
@@ -245,7 +245,7 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() => RunDistinct(db, shape, wellFormedOnly: false));
-            Assert.Contains("Nullable object must have a value", ex.Message);
+            NullableValueMessage.AssertIs(ex.Message);
         }
 
         using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
@@ -371,11 +371,11 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
         {
             using var db = CreateContext(collection, mode);
             var row = db.Entities.AsNoTracking().Where(x => x.Title == "c");
-            Assert.Contains("Nullable object must have a value",
+            NullableValueMessage.AssertIs(
                 Assert.Throws<InvalidOperationException>(() => row.Select(x => x.Rank + 0).ToList()).Message);
-            Assert.Contains("Nullable object must have a value",
+            NullableValueMessage.AssertIs(
                 Assert.Throws<InvalidOperationException>(() => row.Select(x => x.Title == "c" ? x.Big : x.Rank).ToList()).Message);
-            Assert.Contains("Nullable object must have a value",
+            NullableValueMessage.AssertIs(
                 Assert.Throws<InvalidOperationException>(() => row.Select(x => x.Title == "zz" ? x.Score!.Value : x.Rank).ToList()).Message);
         }
 
