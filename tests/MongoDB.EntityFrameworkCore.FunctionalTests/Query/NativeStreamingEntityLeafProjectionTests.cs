@@ -36,7 +36,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? model = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? model = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -44,7 +44,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private class Order
@@ -125,7 +125,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
     public void Owned_reference_in_a_projection_streams()
     {
         var collection = SeedOrders();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, OrderModel);
 
         AssertStreams(db.Entities.AsNoTracking().Select(o => new { o.Code, o.Shipping }));
     }
@@ -156,7 +156,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
     public void Whole_entity_beside_a_scalar_streams()
     {
         var collection = SeedOrders();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, OrderModel);
 
         AssertStreams(db.Entities.AsNoTracking().Select(o => new { Item = o, o.Code.Length }));
     }
@@ -197,7 +197,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
     public void Constructor_wrapped_entity_streams()
     {
         var collection = SeedOrders();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, OrderModel);
 
         // The cursor yields the entity (untracked) or the entity with its deferred tracking (tracked), never a BsonDocument.
         AssertCursorIsNotDocument(db.Entities.AsNoTracking().Select(o => new OrderDto(o)));
@@ -255,7 +255,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
     public void Tracked_whole_entity_beside_a_scalar_streams_and_tracks_each_entity()
     {
         var collection = SeedOrders();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, OrderModel);
 
         AssertStreams(db.Entities.Select(o => new { Item = o, o.Code.Length }));
 
@@ -302,7 +302,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
 
         Assert.Equal(["-1:air", "2:none", "3:none", "4:sea", "5:rail"], results);
 
-        using var streaming = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        using var streaming = CreateContext(collection, MongoQueryProvider.NativeOnly, OrderModel);
         AssertStreams(streaming.Entities.AsNoTracking().Select(o => o.Code == "one" ? -1 : o.Id));
     }
 
@@ -337,7 +337,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
         Assert.Equal(tracked ? "entries=5" : "entries=0", results[1]);
         Assert.Equal("1one,2two,3three,4four,5five", results[2]);
 
-        using var streaming = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        using var streaming = CreateContext(collection, MongoQueryProvider.NativeOnly, OrderModel);
         AssertCursorIsNotDocument(streaming.Entities.AsNoTracking().Select(o => new Wrapped(o) { Code = o.Code }));
     }
 
@@ -363,7 +363,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
         Assert.Equal("one!-,two!-,three!-,four!-,five!-", results[0]);
         Assert.Equal("entries=0", results[1]);
 
-        using var streaming = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        using var streaming = CreateContext(collection, MongoQueryProvider.NativeOnly, OrderModel);
         AssertStreams(streaming.Entities.AsNoTracking().Select(o => new Order { Code = o.Code + "!" }));
     }
 
@@ -392,7 +392,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
         Assert.Equal("1,1", results[1]);
         Assert.Equal("7", results[2]);
 
-        using var streaming = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        using var streaming = CreateContext(collection, MongoQueryProvider.NativeOnly, OrderModel);
         AssertStreams(streaming.Entities.AsNoTracking().Select(o => new Marker()));
     }
 
@@ -447,7 +447,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
     {
         var suffix = SeedBlog();
 
-        using (var db = BlogDb(MongoQueryMode.NativeOnly, suffix))
+        using (var db = BlogDb(MongoQueryProvider.NativeOnly, suffix))
         {
             AssertStreams(db.Articles.Select(a => new { a.Title, a.Author }));
         }
@@ -501,10 +501,10 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
         }
     }
 
-    private BlogContext BlogDb(MongoQueryMode mode, string suffix)
+    private BlogContext BlogDb(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<BlogContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,
@@ -514,7 +514,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
     private string SeedBlog()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        using var seed = BlogDb(MongoQueryMode.Native, suffix);
+        using var seed = BlogDb(MongoQueryProvider.Native, suffix);
         seed.Authors.AddRange(new Author { Id = 1, Name = "ann", Bio = "bio" }, new Author { Id = 2, Name = "bob" });
         seed.SaveChanges();
         seed.Articles.AddRange(
@@ -531,7 +531,7 @@ public class NativeStreamingEntityLeafProjectionTests(TemporaryDatabaseFixture d
     public void Joined_entity_in_a_projection_streams()
     {
         var suffix = SeedBlog();
-        using var db = BlogDb(MongoQueryMode.NativeOnly, suffix);
+        using var db = BlogDb(MongoQueryProvider.NativeOnly, suffix);
 
         AssertStreams(db.Articles.AsNoTracking().Select(a => new { a.Title, a.Author }));
     }

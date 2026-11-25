@@ -40,9 +40,9 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
     // Seed by Name is N1, N2, N3; Mid matches all, Other only N2/N3. Skip(1).Take(2) between the joins yields
     // {N2, N3}; paging after both joins would yield {N3}.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Paging_between_two_joins_pages_the_rows_the_first_join_produced(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Paging_between_two_joins_pages_the_rows_the_first_join_produced(MongoQueryProvider mode)
     {
         using var db = Setup(mode);
 
@@ -61,7 +61,7 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Paging_between_two_joins_emits_the_second_lookup_above_the_paging()
     {
-        using var db = Setup(MongoQueryMode.Native, out var spyLogger);
+        using var db = Setup(MongoQueryProvider.Native, out var spyLogger);
 
         var result = db.Roots
             .Join(db.Mids, r => r.MidId, m => m._id, (r, m) => r)
@@ -93,9 +93,9 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
     // Control: paging before all joins keeps one contiguous lookup group after the paging, so the fix isn't
     // over-broad.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Paging_below_all_joins_still_emits_both_lookups_above_the_paging(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Paging_below_all_joins_still_emits_both_lookups_above_the_paging(MongoQueryProvider mode)
     {
         using var db = Setup(mode, out var spyLogger);
 
@@ -127,9 +127,9 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
 
     // Lone interleaved Skip (no Take).
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Interleaved_Skip_without_Take_pages_the_rows_the_first_join_produced(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Interleaved_Skip_without_Take_pages_the_rows_the_first_join_produced(MongoQueryProvider mode)
     {
         using var db = Setup(mode);
 
@@ -148,21 +148,21 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
     // is compared with LINQ-to-Objects over the same rows; paging deferred past both $lookup/$unwind blocks pages
     // the fully joined result (N1 dropped by the second join first), giving a silently wrong page.
     [Theory]
-    [InlineData(MongoQueryMode.Native, "WrappedSkipTake")]
-    [InlineData(MongoQueryMode.DriverLinq, "WrappedSkipTake")]
-    [InlineData(MongoQueryMode.Native, "WrappedSkip")]
-    [InlineData(MongoQueryMode.DriverLinq, "WrappedSkip")]
-    [InlineData(MongoQueryMode.Native, "WrappedTake")]
-    [InlineData(MongoQueryMode.DriverLinq, "WrappedTake")]
-    [InlineData(MongoQueryMode.Native, "WrappedBothScopes")]
-    [InlineData(MongoQueryMode.DriverLinq, "WrappedBothScopes")]
-    [InlineData(MongoQueryMode.Native, "ScalarLeaf")]
-    [InlineData(MongoQueryMode.DriverLinq, "ScalarLeaf")]
-    [InlineData(MongoQueryMode.Native, "WrappedThenTrailingSelect")]
-    [InlineData(MongoQueryMode.DriverLinq, "WrappedThenTrailingSelect")]
-    [InlineData(MongoQueryMode.Native, "LeftFirstJoinSkipTake")]
-    [InlineData(MongoQueryMode.DriverLinq, "LeftFirstJoinSkipTake")]
-    public void Paging_between_two_transparent_identifier_joins_matches_oracle(MongoQueryMode mode, string shape)
+    [InlineData(MongoQueryProvider.Native, "WrappedSkipTake")]
+    [InlineData(MongoQueryProvider.DriverLinq, "WrappedSkipTake")]
+    [InlineData(MongoQueryProvider.Native, "WrappedSkip")]
+    [InlineData(MongoQueryProvider.DriverLinq, "WrappedSkip")]
+    [InlineData(MongoQueryProvider.Native, "WrappedTake")]
+    [InlineData(MongoQueryProvider.DriverLinq, "WrappedTake")]
+    [InlineData(MongoQueryProvider.Native, "WrappedBothScopes")]
+    [InlineData(MongoQueryProvider.DriverLinq, "WrappedBothScopes")]
+    [InlineData(MongoQueryProvider.Native, "ScalarLeaf")]
+    [InlineData(MongoQueryProvider.DriverLinq, "ScalarLeaf")]
+    [InlineData(MongoQueryProvider.Native, "WrappedThenTrailingSelect")]
+    [InlineData(MongoQueryProvider.DriverLinq, "WrappedThenTrailingSelect")]
+    [InlineData(MongoQueryProvider.Native, "LeftFirstJoinSkipTake")]
+    [InlineData(MongoQueryProvider.DriverLinq, "LeftFirstJoinSkipTake")]
+    public void Paging_between_two_transparent_identifier_joins_matches_oracle(MongoQueryProvider mode, string shape)
     {
         using var db = Setup(mode);
 
@@ -190,7 +190,7 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
     [InlineData("LeftFirstJoinSkipTake")]
     public void Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly(string shape)
     {
-        using var db = Setup(MongoQueryMode.NativeOnly);
+        using var db = Setup(MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => RunInterleavedTransparentIdentifierShape(db.Roots, db.Mids, db.Others, shape));
@@ -198,9 +198,9 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
 
     // Aggregate terminal over an interleaved chain: TryBindAggregate confirms through the same gate.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Count_over_paging_between_two_transparent_identifier_joins_matches_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Count_over_paging_between_two_transparent_identifier_joins_matches_oracle(MongoQueryProvider mode)
     {
         using var db = Setup(mode);
 
@@ -219,7 +219,7 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Paging_after_both_transparent_identifier_joins_still_goes_native_under_NativeOnly()
     {
-        using var db = Setup(MongoQueryMode.NativeOnly);
+        using var db = Setup(MongoQueryProvider.NativeOnly);
 
         var actual = db.Roots
             .Join(db.Mids, r => r.MidId, m => (ObjectId?)m._id, (r, m) => new { r, m })
@@ -274,9 +274,9 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
     // A sort between two joins whose second join is 1:N, so $unwind expands. Roots are inserted in reverse order
     // (an unsorted pipeline fails) and each fans out to 3 leaves (losing the join fails).
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Sort_between_two_joins_orders_the_rows_a_one_to_many_second_join_expands(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Sort_between_two_joins_orders_the_rows_a_one_to_many_second_join_expands(MongoQueryProvider mode)
     {
         using var db = SetupFanOut(mode, out var spyLogger);
 
@@ -308,14 +308,14 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
         Assert.True(sort < leafLookup, mql);
     }
 
-    private RootDbContext Setup(MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+    private RootDbContext Setup(MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
         return Setup(mode, loggerFactory);
     }
 
-    private RootDbContext SetupFanOut(MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+    private RootDbContext SetupFanOut(MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -352,7 +352,7 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
         return new RootDbContext(database, rootsName, midsName, othersName, leavesName, mode, loggerFactory);
     }
 
-    private RootDbContext Setup(MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+    private RootDbContext Setup(MongoQueryProvider mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var rootsName = TemporaryDatabaseFixtureBase.CreateCollectionName("Ef373Roots") + suffix;
@@ -427,7 +427,7 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
 
         public RootDbContext(
             TemporaryDatabaseFixture db, string roots, string mids, string others, string leaves,
-            MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            MongoQueryProvider mode, ILoggerFactory? loggerFactory)
             : base(BuildOptions(db, mode, loggerFactory))
         {
             _roots = roots;
@@ -472,10 +472,10 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
         }
 
         private static DbContextOptions<RootDbContext> BuildOptions(
-            TemporaryDatabaseFixture db, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            TemporaryDatabaseFixture db, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var builder = new DbContextOptionsBuilder<RootDbContext>()
-                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
             if (loggerFactory != null)

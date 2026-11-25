@@ -87,10 +87,10 @@ public class ReferencedCollectionCorrelationTests(TemporaryDatabaseFixture datab
         return names;
     }
 
-    private Ctx Create(string[] names, MongoQueryMode mode)
+    private Ctx Create(string[] names, MongoQueryProvider mode)
     {
         var options = new DbContextOptionsBuilder<Ctx>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;
@@ -101,7 +101,7 @@ public class ReferencedCollectionCorrelationTests(TemporaryDatabaseFixture datab
     private void AssertAnswersOrRefuses(Func<Ctx, List<string>> query, List<string> expected, bool mustNotRefuse)
     {
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(names, mode);
             List<string>? rows = null;
@@ -109,7 +109,7 @@ public class ReferencedCollectionCorrelationTests(TemporaryDatabaseFixture datab
             {
                 rows = query(db);
             }
-            catch (NativeTranslationNotSupportedException) when (mode == MongoQueryMode.NativeOnly)
+            catch (NativeTranslationNotSupportedException) when (mode == MongoQueryProvider.NativeOnly)
             {
             }
             catch (Exception) when (!mustNotRefuse)

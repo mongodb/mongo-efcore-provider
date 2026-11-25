@@ -32,8 +32,8 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Native set operations. <c>Union</c>/<c>Concat</c> lower to <c>$unionWith</c> (<c>Union</c> also dedups via
 /// <c>$group{_id:"$$ROOT"}</c> + <c>$replaceRoot</c>); <c>Intersect</c>/<c>Except</c> lower to a source-tagging
 /// <c>$unionWith</c> pipeline. Out-of-scope <c>Union</c>/<c>Concat</c> shapes fall back (correct under
-/// <see cref="MongoQueryMode.Native"/>, <see cref="NativeTranslationNotSupportedException"/> under
-/// <see cref="MongoQueryMode.NativeOnly"/>). <c>Intersect</c>/<c>Except</c> have no driver-LINQ fallback, so
+/// <see cref="MongoQueryProvider.Native"/>, <see cref="NativeTranslationNotSupportedException"/> under
+/// <see cref="MongoQueryProvider.NativeOnly"/>). <c>Intersect</c>/<c>Except</c> have no driver-LINQ fallback, so
 /// out-of-scope shapes hard-fail in every mode and results are checked against in-memory LINQ.
 /// </summary>
 public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -79,17 +79,17 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         return collection;
     }
 
-    private static SingleEntityDbContext<Item> Make(IMongoCollection<Item> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Item> Make(IMongoCollection<Item> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static SingleEntityDbContext<Item> MakeWithLogs(
-        IMongoCollection<Item> collection, MongoQueryMode mode, List<string> logs)
+        IMongoCollection<Item> collection, MongoQueryProvider mode, List<string> logs)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
@@ -97,7 +97,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 b.LogTo(logs.Add)
                     .EnableSensitiveDataLogging()
                     .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static string Mql(List<string> logs)
@@ -108,7 +108,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Union_whole_entity_goes_native));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3)).ToList();
 
@@ -125,7 +125,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Concat_whole_entity_goes_native));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 3).Concat(db.Entities.Where(i => i.Value >= 3)).ToList();
 
@@ -141,7 +141,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Intersect_whole_entity_goes_native));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3)).ToList();
 
@@ -158,7 +158,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Except_whole_entity_goes_native));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 3).Except(db.Entities.Where(i => i.Value >= 3)).ToList();
 
@@ -176,7 +176,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Intersect_disjoint_operands_yields_empty()
     {
         var collection = SeedCollection(nameof(Intersect_disjoint_operands_yields_empty));
-        using var db = Make(collection, MongoQueryMode.Native);
+        using var db = Make(collection, MongoQueryProvider.Native);
         var result = db.Entities.Where(i => i.Value <= 2).Intersect(db.Entities.Where(i => i.Value >= 4)).ToList();
         Assert.Empty(result);
     }
@@ -185,7 +185,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Except_disjoint_operands_yields_all_of_first()
     {
         var collection = SeedCollection(nameof(Except_disjoint_operands_yields_all_of_first));
-        using var db = Make(collection, MongoQueryMode.Native);
+        using var db = Make(collection, MongoQueryProvider.Native);
         var result = db.Entities.Where(i => i.Value <= 2).Except(db.Entities.Where(i => i.Value >= 4)).ToList();
         Assert.Equal([1, 2], result.Select(i => i.Value).OrderBy(v => v));
     }
@@ -194,7 +194,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Intersect_full_overlap_yields_deduped_first()
     {
         var collection = SeedCollection(nameof(Intersect_full_overlap_yields_deduped_first));
-        using var db = Make(collection, MongoQueryMode.Native);
+        using var db = Make(collection, MongoQueryProvider.Native);
         var result = db.Entities.Where(i => i.Value >= 1).Intersect(db.Entities.Where(i => i.Value >= 1)).ToList();
         Assert.Equal([1, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
     }
@@ -203,7 +203,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Except_whole_second_operand_yields_empty()
     {
         var collection = SeedCollection(nameof(Except_whole_second_operand_yields_empty));
-        using var db = Make(collection, MongoQueryMode.Native);
+        using var db = Make(collection, MongoQueryProvider.Native);
         var result = db.Entities.Where(i => i.Value <= 3).Except(db.Entities.Where(i => i.Value >= 1)).ToList();
         Assert.Empty(result);
     }
@@ -212,7 +212,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Intersect_parametrized_operand_predicate_substitutes()
     {
         var collection = SeedCollection(nameof(Intersect_parametrized_operand_predicate_substitutes));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         var threshold = 3;
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= threshold)).ToList();
         Assert.Equal([3], result.Select(i => i.Value).OrderBy(v => v)); // captured `threshold` substitutes inside the operand pipeline
@@ -221,9 +221,9 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     // A bare projected operand is admitted like a wrapped one (array-leaf dedup-key hazard: HasArrayProjectionLeaf).
     // DriverLinq still hard-fails: the driver has no Intersect/Except translation.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_scalar_operand_intersect_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_scalar_operand_intersect_goes_native(MongoQueryProvider mode)
     {
         var collection = SeedCollection(nameof(Bare_scalar_operand_intersect_goes_native) + mode);
         using var db = Make(collection, mode);
@@ -236,7 +236,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Bare_scalar_operand_intersect_still_hard_fails_under_explicit_driver_linq()
     {
         var collection = SeedCollection(nameof(Bare_scalar_operand_intersect_still_hard_fails_under_explicit_driver_linq));
-        using var db = Make(collection, MongoQueryMode.DriverLinq);
+        using var db = Make(collection, MongoQueryProvider.DriverLinq);
         Assert.ThrowsAny<Exception>(() =>
             db.Entities.Where(i => i.Value <= 3).Select(i => i.Value)
                 .Intersect(db.Entities.Where(i => i.Value >= 3).Select(i => i.Value)).ToList());
@@ -246,7 +246,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Except_then_Where_goes_native()
     {
         var collection = SeedCollection(nameof(Except_then_Where_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         // {1,2,3} Except {3,4,5} = {1,2}; Where(Value >= 2) = {2}. A $match before the set-difference would coincidentally
         // give {2} too; the paging/Count tests below discriminate that.
         var result = db.Entities.Where(i => i.Value <= 3).Except(db.Entities.Where(i => i.Value >= 3))
@@ -264,7 +264,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Intersect_then_op_hard_fails_under_native(string name, Func<IQueryable<Item>, object> compose)
     {
         var collection = SeedCollection(nameof(Intersect_then_op_hard_fails_under_native) + name);
-        using var db = Make(collection, MongoQueryMode.Native);
+        using var db = Make(collection, MongoQueryProvider.Native);
         var q = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3));
         Assert.ThrowsAny<Exception>(() => compose(q));
     }
@@ -273,7 +273,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Intersect_then_paging_goes_native()
     {
         var collection = SeedCollection(nameof(Intersect_then_paging_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         // {1,2,3} Intersect {2,3,4} = {2,3}; OrderBy(Value).Take(1) = {2}.
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 2 && i.Value <= 4))
             .OrderBy(i => i.Value).Take(1).ToList();
@@ -286,8 +286,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void First_after_union_with_preceding_take_goes_native()
     {
         var collection = SeedCollection(nameof(First_after_union_with_preceding_take_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         // Union({1,2,3},{3,4,5}) deduped = {1,2,3,4,5}; ordered, Take(4) = {1,2,3,4}; First = 1.
         int Run(SingleEntityDbContext<Item> db) =>
@@ -305,7 +305,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Intersect_then_Skip_goes_native()
     {
         var collection = SeedCollection(nameof(Intersect_then_Skip_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         // {1,2,3} Intersect {2,3,4} = {2,3}; OrderBy(Value).Skip(1) = {3}.
         var result = db.Entities.Where(i => i.Value <= 3)
             .Intersect(db.Entities.Where(i => i.Value >= 2 && i.Value <= 4))
@@ -317,7 +317,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Union_then_parametrized_trailing_Where_goes_native()
     {
         var collection = SeedCollection(nameof(Union_then_parametrized_trailing_Where_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         var threshold = 4;
         var result = db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
             .Where(i => i.Value >= threshold).ToList();
@@ -344,13 +344,13 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         return collection;
     }
 
-    private static SingleEntityDbContext<TaggyItem> MakeTaggy(IMongoCollection<TaggyItem> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<TaggyItem> MakeTaggy(IMongoCollection<TaggyItem> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -364,7 +364,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         };
         var collection = SeedTaggyCollection(
             nameof(Intersect_with_real_element_named_underscore_a_is_not_corrupted_by_the_source_tag), items);
-        using var db = MakeTaggy(collection, MongoQueryMode.Native);
+        using var db = MakeTaggy(collection, MongoQueryProvider.Native);
 
         var result = db.Entities.Where(i => i.Value <= 2).Intersect(db.Entities.Where(i => i.Value >= 2)).ToList();
 
@@ -377,8 +377,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Union_matches_baseline()
     {
         var collection = SeedCollection(nameof(Union_matches_baseline));
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
@@ -393,8 +393,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Concat_matches_baseline()
     {
         var collection = SeedCollection(nameof(Concat_matches_baseline));
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Concat(db.Entities.Where(i => i.Value >= 3))
@@ -411,7 +411,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Projected_operand_union_bare_goes_native()
     {
         var collection = SeedCollection(nameof(Projected_operand_union_bare_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
         var result = nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
             .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
             .ToList();
@@ -426,7 +426,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     [Fact]
     public void Different_collection_projected_operand_union_goes_native()
     {
-        using var db = MakeTwoEntity(MongoQueryMode.NativeOnly);
+        using var db = MakeTwoEntity(MongoQueryProvider.NativeOnly);
         var result = db.Lefts.Select(l => new { Label = l.Name })
             .Union(db.Rights.Select(r => new { Label = r.Title }))
             .ToList()
@@ -437,7 +437,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     [Fact]
     public void Different_collection_projected_operand_intersect_goes_native_result_set()
     {
-        using var db = MakeTwoEntity(MongoQueryMode.NativeOnly);
+        using var db = MakeTwoEntity(MongoQueryProvider.NativeOnly);
         var result = db.Lefts.Select(l => new { Label = l.Name })
             .Intersect(db.Rights.Select(r => new { Label = r.Title }))
             .ToList()
@@ -448,7 +448,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     [Fact]
     public void Different_collection_projected_operand_except_goes_native_result_set()
     {
-        using var db = MakeTwoEntity(MongoQueryMode.NativeOnly);
+        using var db = MakeTwoEntity(MongoQueryProvider.NativeOnly);
         var result = db.Lefts.Select(l => new { Label = l.Name })
             .Except(db.Rights.Select(r => new { Label = r.Title }))
             .ToList()
@@ -463,7 +463,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollectionWithDuplicateNames(
             nameof(Projected_operand_union_dedups_over_projected_values_not_whole_entities));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         var result = db.Entities.Select(i => new { i.Name })
             .Union(db.Entities.Select(i => new { i.Name }))
             .ToList();
@@ -477,8 +477,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var collection = SeedCollection(nameof(Projected_operand_union_with_per_operand_filter_and_parameter_goes_native));
         var lo = 2;
         var hi = 4;
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<string> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= lo).Select(i => new { i.Name })
@@ -498,11 +498,11 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         private readonly string _lefts;
         private readonly string _rights;
-        private readonly MongoQueryMode _mode;
+        private readonly MongoQueryProvider _mode;
 
-        public TwoEntityDbContext(TemporaryDatabaseFixture db, string lefts, string rights, MongoQueryMode mode)
+        public TwoEntityDbContext(TemporaryDatabaseFixture db, string lefts, string rights, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<TwoEntityDbContext>()
-                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreTwoEntityCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)
@@ -528,7 +528,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         }
     }
 
-    private TwoEntityDbContext MakeTwoEntity(MongoQueryMode mode)
+    private TwoEntityDbContext MakeTwoEntity(MongoQueryProvider mode)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var leftsName = TemporaryDatabaseFixtureBase.CreateCollectionName("C1Lefts") + suffix;
@@ -567,9 +567,9 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         private readonly string _items;
         private readonly string _details;
 
-        public LinkedItemDbContext(TemporaryDatabaseFixture db, string items, string details, MongoQueryMode mode)
+        public LinkedItemDbContext(TemporaryDatabaseFixture db, string items, string details, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<LinkedItemDbContext>()
-                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)
@@ -635,7 +635,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var (itemsName, detailsName) = SeedLinked(nameof(Union_with_collection_include_goes_native_and_joins_both_operands));
 
-        List<LinkedItem> Run(MongoQueryMode mode)
+        List<LinkedItem> Run(MongoQueryProvider mode)
         {
             using var db = new LinkedItemDbContext(database, itemsName, detailsName, mode);
             return db.Items.Where(i => i.Value == 1).Include(i => i.Details)
@@ -644,14 +644,14 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 .ToList();
         }
 
-        var native = Run(MongoQueryMode.NativeOnly); // NativeOnly succeeding is the "went native" signal
+        var native = Run(MongoQueryProvider.NativeOnly); // NativeOnly succeeding is the "went native" signal
 
         Assert.Equal([1, 2, 3], native.Select(i => i.Value));
         Assert.Equal(["a1", "a2"], native.Single(i => i.Value == 1).Details.Select(d => d.Text).Order());
         Assert.Equal(["b1"], native.Single(i => i.Value == 2).Details.Select(d => d.Text));
         Assert.Empty(native.Single(i => i.Value == 3).Details);
 
-        var driver = Run(MongoQueryMode.DriverLinq);
+        var driver = Run(MongoQueryProvider.DriverLinq);
         Assert.Equal(
             driver.Select(i => (i.Value, string.Join(",", i.Details.Select(d => d.Text).Order()))),
             native.Select(i => (i.Value, string.Join(",", i.Details.Select(d => d.Text).Order()))));
@@ -662,7 +662,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var (itemsName, detailsName) = SeedLinked(nameof(Concat_with_collection_include_goes_native_and_keeps_duplicates));
 
-        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly);
+        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryProvider.NativeOnly);
         var result = db.Items.Where(i => i.Value <= 2).Include(i => i.Details)
             .Concat(db.Items.Where(i => i.Value >= 2).Include(i => i.Details))
             .AsNoTracking() // no identity resolution: keep the duplicate as two distinct instances
@@ -679,7 +679,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var (itemsName, detailsName) = SeedLinked(nameof(Union_with_collection_include_dedups_by_entity_not_by_joined_children));
 
-        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly);
+        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryProvider.NativeOnly);
         var result = db.Items.Where(i => i.Value <= 2).Include(i => i.Details)
             .Union(db.Items.Where(i => i.Value <= 2).Include(i => i.Details))
             .OrderBy(i => i.Value)
@@ -697,7 +697,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         // Skip(1).Take(1) over {1,2,3} keeps the operand-contributed row 2.
         var (itemsName, detailsName) = SeedLinked(nameof(Include_composes_with_paging_after_the_union));
 
-        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly);
+        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryProvider.NativeOnly);
         var result = db.Items.Where(i => i.Value == 1).Include(i => i.Details)
             .Union(db.Items.Where(i => i.Value >= 2).Include(i => i.Details))
             .OrderBy(i => i.Value).Skip(1).Take(1)
@@ -715,7 +715,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         // detail counts prove each surviving row got its own children.
         var (itemsName, detailsName) = SeedLinked(nameof(Intersect_with_collection_include_goes_native));
 
-        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly);
+        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryProvider.NativeOnly);
         var result = db.Items.Where(i => i.Value <= 2).Include(i => i.Details)
             .Intersect(db.Items.Where(i => i.Value >= 2).Include(i => i.Details))
             .ToList();
@@ -730,7 +730,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var (itemsName, detailsName) = SeedLinked(nameof(Except_with_collection_include_goes_native));
 
-        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly);
+        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryProvider.NativeOnly);
         var result = db.Items.Where(i => i.Value <= 2).Include(i => i.Details)
             .Except(db.Items.Where(i => i.Value >= 2).Include(i => i.Details))
             .ToList();
@@ -747,7 +747,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         // (TryConfirmReferenceInclude's HasTerminalOperator conjunct), so it must still fall back.
         var (itemsName, detailsName) = SeedLinked(nameof(Reference_include_after_union_still_falls_back));
 
-        using (var nativeOnlyDb = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Details.Where(d => d.Text == "a1").Include(d => d.Item)
@@ -755,7 +755,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .ToList());
         }
 
-        using var nativeDb = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.Native);
+        using var nativeDb = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryProvider.Native);
         var result = nativeDb.Details.Where(d => d.Text == "a1").Include(d => d.Item)
             .Union(nativeDb.Details.Where(d => d.Text == "b1").Include(d => d.Item))
             .OrderBy(d => d.Text)
@@ -772,7 +772,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         // IsNativeCollectionLookup $lookup, which must also run after the combine or operand rows count 0.
         var (itemsName, detailsName) = SeedLinked(nameof(Collection_count_in_a_trailing_projection_after_a_union_counts_every_row));
 
-        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly);
+        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryProvider.NativeOnly);
         var result = db.Items.Where(i => i.Value == 1)
             .Union(db.Items.Where(i => i.Value >= 2))
             .Select(i => new { i.Value, Count = i.Details.Count })
@@ -787,7 +787,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var (itemsName, detailsName) = SeedLinked(nameof(Operand_carrying_its_own_include_is_unaffected_by_the_relaxation));
 
-        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryMode.NativeOnly);
+        using var db = new LinkedItemDbContext(database, itemsName, detailsName, MongoQueryProvider.NativeOnly);
         var result = db.Items.Include(i => i.Details).Where(i => i.Value == 1)
             .Union(db.Items.Include(i => i.Details).Where(i => i.Value == 2))
             .OrderBy(i => i.Value)
@@ -805,7 +805,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         // source1's own pre-combine pipeline: it must run before source1's $project and before $unionWith.
         var (itemsName, detailsName) = SeedLinked(nameof(Projected_operand_union_over_collection_navigation_count_goes_native));
 
-        List<int> Run(MongoQueryMode mode)
+        List<int> Run(MongoQueryProvider mode)
         {
             using var db = new LinkedItemDbContext(database, itemsName, detailsName, mode);
             return db.Items.Select(i => i.Details.Count())
@@ -813,11 +813,11 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 .ToList();
         }
 
-        var native = Run(MongoQueryMode.NativeOnly); // NativeOnly succeeding is the "went native" signal
+        var native = Run(MongoQueryProvider.NativeOnly); // NativeOnly succeeding is the "went native" signal
 
         Assert.Equal([0, 1, 2, 8], native.Order());
 
-        var driver = Run(MongoQueryMode.DriverLinq);
+        var driver = Run(MongoQueryProvider.DriverLinq);
         Assert.Equal(driver.Order(), native.Order());
     }
 
@@ -831,16 +831,16 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var collection = SeedCollection(
             nameof(Constant_projected_operand_as_source1_goes_native_and_reads_each_row_from_the_document));
 
-        List<int> Run(MongoQueryMode mode)
+        List<int> Run(MongoQueryProvider mode)
         {
             using var db = Make(collection, mode);
             return db.Entities.Select(i => 8).Union(db.Entities.Select(i => i.Value + 1)).ToList().Order().ToList();
         }
 
-        var native = Run(MongoQueryMode.NativeOnly);
+        var native = Run(MongoQueryProvider.NativeOnly);
 
         Assert.Equal([2, 3, 4, 5, 6, 8], native);
-        Assert.Equal(Run(MongoQueryMode.DriverLinq), native);
+        Assert.Equal(Run(MongoQueryProvider.DriverLinq), native);
     }
 
     // Composition seams: every operator after a Union/Concat must go native correctly or fall back. Every
@@ -851,8 +851,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Where_after_union_goes_native()
     {
         var collection = SeedCollection(nameof(Where_after_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
@@ -868,8 +868,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void OrderBy_after_union_goes_native()
     {
         var collection = SeedCollection(nameof(OrderBy_after_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
@@ -886,8 +886,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Paging_after_union_goes_native()
     {
         var collection = SeedCollection(nameof(Paging_after_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         // Union = {1,2,3,4,5} ordered; Skip(1).Take(2) = {2,3}. Paging source1 would also give {2,3}; the Count test below discriminates.
         List<int> Run(SingleEntityDbContext<Item> db) =>
@@ -904,8 +904,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Count_after_union_goes_native()
     {
         var collection = SeedCollection(nameof(Count_after_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         int Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3)).Count();
@@ -919,7 +919,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Count_after_intersect_goes_native()
     {
         var collection = SeedCollection(nameof(Count_after_intersect_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         var count = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3)).Count();
         Assert.Equal(1, count);
     }
@@ -928,8 +928,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Count_with_predicate_after_union_goes_native()
     {
         var collection = SeedCollection(nameof(Count_with_predicate_after_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         int Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3)).Count(i => i.Value >= 3);
@@ -943,8 +943,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void First_after_union_ordered_goes_native()
     {
         var collection = SeedCollection(nameof(First_after_union_ordered_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         int Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
@@ -959,7 +959,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Chained_union_goes_native()
     {
         var collection = SeedCollection(nameof(Chained_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
 
         var result = nativeOnlyDb.Entities.Where(i => i.Value <= 2)
             .Union(nativeOnlyDb.Entities.Where(i => i.Value == 3))
@@ -974,7 +974,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(GroupBy_after_union_goes_native));
 
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
         var result = nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
             .GroupBy(i => i.Value % 2 == 0)
             .Select(g => new { g.Key, Count = g.Count() })
@@ -1010,14 +1010,14 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
             .HasValue<SetOpBase>("Base")
             .HasValue<SetOpDerived>("Derived");
 
-    private static SingleEntityDbContext<SetOpBase> MakeTph(IMongoCollection<SetOpBase> collection, MongoQueryMode mode) =>
+    private static SingleEntityDbContext<SetOpBase> MakeTph(IMongoCollection<SetOpBase> collection, MongoQueryProvider mode) =>
         SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: SetOpTphModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static void SeedSetOpTphData(DbContext db)
@@ -1033,15 +1033,15 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void OfType_after_union_falls_back()
     {
         var collection = database.CreateCollection<SetOpBase>();
-        SeedSetOpTphData(MakeTph(collection, MongoQueryMode.Native));
+        SeedSetOpTphData(MakeTph(collection, MongoQueryProvider.Native));
 
-        using (var nativeOnlyDb = MakeTph(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = MakeTph(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Entities.Union(nativeOnlyDb.Entities).OfType<SetOpDerived>().ToList());
         }
 
-        using var nativeDb = MakeTph(collection, MongoQueryMode.Native);
+        using var nativeDb = MakeTph(collection, MongoQueryProvider.Native);
         var result = nativeDb.Entities.Union(nativeDb.Entities).OfType<SetOpDerived>().ToList();
 
         Assert.Equal(2, result.Count);
@@ -1052,8 +1052,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Select_after_union_goes_native_parity()
     {
         var collection = SeedCollection(nameof(Select_after_union_goes_native_parity));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<string> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
@@ -1071,7 +1071,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Trailing_distinct_after_whole_entity_union_still_goes_native()
     {
         var collection = SeedCollection(nameof(Trailing_distinct_after_whole_entity_union_still_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
             .Select(i => new { i.Name })
@@ -1087,7 +1087,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Distinct_operand_union_goes_native()
     {
         var collection = SeedCollection(nameof(Distinct_operand_union_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name }).Distinct()
             .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
@@ -1100,8 +1100,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Distinct_operand_union_matches_driver_linq()
     {
         var collection = SeedCollection(nameof(Distinct_operand_union_matches_driver_linq));
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<string> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name }).Distinct()
@@ -1117,7 +1117,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Both_operands_distinct_union_goes_native()
     {
         var collection = SeedCollection(nameof(Both_operands_distinct_union_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name }).Distinct()
             .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }).Distinct())
@@ -1132,7 +1132,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void GroupBy_select_operand_union_goes_native()
     {
         var collection = SeedCollection(nameof(GroupBy_select_operand_union_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.Where(i => i.Value <= 3).GroupBy(i => i.Value)
                 .Select(g => new { Key = g.Key, Count = g.Count() })
@@ -1149,8 +1149,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void GroupBy_select_operand_union_matches_driver_linq()
     {
         var collection = SeedCollection(nameof(GroupBy_select_operand_union_matches_driver_linq));
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<(int Key, int Count)> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).GroupBy(i => i.Value)
@@ -1183,15 +1183,15 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .Select(g => new { g.Key, Count = g.Count() }))
                 .ToList().OrderBy(x => x.Key).Select(x => (x.Key, x.Count)).ToArray();
 
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Query(nativeOnlyDb));
 
         var expected = new[] { (2, 1), (3, 1), (3, 1), (4, 1), (5, 1) };
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
         Assert.Equal(expected, Query(nativeDb));
 
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
         Assert.Equal(expected, Query(driverDb));
     }
 
@@ -1211,15 +1211,15 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .Select(g => new { g.Key, Count = g.Count() }))
                 .ToList().OrderBy(x => x.Key).Select(x => (x.Key, x.Count)).ToArray();
 
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Query(nativeOnlyDb));
 
         var expected = new[] { (false, 3), (true, 2) };
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
         Assert.Equal(expected, Query(nativeDb));
 
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
         Assert.Equal(expected, Query(driverDb));
     }
 
@@ -1238,15 +1238,15 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .Select(g => new { g.Key, Count = g.Count() }))
                 .ToList().OrderBy(x => x.Key).Select(x => (x.Key, x.Count)).ToArray();
 
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Query(nativeOnlyDb));
 
         var expected = new[] { (1, 1), (2, 1), (3, 1), (3, 1), (4, 1), (5, 1) };
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
         Assert.Equal(expected, Query(nativeDb));
 
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
         Assert.Equal(expected, Query(driverDb));
     }
 
@@ -1254,7 +1254,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Distinct_operand_concat_goes_native()
     {
         var collection = SeedCollection(nameof(Distinct_operand_concat_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name }).Distinct()
             .Concat(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
@@ -1270,8 +1270,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         // the entity would crash or compare the wrong field.
         var collection = SeedCollection(
             nameof(Distinct_operand_union_on_renamed_member_dedups_by_projected_source_not_colliding_entity_property));
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<string> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { Value = i.Name }).Distinct()
@@ -1287,7 +1287,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Select_after_intersect_goes_native_result_set()
     {
         var collection = SeedCollection(nameof(Select_after_intersect_goes_native_result_set));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
             .Select(i => new { i.Name })
             .ToList();
@@ -1299,8 +1299,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Select_after_union_goes_native()
     {
         var collection = SeedCollection(nameof(Select_after_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
@@ -1317,7 +1317,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Select_after_intersect_goes_native()
     {
         var collection = SeedCollection(nameof(Select_after_intersect_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
             .Select(i => new { N = i.Value })
             .ToList();
@@ -1328,7 +1328,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Computed_leaf_projection_after_intersect_goes_native_result_set()
     {
         var collection = SeedCollection(nameof(Computed_leaf_projection_after_intersect_goes_native_result_set));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         var result = db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
             .Select(i => new { Doubled = i.Value * 2 })
             .ToList();
@@ -1339,8 +1339,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Where_then_Select_after_union_goes_native()
     {
         var collection = SeedCollection(nameof(Where_then_Select_after_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
@@ -1358,8 +1358,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Union_dedups_entities_then_projects_keeping_duplicate_projected_values()
     {
         var collection = SeedCollectionWithDuplicateNames(nameof(Union_dedups_entities_then_projects_keeping_duplicate_projected_values));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<string> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value == 1).Union(db.Entities.Where(i => i.Value == 2))
@@ -1379,8 +1379,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Where_after_trailing_projection_on_union_goes_native_via_ef_predicate_pushdown()
     {
         var collection = SeedCollection(nameof(Where_after_trailing_projection_on_union_goes_native_via_ef_predicate_pushdown));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Union(db.Entities.Where(i => i.Value >= 3))
@@ -1393,9 +1393,9 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Where_after_trailing_projection_on_intersect_goes_native_via_ef_predicate_pushdown(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Where_after_trailing_projection_on_intersect_goes_native_via_ef_predicate_pushdown(MongoQueryProvider mode)
     {
         var collection = SeedCollection(nameof(Where_after_trailing_projection_on_intersect_goes_native_via_ef_predicate_pushdown) + mode);
         using var db = Make(collection, mode);
@@ -1410,7 +1410,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Where_after_trailing_projection_on_intersect_still_hard_fails_under_explicit_DriverLinq()
     {
         var collection = SeedCollection(nameof(Where_after_trailing_projection_on_intersect_still_hard_fails_under_explicit_DriverLinq));
-        using var db = Make(collection, MongoQueryMode.DriverLinq);
+        using var db = Make(collection, MongoQueryProvider.DriverLinq);
         Assert.ThrowsAny<Exception>(() =>
             db.Entities.Where(i => i.Value <= 3).Intersect(db.Entities.Where(i => i.Value >= 3))
                 .Select(i => new { N = i.Value }).Where(x => x.N >= 2).ToList());
@@ -1420,7 +1420,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Second_projection_after_union_goes_native_because_ef_fuses_the_two_selects()
     {
         var collection = SeedCollection(nameof(Second_projection_after_union_goes_native_because_ef_fuses_the_two_selects));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
         var result = nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
             .Select(i => new { N = i.Value }).Select(x => new { M = x.N }).ToList();
         Assert.Equal(5, result.Count); // NativeOnly succeeding proves native — a single fused $project, no seam
@@ -1434,7 +1434,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Bare_scalar_projection_after_union_goes_native()
     {
         var collection = SeedCollection(nameof(Bare_scalar_projection_after_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
         var result = nativeOnlyDb.Entities.Where(i => i.Value <= 3).Union(nativeOnlyDb.Entities.Where(i => i.Value >= 3))
             .Select(i => i.Value).ToList().OrderBy(v => v).ToList();
         Assert.Equal([1, 2, 3, 4, 5], result);
@@ -1450,11 +1450,11 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 .Select(i => new { Doubled = i.Value * 2 })
                 .ToList().Select(x => x.Doubled).OrderBy(v => v).ToList();
 
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
         var native = Run(nativeOnlyDb);
         Assert.Equal([2, 4, 6, 8, 10], native); // {1,2,3} U {3,4,5} deduped (5 rows), each doubled
 
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
         Assert.Equal(Run(driverDb), native);
     }
 
@@ -1471,7 +1471,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var threshold = 3; // captured local -- feeds the SECOND operand's predicate
 
         var logs = new List<string>();
-        using var nativeOnlyDb = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var nativeOnlyDb = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var native = nativeOnlyDb.Entities.Where(i => i.Value <= 2)
             .Union(nativeOnlyDb.Entities.Where(i => i.Value >= threshold))
@@ -1482,7 +1482,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var mql = Mql(logs);
         Assert.Contains("$unionWith", mql);
 
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
         var driverResult = driverDb.Entities.Where(i => i.Value <= 2)
             .Union(driverDb.Entities.Where(i => i.Value >= threshold))
             .ToList().Select(i => i.Value).OrderBy(v => v).ToList();
@@ -1494,8 +1494,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Projected_operand_union_goes_native()
     {
         var collection = SeedCollection(nameof(Projected_operand_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         static List<string> Q(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
@@ -1511,8 +1511,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Projected_operand_concat_goes_native()
     {
         var collection = SeedCollection(nameof(Projected_operand_concat_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         static List<string> Q(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
@@ -1528,7 +1528,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Projected_operand_intersect_goes_native_result_set()
     {
         var collection = SeedCollection(nameof(Projected_operand_intersect_goes_native_result_set));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
             .Intersect(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
             .ToList().Select(x => x.Name).ToList();
@@ -1539,7 +1539,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Projected_operand_except_goes_native_result_set()
     {
         var collection = SeedCollection(nameof(Projected_operand_except_goes_native_result_set));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
         var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
             .Except(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
             .ToList().Select(x => x.Name).OrderBy(s => s).ToList();
@@ -1553,14 +1553,14 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Bare_scalar_operand_union_goes_native()
     {
         var collection = SeedCollection(nameof(Bare_scalar_operand_union_goes_native));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly))
         {
             var namesOnly = nativeOnlyDb.Entities.Select(i => i.Name)
                 .Union(nativeOnlyDb.Entities.Select(i => i.Name)).ToList();
             Assert.Equal(5, namesOnly.Count);
         }
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
         Assert.Equal(5, nativeDb.Entities.Select(i => i.Name)
             .Union(nativeDb.Entities.Select(i => i.Name)).ToList().Count);
     }
@@ -1571,8 +1571,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Computed_leaf_operand_union_goes_native()
     {
         var collection = SeedCollection(nameof(Computed_leaf_operand_union_goes_native));
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         static List<int> Q(SingleEntityDbContext<Item> db) =>
             db.Entities.Select(i => new { Doubled = i.Value * 2 })
@@ -1594,7 +1594,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Where_after_projected_operand_union_falls_back_gracefully()
     {
         var collection = SeedCollection(nameof(Where_after_projected_operand_union_falls_back_gracefully));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1602,8 +1602,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .Where(x => x.Value > 2).ToList());
         }
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1620,7 +1620,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void OrderBy_after_projected_operand_union_falls_back_gracefully()
     {
         var collection = SeedCollection(nameof(OrderBy_after_projected_operand_union_falls_back_gracefully));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1628,8 +1628,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .OrderBy(x => x.Value).ToList());
         }
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1646,7 +1646,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Paging_after_projected_operand_union_falls_back_gracefully()
     {
         var collection = SeedCollection(nameof(Paging_after_projected_operand_union_falls_back_gracefully));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1658,8 +1658,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .OrderBy(x => x.Value).Take(2).ToList());
         }
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> RunSkip(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1686,7 +1686,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Count_after_projected_operand_union_falls_back_gracefully()
     {
         var collection = SeedCollection(nameof(Count_after_projected_operand_union_falls_back_gracefully));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1694,8 +1694,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .Count());
         }
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         int Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1711,7 +1711,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void GroupBy_after_projected_operand_union_falls_back_gracefully()
     {
         var collection = SeedCollection(nameof(GroupBy_after_projected_operand_union_falls_back_gracefully));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1719,8 +1719,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .GroupBy(x => x.Value).Select(g => new { g.Key, Count = g.Count() }).ToList());
         }
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<(int Key, int Count)> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1738,7 +1738,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Chained_set_op_after_projected_operand_union_falls_back_gracefully()
     {
         var collection = SeedCollection(nameof(Chained_set_op_after_projected_operand_union_falls_back_gracefully));
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1747,8 +1747,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .ToList());
         }
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<int> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1769,7 +1769,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Distinct_after_projected_operand_union_falls_back_gracefully));
 
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1777,8 +1777,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .Distinct().ToList());
         }
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         int Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
@@ -1796,7 +1796,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Distinct_after_projected_operand_concat_falls_back_gracefully));
 
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnlyDb.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
@@ -1804,8 +1804,8 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                     .Distinct().ToList());
         }
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq);
 
         List<string> Run(SingleEntityDbContext<Item> db) =>
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name })
@@ -1818,10 +1818,10 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Distinct_after_projected_operand_intersect_hard_fails_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Distinct_after_projected_operand_intersect_hard_fails_in_every_mode(MongoQueryProvider mode)
     {
         var collection = SeedCollection(nameof(Distinct_after_projected_operand_intersect_hard_fails_in_every_mode) + mode);
         using var db = Make(collection, mode);
@@ -1832,10 +1832,10 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Distinct_after_projected_operand_except_hard_fails_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Distinct_after_projected_operand_except_hard_fails_in_every_mode(MongoQueryProvider mode)
     {
         var collection = SeedCollection(nameof(Distinct_after_projected_operand_except_hard_fails_in_every_mode) + mode);
         using var db = Make(collection, mode);
@@ -1846,10 +1846,10 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Second_select_after_projected_operand_union_hard_fails_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Second_select_after_projected_operand_union_hard_fails_in_every_mode(MongoQueryProvider mode)
     {
         var collection = SeedCollection(nameof(Second_select_after_projected_operand_union_hard_fails_in_every_mode) + mode);
         using var db = Make(collection, mode);
@@ -1860,10 +1860,10 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Op_after_projected_operand_intersect_hard_fails_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Op_after_projected_operand_intersect_hard_fails_in_every_mode(MongoQueryProvider mode)
     {
         var collection = SeedCollection(nameof(Op_after_projected_operand_intersect_hard_fails_in_every_mode) + mode);
         using var db = Make(collection, mode);
@@ -1883,7 +1883,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Concat_chain_goes_native));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 2)
             .Concat(db.Entities.Where(i => i.Value >= 2))
@@ -1902,7 +1902,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Union_chain_goes_native));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 2)
             .Union(db.Entities.Where(i => i.Value >= 2))
@@ -1923,7 +1923,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Union_then_Concat_chain_dedups_only_the_inner_union));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 2)
             .Union(db.Entities.Where(i => i.Value >= 2))
@@ -1949,7 +1949,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Concat_then_Union_chain_dedups_the_whole_result));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 2)
             .Concat(db.Entities.Where(i => i.Value >= 2))
@@ -1968,7 +1968,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Chain_with_a_whole_entity_Distinct_operand_goes_native));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         // The spec suite's Nested_concat_with_distinct_in_the_middle_and_pruning: a whole-entity Distinct() on the middle
         // operand is an ordinary MongoDistinctOp in its PipelineOps.
@@ -1989,7 +1989,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Union_inside_Concat_goes_native));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 2)
             .Concat(db.Entities.Where(i => i.Value >= 2).Union(db.Entities.Where(i => i.Value == 2)))
@@ -2017,7 +2017,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Right_nested_union_is_not_flattened_into_a_left_chain()
     {
         var collection = SeedCollection(nameof(Right_nested_union_is_not_flattened_into_a_left_chain));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
 
         var rightNested = db.Entities.Where(i => i.Value <= 2)
             .Concat(db.Entities.Where(i => i.Value >= 2).Union(db.Entities.Where(i => i.Value == 2)))
@@ -2037,7 +2037,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Nesting_on_both_sides_goes_native));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         // A left chain whose NEXT link's operand is itself a set op — the two directions composing.
         var result = db.Entities.Where(i => i.Value == 1)
@@ -2061,7 +2061,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Deeply_right_nested_chain_goes_native));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         // Three levels: the recursion has no depth limit (IsWholeEntitySetOpOperandSelect / AppendSetOpOperandStages).
         var result = db.Entities.Where(i => i.Value == 1)
@@ -2078,7 +2078,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Right_nested_operand_with_a_parameter_substitutes_correctly()
     {
         var collection = SeedCollection(nameof(Right_nested_operand_with_a_parameter_substitutes_correctly));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
 
         // The nested operand shares the outer placeholder table, so a captured variable inside it must still
         // substitute at Build time.
@@ -2107,7 +2107,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Take_between_two_set_ops_pages_the_partial_combine));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 2)
             .Union(db.Entities.Where(i => i.Value >= 4))
@@ -2137,7 +2137,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var collection = SeedCollection(nameof(Take_after_the_last_link_still_pages_the_whole_combine));
         var logs = new List<string>();
-        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = MakeWithLogs(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Where(i => i.Value <= 2)
             .Union(db.Entities.Where(i => i.Value >= 4))
@@ -2158,7 +2158,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Paging_between_every_link_of_a_three_link_chain()
     {
         var collection = SeedCollection(nameof(Paging_between_every_link_of_a_three_link_chain));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.Where(i => i.Value == 1)
             .Union(db.Entities.Where(i => i.Value == 2))
@@ -2187,7 +2187,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Right_nested_operand_with_its_own_trailing_paging_goes_native()
     {
         var collection = SeedCollection(nameof(Right_nested_operand_with_its_own_trailing_paging_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
 
         // The operand's own post-combine paging closes out ITS nested sub-pipeline, mirroring where the
         // outer select's TrailingOps land in the outer pipeline.
@@ -2212,7 +2212,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Intersect_after_a_set_op_is_not_chained()
     {
         var collection = SeedCollection(nameof(Intersect_after_a_set_op_is_not_chained));
-        using var db = Make(collection, MongoQueryMode.Native);
+        using var db = Make(collection, MongoQueryProvider.Native);
 
         Assert.ThrowsAny<Exception>(() =>
             db.Entities.Where(i => i.Value <= 2)
@@ -2222,9 +2222,9 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void GroupBy_after_Union_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void GroupBy_after_Union_goes_native(MongoQueryProvider mode)
     {
         var collection = SeedCollection(nameof(GroupBy_after_Union_goes_native) + mode);
         using var db = Make(collection, mode);
@@ -2244,9 +2244,9 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Union_then_GroupBy_OrderBy_Skip_Select_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Union_then_GroupBy_OrderBy_Skip_Select_goes_native(MongoQueryProvider mode)
     {
         // GroupBy after a Union plus OrderBy/Skip on the bare GroupBy result before the terminal Select. Ordered
         // Five, Four, One, Three, Two; Skip(1) drops "Five".
@@ -2283,10 +2283,10 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
                 .Select(r => (r.Key, r.Total))
                 .ToArray();
 
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Query(nativeOnlyDb));
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
         var result = Query(nativeDb);
         Assert.Equal(5, result.Length);
         Assert.All(result, r => Assert.Equal(1, r.Total));
@@ -2296,10 +2296,10 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     // after the set op. The lowerer must emit source1's own $group/$project before $unionWith and the outer $group
     // after it (the reverse failed with "Document element '...' is missing but required").
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void GroupBy_after_Union_of_projected_Distinct_operand_returns_correct_groups(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void GroupBy_after_Union_of_projected_Distinct_operand_returns_correct_groups(MongoQueryProvider mode)
     {
         // Operand 1 is a projected Distinct ({1,2,3} -> 3 names); operand 2 is a plain projection ({3,4,5}).
         // Union dedups the shared "Three", so GroupBy(Name) yields 5 groups of 1.
@@ -2321,10 +2321,10 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void GroupBy_after_Concat_of_projected_Distinct_operand_counts_the_duplicate(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void GroupBy_after_Concat_of_projected_Distinct_operand_counts_the_duplicate(MongoQueryProvider mode)
     {
         // Concat keeps the "Three" from both operands, so its group has 2 rows. Grouping by a different
         // member than the Distinct also proves the outer $group runs over the combined, flattened rows.
@@ -2405,10 +2405,10 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var items = SeedItems().AsQueryable();
         var expected = query(items, items).OrderBy(r => r.Key).ToArray();
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native);
         Assert.Equal(expected, query(nativeDb.Entities, nativeDb.Entities).OrderBy(r => r.Key).ToArray());
 
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly);
         (int Key, int Total)[]? nativeOnly = null;
         try
         {
@@ -2423,9 +2423,9 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Where_between_projected_Distinct_and_Concat_filters_source1(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Where_between_projected_Distinct_and_Concat_filters_source1(MongoQueryProvider mode)
     {
         // The Where after the Distinct lands in source1's PostGroupOps and must run before the $unionWith.
         var collection = SeedCollection(nameof(Where_between_projected_Distinct_and_Concat_filters_source1) + mode);
@@ -2439,9 +2439,9 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Ops_after_projected_Distinct_in_second_operand_filter_that_operand(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Ops_after_projected_Distinct_in_second_operand_filter_that_operand(MongoQueryProvider mode)
     {
         // The second operand's post-Distinct Where/OrderBy/Take must run inside its $unionWith pipeline.
         var collection = SeedCollection(nameof(Ops_after_projected_Distinct_in_second_operand_filter_that_operand) + mode);
@@ -2460,7 +2460,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         // Declines today (a Where after GroupBy.Select isn't admitted as a set-op operand); pins the result.
         var collection = SeedCollection(nameof(Where_after_GroupBy_operand_before_Union_filters_that_operand));
-        using var db = Make(collection, MongoQueryMode.Native);
+        using var db = Make(collection, MongoQueryProvider.Native);
 
         var result = db.Entities.GroupBy(i => i.Value).Select(g => new { g.Key, Count = g.Count() })
             .Where(x => x.Key >= 4)
@@ -2477,7 +2477,7 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         // {1,2,3} ∩ {2,3,4} = {2,3} — 2 groups of 1. IsSetOpTerminalOnly covers every set-op kind, so GroupBy after
         // Intersect goes native too.
         var collection = SeedCollection(nameof(GroupBy_after_Intersect_goes_native));
-        using var db = Make(collection, MongoQueryMode.NativeOnly);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities
             .Where(i => i.Value <= 3)

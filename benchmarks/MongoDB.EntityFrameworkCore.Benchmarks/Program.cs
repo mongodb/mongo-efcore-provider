@@ -19,9 +19,9 @@ if (args.Contains("--verify-native"))
     var client = new MongoClient(conn);
 
     var seedOptions = new DbContextOptionsBuilder<BenchmarkDbContext>()
-        .UseMongoDB(client, dbName, o => o.UseQueryMode(MongoQueryMode.DriverLinq)).Options;
+        .UseMongoDB(client, dbName, o => o.UseQueryProvider(MongoQueryProvider.DriverLinq)).Options;
     var nativeOnlyOptions = new DbContextOptionsBuilder<BenchmarkDbContext>()
-        .UseMongoDB(client, dbName, o => o.UseQueryMode(MongoQueryMode.NativeOnly)).Options;
+        .UseMongoDB(client, dbName, o => o.UseQueryProvider(MongoQueryProvider.NativeOnly)).Options;
 
     try
     {

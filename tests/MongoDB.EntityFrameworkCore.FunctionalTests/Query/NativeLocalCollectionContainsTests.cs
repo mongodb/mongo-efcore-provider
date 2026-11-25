@@ -57,11 +57,11 @@ public class NativeLocalCollectionContainsTests(TemporaryDatabaseFixture databas
         return collection;
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(collection, optionsBuilderAction: b =>
         {
             b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
         });
 
     /// <summary>Runs <paramref name="query"/> natively and against DriverLinq; returns the sorted Names.</summary>
@@ -134,7 +134,7 @@ public class NativeLocalCollectionContainsTests(TemporaryDatabaseFixture databas
     public void Filtered_parameter_collection_is_re_evaluated_per_execution()
     {
         var collection = Seed(nameof(Filtered_parameter_collection_is_re_evaluated_per_execution));
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.DriverLinq })
         {
             var id = "a";
             using (var db = CreateContext(collection, mode))
@@ -174,7 +174,7 @@ public class NativeLocalCollectionContainsTests(TemporaryDatabaseFixture databas
     {
         var pairs = new[] { Tuple.Create(Guid.Empty, 1) };
         var collection = Seed(nameof(Tuple_contains_with_guid_decimal_and_datetime_elements_matches_stored_values_natively));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var r0 = db.Entities.Where(r => pairs.Contains(Tuple.Create(r.G, r.A))).Select(r => r.Name).ToList();
         Assert.Equal(["a", "c"], r0.Order());
         var dPairs = new[] { Tuple.Create(0m, 1) };
@@ -197,7 +197,7 @@ public class NativeLocalCollectionContainsTests(TemporaryDatabaseFixture databas
     public void Negated_contains_over_prepopulated_user_collection_does_not_treat_it_as_empty()
     {
         var collection = Seed(nameof(Negated_contains_over_prepopulated_user_collection_does_not_treat_it_as_empty));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         List<string>? names = null;
         var ex = Record.Exception(() => names = db.Entities.Where(r => !new PrePopulatedNames().Contains(r.Name))
             .Select(r => r.Name).ToList());

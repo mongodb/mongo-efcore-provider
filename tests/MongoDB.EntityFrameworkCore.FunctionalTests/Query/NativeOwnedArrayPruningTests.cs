@@ -74,10 +74,10 @@ public class NativeOwnedArrayPruningTests(TemporaryDatabaseFixture database)
             });
     }
 
-    private PruneContext Db(MongoQueryMode mode, string suffix, MongoClient? client = null)
+    private PruneContext Db(MongoQueryProvider mode, string suffix, MongoClient? client = null)
         => new(
             new DbContextOptionsBuilder<PruneContext>()
-                .UseMongoDB(client ?? database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(client ?? database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,
@@ -87,7 +87,7 @@ public class NativeOwnedArrayPruningTests(TemporaryDatabaseFixture database)
     private string Seed()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        using (var seed = Db(MongoQueryMode.Native, suffix))
+        using (var seed = Db(MongoQueryProvider.Native, suffix))
         {
             seed.Orders.AddRange(
                 new Order
@@ -126,7 +126,7 @@ public class NativeOwnedArrayPruningTests(TemporaryDatabaseFixture database)
             }
         });
 
-        using var db = Db(MongoQueryMode.NativeOnly, suffix, new MongoClient(settings));
+        using var db = Db(MongoQueryProvider.NativeOnly, suffix, new MongoClient(settings));
         var skus = db.Orders.AsNoTracking().OrderBy(o => o.Id).Select(o => new { o.Code, Skus = o.Lines.Select(l => l.Sku).ToList() })
             .AsEnumerable().Select(r => $"{r.Code}:[{string.Join(",", r.Skus)}]").ToList();
 

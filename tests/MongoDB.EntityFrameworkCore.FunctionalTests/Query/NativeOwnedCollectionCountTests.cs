@@ -36,7 +36,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -44,11 +44,11 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private SingleEntityDbContext<T> CreateContextWithLogging<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
         where T : class
     {
@@ -63,7 +63,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -277,7 +277,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         => Seed(name, LenRow("len0", 0), LenRow("len1", 1), LenRow("len2", 2), LenRow("len3", 3));
 
     private List<string> RunTitles(
-        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryMode mode)
+        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryProvider mode)
     {
         using var db = CreateContext(collection, mode, BlogModel);
         return query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
@@ -293,7 +293,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
     private List<string> AssertNativeOnlyMatches(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
-        => RunTitles(collection, query, MongoQueryMode.NativeOnly);
+        => RunTitles(collection, query, MongoQueryProvider.NativeOnly);
 
     // `threshold` is a captured parameter, so every row routes to the $expr tier, not the array-index form. The
     // constant tier is covered by Count_comparison_emits_the_array_index_form and the const-gt* matrix rows.
@@ -434,7 +434,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         // Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array.
         var collection = SeedLengths(nameof(Arithmetic_projection_leaf_containing_a_count_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var doubled = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, X = b.Posts.Count * 2 })
@@ -450,7 +450,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     {
         var collection = SeedLengths(nameof(Owned_collection_count_projection_leaf_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var rows = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, N = b.Posts.Count })
@@ -471,7 +471,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         var wellFormed = SeedWellFormed(
             nameof(Wrapped_count_projection_under_DriverLinq_works_for_present_and_ragged_arrays_alike));
 
-        using (var db = CreateContext(wellFormed, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(wellFormed, MongoQueryProvider.DriverLinq, BlogModel))
         {
             var rows = db.Entities.AsNoTracking()
                 .Select(b => new { b.Title, N = b.Posts.Count })
@@ -486,7 +486,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             nameof(Wrapped_count_projection_under_DriverLinq_works_for_present_and_ragged_arrays_alike)
             + "ragged");
 
-        using (var db = CreateContext(ragged, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(ragged, MongoQueryProvider.DriverLinq, BlogModel))
         {
             var raggedRows = db.Entities.AsNoTracking()
                 .Select(b => new { b.Title, N = b.Posts.Count })
@@ -498,7 +498,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         }
 
         // Parity leg on the same ragged seed: Native also answers 0 for the missing and null rows.
-        using (var db = CreateContext(ragged, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(ragged, MongoQueryProvider.Native, BlogModel))
         {
             var rows = db.Entities.AsNoTracking()
                 .Select(b => new { b.Title, N = b.Posts.Count })
@@ -547,23 +547,23 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         };
 
         List<string> expected;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             var compiled = render.Compile();
             expected = db.Entities.AsNoTracking().ToList().Select(compiled).OrderBy(v => v).ToList();
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             Assert.Equal(expected, run(db));
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             Assert.Equal(expected, run(db));
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             Assert.Equal(expected, run(db));
         }
@@ -576,7 +576,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         // "null" rows would abort without it.
         var collection = SeedLengths(nameof(Owned_collection_count_projection_emits_a_null_safe_size));
 
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spyLogger);
 
         _ = db.Entities.AsNoTracking().Select(b => new { b.Title, N = b.Posts.Count }).ToList();
 
@@ -608,7 +608,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         const string expected = "[0,1,2,3]";
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             legs.Add(($"{mode} direct", LegOutcome(
@@ -617,8 +617,8 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
         // Late-decline legs: a captured-local StartsWith declines at render time, after the alias-addressed shaper
         // is committed — the one route where a bare projection's alias miss is silent. The DriverLinq leg is
-        // required because UseQueryMode(DriverLinq) must restore the previous path.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        // required because UseQueryProvider(DriverLinq) must restore the previous path.
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             legs.Add(($"{mode} late-decline", LegOutcome(
@@ -627,7 +627,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         }
 
         // Emitted-MQL pin, collected with the legs; alias check scoped to the $project field names.
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger))
+        using (var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spyLogger))
         {
             legs.Add(("NativeOnly MQL", LegOutcome(() =>
             {
@@ -668,7 +668,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             nameof(Bare_embedded_collection_Count_projection_returns_zero_for_a_missing_or_null_array));
 
         var legs = new List<(string Leg, string Outcome)>();
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             legs.Add(($"{mode}", LegOutcome(
@@ -692,7 +692,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         var collection = Seed(nameof(Count_inside_an_owned_SelectMany_inner_filter_goes_native),
             Row("blog", new BsonArray { PostWithComments("few", 1), PostWithComments("many", 3) }));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var headings = db.Entities.AsNoTracking()
             .SelectMany(b => b.Posts.Where(p => p.Comments.Count > 2), (b, p) => new { p.Heading })
@@ -713,7 +713,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     public void Count_predicate_is_correct_for_a_tracking_query()
     {
         var collection = SeedLengths(nameof(Count_predicate_is_correct_for_a_tracking_query));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var titles = db.Entities.Where(b => b.Posts.Count > 1).ToList()
             .Select(b => b.Title).OrderBy(t => t).ToList();
@@ -729,7 +729,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     public void Count_comparison_emits_the_array_index_form(string op, string expectedMatch)
     {
         var collection = SeedWellFormed($"mql{op.Length}{op[0]}");
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spy);
 
         var query = op switch
         {
@@ -747,7 +747,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     public void Count_equality_emits_a_merged_two_key_match()
     {
         var collection = SeedWellFormed(nameof(Count_equality_emits_a_merged_two_key_match));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spy);
 
         db.Entities.AsNoTracking().Where(b => b.Posts.Count == 2).ToList();
 
@@ -758,7 +758,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     public void A_parameterized_threshold_emits_expr_with_a_null_safe_size()
     {
         var collection = SeedWellFormed(nameof(A_parameterized_threshold_emits_expr_with_a_null_safe_size));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spy);
         var threshold = 1;
 
         db.Entities.AsNoTracking().Where(b => b.Posts.Count > threshold).ToList();
@@ -774,7 +774,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     {
         // The bare-Any() unification's byte-identity bar, asserted from the user-facing side.
         var collection = SeedWellFormed(nameof(Bare_Any_still_emits_the_index_zero_form));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spy);
 
         db.Entities.AsNoTracking().Where(b => b.Posts.Any()).ToList();
 
@@ -785,7 +785,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     public void Negated_bare_Any_still_emits_the_index_zero_absent_form()
     {
         var collection = SeedWellFormed(nameof(Negated_bare_Any_still_emits_the_index_zero_absent_form));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spy);
 
         db.Entities.AsNoTracking().Where(b => !b.Posts.Any()).ToList();
 
@@ -925,14 +925,14 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         var collection = Seed($"diff_{name}", DifferentialRows());
 
         List<string> expected;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             expected = db.Entities.AsNoTracking().ToList()
                 .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t).ToList();
         }
 
         List<string> actual;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             actual = db.Entities.AsNoTracking().Where(predicate).ToList()
                 .Select(b => b.Title).OrderBy(t => t).ToList();
@@ -969,7 +969,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         var collection = Seed($"projdiff_{name}", DifferentialRows());
 
         List<(string Title, int N)> expected;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             var compiled = selector.Compile();
             expected = db.Entities.AsNoTracking().ToList()
@@ -977,7 +977,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         }
 
         List<(string Title, int N)> actual;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             actual = db.Entities.AsNoTracking().Select(selector)
                 .ToList().Select(r => (r.Title, r.N)).OrderBy(r => r.Title).ToList();
@@ -991,7 +991,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     {
         var collection = SeedLengths(nameof(LongCount_projection_leaf_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var rows = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, N = b.Posts.LongCount() })
@@ -1008,7 +1008,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         var collection = Seed(nameof(Count_projection_through_an_owned_reference_hop_goes_native),
             RowWithNotes("none", 0), RowWithNotes("one", 1), RowWithNotes("three", 3));
 
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spyLogger);
 
         var rows = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, N = b.Home.Notes.Count })
@@ -1031,7 +1031,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             LenRow("len0", 0), LenRow("len1", 1), LenRowWithNotes("len2", postLength: 2, noteCount: 3),
             LenRow("len3", 3), Row("missing", posts: null), Row("null", BsonNull.Value));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var rows = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, N = b.Posts.Count, Doubled = b.Posts.Count * 2, Notes = b.Home.Notes.Count })
@@ -1060,7 +1060,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         const string expected = "[0,1,2,3,0,0]";
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = CreateContext(collection, mode, BlogModel);
 
@@ -1075,14 +1075,14 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
         // The bare form's DriverLinq leg and both late-decline legs, where a bare alias miss is silent and the
         // $ifNull rewrite over the driver's un-stripped push-down is exercised.
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             legs.Add(("DriverLinq bare", LegOutcome(
                 () => db.Entities.AsNoTracking().OrderBy(b => b.Title)
                     .Select(b => b.Posts.Count).ToList())));
         }
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             legs.Add(($"{mode} bare late-decline", LegOutcome(
@@ -1092,7 +1092,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
         // Alias pins are part of the collected set, so they still run when a leg above regresses. Both aliases
         // read back correctly, so an alias collapse is visible only here.
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var wrappedSpy))
+        using (var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var wrappedSpy))
         {
             legs.Add(("NativeOnly wrapped alias", LegOutcome(() =>
             {
@@ -1101,7 +1101,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             })));
         }
 
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var bareSpy))
+        using (var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var bareSpy))
         {
             legs.Add(("NativeOnly bare alias", LegOutcome(() =>
             {
@@ -1135,7 +1135,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         // missing/null -> 0.
         var collection = SeedLengths(nameof(Filtered_count_projection_now_goes_native_EF359));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
         var rows = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) })
             .OrderBy(r => r.Title).ToList();

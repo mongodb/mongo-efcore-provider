@@ -60,28 +60,28 @@ public class NativeNullAbsorbingMathPredicateTests(TemporaryDatabaseFixture data
         return database.MongoDatabase.GetCollection<Row>(collectionName);
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private void CheckDeclines(string name, Func<IQueryable<Row>, IQueryable<Row>> where)
     {
         var collection = Seed(name);
-        List<string> Run(MongoQueryMode mode)
+        List<string> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, mode);
             return where(db.Entities.AsNoTracking()).OrderBy(x => x.Title).Select(x => x.Title).ToList();
         }
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryProvider.NativeOnly));
 
-        Assert.Equal("ExpressionNotSupportedException", Assert.ThrowsAny<Exception>(() => Run(MongoQueryMode.Native)).GetType().Name);
-        Assert.Equal("ExpressionNotSupportedException", Assert.ThrowsAny<Exception>(() => Run(MongoQueryMode.DriverLinq)).GetType().Name);
+        Assert.Equal("ExpressionNotSupportedException", Assert.ThrowsAny<Exception>(() => Run(MongoQueryProvider.Native)).GetType().Name);
+        Assert.Equal("ExpressionNotSupportedException", Assert.ThrowsAny<Exception>(() => Run(MongoQueryProvider.DriverLinq)).GetType().Name);
     }
 
     // driverThrows: driver-LINQ has no Math.Sign/Max/Min translation, so the native result is a new capability (no
@@ -90,7 +90,7 @@ public class NativeNullAbsorbingMathPredicateTests(TemporaryDatabaseFixture data
         string name, Func<IQueryable<Row>, IQueryable<Row>> where, bool driverThrows, params string[] expected)
     {
         var collection = Seed(name);
-        List<string> Run(MongoQueryMode mode)
+        List<string> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, mode);
             return where(db.Entities.AsNoTracking()).OrderBy(x => x.Title).Select(x => x.Title).ToList();
@@ -102,9 +102,9 @@ public class NativeNullAbsorbingMathPredicateTests(TemporaryDatabaseFixture data
             return;
         }
 
-        Assert.Equal(expected, Run(MongoQueryMode.NativeOnly));
-        Assert.Equal(expected, Run(MongoQueryMode.Native));
-        Assert.Equal("ExpressionNotSupportedException", Assert.ThrowsAny<Exception>(() => Run(MongoQueryMode.DriverLinq)).GetType().Name);
+        Assert.Equal(expected, Run(MongoQueryProvider.NativeOnly));
+        Assert.Equal(expected, Run(MongoQueryProvider.Native));
+        Assert.Equal("ExpressionNotSupportedException", Assert.ThrowsAny<Exception>(() => Run(MongoQueryProvider.DriverLinq)).GetType().Name);
     }
 
     [Fact]

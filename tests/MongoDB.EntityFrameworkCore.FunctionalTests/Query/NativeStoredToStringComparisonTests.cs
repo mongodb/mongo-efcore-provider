@@ -80,7 +80,7 @@ public class NativeStoredToStringComparisonTests(TemporaryDatabaseFixture databa
     public void ToString_with_a_format_declines()
     {
         var collection = Seed();
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Where(x => x.G.ToString("N") == "380bb5defb714f6da3492b83908ab43b").Select(x => x.Id).ToList());
     }
@@ -89,14 +89,14 @@ public class NativeStoredToStringComparisonTests(TemporaryDatabaseFixture databa
     public void ToString_over_a_default_stored_guid_is_not_the_stored_string_comparison()
     {
         var collection = Seed();
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
         var guid = FirstGuid.ToString();
 
         // The default Guid representation is binary: ToString() cannot be the stored value, so this must not match.
         Assert.ThrowsAny<Exception>(() => db.Entities.Where(x => x.Plain.ToString() == guid).Select(x => x.Id).ToList());
     }
 
-    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             mb =>
@@ -108,14 +108,14 @@ public class NativeStoredToStringComparisonTests(TemporaryDatabaseFixture databa
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Row> Seed()
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName("tostring") + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Row>(name);
-        using var db = Create(collection, MongoQueryMode.DriverLinq);
+        using var db = Create(collection, MongoQueryProvider.DriverLinq);
         db.Entities.AddRange(
             new Row { Id = 1, G = FirstGuid, D = 1.5, E = Color.Red, Plain = FirstGuid },
             new Row { Id = 2, G = SecondGuid, D = 2.5, E = Color.Green, Plain = SecondGuid });

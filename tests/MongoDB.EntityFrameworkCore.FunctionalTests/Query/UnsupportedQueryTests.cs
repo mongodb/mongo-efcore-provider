@@ -90,7 +90,7 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     public void Cast_to_child_not_supported_in_driver()
     {
         // The exception type is the driver's, so this pins the mode it is about.
-        using var db = GuidesDbContext.Create(database.MongoDatabase, queryMode: MongoQueryMode.DriverLinq);
+        using var db = GuidesDbContext.Create(database.MongoDatabase, queryProvider: MongoQueryProvider.DriverLinq);
 
         var ex = Assert.Throws<ExpressionNotSupportedException>(() => db.Planets.Cast<SuperPlanet>().ToList());
 
@@ -101,7 +101,7 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     public void Cast_to_child_is_declined_cleanly_by_native()
     {
         // SuperPlanet is not a mapped entity: no valid native form, so NativeOnly refuses before the driver is reached.
-        using var db = GuidesDbContext.Create(database.MongoDatabase, queryMode: MongoQueryMode.NativeOnly);
+        using var db = GuidesDbContext.Create(database.MongoDatabase, queryProvider: MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => db.Planets.Cast<SuperPlanet>().ToList());
     }
@@ -120,11 +120,11 @@ public sealed class UnsupportedQueriesTests(ReadOnlySampleGuidesFixture database
     // materialize a bare IGrouping; the exception type is the contract here, not the message.
     [Fact]
     public void GroupBy_cannot_be_translated()
-        => TestQueryMode.AssertRefusal<InvalidOperationException>(() => _db.Planets.GroupBy(p => p.hasRings).ToList());
+        => TestQueryProvider.AssertRefusal<InvalidOperationException>(() => _db.Planets.GroupBy(p => p.hasRings).ToList());
 
     [Fact]
     public void GroupBy_with_element_selector_cannot_be_translated()
-        => TestQueryMode.AssertRefusal<InvalidOperationException>(() => _db.Planets.GroupBy(p => p.hasRings, p => p.name).ToList());
+        => TestQueryProvider.AssertRefusal<InvalidOperationException>(() => _db.Planets.GroupBy(p => p.hasRings, p => p.name).ToList());
 
     public void Dispose()
         => _db.Dispose();

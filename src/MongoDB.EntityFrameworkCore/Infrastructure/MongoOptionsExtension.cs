@@ -55,7 +55,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         KeyVaultNamespace = copyFrom.KeyVaultNamespace;
         KmsProviders = copyFrom.KmsProviders;
         QueryableEncryptionSchemaMode = copyFrom.QueryableEncryptionSchemaMode;
-        QueryMode = copyFrom.QueryMode;
+        QueryProvider = copyFrom.QueryProvider;
     }
 
     /// <summary>
@@ -227,26 +227,26 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     }
 
     /// <summary>
-    /// Gets the <see cref="MongoQueryMode"/> that controls how LINQ queries are translated.
+    /// Gets the <see cref="MongoQueryProvider"/> that controls how LINQ queries are translated.
     /// </summary>
-    public MongoQueryMode QueryMode { get; private set; } = DefaultQueryMode;
+    public MongoQueryProvider QueryProvider { get; private set; } = DefaultQueryProvider;
 
     /// <summary>
-    /// Process-wide default for <see cref="QueryMode"/>; test infrastructure only (InternalsVisibleTo).
+    /// Process-wide default for <see cref="QueryProvider"/>; test infrastructure only (InternalsVisibleTo).
     /// </summary>
-    internal static MongoQueryMode DefaultQueryMode { get; set; } = MongoQueryMode.Native;
+    internal static MongoQueryProvider DefaultQueryProvider { get; set; } = MongoQueryProvider.Native;
 
     /// <summary>
-    /// Specifies the <see cref="MongoQueryMode"/> to use when translating LINQ queries.
+    /// Specifies the <see cref="MongoQueryProvider"/> to use when translating LINQ queries.
     /// </summary>
-    /// <param name="queryMode">The <see cref="MongoQueryMode"/> to use.</param>
+    /// <param name="queryProvider">The <see cref="MongoQueryProvider"/> to use.</param>
     /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
-    public virtual MongoOptionsExtension WithQueryMode(MongoQueryMode queryMode)
+    public virtual MongoOptionsExtension WithQueryProvider(MongoQueryProvider queryProvider)
     {
-        Check.IsDefinedOrNull<MongoQueryMode>(queryMode);
+        Check.IsDefinedOrNull<MongoQueryProvider>(queryProvider);
 
         var clone = Clone();
-        clone.QueryMode = queryMode;
+        clone.QueryProvider = queryProvider;
         return clone;
     }
 
@@ -299,7 +299,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         /// <inheritdoc/>
         public override int GetServiceProviderHashCode()
         {
-            _serviceProviderHash ??= HashCode.Combine(Extension.ConnectionString, Extension.DatabaseName, Extension.QueryMode);
+            _serviceProviderHash ??= HashCode.Combine(Extension.ConnectionString, Extension.DatabaseName, Extension.QueryProvider);
             return _serviceProviderHash.Value;
         }
 
@@ -311,7 +311,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
                && (Extension.ClientSettings == otherInfo.Extension.ClientSettings ||
                    Extension.ClientSettings != null && Extension.ClientSettings.Equals(otherInfo.Extension.ClientSettings))
                && Extension.DatabaseName == otherInfo.Extension.DatabaseName
-               && Extension.QueryMode == otherInfo.Extension.QueryMode;
+               && Extension.QueryProvider == otherInfo.Extension.QueryProvider;
 
         /// <inheritdoc/>
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
@@ -320,7 +320,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
             AddDebugInfo(debugInfo, nameof(MongoClient), Extension.MongoClient);
             AddDebugInfo(debugInfo, nameof(ClientSettings), Extension.ClientSettings);
             AddDebugInfo(debugInfo, nameof(DatabaseName), Extension.DatabaseName);
-            AddDebugInfo(debugInfo, nameof(QueryMode), Extension.QueryMode);
+            AddDebugInfo(debugInfo, nameof(QueryProvider), Extension.QueryProvider);
         }
 
         /// <inheritdoc/>
@@ -351,9 +351,9 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
 
             builder.Append("DatabaseName=").Append(Extension.DatabaseName).Append(' ');
 
-            if (Extension.QueryMode != MongoQueryMode.Native)
+            if (Extension.QueryProvider != MongoQueryProvider.Native)
             {
-                builder.Append("QueryMode=").Append(Extension.QueryMode).Append(' ');
+                builder.Append("QueryProvider=").Append(Extension.QueryProvider).Append(' ');
             }
 
             return builder.ToString();

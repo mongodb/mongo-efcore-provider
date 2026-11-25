@@ -33,10 +33,10 @@ public class PrincipalSideReferenceIncludeTests(TemporaryDatabaseFixture databas
     : IClassFixture<TemporaryDatabaseFixture>
 {
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Include_principal_side_reference_with_required_dependent_fk_keeps_principals_without_a_dependent(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Include_principal_side_reference_with_required_dependent_fk_keeps_principals_without_a_dependent(MongoQueryProvider mode)
     {
         using var db = Setup(mode);
         Assert.Equal(["with:Paris", "without:<none>"],
@@ -45,10 +45,10 @@ public class PrincipalSideReferenceIncludeTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Include_principal_side_reference_AsNoTracking_keeps_principals_without_a_dependent(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Include_principal_side_reference_AsNoTracking_keeps_principals_without_a_dependent(MongoQueryProvider mode)
     {
         using var db = Setup(mode);
         Assert.Equal(["with:Paris", "without:<none>"],
@@ -58,10 +58,10 @@ public class PrincipalSideReferenceIncludeTests(TemporaryDatabaseFixture databas
 
     // Dependent-side control: EF emits an inner Join for a required FK, so the dangling row drops.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Include_dependent_side_reference_with_required_fk_drops_dangling_dependent(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Include_dependent_side_reference_with_required_fk_drops_dangling_dependent(MongoQueryProvider mode)
     {
         using var db = Setup(mode);
         Assert.Equal(["Paris:with"],
@@ -71,10 +71,10 @@ public class PrincipalSideReferenceIncludeTests(TemporaryDatabaseFixture databas
 
     // Dependent-side control with an optional FK: a LeftJoin, so the dangling row stays with a null navigation.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Include_dependent_side_reference_with_optional_fk_keeps_dangling_dependent(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Include_dependent_side_reference_with_optional_fk_keeps_dangling_dependent(MongoQueryProvider mode)
     {
         using var db = Setup(mode);
         Assert.Equal(["111:Ann", "222:<none>"],
@@ -84,10 +84,10 @@ public class PrincipalSideReferenceIncludeTests(TemporaryDatabaseFixture databas
 
     // Regression pins for neighbouring shapes that were already right.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Neighbouring_navigation_shapes_keep_principals_without_a_dependent(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Neighbouring_navigation_shapes_keep_principals_without_a_dependent(MongoQueryProvider mode)
     {
         using var db = Setup(mode);
 
@@ -100,7 +100,7 @@ public class PrincipalSideReferenceIncludeTests(TemporaryDatabaseFixture databas
             db.Customers.Where(c => c.Address != null).OrderBy(c => c.Id).Select(c => c.Name).ToList());
     }
 
-    private PrincipalDbContext Setup(MongoQueryMode mode)
+    private PrincipalDbContext Setup(MongoQueryProvider mode)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var customers = TemporaryDatabaseFixtureBase.CreateCollectionName("PsriCustomers") + suffix;
@@ -171,7 +171,7 @@ public class PrincipalSideReferenceIncludeTests(TemporaryDatabaseFixture databas
 
         public PrincipalDbContext(
             TemporaryDatabaseFixture db, string customers, string addresses, string people, string phones,
-            MongoQueryMode mode)
+            MongoQueryProvider mode)
             : base(BuildOptions(db, mode))
         {
             _customers = customers;
@@ -193,9 +193,9 @@ public class PrincipalSideReferenceIncludeTests(TemporaryDatabaseFixture databas
                 .HasOne(p => p.Person).WithMany(p => p.Phones).HasForeignKey(p => p.PersonId).IsRequired(false);
         }
 
-        private static DbContextOptions<PrincipalDbContext> BuildOptions(TemporaryDatabaseFixture db, MongoQueryMode mode)
+        private static DbContextOptions<PrincipalDbContext> BuildOptions(TemporaryDatabaseFixture db, MongoQueryProvider mode)
             => new DbContextOptionsBuilder<PrincipalDbContext>()
-                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options;

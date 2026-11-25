@@ -30,7 +30,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// Native reducers and scalar aggregates. Reducers synthesize a native <c>$limit</c> and EF Core's cardinality
 /// reduction runs over the result (empty ⇒ throw/null, more-than-one ⇒ throw for Single*).
-/// <see cref="MongoQueryMode.NativeOnly"/> is the "went native" signal, since the MQL matches the fallback's.
+/// <see cref="MongoQueryProvider.NativeOnly"/> is the "went native" signal, since the MQL matches the fallback's.
 /// </summary>
 public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -52,7 +52,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
 
     /// <summary>Shared seed/context builder for the int/decimal/nullable-int/bool <see cref="ValueEntity"/> shapes.</summary>
     private SingleEntityDbContext<ValueEntity> CreateContext<TSeed>(
-        TSeed[] seed, Func<TSeed, ValueEntity> project, MongoQueryMode mode, string name)
+        TSeed[] seed, Func<TSeed, ValueEntity> project, MongoQueryProvider mode, string name)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<ValueEntity>(collectionName);
@@ -64,23 +64,23 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
-    private SingleEntityDbContext<ValueEntity> CreateContext(int[] seed, MongoQueryMode mode, string name)
+    private SingleEntityDbContext<ValueEntity> CreateContext(int[] seed, MongoQueryProvider mode, string name)
         => CreateContext(seed, v => new ValueEntity { Id = ObjectId.GenerateNewId(), Value = v }, mode, name);
 
-    private SingleEntityDbContext<ValueEntity> CreateDecimalContext(decimal[] seed, MongoQueryMode mode, string name)
+    private SingleEntityDbContext<ValueEntity> CreateDecimalContext(decimal[] seed, MongoQueryProvider mode, string name)
         => CreateContext(seed, v => new ValueEntity { Id = ObjectId.GenerateNewId(), DecimalValue = v }, mode, name);
 
-    private SingleEntityDbContext<ValueEntity> CreateNullableContext(int?[] seed, MongoQueryMode mode, string name)
+    private SingleEntityDbContext<ValueEntity> CreateNullableContext(int?[] seed, MongoQueryProvider mode, string name)
         => CreateContext(seed, v => new ValueEntity { Id = ObjectId.GenerateNewId(), NullableValue = v }, mode, name);
 
-    private SingleEntityDbContext<ValueEntity> CreateBoolContext(bool[] seed, MongoQueryMode mode, string name)
+    private SingleEntityDbContext<ValueEntity> CreateBoolContext(bool[] seed, MongoQueryProvider mode, string name)
         => CreateContext(seed, v => new ValueEntity { Id = ObjectId.GenerateNewId(), IsActive = v }, mode, name);
 
-    private SingleEntityDbContext<ValueEntity> CreateStringContext(string[] seed, MongoQueryMode mode, string name)
+    private SingleEntityDbContext<ValueEntity> CreateStringContext(string[] seed, MongoQueryProvider mode, string name)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<ValueEntity>(collectionName);
@@ -92,14 +92,14 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
     [Fact]
     public void First_returns_first_and_goes_native()
     {
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(First_returns_first_and_goes_native));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(First_returns_first_and_goes_native));
         var first = db.Entities.OrderBy(e => e.Value).First();
         Assert.Equal(1, first.Value); // succeeds under NativeOnly => went native
     }
@@ -107,7 +107,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void FirstOrDefault_returns_first_and_goes_native()
     {
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(FirstOrDefault_returns_first_and_goes_native));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(FirstOrDefault_returns_first_and_goes_native));
         var first = db.Entities.OrderBy(e => e.Value).FirstOrDefault();
         Assert.NotNull(first);
         Assert.Equal(1, first!.Value);
@@ -116,7 +116,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Single_returns_match_and_goes_native()
     {
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(Single_returns_match_and_goes_native));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(Single_returns_match_and_goes_native));
         var single = db.Entities.Where(e => e.Value == 2).Single();
         Assert.Equal(2, single.Value);
     }
@@ -124,7 +124,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void SingleOrDefault_returns_match_and_goes_native()
     {
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(SingleOrDefault_returns_match_and_goes_native));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(SingleOrDefault_returns_match_and_goes_native));
         var single = db.Entities.Where(e => e.Value == 2).SingleOrDefault();
         Assert.NotNull(single);
         Assert.Equal(2, single!.Value);
@@ -133,7 +133,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void First_on_empty_throws_sequence_contains_no_elements()
     {
-        using var db = CreateContext([], MongoQueryMode.Native, nameof(First_on_empty_throws_sequence_contains_no_elements));
+        using var db = CreateContext([], MongoQueryProvider.Native, nameof(First_on_empty_throws_sequence_contains_no_elements));
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.First());
         Assert.Contains("no elements", ex.Message);
     }
@@ -141,14 +141,14 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void FirstOrDefault_on_empty_returns_null()
     {
-        using var db = CreateContext([], MongoQueryMode.Native, nameof(FirstOrDefault_on_empty_returns_null));
+        using var db = CreateContext([], MongoQueryProvider.Native, nameof(FirstOrDefault_on_empty_returns_null));
         Assert.Null(db.Entities.FirstOrDefault());
     }
 
     [Fact]
     public void Single_on_empty_throws_sequence_contains_no_elements()
     {
-        using var db = CreateContext([], MongoQueryMode.Native, nameof(Single_on_empty_throws_sequence_contains_no_elements));
+        using var db = CreateContext([], MongoQueryProvider.Native, nameof(Single_on_empty_throws_sequence_contains_no_elements));
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Single());
         Assert.Contains("no elements", ex.Message);
     }
@@ -156,14 +156,14 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void SingleOrDefault_on_empty_returns_null()
     {
-        using var db = CreateContext([], MongoQueryMode.Native, nameof(SingleOrDefault_on_empty_returns_null));
+        using var db = CreateContext([], MongoQueryProvider.Native, nameof(SingleOrDefault_on_empty_returns_null));
         Assert.Null(db.Entities.SingleOrDefault());
     }
 
     [Fact]
     public void Single_with_two_matches_throws_more_than_one()
     {
-        using var db = CreateContext([5, 5], MongoQueryMode.Native, nameof(Single_with_two_matches_throws_more_than_one));
+        using var db = CreateContext([5, 5], MongoQueryProvider.Native, nameof(Single_with_two_matches_throws_more_than_one));
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Where(e => e.Value == 5).Single());
         Assert.Contains("more than one", ex.Message);
     }
@@ -171,7 +171,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void SingleOrDefault_with_two_matches_throws_more_than_one()
     {
-        using var db = CreateContext([5, 5], MongoQueryMode.Native, nameof(SingleOrDefault_with_two_matches_throws_more_than_one));
+        using var db = CreateContext([5, 5], MongoQueryProvider.Native, nameof(SingleOrDefault_with_two_matches_throws_more_than_one));
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Where(e => e.Value == 5).SingleOrDefault());
         Assert.Contains("more than one", ex.Message);
     }
@@ -182,7 +182,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void First_after_Take_now_goes_native()
     {
-        using var db = CreateContext([1, 2, 3, 4, 5], MongoQueryMode.NativeOnly, nameof(First_after_Take_now_goes_native));
+        using var db = CreateContext([1, 2, 3, 4, 5], MongoQueryProvider.NativeOnly, nameof(First_after_Take_now_goes_native));
         Assert.Equal(1, db.Entities.OrderBy(e => e.Value).Take(3).First().Value); // NativeOnly succeeds => native
     }
 
@@ -192,11 +192,11 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         // Correct emission is [$sort, $skip 2, $limit 2, $limit 1] => row 3. Hoisting the reducer's $limit
         // ahead of the paging would yield no rows and throw.
         using var nativeOnly = CreateContext(
-            [1, 2, 3, 4, 5], MongoQueryMode.NativeOnly, nameof(First_after_Skip_then_Take_composes_in_recorded_order) + "only");
+            [1, 2, 3, 4, 5], MongoQueryProvider.NativeOnly, nameof(First_after_Skip_then_Take_composes_in_recorded_order) + "only");
         Assert.Equal(3, nativeOnly.Entities.OrderBy(e => e.Value).Skip(2).Take(2).First().Value);
 
         using var driver = CreateContext(
-            [1, 2, 3, 4, 5], MongoQueryMode.DriverLinq, nameof(First_after_Skip_then_Take_composes_in_recorded_order) + "driver");
+            [1, 2, 3, 4, 5], MongoQueryProvider.DriverLinq, nameof(First_after_Skip_then_Take_composes_in_recorded_order) + "driver");
         Assert.Equal(3, driver.Entities.OrderBy(e => e.Value).Skip(2).Take(2).First().Value); // driver-LINQ oracle agrees
     }
 
@@ -206,7 +206,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         // Take(2) keeps rows 1,2; the Where then rejects both. The reducer's $limit composes onto an empty
         // stream and FirstOrDefault must answer null (not throw, and not see row 5, which Take excluded).
         using var db = CreateContext(
-            [1, 2, 5], MongoQueryMode.NativeOnly, nameof(FirstOrDefault_after_Take_that_selects_nothing_is_null));
+            [1, 2, 5], MongoQueryProvider.NativeOnly, nameof(FirstOrDefault_after_Take_that_selects_nothing_is_null));
         Assert.Null(db.Entities.OrderBy(e => e.Value).Take(2).Where(e => e.Value == 5).FirstOrDefault());
     }
 
@@ -216,7 +216,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         // Single appends $limit 2: [$limit 2, $limit 2] => two rows => throws. Replacing the Take's limit with
         // 1 would wrongly return a value.
         using var db = CreateContext(
-            [1, 2, 3], MongoQueryMode.NativeOnly, nameof(Single_after_Take_of_two_still_throws_more_than_one));
+            [1, 2, 3], MongoQueryProvider.NativeOnly, nameof(Single_after_Take_of_two_still_throws_more_than_one));
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.OrderBy(e => e.Value).Take(2).Single());
         Assert.Contains("more than one", ex.Message);
     }
@@ -227,7 +227,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         // [$limit 1, $limit 2] => one row. With the test above, proves the limits take the minimum rather than
         // one clobbering the other.
         using var db = CreateContext(
-            [7, 8, 9], MongoQueryMode.NativeOnly, nameof(Single_after_Take_of_one_returns_that_element));
+            [7, 8, 9], MongoQueryProvider.NativeOnly, nameof(Single_after_Take_of_one_returns_that_element));
         Assert.Equal(7, db.Entities.OrderBy(e => e.Value).Take(1).Single().Value);
     }
 
@@ -236,7 +236,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     {
         // Take(0) is normalized to an always-false $match, so the reducer sees an empty stream and throws
         // "no elements", not the ArgumentOutOfRangeException a raw $limit:0 would raise.
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(First_after_Take_zero_throws_no_elements));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(First_after_Take_zero_throws_no_elements));
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Take(0).First());
         Assert.Contains("no elements", ex.Message);
     }
@@ -245,44 +245,44 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     public void First_after_Skip_only_is_unaffected()
     {
         // Skip alone, as a baseline for the Take cases above.
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(First_after_Skip_only_is_unaffected));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(First_after_Skip_only_is_unaffected));
         Assert.Equal(2, db.Entities.OrderBy(e => e.Value).Skip(1).First().Value);
     }
 
     [Fact]
     public void Count_goes_native_and_counts()
     {
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(Count_goes_native_and_counts));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(Count_goes_native_and_counts));
         Assert.Equal(3, db.Entities.Count()); // succeeds under NativeOnly => went native
     }
 
     [Fact]
     public void LongCount_goes_native_and_counts()
     {
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(LongCount_goes_native_and_counts));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(LongCount_goes_native_and_counts));
         Assert.Equal(3L, db.Entities.LongCount());
     }
 
     [Fact]
     public void Count_on_empty_is_zero()
     {
-        using var db = CreateContext([], MongoQueryMode.Native, nameof(Count_on_empty_is_zero));
+        using var db = CreateContext([], MongoQueryProvider.Native, nameof(Count_on_empty_is_zero));
         Assert.Equal(0, db.Entities.Count());
     }
 
     [Fact]
     public void Sum_on_empty_is_zero()
     {
-        using var db = CreateContext([], MongoQueryMode.Native, nameof(Sum_on_empty_is_zero));
+        using var db = CreateContext([], MongoQueryProvider.Native, nameof(Sum_on_empty_is_zero));
         Assert.Equal(0, db.Entities.Sum(e => e.Value));
     }
 
     [Fact]
     public void Any_true_and_false()
     {
-        using var db = CreateContext([1], MongoQueryMode.NativeOnly, nameof(Any_true_and_false) + "1");
+        using var db = CreateContext([1], MongoQueryProvider.NativeOnly, nameof(Any_true_and_false) + "1");
         Assert.True(db.Entities.Any());
-        using var empty = CreateContext([], MongoQueryMode.Native, nameof(Any_true_and_false) + "2");
+        using var empty = CreateContext([], MongoQueryProvider.Native, nameof(Any_true_and_false) + "2");
         Assert.False(empty.Entities.Any());
     }
 
@@ -291,14 +291,14 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void All_over_empty_is_true()
     {
-        using var db = CreateContext([], MongoQueryMode.NativeOnly, nameof(All_over_empty_is_true));
+        using var db = CreateContext([], MongoQueryProvider.NativeOnly, nameof(All_over_empty_is_true));
         Assert.True(db.Entities.All(e => e.Value > 0)); // vacuously true over an empty set — succeeds under NativeOnly
     }
 
     [Fact]
     public void All_with_failing_element_is_false()
     {
-        using var db = CreateContext([1, -1, 2], MongoQueryMode.NativeOnly, nameof(All_with_failing_element_is_false));
+        using var db = CreateContext([1, -1, 2], MongoQueryProvider.NativeOnly, nameof(All_with_failing_element_is_false));
         Assert.False(db.Entities.All(e => e.Value > 0)); // -1 fails the predicate => All is false
     }
 
@@ -306,7 +306,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     public void All_over_bare_bool_goes_native()
     {
         // A bare-bool predicate has no comparison to negate.
-        using var active = CreateBoolContext([true, true], MongoQueryMode.NativeOnly, nameof(All_over_bare_bool_goes_native));
+        using var active = CreateBoolContext([true, true], MongoQueryProvider.NativeOnly, nameof(All_over_bare_bool_goes_native));
         Assert.True(active.Entities.All(e => e.IsActive));
     }
 
@@ -317,10 +317,10 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         TSeed[] seed, Func<TSeed, ValueEntity> project, Func<IQueryable<ValueEntity>, bool> query,
         [CallerMemberName] string testName = "")
     {
-        using var nativeOnly = CreateContext(seed, project, MongoQueryMode.NativeOnly, testName + "native");
+        using var nativeOnly = CreateContext(seed, project, MongoQueryProvider.NativeOnly, testName + "native");
         var nativeResult = query(nativeOnly.Entities); // succeeds only if the aggregate went native
 
-        using var driver = CreateContext(seed, project, MongoQueryMode.DriverLinq, testName + "driver");
+        using var driver = CreateContext(seed, project, MongoQueryProvider.DriverLinq, testName + "driver");
         var driverResult = query(driver.Entities);
 
         Assert.Equal(driverResult, nativeResult);
@@ -331,11 +331,11 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         TSeed[] seed, Func<TSeed, ValueEntity> project, Func<IQueryable<ValueEntity>, bool> query,
         [CallerMemberName] string testName = "")
     {
-        using var nativeOnly = CreateContext(seed, project, MongoQueryMode.NativeOnly, testName + "no");
+        using var nativeOnly = CreateContext(seed, project, MongoQueryProvider.NativeOnly, testName + "no");
         Assert.Throws<NativeTranslationNotSupportedException>(() => query(nativeOnly.Entities));
 
-        using var native = CreateContext(seed, project, MongoQueryMode.Native, testName + "native");
-        using var driver = CreateContext(seed, project, MongoQueryMode.DriverLinq, testName + "driver");
+        using var native = CreateContext(seed, project, MongoQueryProvider.Native, testName + "native");
+        using var driver = CreateContext(seed, project, MongoQueryProvider.DriverLinq, testName + "driver");
         var nativeResult = query(native.Entities);
         Assert.Equal(query(driver.Entities), nativeResult);
         return nativeResult;
@@ -411,7 +411,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Min_on_empty_nonnullable_throws()
     {
-        using var db = CreateContext([], MongoQueryMode.Native, nameof(Min_on_empty_nonnullable_throws));
+        using var db = CreateContext([], MongoQueryProvider.Native, nameof(Min_on_empty_nonnullable_throws));
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Min(e => e.Value));
         Assert.Contains("no elements", ex.Message);
     }
@@ -419,7 +419,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Max_and_average_go_native()
     {
-        using var db = CreateContext([2, 4, 6], MongoQueryMode.NativeOnly, nameof(Max_and_average_go_native));
+        using var db = CreateContext([2, 4, 6], MongoQueryProvider.NativeOnly, nameof(Max_and_average_go_native));
         Assert.Equal(6, db.Entities.Max(e => e.Value));
         Assert.Equal(4.0, db.Entities.Average(e => e.Value));
     }
@@ -427,21 +427,21 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Computed_selector_sum_goes_native()
     {
-        using var db = CreateContext([1, 2], MongoQueryMode.NativeOnly, nameof(Computed_selector_sum_goes_native));
+        using var db = CreateContext([1, 2], MongoQueryProvider.NativeOnly, nameof(Computed_selector_sum_goes_native));
         Assert.Equal(6, db.Entities.Sum(e => e.Value * 2));
     }
 
     [Fact]
     public void Sum_over_decimal_goes_native()
     {
-        using var db = CreateDecimalContext([1.5m, 2.25m, 3.0m], MongoQueryMode.NativeOnly, nameof(Sum_over_decimal_goes_native));
+        using var db = CreateDecimalContext([1.5m, 2.25m, 3.0m], MongoQueryProvider.NativeOnly, nameof(Sum_over_decimal_goes_native));
         Assert.Equal(6.75m, db.Entities.Sum(e => e.DecimalValue)); // succeeds under NativeOnly => went native
     }
 
     [Fact]
     public void Average_over_decimal_goes_native()
     {
-        using var db = CreateDecimalContext([1.0m, 2.0m, 3.0m], MongoQueryMode.NativeOnly, nameof(Average_over_decimal_goes_native));
+        using var db = CreateDecimalContext([1.0m, 2.0m, 3.0m], MongoQueryProvider.NativeOnly, nameof(Average_over_decimal_goes_native));
         Assert.Equal(2.0m, db.Entities.Average(e => e.DecimalValue));
     }
 
@@ -450,7 +450,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
 
     private static readonly float[] FloatSeed = [1.6f, 1.7f];
 
-    private SingleEntityDbContext<ValueEntity> CreateFloatContext(float?[] seed, MongoQueryMode mode, string name)
+    private SingleEntityDbContext<ValueEntity> CreateFloatContext(float?[] seed, MongoQueryProvider mode, string name)
         => CreateContext(
             seed,
             v => new ValueEntity { Id = ObjectId.GenerateNewId(), FloatValue = v ?? 0f, NullableFloatValue = v, Name = "g" },
@@ -459,7 +459,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Average_over_float_goes_native_and_matches_linq_to_objects()
     {
-        using var db = CreateFloatContext([1.6f, 1.7f], MongoQueryMode.NativeOnly, nameof(Average_over_float_goes_native_and_matches_linq_to_objects));
+        using var db = CreateFloatContext([1.6f, 1.7f], MongoQueryProvider.NativeOnly, nameof(Average_over_float_goes_native_and_matches_linq_to_objects));
         var expected = FloatSeed.Average();
         Assert.Equal(1.6500001f, expected);
         Assert.Equal(expected, db.Entities.Average(e => e.FloatValue));
@@ -468,21 +468,21 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Average_over_nullable_float_goes_native_and_matches_linq_to_objects()
     {
-        using var db = CreateFloatContext([1.6f, null, 1.7f], MongoQueryMode.NativeOnly, nameof(Average_over_nullable_float_goes_native_and_matches_linq_to_objects));
+        using var db = CreateFloatContext([1.6f, null, 1.7f], MongoQueryProvider.NativeOnly, nameof(Average_over_nullable_float_goes_native_and_matches_linq_to_objects));
         Assert.Equal(1.6500001f, db.Entities.Average(e => e.NullableFloatValue));
     }
 
     [Fact]
     public void Average_over_nullable_float_with_no_values_is_null()
     {
-        using var db = CreateFloatContext([null, null], MongoQueryMode.NativeOnly, nameof(Average_over_nullable_float_with_no_values_is_null));
+        using var db = CreateFloatContext([null, null], MongoQueryProvider.NativeOnly, nameof(Average_over_nullable_float_with_no_values_is_null));
         Assert.Null(db.Entities.Average(e => e.NullableFloatValue));
     }
 
     [Fact]
     public void Grouped_average_over_float_goes_native_and_matches_linq_to_objects()
     {
-        using var db = CreateFloatContext([1.6f, 1.7f], MongoQueryMode.NativeOnly, nameof(Grouped_average_over_float_goes_native_and_matches_linq_to_objects));
+        using var db = CreateFloatContext([1.6f, 1.7f], MongoQueryProvider.NativeOnly, nameof(Grouped_average_over_float_goes_native_and_matches_linq_to_objects));
         var result = db.Entities.GroupBy(e => e.Name).Select(g => new { g.Key, Avg = g.Average(x => x.FloatValue) }).ToList();
         var row = Assert.Single(result);
         Assert.Equal("g", row.Key);
@@ -495,7 +495,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         using var db = CreateContext(
             new decimal?[] { 1.0m, null, 2.0m },
             v => new ValueEntity { Id = ObjectId.GenerateNewId(), NullableDecimalValue = v },
-            MongoQueryMode.NativeOnly, nameof(Average_over_nullable_decimal_goes_native));
+            MongoQueryProvider.NativeOnly, nameof(Average_over_nullable_decimal_goes_native));
         Assert.Equal(1.5m, db.Entities.Average(e => e.NullableDecimalValue));
     }
 
@@ -503,7 +503,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     public void Average_over_nullable_int_ignores_nulls()
     {
         // Nulls are skipped, not counted as zero: (2 + 6) / 2 = 4, not 8 / 3.
-        using var db = CreateNullableContext([2, null, 6], MongoQueryMode.NativeOnly, nameof(Average_over_nullable_int_ignores_nulls));
+        using var db = CreateNullableContext([2, null, 6], MongoQueryProvider.NativeOnly, nameof(Average_over_nullable_int_ignores_nulls));
         Assert.Equal(4.0, db.Entities.Average(e => e.NullableValue));
     }
 
@@ -512,14 +512,14 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     {
         // EF-228 DriverLinq leg, NOT fixed: the driver's float Average reads the double result through a
         // float serializer and throws. Pinned so a change is noticed; driver-LINQ is being retired.
-        using var db = CreateFloatContext([1.6f, 1.7f], MongoQueryMode.DriverLinq, nameof(Average_over_float_under_explicit_driver_linq_throws_truncation));
+        using var db = CreateFloatContext([1.6f, 1.7f], MongoQueryProvider.DriverLinq, nameof(Average_over_float_under_explicit_driver_linq_throws_truncation));
         Assert.Throws<TruncationException>(() => db.Entities.Average(e => e.FloatValue));
     }
 
     [Fact]
     public void Min_max_average_over_nullable_on_empty_return_null()
     {
-        using var db = CreateNullableContext([], MongoQueryMode.Native, nameof(Min_max_average_over_nullable_on_empty_return_null));
+        using var db = CreateNullableContext([], MongoQueryProvider.Native, nameof(Min_max_average_over_nullable_on_empty_return_null));
         Assert.Null(db.Entities.Min(e => e.NullableValue));
         Assert.Null(db.Entities.Max(e => e.NullableValue));
         Assert.Null(db.Entities.Average(e => e.NullableValue));
@@ -528,7 +528,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Min_max_average_over_nullable_with_values_go_native()
     {
-        using var db = CreateNullableContext([2, 4, 6], MongoQueryMode.NativeOnly, nameof(Min_max_average_over_nullable_with_values_go_native));
+        using var db = CreateNullableContext([2, 4, 6], MongoQueryProvider.NativeOnly, nameof(Min_max_average_over_nullable_with_values_go_native));
         Assert.Equal(2, db.Entities.Min(e => e.NullableValue));
         Assert.Equal(6, db.Entities.Max(e => e.NullableValue));
         Assert.Equal(4.0, db.Entities.Average(e => e.NullableValue));
@@ -540,7 +540,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         // Every NullableValue is null: $group yields one document with v: null (not the empty-input path).
         using var db = CreateNullableContext(
             [null, null, null],
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(Min_max_average_over_nullable_all_null_rows_return_null));
 
         Assert.Null(db.Entities.Min(e => e.NullableValue));
@@ -557,18 +557,18 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         // The first two rows are active and the third (excluded by Take(2)) isn't, so ignoring the Take would
         // answer false.
         using var db = CreateBoolContext(
-            [true, true, false], MongoQueryMode.Native, nameof(All_after_Take_goes_native_and_is_correct) + "native");
+            [true, true, false], MongoQueryProvider.Native, nameof(All_after_Take_goes_native_and_is_correct) + "native");
         Assert.True(db.Entities.Take(2).All(e => e.IsActive));
 
         using var nativeOnly = CreateBoolContext(
-            [true, true, false], MongoQueryMode.NativeOnly, nameof(All_after_Take_goes_native_and_is_correct) + "only");
+            [true, true, false], MongoQueryProvider.NativeOnly, nameof(All_after_Take_goes_native_and_is_correct) + "only");
         Assert.True(nativeOnly.Entities.Take(2).All(e => e.IsActive)); // succeeds under NativeOnly => went native
     }
 
     [Fact]
     public void Count_after_Take_stays_native()
     {
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(Count_after_Take_stays_native));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(Count_after_Take_stays_native));
         Assert.Equal(2, db.Entities.Take(2).Count()); // succeeds under NativeOnly => went native
     }
 
@@ -576,7 +576,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     public void All_bare_bool_with_failing_row_is_false_native()
     {
         using var db = CreateBoolContext(
-            [true, false], MongoQueryMode.NativeOnly, nameof(All_bare_bool_with_failing_row_is_false_native));
+            [true, false], MongoQueryProvider.NativeOnly, nameof(All_bare_bool_with_failing_row_is_false_native));
         Assert.False(db.Entities.All(e => e.IsActive));
     }
 
@@ -584,14 +584,14 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     public void All_bare_bool_all_true_is_true_native()
     {
         using var db = CreateBoolContext(
-            [true, true], MongoQueryMode.NativeOnly, nameof(All_bare_bool_all_true_is_true_native));
+            [true, true], MongoQueryProvider.NativeOnly, nameof(All_bare_bool_all_true_is_true_native));
         Assert.True(db.Entities.All(e => e.IsActive));
     }
 
     [Fact]
     public void Select_projection_First_goes_native()
     {
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(Select_projection_First_goes_native));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(Select_projection_First_goes_native));
         var first = db.Entities.OrderBy(e => e.Value).Select(e => new { e.Value }).First();
         Assert.Equal(1, first.Value); // succeeds under NativeOnly => went native
     }
@@ -599,7 +599,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Select_projection_FirstOrDefault_over_empty_is_null()
     {
-        using var db = CreateContext([], MongoQueryMode.Native, nameof(Select_projection_FirstOrDefault_over_empty_is_null));
+        using var db = CreateContext([], MongoQueryProvider.Native, nameof(Select_projection_FirstOrDefault_over_empty_is_null));
         var first = db.Entities.Select(e => new { e.Value }).FirstOrDefault();
         Assert.Null(first);
     }
@@ -610,18 +610,18 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     public void Select_bare_scalar_First_goes_native()
     {
         using var nativeOnly = CreateContext(
-            [1, 2, 3], MongoQueryMode.NativeOnly, nameof(Select_bare_scalar_First_goes_native) + "only");
+            [1, 2, 3], MongoQueryProvider.NativeOnly, nameof(Select_bare_scalar_First_goes_native) + "only");
         Assert.Equal(1, nativeOnly.Entities.OrderBy(e => e.Value).Select(e => e.Value).First());
 
         using var native = CreateContext(
-            [1, 2, 3], MongoQueryMode.Native, nameof(Select_bare_scalar_First_goes_native) + "native");
+            [1, 2, 3], MongoQueryProvider.Native, nameof(Select_bare_scalar_First_goes_native) + "native");
         Assert.Equal(1, native.Entities.OrderBy(e => e.Value).Select(e => e.Value).First());
     }
 
     [Fact]
     public void Min_max_over_string_go_native()
     {
-        using var db = CreateStringContext(["banana", "apple", "cherry"], MongoQueryMode.NativeOnly, nameof(Min_max_over_string_go_native));
+        using var db = CreateStringContext(["banana", "apple", "cherry"], MongoQueryProvider.NativeOnly, nameof(Min_max_over_string_go_native));
         Assert.Equal("apple", db.Entities.Min(e => e.Name));
         Assert.Equal("cherry", db.Entities.Max(e => e.Name));
     }
@@ -629,7 +629,7 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
     [Fact]
     public void Filtered_sum_and_count_go_native()
     {
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(Filtered_sum_and_count_go_native));
+        using var db = CreateContext([1, 2, 3], MongoQueryProvider.NativeOnly, nameof(Filtered_sum_and_count_go_native));
         Assert.Equal(5, db.Entities.Where(e => e.Value > 1).Sum(e => e.Value));
         Assert.Equal(2, db.Entities.Where(e => e.Value > 1).Count());
     }

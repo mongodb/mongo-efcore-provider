@@ -33,8 +33,8 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// slice 1. Hand-computed over raw seeds, including a customer with no orders (the empty group) and orders whose
 /// customer is dangling or null (never counted).
 /// <para>
-/// <see cref="MongoQueryMode.NativeOnly"/> and <see cref="MongoQueryMode.Native"/> must answer exactly. The explicit
-/// <see cref="MongoQueryMode.DriverLinq"/> leg may answer correctly or refuse loudly, never answer wrongly: the driver-LINQ
+/// <see cref="MongoQueryProvider.NativeOnly"/> and <see cref="MongoQueryProvider.Native"/> must answer exactly. The explicit
+/// <see cref="MongoQueryProvider.DriverLinq"/> leg may answer correctly or refuse loudly, never answer wrongly: the driver-LINQ
 /// bridge does not implement these leaves yet.
 /// </para>
 /// </summary>
@@ -88,7 +88,7 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
     private void Assert3<T>(Func<Ctx, IQueryable<T>> query, Func<T, string> format, List<string> expected)
     {
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(names, mode);
             List<string>? rows = null;
@@ -96,7 +96,7 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
             {
                 rows = query(db).AsEnumerable().Select(format).OrderBy(s => s).ToList();
             }
-            catch (Exception) when (mode == MongoQueryMode.DriverLinq)
+            catch (Exception) when (mode == MongoQueryProvider.DriverLinq)
             {
                 // The bridge may refuse these leaves for now (never answer wrongly).
             }
@@ -107,7 +107,7 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
             }
             else
             {
-                Assert.Equal(MongoQueryMode.DriverLinq, mode);
+                Assert.Equal(MongoQueryProvider.DriverLinq, mode);
             }
         }
     }
@@ -202,7 +202,7 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
     {
         // LINQ's Min over an empty sequence of a non-nullable type throws; the whole query fails because C0 has no orders.
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = Create(names, mode);
             Assert.ThrowsAny<InvalidOperationException>(
@@ -214,7 +214,7 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
     public void Sum_of_a_computed_selector_with_a_captured_factor_is_read_per_execution()
     {
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = Create(names, mode);
             NativeModeAssert.TwiceWithDifferentValues(
@@ -231,7 +231,7 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
     {
         // A conditional is not arithmetic over the element: it must refuse (or answer exactly), never fall back to a property read.
         var names = Seed();
-        using var db = Create(names, MongoQueryMode.NativeOnly);
+        using var db = Create(names, MongoQueryProvider.NativeOnly);
 
         var exception = Record.Exception(() => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Sum(o => o.Total > 15 ? 1 : 0) })
             .AsEnumerable().Select(z => z.Id + ":" + z.V).OrderBy(s => s).ToList());
@@ -249,9 +249,9 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
             .AsEnumerable().Select(z => z.Id + ":" + z.V).OrderBy(s => s).ToList();
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Parameterized_predicate_is_read_per_execution(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Parameterized_predicate_is_read_per_execution(MongoQueryProvider mode)
     {
         var names = Seed();
 
@@ -262,10 +262,10 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
             v => CountAbove(db, (int)v!), 15, ["A1:2", "A2:1", "B1:1", "C0:0"], 650, ["A1:0", "A2:1", "B1:0", "C0:0"]);
     }
 
-    private Ctx Create(string[] names, MongoQueryMode mode)
+    private Ctx Create(string[] names, MongoQueryProvider mode)
     {
         var options = new DbContextOptionsBuilder<Ctx>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;

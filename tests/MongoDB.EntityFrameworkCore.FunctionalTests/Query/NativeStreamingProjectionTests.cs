@@ -33,14 +33,14 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    private static SingleEntityDbContext<T> CreateContext<T>(IMongoCollection<T> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<T> CreateContext<T>(IMongoCollection<T> collection, MongoQueryProvider mode)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private class Row
@@ -95,7 +95,7 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedRows();
 
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             AssertStreams(db.Entities.AsNoTracking().Select(r => r.Count));
         }
@@ -217,7 +217,7 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedRows();
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(1, db.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Count).First());
@@ -256,7 +256,7 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
             P10 = i % 2 == 0 ? null : i * 10,
         }));
 
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             AssertStreams(db.Entities.AsNoTracking().Select(w => new { w.P1, w.P2, w.P3, w.P4, w.P5, w.P6, w.P7, w.P8, w.P9, w.P10 }));
         }
@@ -299,7 +299,7 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
             new Typed { Id = 2, Kind = Kind.Large, When = new DateTime(1999, 12, 31, 23, 59, 59, DateTimeKind.Utc), Token = Guid.Empty, Amount = -0.5m, MaybeKind = null, Span = TimeSpan.Zero },
         ]);
 
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             AssertStreams(db.Entities.AsNoTracking().Select(t => new { t.Kind, t.When, t.Token, t.Amount, t.MaybeKind, t.Span }));
         }
@@ -332,7 +332,7 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
         ]);
 
         // (Driver-LINQ throws the driver's FormatException for the null, from inside its batch read; only the provider's message is asserted.)
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         using var enumerator = db.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Count).AsEnumerable().GetEnumerator();
 
         Assert.True(enumerator.MoveNext());
@@ -358,12 +358,12 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
         ]);
 
         // Driver-LINQ deserializes the whole batch inside the driver, so it fails before returning row 1; only its exception type is compared.
-        using var driverDb = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverDb = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverType = Assert.ThrowsAny<Exception>(
             () => driverDb.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Count).ToList()).GetType();
 
         // Stored data that contradicts the model is not recovered from: the native cursor fails the same way, at the same point.
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(
             driverType,
             Assert.ThrowsAny<Exception>(() => db.Entities.AsNoTracking().OrderBy(r => r.Id).Select(r => r.Count).ToList()).GetType());
@@ -377,7 +377,7 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
     public void Client_side_projection_code_runs_per_row_as_the_enumerator_reaches_it()
     {
         var collection = SeedRows();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         lock (Calls)
         {
@@ -408,7 +408,7 @@ public class NativeStreamingProjectionTests(TemporaryDatabaseFixture database)
     public void Projection_with_no_document_reads_keeps_the_dom_shaper()
     {
         var collection = SeedRows();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // A whole entity is the entity materializer's, not a projection's, and is never a MongoProjectedRow.
         var rowType = CursorRowType(db.Entities.AsNoTracking());

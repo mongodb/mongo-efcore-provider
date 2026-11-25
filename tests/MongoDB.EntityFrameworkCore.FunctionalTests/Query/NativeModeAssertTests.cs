@@ -93,11 +93,11 @@ public class NativeModeAssertTests(TemporaryDatabaseFixture database) : IClassFi
     {
         Assert.ThrowsAny<Xunit.Sdk.XunitException>(
             () => NativeModeAssert.NativeAndParity(
-                mode => mode == MongoQueryMode.NativeOnly ? ["a"] : new List<string>(), allowEmpty: true));
+                mode => mode == MongoQueryProvider.NativeOnly ? ["a"] : new List<string>(), allowEmpty: true));
     }
 
     private static List<string> Titles(
-        IMongoCollection<Item> collection, MongoQueryMode mode, System.Linq.Expressions.Expression<Func<Item, bool>> predicate)
+        IMongoCollection<Item> collection, MongoQueryProvider mode, System.Linq.Expressions.Expression<Func<Item, bool>> predicate)
     {
         using var db = CreateContext(collection, mode);
         return db.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Title).Select(x => x.Title).ToList();
@@ -116,7 +116,7 @@ public class NativeModeAssertTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
                 b.LogTo(_ => compilations++, [CoreEventId.QueryCompilationStarting]);
             });
 
@@ -148,12 +148,12 @@ public class NativeModeAssertTests(TemporaryDatabaseFixture database) : IClassFi
         return database.MongoDatabase.GetCollection<Item>(collectionName);
     }
 
-    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

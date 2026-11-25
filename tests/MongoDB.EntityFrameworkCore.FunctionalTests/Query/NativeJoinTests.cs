@@ -34,7 +34,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Native translation of explicit <c>Join</c>/<c>LeftJoin</c>. A join records a
 /// <see cref="MongoDB.EntityFrameworkCore.Query.Expressions.MongoJoinScope"/> (metadata only); the consuming
 /// operator (<c>Where</c> over the outer side, a bare or wrapped <c>Select</c>) confirms it and registers the
-/// <c>$lookup</c>. Shapes that go native are asserted under <see cref="MongoQueryMode.NativeOnly"/>; the rest must
+/// <c>$lookup</c>. Shapes that go native are asserted under <see cref="MongoQueryProvider.NativeOnly"/>; the rest must
 /// decline gracefully. The outer whole-entity leaf stages <c>$$ROOT</c> under its alias; the inner leaf uses the
 /// join's fixed <c>$lookup</c> prefix because the read side resolves it from the navigation.
 /// </summary>
@@ -44,7 +44,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Recording_join_scope_does_not_change_driver_LINQ_fallback_MQL()
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var db = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Recording_join_scope_does_not_change_driver_LINQ_fallback_MQL), out var spyLogger);
 
         // Uses a shape no Select arm confirms (untranslatable `o.Name.ToUpper()`), so the driver-LINQ document shape is
@@ -73,10 +73,10 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Confirmed_join_projection_uses_the_flat_lookup_shape_under_DriverLinq_too()
     {
-        // Once a Select confirms the join, the $lookup is registered at translation time, before the query mode is
+        // Once a Select confirms the join, the $lookup is registered at translation time, before the query provider is
         // read, so the flat "_lookup_<Navigation>" shape applies under DriverLinq too.
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var db = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Confirmed_join_projection_uses_the_flat_lookup_shape_under_DriverLinq_too), out var spyLogger);
 
         var result = db.Owners
@@ -100,7 +100,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Genuine_two_sided_join_returns_correct_results_via_fallback()
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.Native,
+        using var db = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Genuine_two_sided_join_returns_correct_results_via_fallback));
 
         var result = db.Owners
@@ -123,7 +123,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Whole outer entity leaf plus a scalar inner leaf: the outer leaf arrives as the join's
         // StructuralTypeShaperExpression and is rebound by index; the binder's Outer arm stages $$ROOT.
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Whole_outer_entity_leaf_projection_goes_native_under_NativeOnly));
 
         var result = db.Owners
@@ -146,7 +146,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Depth1_whole_entity_leaf_join_with_paging_goes_native_under_NativeOnly()
     {
         var seed = SeedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Depth1_whole_entity_leaf_join_with_paging_goes_native_under_NativeOnly));
 
         var results = db.Owners
@@ -163,7 +163,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Raw GroupJoin with a collection result is unsupported in every mode (EF-436): substituting a single-entity
         // shaper for the collection in TranslateJoinCore gives a type mismatch.
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(GroupJoin_array_result_shape_still_declines_cleanly_in_NativeOnly));
 
         var ex = Assert.Throws<InvalidOperationException>(() =>
@@ -179,7 +179,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Chained_join_scalar_leaf_shapes_resolve_correctly_under_NativeOnly()
     {
         var seed = SeedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Chained_join_scalar_leaf_shapes_resolve_correctly_under_NativeOnly));
 
         var chainResult = db.Owners
@@ -201,7 +201,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // The intermediate-Select spelling confirms the first join while Joins.Count is still 1, so AddLookup fires
         // and UsesDriverJoinFields flips before the second join runs (a wrong-data bug in
         // NorthwindJoinQueryMongoTest.GroupJoin_Where). Needs a result check on either route, hence Native.
-        using var dbNative = CreateContext(seed, MongoQueryMode.Native,
+        using var dbNative = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Chained_join_scalar_leaf_shapes_resolve_correctly_under_NativeOnly) + "_fallback");
 
         var result = dbNative.Owners
@@ -228,7 +228,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // EF elides the pending wrap Select for a bare Any(), so confirmation happens only via
         // NativeCardinalityBinder.TryBindAggregate's no-trailing-Select path.
         var seed = SeedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Chained_join_Where_OrderBy_Any_goes_native_under_NativeOnly));
 
         var found = db.Owners
@@ -245,7 +245,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Chained_join_Where_terminal_Count_goes_native_under_NativeOnly()
     {
         var seed = SeedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Chained_join_Where_terminal_Count_goes_native_under_NativeOnly));
 
         var count = db.Owners
@@ -261,7 +261,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Chained_join_scalar_leaf_projection_goes_native_under_NativeOnly()
     {
         var seed = SeedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Chained_join_scalar_leaf_projection_goes_native_under_NativeOnly));
 
         var results = db.Owners
@@ -286,7 +286,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Skip/Take ahead of the pending selector, so it reaches TryAdmitSingleEligibleNativeJoinScope's HasPaging branch
         // pre-confirmation and is deferred past the $lookup/$unwind.
         var seed = SeedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Chained_join_scalar_leaf_projection_with_trailing_paging_goes_native_under_NativeOnly));
 
         var results = db.Owners
@@ -320,7 +320,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // EF hoists Skip/Take ahead of the pending selector, so Select.HasPaging is true at confirmation; neither join
         // is a left-outer reference nav, so PipelineOps are deferred past both $lookup/$unwind pairs.
         var seed = SeedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Chained_join_scalar_leaf_projection_with_paging_goes_native_under_NativeOnly));
 
         var results = db.Owners
@@ -355,7 +355,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // {$limit: 1} would keep the dangling order and the join would return zero rows.
         var seed = SeedDanglingOrderFirstThenMatched();
 
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Paging_after_a_confirmed_join_applies_to_the_joined_row_count_not_the_outer_one_under_NativeOnly));
 
         var result = db.Orders
@@ -375,7 +375,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // MongoSelectLowerer would emit filter-then-page and return zero rows; TryAdmitSingleEligibleNativeJoinScope declines
         // it (JoinInnerAccessConfirmed guard). No explicit Select: nav-expansion synthesizes `Select(ti => ti.Outer)`.
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Paging_before_a_where_reaching_a_confirmed_joins_inner_side_declines_under_NativeOnly));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -392,7 +392,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // reference nav. With a dangling reference, native is drop-then-page (see MongoSelectDefinition.PostLookupPagingOps),
         // consistent with explicit joins.
         var seed = SeedDanglingOrderFirstThenMatched();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Paging_after_a_dangling_required_reference_dereference_pages_the_joined_result_under_NativeOnly));
 
         // Mirrors the spec shape: Include, Skip/Take, then a wrapped projection. A bare leaf declines for an
@@ -411,13 +411,13 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // non-multiplying deferred the Take past the $unwind (one row instead of three, silently). Differential against
     // an in-memory oracle, all three modes, inner and left-outer spellings.
     [Theory]
-    [InlineData(MongoQueryMode.Native, false)]
-    [InlineData(MongoQueryMode.DriverLinq, false)]
-    [InlineData(MongoQueryMode.NativeOnly, false)]
-    [InlineData(MongoQueryMode.Native, true)]
-    [InlineData(MongoQueryMode.DriverLinq, true)]
-    [InlineData(MongoQueryMode.NativeOnly, true)]
-    public void Outer_paging_before_a_navigation_less_one_to_many_join_pages_the_outer_rows(MongoQueryMode mode, bool leftOuter)
+    [InlineData(MongoQueryProvider.Native, false)]
+    [InlineData(MongoQueryProvider.DriverLinq, false)]
+    [InlineData(MongoQueryProvider.NativeOnly, false)]
+    [InlineData(MongoQueryProvider.Native, true)]
+    [InlineData(MongoQueryProvider.DriverLinq, true)]
+    [InlineData(MongoQueryProvider.NativeOnly, true)]
+    public void Outer_paging_before_a_navigation_less_one_to_many_join_pages_the_outer_rows(MongoQueryProvider mode, bool leftOuter)
     {
         var (owners, orderLines) = SeedTwoOwnersSharingThreeMatchingLines();
         using var db = CreateContext(new Seed(owners, [], orderLines), mode,
@@ -455,7 +455,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Outer_paging_before_a_collection_navigation_join_goes_native_and_pages_the_outer_rows()
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Outer_paging_before_a_collection_navigation_join_goes_native_and_pages_the_outer_rows));
 
         var actual = db.Owners.OrderBy(o => o.Name).Take(1)
@@ -477,7 +477,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         var (owners, orderLines) = SeedTwoOwnersSharingThreeMatchingLines();
         var seed = new Seed(owners, [], orderLines);
 
-        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using (var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
                    nameof(Paging_on_both_sides_of_a_one_to_many_join_declines_and_falls_back_correctly) + "_nativeOnly"))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -487,7 +487,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
                     .ToList());
         }
 
-        using var native = CreateContext(seed, MongoQueryMode.Native,
+        using var native = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Paging_on_both_sides_of_a_one_to_many_join_declines_and_falls_back_correctly) + "_native");
 
         var actual = native.Owners.OrderBy(o => o.Name).Take(1)
@@ -536,11 +536,11 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Spelled out: LINQ-to-objects' LeftJoin yields a null `o` for the dangling row, so `o.Rank` would throw.
         List<(int?, decimal, int?)> expected = [(1, 10m, 7), (2, 20m, null)];
 
-        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Chained_join_then_LeftJoin_unmatched_row_reads_a_scalar_leaf_at_the_second_level_under_NativeOnly) + "_nativeOnly");
         Assert.Equal(expected, Run(nativeOnly));
 
-        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Chained_join_then_LeftJoin_unmatched_row_reads_a_scalar_leaf_at_the_second_level_under_NativeOnly) + "_dl");
         Assert.Equal(expected, Run(driverLinq));
     }
@@ -552,7 +552,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Two joins over the same navigation must get distinct aliases ("_lookup_Orders", "_lookup_Orders_1") via
         // UniquifyLookupAlias, or the second $lookup collides.
         var seed = SeedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Chained_join_onto_the_same_target_entity_type_disambiguates_lookup_aliases_under_NativeOnly),
             out var spyLogger);
 
@@ -585,7 +585,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Where then Take over a 2-level chain of collection-navigation joins: PipelineOps are deferred past the
         // $lookup/$unwind blocks.
         var seed = SeedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Take_after_Where_over_a_two_level_collection_nav_chain_goes_native_under_NativeOnly));
 
         var results = db.Owners
@@ -616,7 +616,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Every chain level must be 1:1-safe for paging to stay ahead of $lookup, not just the last. Level 1
         // (Owner.Orders, inner Join) is unsafe, level 2 (Order.Owner, LeftJoin) is safe; a last-only check would wrongly pass.
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Chained_join_with_an_earlier_collection_nav_pages_the_joined_result_under_NativeOnly));
 
         var results = db.Owners
@@ -647,7 +647,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // so the HasPaging branch defers it past the join. Alice has two Orders and Bob one: Take(2) must return two
         // joined rows (paging owners would give three) and Skip(2) one (paging owners would give none).
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Take_or_Skip_after_a_confirmed_join_pages_the_joined_result_under_NativeOnly));
 
         var allJoined = seed.Owners
@@ -669,7 +669,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Single(skipped);
         Assert.All(skipped, row => Assert.Contains(row, allJoined));
 
-        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Take_or_Skip_after_a_confirmed_join_pages_the_joined_result_under_NativeOnly) + "_driverLinq");
 
         var takenDriverLinq = driverLinq.Owners
@@ -695,7 +695,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // is seeded first: {$limit: 1} keeps it, the $unwind drops it, and First() returns nothing. Keep the whole-entity
         // `Select(x => x.r)`: a wrapped scalar projection declines earlier for an unrelated reason.
         var seed = SeedOrderlessOwnerFirst();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(First_after_a_confirmed_join_declines_cleanly_under_NativeOnly));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -719,15 +719,15 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // `Select(x => x.r)` down as `{ _v: "$_lookup_Orders" }` and the entity shaper (reading `_lookup_Orders`) found
     // nothing. Fixed by the fallback's strip of that Select under a reducer (MongoSelectDefinition.HasBareJoinInnerEntityLeaf).
     [Theory]
-    [InlineData(MongoQueryMode.Native, "First")]
-    [InlineData(MongoQueryMode.DriverLinq, "First")]
-    [InlineData(MongoQueryMode.Native, "FirstOrDefault")]
-    [InlineData(MongoQueryMode.DriverLinq, "FirstOrDefault")]
-    [InlineData(MongoQueryMode.Native, "Single")]
-    [InlineData(MongoQueryMode.DriverLinq, "Single")]
-    [InlineData(MongoQueryMode.Native, "SingleOrDefault")]
-    [InlineData(MongoQueryMode.DriverLinq, "SingleOrDefault")]
-    public void Reducer_after_a_bare_Inner_entity_leaf_over_a_join_returns_the_joined_row(MongoQueryMode mode, string reducer)
+    [InlineData(MongoQueryProvider.Native, "First")]
+    [InlineData(MongoQueryProvider.DriverLinq, "First")]
+    [InlineData(MongoQueryProvider.Native, "FirstOrDefault")]
+    [InlineData(MongoQueryProvider.DriverLinq, "FirstOrDefault")]
+    [InlineData(MongoQueryProvider.Native, "Single")]
+    [InlineData(MongoQueryProvider.DriverLinq, "Single")]
+    [InlineData(MongoQueryProvider.Native, "SingleOrDefault")]
+    [InlineData(MongoQueryProvider.DriverLinq, "SingleOrDefault")]
+    public void Reducer_after_a_bare_Inner_entity_leaf_over_a_join_returns_the_joined_row(MongoQueryProvider mode, string reducer)
     {
         var seed = SeedOrderlessOwnerFirst();
         using var db = CreateContext(seed, mode,
@@ -760,7 +760,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         var seed = SeedOwnersAndOrders();
         var targetOrderId = seed.Orders[2].Id;
 
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Where_after_a_bare_whole_entity_leaf_select_goes_native_and_filters_the_inner_side));
 
         var result = db.Owners
@@ -779,15 +779,15 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // currently fails with the conjunct removed (kept as defence in depth); these pin the results in every mode, and the
     // NativeOnly half pins that each predicate still declines. Re-check the predicates if this starts going native.
     [Theory]
-    [InlineData(MongoQueryMode.Native, "Replace")]
-    [InlineData(MongoQueryMode.DriverLinq, "Replace")]
-    [InlineData(MongoQueryMode.Native, "ToString")]
-    [InlineData(MongoQueryMode.DriverLinq, "ToString")]
-    [InlineData(MongoQueryMode.Native, "Substring")]
-    [InlineData(MongoQueryMode.DriverLinq, "Substring")]
-    [InlineData(MongoQueryMode.Native, "Split")]
-    [InlineData(MongoQueryMode.DriverLinq, "Split")]
-    public void Inner_side_Where_that_declines_natively_does_not_confirm_the_join(MongoQueryMode mode, string shape)
+    [InlineData(MongoQueryProvider.Native, "Replace")]
+    [InlineData(MongoQueryProvider.DriverLinq, "Replace")]
+    [InlineData(MongoQueryProvider.Native, "ToString")]
+    [InlineData(MongoQueryProvider.DriverLinq, "ToString")]
+    [InlineData(MongoQueryProvider.Native, "Substring")]
+    [InlineData(MongoQueryProvider.DriverLinq, "Substring")]
+    [InlineData(MongoQueryProvider.Native, "Split")]
+    [InlineData(MongoQueryProvider.DriverLinq, "Split")]
+    public void Inner_side_Where_that_declines_natively_does_not_confirm_the_join(MongoQueryProvider mode, string shape)
     {
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, mode,
@@ -806,7 +806,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Inner_side_Where_that_declines_natively_throws_under_NativeOnly(string shape)
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Inner_side_Where_that_declines_natively_throws_under_NativeOnly) + shape);
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => RunInnerSideDecliningWhere(db.Owners, db.Orders, shape));
@@ -831,19 +831,19 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // MongoLookupNullCheckExpression) and lands after the $lookup/$unwind. Covers collection and reference navs,
     // the null check alone, and the conjuncts in the other order.
     [Theory]
-    [InlineData(MongoQueryMode.Native, "CollectionAnd")]
-    [InlineData(MongoQueryMode.DriverLinq, "CollectionAnd")]
-    [InlineData(MongoQueryMode.NativeOnly, "CollectionAnd")]
-    [InlineData(MongoQueryMode.Native, "CollectionNullCheckOnly")]
-    [InlineData(MongoQueryMode.DriverLinq, "CollectionNullCheckOnly")]
-    [InlineData(MongoQueryMode.NativeOnly, "CollectionNullCheckOnly")]
-    [InlineData(MongoQueryMode.Native, "ReferenceAnd")]
-    [InlineData(MongoQueryMode.DriverLinq, "ReferenceAnd")]
-    [InlineData(MongoQueryMode.NativeOnly, "ReferenceAnd")]
-    [InlineData(MongoQueryMode.Native, "ReferenceAndReversed")]
-    [InlineData(MongoQueryMode.DriverLinq, "ReferenceAndReversed")]
-    [InlineData(MongoQueryMode.NativeOnly, "ReferenceAndReversed")]
-    public void Left_join_Where_with_an_Inner_null_check_conjunct_matches_oracle(MongoQueryMode mode, string shape)
+    [InlineData(MongoQueryProvider.Native, "CollectionAnd")]
+    [InlineData(MongoQueryProvider.DriverLinq, "CollectionAnd")]
+    [InlineData(MongoQueryProvider.NativeOnly, "CollectionAnd")]
+    [InlineData(MongoQueryProvider.Native, "CollectionNullCheckOnly")]
+    [InlineData(MongoQueryProvider.DriverLinq, "CollectionNullCheckOnly")]
+    [InlineData(MongoQueryProvider.NativeOnly, "CollectionNullCheckOnly")]
+    [InlineData(MongoQueryProvider.Native, "ReferenceAnd")]
+    [InlineData(MongoQueryProvider.DriverLinq, "ReferenceAnd")]
+    [InlineData(MongoQueryProvider.NativeOnly, "ReferenceAnd")]
+    [InlineData(MongoQueryProvider.Native, "ReferenceAndReversed")]
+    [InlineData(MongoQueryProvider.DriverLinq, "ReferenceAndReversed")]
+    [InlineData(MongoQueryProvider.NativeOnly, "ReferenceAndReversed")]
+    public void Left_join_Where_with_an_Inner_null_check_conjunct_matches_oracle(MongoQueryProvider mode, string shape)
     {
         var seed = SeedOwnersAndOrdersWithUnmatchedRows();
         using var db = CreateContext(seed, mode,
@@ -892,25 +892,25 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // down as `{ _v: "$_lookup_Orders" }` while the entity shaper reads `_lookup_Orders`, so every row was a null
     // entity. The fallback now strips that pushed-down Select.
     [Theory]
-    [InlineData(MongoQueryMode.Native, "BareSelect")]
-    [InlineData(MongoQueryMode.DriverLinq, "BareSelect")]
-    [InlineData(MongoQueryMode.NativeOnly, "BareSelect")]
-    [InlineData(MongoQueryMode.Native, "InnerWhere")]
-    [InlineData(MongoQueryMode.DriverLinq, "InnerWhere")]
-    [InlineData(MongoQueryMode.Native, "OrderByAfter")]
-    [InlineData(MongoQueryMode.DriverLinq, "OrderByAfter")]
-    [InlineData(MongoQueryMode.Native, "SkipAfter")]
-    [InlineData(MongoQueryMode.DriverLinq, "SkipAfter")]
-    [InlineData(MongoQueryMode.Native, "TakeAfter")]
-    [InlineData(MongoQueryMode.DriverLinq, "TakeAfter")]
-    [InlineData(MongoQueryMode.Native, "WhereAfter")]
-    [InlineData(MongoQueryMode.DriverLinq, "WhereAfter")]
-    [InlineData(MongoQueryMode.Native, "DistinctAfter")]
-    [InlineData(MongoQueryMode.NativeOnly, "DistinctAfter")]
-    [InlineData(MongoQueryMode.Native, "FirstAfter")]
-    [InlineData(MongoQueryMode.DriverLinq, "FirstAfter")]
-    [InlineData(MongoQueryMode.NativeOnly, "InnerWhere")]
-    public void Bare_Inner_entity_leaf_over_a_join_matches_oracle(MongoQueryMode mode, string shape)
+    [InlineData(MongoQueryProvider.Native, "BareSelect")]
+    [InlineData(MongoQueryProvider.DriverLinq, "BareSelect")]
+    [InlineData(MongoQueryProvider.NativeOnly, "BareSelect")]
+    [InlineData(MongoQueryProvider.Native, "InnerWhere")]
+    [InlineData(MongoQueryProvider.DriverLinq, "InnerWhere")]
+    [InlineData(MongoQueryProvider.Native, "OrderByAfter")]
+    [InlineData(MongoQueryProvider.DriverLinq, "OrderByAfter")]
+    [InlineData(MongoQueryProvider.Native, "SkipAfter")]
+    [InlineData(MongoQueryProvider.DriverLinq, "SkipAfter")]
+    [InlineData(MongoQueryProvider.Native, "TakeAfter")]
+    [InlineData(MongoQueryProvider.DriverLinq, "TakeAfter")]
+    [InlineData(MongoQueryProvider.Native, "WhereAfter")]
+    [InlineData(MongoQueryProvider.DriverLinq, "WhereAfter")]
+    [InlineData(MongoQueryProvider.Native, "DistinctAfter")]
+    [InlineData(MongoQueryProvider.NativeOnly, "DistinctAfter")]
+    [InlineData(MongoQueryProvider.Native, "FirstAfter")]
+    [InlineData(MongoQueryProvider.DriverLinq, "FirstAfter")]
+    [InlineData(MongoQueryProvider.NativeOnly, "InnerWhere")]
+    public void Bare_Inner_entity_leaf_over_a_join_matches_oracle(MongoQueryProvider mode, string shape)
     {
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, mode, nameof(Bare_Inner_entity_leaf_over_a_join_matches_oracle) + mode + shape);
@@ -928,43 +928,43 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // Every mode must match the in-memory oracle, incl. an inner row matched more than once and a left-join leaf
     // whose unmatched rows collapse to a single null. The Distinct goes native; an operator after it falls back.
     [Theory]
-    [InlineData(MongoQueryMode.Native, "Distinct")]
-    [InlineData(MongoQueryMode.DriverLinq, "Distinct")]
-    [InlineData(MongoQueryMode.NativeOnly, "Distinct")]
-    [InlineData(MongoQueryMode.Native, "DuplicateInnerDistinct")]
-    [InlineData(MongoQueryMode.DriverLinq, "DuplicateInnerDistinct")]
-    [InlineData(MongoQueryMode.NativeOnly, "DuplicateInnerDistinct")]
-    [InlineData(MongoQueryMode.Native, "OuterDistinct")]
-    [InlineData(MongoQueryMode.DriverLinq, "OuterDistinct")]
-    [InlineData(MongoQueryMode.NativeOnly, "OuterDistinct")]
-    [InlineData(MongoQueryMode.Native, "PagedOuterDistinct")]
-    [InlineData(MongoQueryMode.DriverLinq, "PagedOuterDistinct")]
-    [InlineData(MongoQueryMode.NativeOnly, "PagedOuterDistinct")]
-    [InlineData(MongoQueryMode.Native, "DistinctWhere")]
-    [InlineData(MongoQueryMode.DriverLinq, "DistinctWhere")]
-    [InlineData(MongoQueryMode.Native, "DistinctOrderBy")]
-    [InlineData(MongoQueryMode.DriverLinq, "DistinctOrderBy")]
-    [InlineData(MongoQueryMode.Native, "DistinctOrderBySkip")]
-    [InlineData(MongoQueryMode.DriverLinq, "DistinctOrderBySkip")]
-    [InlineData(MongoQueryMode.Native, "DistinctOrderByTake")]
-    [InlineData(MongoQueryMode.DriverLinq, "DistinctOrderByTake")]
-    [InlineData(MongoQueryMode.Native, "DistinctFirst")]
-    [InlineData(MongoQueryMode.DriverLinq, "DistinctFirst")]
-    [InlineData(MongoQueryMode.Native, "DistinctCount")]
-    [InlineData(MongoQueryMode.DriverLinq, "DistinctCount")]
-    [InlineData(MongoQueryMode.NativeOnly, "DistinctCount")]
-    [InlineData(MongoQueryMode.Native, "GroupJoinDefaultIfEmptyDistinct")]
-    [InlineData(MongoQueryMode.DriverLinq, "GroupJoinDefaultIfEmptyDistinct")]
-    [InlineData(MongoQueryMode.NativeOnly, "GroupJoinDefaultIfEmptyDistinct")]
-    [InlineData(MongoQueryMode.Native, "GroupJoinDefaultIfEmptyDuplicateInnerDistinct")]
-    [InlineData(MongoQueryMode.DriverLinq, "GroupJoinDefaultIfEmptyDuplicateInnerDistinct")]
-    [InlineData(MongoQueryMode.NativeOnly, "GroupJoinDefaultIfEmptyDuplicateInnerDistinct")]
+    [InlineData(MongoQueryProvider.Native, "Distinct")]
+    [InlineData(MongoQueryProvider.DriverLinq, "Distinct")]
+    [InlineData(MongoQueryProvider.NativeOnly, "Distinct")]
+    [InlineData(MongoQueryProvider.Native, "DuplicateInnerDistinct")]
+    [InlineData(MongoQueryProvider.DriverLinq, "DuplicateInnerDistinct")]
+    [InlineData(MongoQueryProvider.NativeOnly, "DuplicateInnerDistinct")]
+    [InlineData(MongoQueryProvider.Native, "OuterDistinct")]
+    [InlineData(MongoQueryProvider.DriverLinq, "OuterDistinct")]
+    [InlineData(MongoQueryProvider.NativeOnly, "OuterDistinct")]
+    [InlineData(MongoQueryProvider.Native, "PagedOuterDistinct")]
+    [InlineData(MongoQueryProvider.DriverLinq, "PagedOuterDistinct")]
+    [InlineData(MongoQueryProvider.NativeOnly, "PagedOuterDistinct")]
+    [InlineData(MongoQueryProvider.Native, "DistinctWhere")]
+    [InlineData(MongoQueryProvider.DriverLinq, "DistinctWhere")]
+    [InlineData(MongoQueryProvider.Native, "DistinctOrderBy")]
+    [InlineData(MongoQueryProvider.DriverLinq, "DistinctOrderBy")]
+    [InlineData(MongoQueryProvider.Native, "DistinctOrderBySkip")]
+    [InlineData(MongoQueryProvider.DriverLinq, "DistinctOrderBySkip")]
+    [InlineData(MongoQueryProvider.Native, "DistinctOrderByTake")]
+    [InlineData(MongoQueryProvider.DriverLinq, "DistinctOrderByTake")]
+    [InlineData(MongoQueryProvider.Native, "DistinctFirst")]
+    [InlineData(MongoQueryProvider.DriverLinq, "DistinctFirst")]
+    [InlineData(MongoQueryProvider.Native, "DistinctCount")]
+    [InlineData(MongoQueryProvider.DriverLinq, "DistinctCount")]
+    [InlineData(MongoQueryProvider.NativeOnly, "DistinctCount")]
+    [InlineData(MongoQueryProvider.Native, "GroupJoinDefaultIfEmptyDistinct")]
+    [InlineData(MongoQueryProvider.DriverLinq, "GroupJoinDefaultIfEmptyDistinct")]
+    [InlineData(MongoQueryProvider.NativeOnly, "GroupJoinDefaultIfEmptyDistinct")]
+    [InlineData(MongoQueryProvider.Native, "GroupJoinDefaultIfEmptyDuplicateInnerDistinct")]
+    [InlineData(MongoQueryProvider.DriverLinq, "GroupJoinDefaultIfEmptyDuplicateInnerDistinct")]
+    [InlineData(MongoQueryProvider.NativeOnly, "GroupJoinDefaultIfEmptyDuplicateInnerDistinct")]
 #if !EF8 && !EF9
-    [InlineData(MongoQueryMode.Native, "LeftJoinDistinct")]
-    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinDistinct")]
-    [InlineData(MongoQueryMode.NativeOnly, "LeftJoinDistinct")]
+    [InlineData(MongoQueryProvider.Native, "LeftJoinDistinct")]
+    [InlineData(MongoQueryProvider.DriverLinq, "LeftJoinDistinct")]
+    [InlineData(MongoQueryProvider.NativeOnly, "LeftJoinDistinct")]
 #endif
-    public void Distinct_after_a_bare_Inner_entity_leaf_matches_oracle(MongoQueryMode mode, string shape)
+    public void Distinct_after_a_bare_Inner_entity_leaf_matches_oracle(MongoQueryProvider mode, string shape)
     {
         var seed = SeedOwnersWithRepeatedAndUnmatchedOrders();
         using var db = CreateContext(seed, mode, nameof(Distinct_after_a_bare_Inner_entity_leaf_matches_oracle) + mode + shape);
@@ -977,9 +977,9 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Distinct_after_a_bare_Inner_entity_leaf_returns_tracked_entities(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Distinct_after_a_bare_Inner_entity_leaf_returns_tracked_entities(MongoQueryProvider mode)
     {
         var seed = SeedOwnersWithRepeatedAndUnmatchedOrders();
         using var db = CreateContext(seed, mode, nameof(Distinct_after_a_bare_Inner_entity_leaf_returns_tracked_entities) + mode);
@@ -997,9 +997,9 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // neither path can translate. It fails loudly rather than returning wrong rows; the Outer-leaf Distinct's
     // `$unset` of the join field must never reach an Include-shaping Select (see IsIncludeShapingSelect).
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Distinct_after_an_Include_over_a_join_declines_loudly(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Distinct_after_an_Include_over_a_join_declines_loudly(MongoQueryProvider mode)
     {
         var seed = SeedOwnersWithRepeatedAndUnmatchedOrders();
         using var db = CreateContext(seed, mode, nameof(Distinct_after_an_Include_over_a_join_declines_loudly) + mode);
@@ -1099,7 +1099,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // The Where's $match is recorded before the Select confirms; a Where that failed to translate would silently
         // block confirmation (HasUnsupportedOperator).
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Where_on_the_outer_side_then_a_wrapped_scalar_projection_goes_native));
 
         var result = db.Owners
@@ -1128,7 +1128,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // LeftJoin spelling of the above (MongoJoinScope.IsLeftOuter with a preceding Where), driven from the dependent
         // side so it resolves the reference nav Order.Owner. No dangling FK here; row preservation is pinned elsewhere.
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(LeftJoin_Where_on_the_outer_side_then_a_wrapped_scalar_projection_goes_native));
 
         var result = db.Orders
@@ -1152,10 +1152,10 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
 #endif
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Filtered_join_inner_goes_native_and_driver_linq_refuses_to_drop_the_filter(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Filtered_join_inner_goes_native_and_driver_linq_refuses_to_drop_the_filter(MongoQueryProvider mode)
     {
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, mode,
@@ -1168,7 +1168,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         // The filter is carried in the $lookup sub-pipeline (EF-322). Driver-LINQ would drop it, so it refuses rather
         // than return unfiltered rows (see NativeJoinFilteredInnerTests).
-        if (mode == MongoQueryMode.DriverLinq)
+        if (mode == MongoQueryProvider.DriverLinq)
         {
             Assert.ThrowsAny<Exception>(Run);
             return;
@@ -1187,10 +1187,10 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // COLLECTION nav, an Owner with none carries NO joined field: the null check must fire for Bob, not read a
     // missing Total.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Wrapped_nav_null_check_ternary_over_a_collection_navigation_left_join_matches_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Wrapped_nav_null_check_ternary_over_a_collection_navigation_left_join_matches_oracle(MongoQueryProvider mode)
     {
         var seed = SeedOwnersAndOrdersWithUnmatchedRows();
         using var db = CreateContext(seed, mode,
@@ -1214,10 +1214,10 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // Reference-navigation sibling (resolves Order.Owner): the dangling-FK Order must take the ELSE branch. Also
     // mixes an Outer scalar leaf with the conditional leaf.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Wrapped_nav_null_check_ternary_over_a_reference_navigation_left_join_matches_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Wrapped_nav_null_check_ternary_over_a_reference_navigation_left_join_matches_oracle(MongoQueryProvider mode)
     {
         var seed = SeedOwnersAndOrdersWithUnmatchedRows();
         using var db = CreateContext(seed, mode,
@@ -1239,14 +1239,14 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native, false)]
-    [InlineData(MongoQueryMode.DriverLinq, false)]
-    [InlineData(MongoQueryMode.NativeOnly, false)]
-    [InlineData(MongoQueryMode.Native, true)]
-    [InlineData(MongoQueryMode.DriverLinq, true)]
-    [InlineData(MongoQueryMode.NativeOnly, true)]
+    [InlineData(MongoQueryProvider.Native, false)]
+    [InlineData(MongoQueryProvider.DriverLinq, false)]
+    [InlineData(MongoQueryProvider.NativeOnly, false)]
+    [InlineData(MongoQueryProvider.Native, true)]
+    [InlineData(MongoQueryProvider.DriverLinq, true)]
+    [InlineData(MongoQueryProvider.NativeOnly, true)]
     public void Join_on_non_key_properties_between_navigation_related_types_joins_on_the_written_keys(
-        MongoQueryMode mode, bool leftOuter)
+        MongoQueryProvider mode, bool leftOuter)
     {
         // Keep the fixture's Owner.Orders / Order.Owner navigations: they give this test meaning. A Join on Region/Region
         // (non-key) between types with a navigation: RebindInnerShaperToOuterQuery's loose
@@ -1286,7 +1286,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Genuinely_navigation_less_key_equality_join_goes_native_under_NativeOnly()
     {
         var seed = SeedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Genuinely_navigation_less_key_equality_join_goes_native_under_NativeOnly));
 
         var results =
@@ -1298,10 +1298,10 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Genuinely_navigation_less_join_matches_in_memory_oracle_including_unmatched_rows(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Genuinely_navigation_less_join_matches_in_memory_oracle_including_unmatched_rows(MongoQueryProvider mode)
     {
         var owners = new[]
         {
@@ -1348,7 +1348,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         };
         var seed = new Seed(owners, [], orderLines);
 
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Genuinely_navigation_less_LeftJoin_goes_native_and_preserves_unmatched_rows_under_NativeOnly));
 
         var actual = db.Owners
@@ -1376,7 +1376,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Where_after_join_with_a_bare_scalar_select_goes_native()
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Where_after_join_with_a_bare_scalar_select_goes_native));
 
         var result = db.Owners
@@ -1398,7 +1398,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Bare_whole_inner_entity_select_after_join_goes_native()
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Bare_whole_inner_entity_select_after_join_goes_native));
 
         var result = db.Owners
@@ -1421,7 +1421,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Bare_whole_outer_entity_select_after_join_goes_native()
     {
         var seed = SeedOwnersAndOrdersWithUnmatchedRows();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Bare_whole_outer_entity_select_after_join_goes_native));
 
         var result = db.Owners
@@ -1444,7 +1444,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Wrapped_scalar_only_join_projection_goes_native()
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Wrapped_scalar_only_join_projection_goes_native), out var spyLogger);
 
         var result = db.Owners
@@ -1472,7 +1472,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // ("_lookup_Orders"), not "r", because the read side resolves it from the navigation. Outer and inner leaves use
         // different machinery ($$ROOT vs the unwound alias), so both are pinned.
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Whole_inner_entity_leaf_projection_goes_native_under_NativeOnly));
 
         var result = db.Owners
@@ -1495,7 +1495,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Both_whole_entity_leaves_projection_goes_native_under_NativeOnly()
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Both_whole_entity_leaves_projection_goes_native_under_NativeOnly));
 
         var result = db.Owners
@@ -1515,10 +1515,10 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Duplicated_inner_leaf_projection_goes_native_and_reads_correctly(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Duplicated_inner_leaf_projection_goes_native_and_reads_correctly(MongoQueryProvider mode)
     {
         // `new { a = r, b = r }`: two members want the same fixed alias. Without the binder's dedup guard the native
         // pipeline fails with "Duplicate element name"; DriverLinq takes the whole-document read with two members
@@ -1553,7 +1553,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         var seed = SeedOwnersAndOrders();
         var namePrefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using (var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
                    nameof(Whole_entity_leaves_behind_a_parameterized_where_reads_correct_values) + "_nativeOnly"))
         {
             var nativeOnlyResult = nativeOnly.Owners
@@ -1567,7 +1567,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             Assert.Equal(2, nativeOnlyResult.Count);
         }
 
-        using var db = CreateContext(seed, MongoQueryMode.Native,
+        using var db = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Whole_entity_leaves_behind_a_parameterized_where_reads_correct_values), out var spyLogger);
 
         var result = db.Owners
@@ -1601,9 +1601,9 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // MongoMixedProjectionBindingRemovingExpressionVisitor.TryBindNativeFieldLeafAsDocumentPath reads such leaves by
     // root-relative path. Asserted under DriverLinq and Native (whose late-fallback leg uses the same read).
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Whole_entity_leaf_beside_a_renamed_or_dotted_scalar_leaf_reads_correctly(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Whole_entity_leaf_beside_a_renamed_or_dotted_scalar_leaf_reads_correctly(MongoQueryProvider mode)
     {
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, mode,
@@ -1668,7 +1668,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         var seed = SeedOwnersAndOrders();
         var namePrefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using (var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
                    nameof(Whole_entity_leaf_and_dotted_scalar_leaf_together_behind_a_parameterized_where) + "_nativeOnly"))
         {
             var nativeOnlyRows = nativeOnly.Owners
@@ -1679,7 +1679,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             Assert.Equal(2, nativeOnlyRows.Count);
         }
 
-        using var db = CreateContext(seed, MongoQueryMode.Native,
+        using var db = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Whole_entity_leaf_and_dotted_scalar_leaf_together_behind_a_parameterized_where), out var spyLogger);
 
         // Both alias-vs-path spellings, each beside a whole-entity inner leaf:
@@ -1730,7 +1730,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // behave the same on both legs.
         var seed = SeedOwnersAndOrdersWithUnmatchedRows();
 
-        using var dl = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var dl = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(LeftJoin_unmatched_row_reads_a_dotted_scalar_leaf_through_the_whole_document_path) + "_dl");
 
         var nullableRows = dl.Orders
@@ -1758,7 +1758,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             }
         }
 
-        using var native = CreateContext(seed, MongoQueryMode.Native,
+        using var native = CreateContext(seed, MongoQueryProvider.Native,
             nameof(LeftJoin_unmatched_row_reads_a_dotted_scalar_leaf_through_the_whole_document_path) + "_native");
 
         var driverLinqRegion = RunRegion(dl);
@@ -1780,7 +1780,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var seed = SeedOwnersAndOrders();
 
-        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using (var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
                    nameof(Computed_leaf_beside_a_whole_entity_leaf_declines_and_still_reads_correctly) + "_nativeOnly"))
         {
             var declined = nativeOnly.Owners
@@ -1794,7 +1794,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Select(x => new { x.o, X = x.r.Total * 2 }).OrderBy(x => x.X)
             .Select(x => (x.o.Name, x.X)).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Computed_leaf_beside_a_whole_entity_leaf_declines_and_still_reads_correctly) + mode);
@@ -1827,11 +1827,11 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Select(x => (x.o.Name, x.Total, seed.Orders.Count(order => order.OwnerId == x.o.Id)))
             .ToList();
 
-        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Whole_outer_entity_leaf_that_is_also_reference_included_goes_native) + "_nativeOnly");
         Assert.Equal(expected, Run(nativeOnly));
 
-        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Whole_outer_entity_leaf_that_is_also_reference_included_goes_native) + "_driverLinq");
         Assert.Equal(expected, Run(driverLinq));
     }
@@ -1861,11 +1861,11 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Select(x => (x.o.Name, x.r?.Total, x.r == null ? 0 : seed.OrderLines.Count(l => l.OrderId == x.r.Id)))
             .ToList();
 
-        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Whole_inner_entity_leaf_that_is_also_collection_included_goes_native_under_a_left_join) + "_nativeOnly");
         Assert.Equal(expected, Run(nativeOnly));
 
-        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Whole_inner_entity_leaf_that_is_also_collection_included_goes_native_under_a_left_join) + "_driverLinq");
         Assert.Equal(expected, Run(driverLinq));
     }
@@ -1928,17 +1928,17 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.All(expected.Where(x => x.Total != null), x => Assert.NotEqual("", x.Item3));
         Assert.Equal(isLeftOuter, expected.Any(x => x.Total == null));
 
-        using var native = CreateContext(seed, MongoQueryMode.Native,
+        using var native = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Collection_Include_on_the_inner_side_of_a_join_reads_the_inner_entitys_own_collection) + shape + "_native");
         Assert.Equal(expected, Run(native));
 
-        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Collection_Include_on_the_inner_side_of_a_join_reads_the_inner_entitys_own_collection) + shape + "_driverLinq");
         Assert.Equal(expected, Run(driverLinq));
 
 #if !EF8 && !EF9
         // Goes native on EF10 (EF8/EF9's LeftJoin shim for the GroupJoin form is a separate gap).
-        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Collection_Include_on_the_inner_side_of_a_join_reads_the_inner_entitys_own_collection) + shape + "_nativeOnly");
         Assert.Equal(expected, Run(nativeOnly));
 #endif
@@ -1950,7 +1950,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Reference Include on a whole-entity join-scope leaf: nav-expansion lowers it to a LeftJoin whose $lookup is the
         // Include's. Must go native and populate Owner on every row.
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Whole_entity_leaf_that_is_also_reference_included_materializes_correctly));
 
         var results = db.Orders.Include(o => o.Owner).Select(o => new { o, o.OwnerId })
@@ -2023,9 +2023,9 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         // Join-scope arm with a reference-Include-wrapped whole-entity leaf; Native and driver-LINQ are each asserted against the oracle.
         var seed = SeedOwnersOrdersAndLines();
-        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Reference_included_whole_entity_leaf_goes_native_and_matches_the_oracle) + shape + "_nativeOnly");
-        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Reference_included_whole_entity_leaf_goes_native_and_matches_the_oracle) + shape + "_driverLinq");
 
         var expected = ExpectedReferenceIncludeShape(seed, shape);
@@ -2043,13 +2043,13 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // A ThenInclude off the reference Include's target isn't admitted (TryResolveReferenceIncludeLevel requires a
         // join-scope Inner leaf): declines under NativeOnly; Native falls back and must fully populate the chain.
         var seed = SeedOwnersOrdersAndLines();
-        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Reference_Include_with_a_ThenInclude_on_a_join_scope_leaf_falls_back_with_correct_data) + shape + "_nativeOnly");
         Assert.Throws<NativeTranslationNotSupportedException>(() => RunReferenceIncludeShape(nativeOnly, shape));
 
-        using var native = CreateContext(seed, MongoQueryMode.Native,
+        using var native = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Reference_Include_with_a_ThenInclude_on_a_join_scope_leaf_falls_back_with_correct_data) + shape + "_native");
-        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Reference_Include_with_a_ThenInclude_on_a_join_scope_leaf_falls_back_with_correct_data) + shape + "_driverLinq");
 
         var expected = ExpectedReferenceIncludeShape(seed, shape);
@@ -2065,9 +2065,9 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // `Include(o => o.Owner).Select(o => new { o, o.OwnerId })` with no explicit Join still reaches the join-scope arm.
         // Order.OwnerId is required, so the Include is an inner join and the dangling order is dropped.
         var seed = SeedLinesOrdersAndOwnersWithADanglingOwnerId();
-        using var native = CreateContext(seed, MongoQueryMode.Native,
+        using var native = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Reference_Include_with_no_join_in_the_query_materializes_correctly) + "_native");
-        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Reference_Include_with_no_join_in_the_query_materializes_correctly) + "_driverLinq");
 
         static List<(decimal Total, ObjectId OwnerId, string? OwnerName)> Run(JoinTestDbContext db) =>
@@ -2086,9 +2086,9 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         // Reference Include on the join's Inner source: lowered to a further join onto Owners. Must go native and match driver-LINQ.
         var seed = SeedOwnersAndOrders();
-        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Reference_included_Inner_leaf_of_a_join_scope_materializes_correctly) + "_nativeOnly");
-        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Reference_included_Inner_leaf_of_a_join_scope_materializes_correctly) + "_driverLinq");
 
         static List<(string OwnerName, decimal Total, ObjectId? IncludedOwnerId, string? IncludedOwnerName)> Run(
@@ -2127,11 +2127,11 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Select(x => (x.o.Name, seed.Orders.Count(order => order.OwnerId == x.o.Id), x.LineSku))
             .ToList();
 
-        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Whole_root_entity_leaf_that_is_also_collection_included_goes_native_in_a_two_level_chain) + "_nativeOnly");
         Assert.Equal(expected, Run(nativeOnly));
 
-        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Whole_root_entity_leaf_that_is_also_collection_included_goes_native_in_a_two_level_chain) + "_driverLinq");
         Assert.Equal(expected, Run(driverLinq));
     }
@@ -2201,7 +2201,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Collection_Include_on_a_non_root_level_of_a_join_chain_declines_under_NativeOnly()
     {
         var seed = SeedRaggedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Collection_Include_on_a_non_root_level_of_a_join_chain_declines_under_NativeOnly));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => RunMultiLevelCollectionInclude(seed, "InnerRootedInclude", db));
@@ -2220,14 +2220,14 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Collection_Include_over_a_join_level_targeting_the_root_type_declines_under_NativeOnly(string shape)
     {
         var seed = SeedRaggedOwnersOrdersAndLines();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Collection_Include_over_a_join_level_targeting_the_root_type_declines_under_NativeOnly) + shape);
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => RunMultiLevelCollectionInclude(seed, shape, db));
 
         if (shape == "SingleLevelNavlessTargetsRootType")
         {
-            using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+            using var driverLinq = CreateContext(seed, MongoQueryProvider.DriverLinq,
                 nameof(Collection_Include_over_a_join_level_targeting_the_root_type_declines_under_NativeOnly) + shape + "DriverLinq");
             Assert.Equal(
                 RunMultiLevelCollectionInclude(seed, shape, db: null),
@@ -2368,7 +2368,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // non-adjacent scope (`l.Sku`, scope 2).
         var seed = SeedOwnersOrdersAndLines();
 
-        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using (var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
                    nameof(Chain_scalar_leaf_beside_a_whole_entity_leaf_at_a_non_adjacent_chain_level_reads_correctly) + "_nativeOnly"))
         {
             var results = nativeOnly.Owners
@@ -2384,7 +2384,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .OrderBy(x => x.o.Name).ThenBy(x => x.LineSku)
             .Select(x => (x.o.Name, x.LineSku)).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Chain_scalar_leaf_beside_a_whole_entity_leaf_at_a_non_adjacent_chain_level_reads_correctly) + mode);
@@ -2405,7 +2405,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // LookupExpression.PreserveNullAndEmptyArrays, so an order-less Owner is kept. Keep the projection all-outer and
         // translatable: a conditional leaf would decline for an unrelated reason.
         var seed = SeedOwnersAndOrdersWithUnmatchedRows();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(LeftJoin_over_a_collection_navigation_now_goes_native_under_NativeOnly));
 
         var result = db.Owners
@@ -2424,7 +2424,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Dependent-side LeftJoin (Order -> Owner) over the reference nav: the read arm treats the field as not required
         // and the lowerer emits preserveNullAndEmptyArrays, so a dangling-FK Order's Owner reads as null.
         var seed = SeedOwnersAndOrdersWithUnmatchedRows();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(LeftJoin_unmatched_inner_row_reads_as_null_reference_navigation));
 
         var result = db.Orders
@@ -2484,7 +2484,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .OrderBy(x => ((dynamic)x).Name).ThenBy(x => ((dynamic)x).Total)
             .ToList();
 
-        using var dbNative = CreateContext(seed, MongoQueryMode.Native,
+        using var dbNative = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Join_result_matches_in_memory_oracle_including_unmatched_rows) + "_native");
 
         var nativeModeResult = query(dbNative.Owners, dbNative.Orders).AsEnumerable()
@@ -2492,7 +2492,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .ToList();
         Assert.Equal(oracleResult, nativeModeResult);
 
-        using var dbNativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var dbNativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Join_result_matches_in_memory_oracle_including_unmatched_rows) + "_nativeOnly");
 
         if (goesNativeUnderNativeOnly)
@@ -2687,7 +2687,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Order.OwnerId is non-nullable, so EF inner-joins: the dangling first order is DROPPED and First() must answer
         // with the matched order's owner. A $limit emitted before this $lookup would keep only the dangling order.
         var seed = SeedDanglingOrderFirstThenMatched();
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(seed, mode,
                 nameof(First_over_required_reference_nav_projection_with_dangling_first_row_is_correct_in_every_mode) + mode);
@@ -2729,18 +2729,18 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         public int? Quantity { get; set; }
     }
 
-    private JoinTestDbContext CreateContext(Seed seed, MongoQueryMode mode, string name)
+    private JoinTestDbContext CreateContext(Seed seed, MongoQueryProvider mode, string name)
         => CreateContext(seed, mode, name, loggerFactory: null);
 
     private JoinTestDbContext CreateContext(
-        Seed seed, MongoQueryMode mode, string name, out SpyLoggerProvider spyLogger)
+        Seed seed, MongoQueryProvider mode, string name, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
         return CreateContext(seed, mode, name, loggerFactory);
     }
 
-    private JoinTestDbContext CreateContext(Seed seed, MongoQueryMode mode, string name, ILoggerFactory? loggerFactory)
+    private JoinTestDbContext CreateContext(Seed seed, MongoQueryProvider mode, string name, ILoggerFactory? loggerFactory)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var ownersName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "Owners" + suffix;
@@ -2768,7 +2768,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         public JoinTestDbContext(
             TemporaryDatabaseFixture database, string ownersCollection, string ordersCollection, string linesCollection,
-            MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+            MongoQueryProvider mode, ILoggerFactory? loggerFactory = null)
             : base(BuildOptions(database, mode, loggerFactory))
         {
             _ownersCollection = ownersCollection;
@@ -2777,13 +2777,13 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         }
 
         private static DbContextOptions BuildOptions(
-            TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var optionsBuilder = new DbContextOptionsBuilder<JoinTestDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(mode);
             if (loggerFactory != null)
             {
                 optionsBuilder = optionsBuilder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();

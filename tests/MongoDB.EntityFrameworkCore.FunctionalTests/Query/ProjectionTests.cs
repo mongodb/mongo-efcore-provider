@@ -548,7 +548,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     private SingleEntityDbContext<PlanetWithLongOrder> CreateLongOrderContext(
-        MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode? mode = null, string collectionName = "planets")
+        MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryProvider? mode = null, string collectionName = "planets")
     {
         var collection = database.MongoDatabase.GetCollection<PlanetWithLongOrder>(collectionName);
         return SingleEntityDbContext.Create(
@@ -559,7 +559,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
                 : b =>
                 {
                     b.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
-                    new MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder(b).UseQueryMode(mode.Value);
+                    new MongoDB.EntityFrameworkCore.Infrastructure.MongoDbContextOptionsBuilder(b).UseQueryProvider(mode.Value);
                 });
     }
 
@@ -700,9 +700,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Theory]
-    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native)]
-    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly)]
-    public void Count_with_value_converter_in_predicate(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode mode)
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryProvider.Native)]
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryProvider.NativeOnly)]
+    public void Count_with_value_converter_in_predicate(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryProvider mode)
     {
         // long stored as int (narrowing): the native comparison serializes the constant by its CLR type (Int64), so it
         // can't wrap, and the server compares it numerically with the stored Int32 (D-EF337).
@@ -716,16 +716,16 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         // The driver-LINQ bridge keeps refusing (EF-337): it would serialize the constant through the unchecked
         // narrowing converter, so a constant outside the int range would wrap. Equality is exact and works.
-        using var db = CreateLongOrderContext(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.DriverLinq);
+        using var db = CreateLongOrderContext(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryProvider.DriverLinq);
         var ex = Assert.Throws<NotSupportedException>(() => db.Entities.Count(p => p.orderFromSun > 4L));
         Assert.Contains("PlanetWithLongOrder.orderFromSun'", ex.Message);
         Assert.Equal(1, db.Entities.Count(p => p.orderFromSun == 4L));
     }
 
     [Theory]
-    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native)]
-    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly)]
-    public void Equality_against_out_of_int_range_constant_does_not_wrap(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode mode)
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryProvider.Native)]
+    [InlineData(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryProvider.NativeOnly)]
+    public void Equality_against_out_of_int_range_constant_does_not_wrap(MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryProvider mode)
     {
         // 3_000_000_000L wraps to -1294967296 through an unchecked long -> int converter; that stored value must not match.
         var collection = database.MongoDatabase.GetCollection<BsonDocument>("planets_wrap_" + mode);

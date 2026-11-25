@@ -30,7 +30,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Native <c>Reverse</c>/<c>Last</c>/<c>LastOrDefault</c>. MQL has no "reverse row order" stage, so
 /// <c>Reverse</c> is native only by flipping an explicit trailing sort; otherwise it hard-fails in every mode
 /// because the driver's LINQ provider doesn't translate <c>Reverse</c> either. <c>Last</c> over a trailing sort
-/// flips it; otherwise it uses <c>$group</c>/<c>$last</c>. <see cref="MongoQueryMode.NativeOnly"/> is the
+/// flips it; otherwise it uses <c>$group</c>/<c>$last</c>. <see cref="MongoQueryProvider.NativeOnly"/> is the
 /// "went native" signal, since the MQL can't tell the paths apart.
 /// </summary>
 public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -51,20 +51,20 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
         return collection;
     }
 
-    private static SingleEntityDbContext<ValueEntity> CreateContext(IMongoCollection<ValueEntity> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<ValueEntity> CreateContext(IMongoCollection<ValueEntity> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
     public void Reverse_over_explicit_order_goes_native_and_reverses_the_rows()
     {
         var collection = Seed([1, 2, 3], nameof(Reverse_over_explicit_order_goes_native_and_reverses_the_rows));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.OrderBy(e => e.Value).Reverse().Select(e => e.Value).ToList();
 
@@ -75,7 +75,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     public void Reverse_over_descending_order_flips_to_ascending_in_the_emitted_sort()
     {
         var collection = Seed([1, 2, 3], nameof(Reverse_over_descending_order_flips_to_ascending_in_the_emitted_sort));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.OrderByDescending(e => e.Value).Reverse().Select(e => e.Value).ToList();
 
@@ -86,7 +86,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     public void Reverse_over_a_ThenBy_chain_flips_every_ordering()
     {
         var collection = Seed([1, 1, 2], nameof(Reverse_over_a_ThenBy_chain_flips_every_ordering));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.OrderBy(e => e.Value).ThenBy(e => e.Name).Reverse().Select(e => e.Name).ToList();
 
@@ -101,13 +101,13 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     {
         var collection = Seed([1, 2, 3], nameof(Reverse_without_an_explicit_order_still_hard_fails_in_every_mode));
 
-        using var nativeDb = CreateContext(collection, MongoQueryMode.Native);
+        using var nativeDb = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Throws<ExpressionNotSupportedException>(() => nativeDb.Entities.Reverse().ToList());
 
-        using var driverDb = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverDb = CreateContext(collection, MongoQueryProvider.DriverLinq);
         Assert.Throws<ExpressionNotSupportedException>(() => driverDb.Entities.Reverse().ToList());
 
-        using var nativeOnlyDb = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnlyDb.Entities.Reverse().ToList());
     }
 
@@ -116,11 +116,11 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     {
         var collection = Seed([1, 2, 3], nameof(Reverse_after_a_composed_operator_following_the_sort_still_hard_fails_in_every_mode));
 
-        using var nativeDb = CreateContext(collection, MongoQueryMode.Native);
+        using var nativeDb = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Throws<ExpressionNotSupportedException>(
             () => nativeDb.Entities.OrderBy(e => e.Value).Where(e => e.Value > 0).Reverse().ToList());
 
-        using var nativeOnlyDb = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnlyDb.Entities.OrderBy(e => e.Value).Where(e => e.Value > 0).Reverse().ToList());
     }
@@ -129,7 +129,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     public void Last_over_ordered_source_goes_native_and_returns_the_max()
     {
         var collection = Seed([1, 3, 2], nameof(Last_over_ordered_source_goes_native_and_returns_the_max));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var last = db.Entities.OrderBy(e => e.Value).Last();
 
@@ -140,7 +140,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     public void LastOrDefault_over_ordered_source_goes_native_and_returns_the_max()
     {
         var collection = Seed([1, 3, 2], nameof(LastOrDefault_over_ordered_source_goes_native_and_returns_the_max));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var last = db.Entities.OrderBy(e => e.Value).LastOrDefault();
 
@@ -152,7 +152,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     public void LastOrDefault_over_an_empty_ordered_source_returns_null_and_goes_native()
     {
         var collection = Seed([], nameof(LastOrDefault_over_an_empty_ordered_source_returns_null_and_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var last = db.Entities.OrderBy(e => e.Value).LastOrDefault();
 
@@ -163,7 +163,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     public void Last_over_an_empty_ordered_source_throws_the_BCL_empty_sequence_contract()
     {
         var collection = Seed([], nameof(Last_over_an_empty_ordered_source_throws_the_BCL_empty_sequence_contract));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Throws<InvalidOperationException>(() => db.Entities.OrderBy(e => e.Value).Last());
     }
@@ -172,7 +172,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     public void Last_over_a_descending_order_flips_to_ascending_and_returns_the_minimum()
     {
         var collection = Seed([1, 3, 2], nameof(Last_over_a_descending_order_flips_to_ascending_and_returns_the_minimum));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var last = db.Entities.OrderByDescending(e => e.Value).Last();
 
@@ -183,7 +183,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     public void Last_over_a_ThenBy_chain_flips_every_ordering()
     {
         var collection = Seed([2, 1, 3], nameof(Last_over_a_ThenBy_chain_flips_every_ordering));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // Every ordering in the ThenBy chain must be flipped together, or ties could return a different row.
         var last = db.Entities.OrderBy(e => e.Value).ThenBy(e => e.Name).Last();
@@ -198,10 +198,10 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     {
         var collection = Seed([1, 2, 3], nameof(Last_without_an_explicit_order_goes_native_with_driver_linq_parity));
 
-        using var nativeOnlyDb = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeValue = nativeOnlyDb.Entities.Last().Value;
 
-        using var driverDb = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverDb = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverValue = driverDb.Entities.Last().Value;
 
         // Row order is undefined for an unordered source, so driver LINQ is the oracle.
@@ -214,7 +214,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
         var collection = Seed([], nameof(LastOrDefault_without_an_explicit_order_goes_native_and_returns_null_when_empty));
 
         // $group{_id:null} over no input emits no document at all; the reducer must still yield null.
-        using var nativeOnlyDb = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyDb = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Null(nativeOnlyDb.Entities.LastOrDefault());
     }
 
@@ -222,7 +222,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     public void Last_after_Take_over_an_ordered_source_goes_native_and_respects_the_Take()
     {
         var collection = Seed([1, 2, 3], nameof(Last_after_Take_over_an_ordered_source_goes_native_and_respects_the_Take));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // The $group must run after $sort/$limit (answer 2). Flipping the sort instead, or dropping the Take,
         // would both answer 3.

@@ -40,8 +40,8 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// </summary>
 /// <remarks>
 /// Seeded 9 / 10 / 100: stored as strings, "9" &gt; "100" &gt; "10", <c>$sum</c> ignores strings (0), and
-/// <c>{$gt: "50"}</c> matches only "9". Each case is run under <see cref="MongoQueryMode.Native"/>,
-/// <see cref="MongoQueryMode.NativeOnly"/> and <see cref="MongoQueryMode.DriverLinq"/>, against an oracle computed
+/// <c>{$gt: "50"}</c> matches only "9". Each case is run under <see cref="MongoQueryProvider.Native"/>,
+/// <see cref="MongoQueryProvider.NativeOnly"/> and <see cref="MongoQueryProvider.DriverLinq"/>, against an oracle computed
 /// in memory over the materialized entities (which apply the representation/converter).
 /// </remarks>
 public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixture database)
@@ -226,7 +226,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         ["GroupBy_composite_key_safe_member_Max"] = q => q.GroupBy(e => new { e.Seq, e.Price }).Select(g => g.Key.Seq).Max()
     };
 
-    private static readonly MongoQueryMode[] Modes = [MongoQueryMode.Native, MongoQueryMode.NativeOnly, MongoQueryMode.DriverLinq];
+    private static readonly MongoQueryProvider[] Modes = [MongoQueryProvider.Native, MongoQueryProvider.NativeOnly, MongoQueryProvider.DriverLinq];
 
     public static IEnumerable<object[]> RefusedCases()
         => from query in OrderSensitiveQueries.Keys
@@ -264,7 +264,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
     /// The guard: correct or loud, never a stored-form answer. Pinned to the decline (the answer can't reveal a
     /// guard that happens to get a right answer by accident, e.g. the order-preserving scaling converter).
     /// </summary>
-    protected void Order_sensitive_query_over_non_order_preserving_storage_is_refusedCore(string query, Storage storage, MongoQueryMode mode)
+    protected void Order_sensitive_query_over_non_order_preserving_storage_is_refusedCore(string query, Storage storage, MongoQueryProvider mode)
     {
         var (oracle, run) = Arrange(query, OrderSensitiveQueries[query], storage, mode);
 
@@ -277,7 +277,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         // Pinned decline. NativeOnly refuses at the native gate; Native falls back and DriverLinq goes straight to the
         // driver-LINQ bridge, which refuses naming the property.
         Assert.NotNull(ex);
-        if (mode == MongoQueryMode.NativeOnly)
+        if (mode == MongoQueryProvider.NativeOnly)
         {
             Assert.IsType<NativeTranslationNotSupportedException>(ex);
         }
@@ -294,7 +294,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         }
     }
 
-    protected void Order_sensitive_query_over_exact_or_converted_storage_is_correctCore(string query, Storage storage, MongoQueryMode mode)
+    protected void Order_sensitive_query_over_exact_or_converted_storage_is_correctCore(string query, Storage storage, MongoQueryProvider mode)
     {
         var (oracle, run) = Arrange(query, OrderSensitiveQueries[query], storage, mode);
 
@@ -323,17 +323,17 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
     // - the round-2 adversarial method/arithmetic/nullable shapes hit assorted native declines and driver-LINQ
     //   limitations over non-default storage (ExpressionNotSupportedException, a NullReferenceException in the driver's
     //   converter serializer); any loud failure other than the EF-337 refusal is accepted for them.
-    private static bool IsPreExistingLoudFailure(string query, Storage storage, MongoQueryMode mode, Exception ex)
+    private static bool IsPreExistingLoudFailure(string query, Storage storage, MongoQueryProvider mode, Exception ex)
         => query is "Where_Math_Abs_gt" or "Where_divided_gt" or "OrderBy_ToString" or "OrderBy_nullable_Value"
                or "Max_GetValueOrDefault"
-           || (mode == MongoQueryMode.NativeOnly && ex is NativeTranslationNotSupportedException
+           || (mode == MongoQueryProvider.NativeOnly && ex is NativeTranslationNotSupportedException
                && (IsAggregate(query) || IsComputed(query) || storage is Storage.StringRepresentation or Storage.StringConverter))
            || (query == "OrderBy_negated" && ex.GetType().Name == "ExpressionNotSupportedException"
                && storage is Storage.CastingConverterToLong or Storage.CastingConverterToDouble)
            // A native Distinct key is likewise default-serialized only (StoredSerialization.HasDefaultKeySerialization).
-           || (mode == MongoQueryMode.NativeOnly && query.StartsWith("Distinct", StringComparison.Ordinal)
+           || (mode == MongoQueryProvider.NativeOnly && query.StartsWith("Distinct", StringComparison.Ordinal)
                && ex is NativeTranslationNotSupportedException)
-           || (mode != MongoQueryMode.NativeOnly && IsGroupByAggregate(query) && ex is InvalidOperationException)
+           || (mode != MongoQueryProvider.NativeOnly && IsGroupByAggregate(query) && ex is InvalidOperationException)
            || (query == "Average" && storage == Storage.Decimal128Representation && ex is TruncationException);
 
     // Fallback GroupBy shapes that fail at compile time before the bridge runs (pre-existing; see the refused test).
@@ -345,13 +345,13 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
            || query.Contains("negated", StringComparison.Ordinal) || query.Contains("computed", StringComparison.Ordinal)
            || query.StartsWith("Distinct", StringComparison.Ordinal);
 
-    protected void Equality_over_any_storage_keeps_workingCore(string query, Storage storage, MongoQueryMode mode)
+    protected void Equality_over_any_storage_keeps_workingCore(string query, Storage storage, MongoQueryProvider mode)
     {
         var (oracle, run) = Arrange(query, EqualityQueries[query], storage, mode);
 
         // A native Distinct / GroupBy key over a non-default-serialized part declines (pre-existing,
         // HasDefaultKeySerialization); the fallback must then answer, not refuse.
-        if (mode == MongoQueryMode.NativeOnly && query.Contains("safe_member", StringComparison.Ordinal)
+        if (mode == MongoQueryProvider.NativeOnly && query.Contains("safe_member", StringComparison.Ordinal)
             && Record.Exception(run) is NativeTranslationNotSupportedException)
         {
             return;
@@ -366,7 +366,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
            || query.StartsWith("GroupBy", StringComparison.Ordinal) || query.EndsWith("_Max", StringComparison.Ordinal);
 
     private (string Oracle, Func<object> Run) Arrange(
-        string query, Func<IQueryable<Item>, object> shape, Storage storage, MongoQueryMode mode)
+        string query, Func<IQueryable<Item>, object> shape, Storage storage, MongoQueryProvider mode)
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(RepresentedPropertyPushdownTests), query, storage, mode)
                    + Guid.NewGuid().ToString("N")[..8];
@@ -385,7 +385,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         var collection = database.MongoDatabase.GetCollection<Item>(name);
 
         // Oracle: materialize through the model (applying the representation/converter), then LINQ-to-objects.
-        using (var materializing = CreateContext(collection, storage, MongoQueryMode.Native))
+        using (var materializing = CreateContext(collection, storage, MongoQueryProvider.Native))
         {
             var entities = materializing.Entities.AsNoTracking().ToList();
             Assert.Equal(Prices, entities.OrderBy(e => e.Seq).Select(e => e.Price));
@@ -399,14 +399,14 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         }
     }
 
-    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, Storage storage, MongoQueryMode mode)
+    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, Storage storage, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: mb => Configure(mb, storage),
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -480,7 +480,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
            from mode in Modes
            select new object[] { query, storage, mode };
 
-    protected void Order_sensitive_query_over_ObjectId_or_enum_representationCore(string query, EnumStorage storage, MongoQueryMode mode)
+    protected void Order_sensitive_query_over_ObjectId_or_enum_representationCore(string query, EnumStorage storage, MongoQueryProvider mode)
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Order_sensitive_query_over_ObjectId_or_enum_representationCore), query, storage, mode)
                    + Guid.NewGuid().ToString("N")[..8];
@@ -503,7 +503,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         var shape = TaggedOrderQueries[query];
 
         string oracle;
-        using (var materializing = CreateTaggedContext(collection, storage, MongoQueryMode.Native))
+        using (var materializing = CreateTaggedContext(collection, storage, MongoQueryProvider.Native))
         {
             var entities = materializing.Entities.AsNoTracking().ToList();
             Assert.Equal(Hexes, entities.OrderBy(e => e.Seq).Select(e => e.Ref));
@@ -526,7 +526,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
             }
 
             Assert.NotNull(ex);
-            if (mode == MongoQueryMode.NativeOnly)
+            if (mode == MongoQueryProvider.NativeOnly)
             {
                 Assert.IsType<NativeTranslationNotSupportedException>(ex);
             }
@@ -544,7 +544,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         if (ex is not null)
         {
             Assert.True(
-                mode == MongoQueryMode.NativeOnly
+                mode == MongoQueryProvider.NativeOnly
                 && (query.StartsWith("Max", StringComparison.Ordinal) || query.Contains("Compare", StringComparison.Ordinal))
                 && ex is NativeTranslationNotSupportedException,
                 $"'{query}' over {storage} threw under {mode}: {ex}");
@@ -555,7 +555,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
     }
 
     private static SingleEntityDbContext<Tagged> CreateTaggedContext(
-        IMongoCollection<Tagged> collection, EnumStorage storage, MongoQueryMode mode)
+        IMongoCollection<Tagged> collection, EnumStorage storage, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: mb =>
@@ -576,7 +576,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -594,7 +594,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         public List<Line> Lines { get; set; } = [];
     }
 
-    protected void Owned_element_comparison_over_string_represented_property_is_converted_or_declinedCore(MongoQueryMode mode)
+    protected void Owned_element_comparison_over_string_represented_property_is_converted_or_declinedCore(MongoQueryProvider mode)
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Owned_element_comparison_over_string_represented_property_is_converted_or_declinedCore), mode)
                    + Guid.NewGuid().ToString("N")[..8];
@@ -607,17 +607,17 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
             }));
 
         var collection = database.MongoDatabase.GetCollection<Order>(name);
-        SingleEntityDbContext<Order> Create(MongoQueryMode m)
+        SingleEntityDbContext<Order> Create(MongoQueryProvider m)
             => SingleEntityDbContext.Create(
                 collection,
                 modelBuilderAction: mb => mb.Entity<Order>().OwnsMany(o => o.Lines, l => l.Property(x => x.Price).HasBsonRepresentation(BsonType.String)),
                 optionsBuilderAction: b =>
                 {
                     b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                    new MongoDbContextOptionsBuilder(b).UseQueryMode(m);
+                    new MongoDbContextOptionsBuilder(b).UseQueryProvider(m);
                 });
 
-        using (var oracleDb = Create(MongoQueryMode.Native))
+        using (var oracleDb = Create(MongoQueryProvider.Native))
         {
             Assert.Equal([3], oracleDb.Entities.AsNoTracking().ToList()
                 .Where(o => o.Lines.Any(l => l.Price > 50)).Select(o => o.Seq));
@@ -627,7 +627,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         List<int>? actual = null;
         var ex = Record.Exception(() => actual = db.Entities.AsNoTracking()
             .Where(o => o.Lines.Any(l => l.Price > 50)).OrderBy(o => o.Seq).Select(o => o.Seq).ToList());
-        if (mode == MongoQueryMode.NativeOnly)
+        if (mode == MongoQueryProvider.NativeOnly)
         {
             Assert.IsType<NativeTranslationNotSupportedException>(ex);
         }
@@ -679,7 +679,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
            from mode in Modes
            select new object[] { query, mode };
 
-    protected void Narrowing_casting_converterCore(string query, MongoQueryMode mode)
+    protected void Narrowing_casting_converterCore(string query, MongoQueryProvider mode)
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Narrowing_casting_converterCore), query, mode)
                    + Guid.NewGuid().ToString("N")[..8];
@@ -690,7 +690,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
             }));
         var collection = database.MongoDatabase.GetCollection<Narrow>(name);
 
-        SingleEntityDbContext<Narrow> Create(MongoQueryMode m)
+        SingleEntityDbContext<Narrow> Create(MongoQueryProvider m)
             => SingleEntityDbContext.Create(
                 collection,
                 modelBuilderAction: mb =>
@@ -701,12 +701,12 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
                 optionsBuilderAction: b =>
                 {
                     b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                    new MongoDbContextOptionsBuilder(b).UseQueryMode(m);
+                    new MongoDbContextOptionsBuilder(b).UseQueryProvider(m);
                 });
 
         var shape = NarrowQueries[query];
         string oracle;
-        using (var materializing = Create(MongoQueryMode.Native))
+        using (var materializing = Create(MongoQueryProvider.Native))
         {
             oracle = Normalize(shape(materializing.Entities.AsNoTracking().ToList().AsQueryable()));
         }
@@ -721,7 +721,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         // A relational comparison of the narrowing long-as-int converter against a CLR constant is native (D-EF337: the
         // constant is serialized by its CLR type, so it cannot wrap); only the driver-LINQ bridge refuses it.
         var refused = query.StartsWith("Dec", StringComparison.Ordinal)
-                      || (query is "Big_gt_3e9" or "Big_lt_5e9" && mode == MongoQueryMode.DriverLinq);
+                      || (query is "Big_gt_3e9" or "Big_lt_5e9" && mode == MongoQueryProvider.DriverLinq);
         if (!refused)
         {
             Assert.True(ex is null, $"'{query}' threw under {mode}: {ex}");
@@ -735,7 +735,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         }
 
         Assert.NotNull(ex);
-        if (mode == MongoQueryMode.NativeOnly)
+        if (mode == MongoQueryProvider.NativeOnly)
         {
             Assert.IsType<NativeTranslationNotSupportedException>(ex);
         }
@@ -757,7 +757,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         public int Count { get; set; }
     }
 
-    protected void Identity_representation_is_not_refusedCore(MongoQueryMode mode)
+    protected void Identity_representation_is_not_refusedCore(MongoQueryProvider mode)
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Identity_representation_is_not_refusedCore), mode)
                    + Guid.NewGuid().ToString("N")[..8];
@@ -780,7 +780,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
         Assert.Equal([3, 1, 2], db.Entities.AsNoTracking().OrderBy(e => e.Name).Select(e => e.Seq).ToList());
@@ -870,13 +870,13 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
            select new object[] { query, refused, flag, mode };
 
     protected void Stored_value_members_truthiness_and_primitive_collectionsCore(
-        string query, bool refused, FlagStorage flag, MongoQueryMode mode)
+        string query, bool refused, FlagStorage flag, MongoQueryProvider mode)
     {
         var collection = database.MongoDatabase.GetCollection<Rich>(
             TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Stored_value_members_truthiness_and_primitive_collectionsCore), query, flag, mode)
             + Guid.NewGuid().ToString("N")[..8]);
 
-        SingleEntityDbContext<Rich> Create(MongoQueryMode m)
+        SingleEntityDbContext<Rich> Create(MongoQueryProvider m)
             => SingleEntityDbContext.Create(
                 collection,
                 modelBuilderAction: mb =>
@@ -905,10 +905,10 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
                 optionsBuilderAction: b =>
                 {
                     b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                    new MongoDbContextOptionsBuilder(b).UseQueryMode(m);
+                    new MongoDbContextOptionsBuilder(b).UseQueryProvider(m);
                 });
 
-        using (var seed = Create(MongoQueryMode.Native))
+        using (var seed = Create(MongoQueryProvider.Native))
         {
             seed.Entities.AddRange(
                 new Rich
@@ -940,7 +940,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
 
         var shape = (refused ? RichRefusedQueries : RichWorkingQueries)[query];
         string oracle;
-        using (var materializing = Create(MongoQueryMode.Native))
+        using (var materializing = Create(MongoQueryProvider.Native))
         {
             var entities = materializing.Entities.AsNoTracking().ToList();
             Assert.Equal(["abcdef", "ab", "abc"], entities.OrderBy(e => e.Seq).Select(e => e.Name));
@@ -961,7 +961,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
             if (ex is not null)
             {
                 Assert.True(
-                    mode == MongoQueryMode.NativeOnly && ex is NativeTranslationNotSupportedException,
+                    mode == MongoQueryProvider.NativeOnly && ex is NativeTranslationNotSupportedException,
                     $"'{query}' ({flag}) threw under {mode}: {ex}");
                 return;
             }
@@ -976,7 +976,7 @@ public abstract class RepresentedPropertyPushdownTestsBase(TemporaryDatabaseFixt
         }
 
         Assert.NotNull(ex);
-        if (mode == MongoQueryMode.NativeOnly)
+        if (mode == MongoQueryProvider.NativeOnly)
         {
             Assert.IsType<NativeTranslationNotSupportedException>(ex);
         }

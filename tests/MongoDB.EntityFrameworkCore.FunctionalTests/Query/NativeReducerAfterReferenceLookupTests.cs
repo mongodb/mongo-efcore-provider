@@ -49,19 +49,19 @@ public class NativeReducerAfterReferenceLookupTests(TemporaryDatabaseFixture dat
         public Customer? Customer { get; set; }
     }
 
-    private sealed class Ctx(TemporaryDatabaseFixture database, string customers, string purchases, MongoQueryMode mode)
+    private sealed class Ctx(TemporaryDatabaseFixture database, string customers, string purchases, MongoQueryProvider mode)
         : DbContext(BuildOptions(database, mode))
     {
         public DbSet<Customer> Customers { get; set; } = null!;
         public DbSet<Purchase> Purchases { get; set; } = null!;
 
-        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode)
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryProvider mode)
         {
             var builder = new DbContextOptionsBuilder<Ctx>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(builder).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(builder).UseQueryProvider(mode);
             return builder.Options;
         }
 
@@ -83,7 +83,7 @@ public class NativeReducerAfterReferenceLookupTests(TemporaryDatabaseFixture dat
     }
 
     /// <summary>Seq 1 has a NULL FK, Seq 2 a DANGLING FK, Seq 3 a matched FK ("London").</summary>
-    private Func<MongoQueryMode, Ctx> Seed(string name)
+    private Func<MongoQueryProvider, Ctx> Seed(string name)
     {
         var suffix = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         var london = new Customer { Id = ObjectId.GenerateNewId(), City = "London" };

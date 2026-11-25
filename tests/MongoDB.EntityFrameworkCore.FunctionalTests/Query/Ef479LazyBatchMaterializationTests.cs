@@ -79,9 +79,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     // ---- Tracking ----------------------------------------------------------------------------------
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Take_one_of_a_tracked_include_tracks_only_that_row_and_its_related_entity(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Take_one_of_a_tracked_include_tracks_only_that_row_and_its_related_entity(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
 
@@ -93,9 +93,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Tracked_include_resolves_a_shared_related_entity_to_one_instance(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Tracked_include_resolves_a_shared_related_entity_to_one_instance(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
 
@@ -111,9 +111,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Tracked_query_returns_an_entity_that_is_already_tracked(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Tracked_query_returns_an_entity_that_is_already_tracked(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
         var product = db.Products.Single(p => p.Id == 1);
@@ -129,9 +129,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Tracked_include_keeps_the_shadow_foreign_key_so_saving_does_not_clear_it(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Tracked_include_keeps_the_shadow_foreign_key_so_saving_does_not_clear_it(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
 
@@ -150,9 +150,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Tracked_query_marks_an_include_that_found_nothing_as_loaded(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Tracked_query_marks_an_include_that_found_nothing_as_loaded(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
         db.RawCollection("Reviews").InsertOne(new BsonDocument { { "_id", 5 }, { "Text", "R5" } });
@@ -164,9 +164,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void No_tracking_include_tracks_nothing_but_sets_the_navigation(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void No_tracking_include_tracks_nothing_but_sets_the_navigation(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
 
@@ -177,9 +177,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void No_tracking_with_identity_resolution_shares_the_related_entity_without_tracking_it(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void No_tracking_with_identity_resolution_shares_the_related_entity_without_tracking_it(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
 
@@ -194,9 +194,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     // ---- Owned collections -------------------------------------------------------------------------
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Take_one_of_an_owned_collection_tracks_only_that_row_and_its_owned_entities(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Take_one_of_an_owned_collection_tracks_only_that_row_and_its_owned_entities(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
 
@@ -208,9 +208,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Tracked_owned_collections_are_complete_when_every_row_is_read(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Tracked_owned_collections_are_complete_when_every_row_is_read(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
 
@@ -224,9 +224,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     // ---- Plain single-entity rows (no shadow values, no graph): keys and types come from the instance ------
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Plain_tracked_rows_track_lazily_and_resolve_to_already_tracked_entities(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Plain_tracked_rows_track_lazily_and_resolve_to_already_tracked_entities(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
 
@@ -239,9 +239,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Plain_tracked_rows_of_a_hierarchy_keep_their_concrete_types(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Plain_tracked_rows_of_a_hierarchy_keep_their_concrete_types(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
 
@@ -256,9 +256,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Plain_tracked_rows_with_a_composite_key_resolve_to_already_tracked_entities(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Plain_tracked_rows_with_a_composite_key_resolve_to_already_tracked_entities(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
         var tracked = db.Pairs.Find(1, 2)!;
@@ -270,9 +270,9 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Plain_tracked_rows_with_a_converted_key_resolve_to_already_tracked_entities(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Plain_tracked_rows_with_a_converted_key_resolve_to_already_tracked_entities(MongoQueryProvider mode)
     {
         using var db = Seed(mode);
         var tracked = db.Shades.Find(Color.Green)!;
@@ -298,10 +298,10 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
         return SingleEntityDbContext.Create(collection);
     }
 
-    private Ef479Context Seed(MongoQueryMode mode, [CallerMemberName] string? name = null)
+    private Ef479Context Seed(MongoQueryProvider mode, [CallerMemberName] string? name = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        var seed = Context(MongoQueryMode.Native, suffix);
+        var seed = Context(MongoQueryProvider.Native, suffix);
 
         seed.Products.AddRange(new Product { Id = 1, Name = "P1" }, new Product { Id = 2, Name = "P2" });
         seed.SaveChanges();
@@ -325,10 +325,10 @@ public class Ef479LazyBatchMaterializationTests(TemporaryDatabaseFixture databas
         return Context(mode, suffix);
     }
 
-    private Ef479Context Context(MongoQueryMode mode, string suffix)
+    private Ef479Context Context(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<Ef479Context>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,

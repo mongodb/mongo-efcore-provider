@@ -166,10 +166,10 @@ public class NativeStreamingNestedShapeTests(TemporaryDatabaseFixture database)
         }
     }
 
-    private NestedContext Db(MongoQueryMode mode, string suffix)
+    private NestedContext Db(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<NestedContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,
@@ -178,7 +178,7 @@ public class NativeStreamingNestedShapeTests(TemporaryDatabaseFixture database)
     private string Seed()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        using var seed = Db(MongoQueryMode.Native, suffix);
+        using var seed = Db(MongoQueryProvider.Native, suffix);
 
         seed.Products.AddRange(new Product { Id = 1, Title = "widget" }, new Product { Id = 2, Title = "gadget" });
         seed.People.AddRange(
@@ -247,7 +247,7 @@ public class NativeStreamingNestedShapeTests(TemporaryDatabaseFixture database)
     {
         var suffix = Seed();
 
-        using (var db = Db(MongoQueryMode.NativeOnly, suffix))
+        using (var db = Db(MongoQueryProvider.NativeOnly, suffix))
         {
             AssertStreams(db.Orders.AsNoTracking());
             AssertStreams(db.Orders);
@@ -270,7 +270,7 @@ public class NativeStreamingNestedShapeTests(TemporaryDatabaseFixture database)
     {
         var suffix = Seed();
 
-        using var db = Db(MongoQueryMode.NativeOnly, suffix);
+        using var db = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(db.Orders.AsNoTracking());
 
         // The navigation is not included, so it stays null, as it did.
@@ -286,7 +286,7 @@ public class NativeStreamingNestedShapeTests(TemporaryDatabaseFixture database)
     {
         var suffix = Seed();
 
-        using (var db = Db(MongoQueryMode.NativeOnly, suffix))
+        using (var db = Db(MongoQueryProvider.NativeOnly, suffix))
         {
             AssertStreams(db.Articles.AsNoTracking().Include(a => a.Author));
             AssertStreams(db.Articles.Include(a => a.Author));
@@ -315,7 +315,7 @@ public class NativeStreamingNestedShapeTests(TemporaryDatabaseFixture database)
     {
         var suffix = Seed();
 
-        using (var db = Db(MongoQueryMode.NativeOnly, suffix))
+        using (var db = Db(MongoQueryProvider.NativeOnly, suffix))
         {
             AssertStreams(db.Categories.AsNoTracking().Include(c => c.Articles));
         }
@@ -336,7 +336,7 @@ public class NativeStreamingNestedShapeTests(TemporaryDatabaseFixture database)
     {
         var suffix = Seed();
 
-        using (var db = Db(MongoQueryMode.NativeOnly, suffix))
+        using (var db = Db(MongoQueryProvider.NativeOnly, suffix))
         {
             AssertStreams(db.Categories.AsNoTracking().Include(c => c.Staff));
             AssertStreams(db.Categories.Include(c => c.Staff));

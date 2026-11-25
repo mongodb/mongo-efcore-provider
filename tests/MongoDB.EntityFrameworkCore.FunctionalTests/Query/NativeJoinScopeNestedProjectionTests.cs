@@ -70,9 +70,9 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
         o => new { o.OrderNo, CustomerInfo = new { o.Customer!.Name } };
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Nested_projection_over_reference_include_matches_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Nested_projection_over_reference_include_matches_oracle(MongoQueryProvider mode)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName(
@@ -86,7 +86,7 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
         // A dangling FK: never inserted, so the $lookup runs and finds no match (unlike a null CustomerId).
         var danglingCustomerId = ObjectId.GenerateNewId();
 
-        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryMode.DriverLinq))
+        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryProvider.DriverLinq))
         {
             seed.Set<Customer>().Add(new Customer { Id = matchedCustomerId, Name = "Alfreds" });
             seed.Set<Order>().AddRange(
@@ -137,9 +137,9 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
     /// and the guard question must be revisited.
     /// </summary>
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Nested_projection_with_value_converted_member_falls_back(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Nested_projection_with_value_converted_member_falls_back(MongoQueryProvider mode)
         => AssertNestedLeafDeclinesButStillReturnsCorrectRows(
             nameof(Nested_projection_with_value_converted_member_falls_back),
             mode,
@@ -152,9 +152,9 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
     /// <see cref="InvalidCastException"/> at compile time.
     /// </summary>
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Nested_projection_with_computed_member_falls_back(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Nested_projection_with_computed_member_falls_back(MongoQueryProvider mode)
         => AssertNestedLeafDeclinesButStillReturnsCorrectRows(
             nameof(Nested_projection_with_computed_member_falls_back),
             mode,
@@ -167,9 +167,9 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
     /// drops an Include the projection never touches).
     /// </summary>
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Nested_projection_with_outer_sourced_member_falls_back(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Nested_projection_with_outer_sourced_member_falls_back(MongoQueryProvider mode)
         => AssertNestedLeafDeclinesButStillReturnsCorrectRows(
             nameof(Nested_projection_with_outer_sourced_member_falls_back),
             mode,
@@ -177,16 +177,16 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
             expected: new { Name = "Alfreds", Copy = new { N = 1 } });
 
     /// <summary>
-    /// Shared body for the decline cases: <see cref="MongoQueryMode.NativeOnly"/> throws (the only reliable proof
-    /// of leaving the native path) while <see cref="MongoQueryMode.Native"/> returns the correct row via fallback.
+    /// Shared body for the decline cases: <see cref="MongoQueryProvider.NativeOnly"/> throws (the only reliable proof
+    /// of leaving the native path) while <see cref="MongoQueryProvider.Native"/> returns the correct row via fallback.
     /// </summary>
     private void AssertNestedLeafDeclinesButStillReturnsCorrectRows(
-        string testName, MongoQueryMode mode, Expression<Func<Order, object>> selector, object expected)
+        string testName, MongoQueryProvider mode, Expression<Func<Order, object>> selector, object expected)
     {
         var (ordersName, customersName) = CreateCollectionNames(testName);
 
         var customerId = ObjectId.GenerateNewId();
-        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryMode.DriverLinq))
+        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryProvider.DriverLinq))
         {
             seed.Set<Customer>().Add(
                 new Customer { Id = customerId, Name = "Alfreds", Rank = 7, Tier = CustomerTier.Gold });
@@ -196,7 +196,7 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
 
         using var db = new JoinScopeDbContext(database, ordersName, customersName, mode);
 
-        if (mode == MongoQueryMode.NativeOnly)
+        if (mode == MongoQueryProvider.NativeOnly)
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => db.Set<Order>().Include(o => o.Customer).Select(selector).ToList());
@@ -217,7 +217,7 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
     {
         var (ordersName, customersName) = CreateCollectionNames(testName);
         var customerId = ObjectId.GenerateNewId();
-        using var seed = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryMode.DriverLinq);
+        using var seed = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryProvider.DriverLinq);
         seed.Set<Customer>().Add(new Customer { Id = customerId, Name = "Alfreds", Rank = 7 });
         seed.Set<Order>().AddRange(
             new Order { Id = ObjectId.GenerateNewId(), OrderNo = 1, CustomerId = customerId },
@@ -249,7 +249,7 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
     {
         var (ordersName, customersName) = SeedMatchedAndDangling(
             nameof(Entity_and_reference_navigation_into_object_array_materializes_tracked_instances));
-        using var db = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryMode.NativeOnly);
+        using var db = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryProvider.NativeOnly);
 
         var rows = db.Set<Order>().OrderBy(o => o.OrderNo).Select(o => new object?[] { o, o.Customer }).ToList();
 
@@ -294,10 +294,10 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
 
         public JoinScopeDbContext(
             TemporaryDatabaseFixture database, string ordersCollection, string customersCollection,
-            MongoQueryMode mode)
+            MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<JoinScopeDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)

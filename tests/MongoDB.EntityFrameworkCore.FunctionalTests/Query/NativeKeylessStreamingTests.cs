@@ -48,10 +48,10 @@ public class NativeKeylessStreamingTests(TemporaryDatabaseFixture database)
             });
     }
 
-    private ReadingContext Db(MongoQueryMode mode, string suffix)
+    private ReadingContext Db(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<ReadingContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,
@@ -82,7 +82,7 @@ public class NativeKeylessStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["a:1.5:7", "b:2.5:-", "c:3.5:-"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         var enumerator = ((IEnumerable)streaming.Readings.Where(r => r.Value > 1)).GetEnumerator();
         try
         {

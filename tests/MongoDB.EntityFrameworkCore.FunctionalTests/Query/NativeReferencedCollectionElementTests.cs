@@ -34,7 +34,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Hand-computed over raw seeds, including a customer with no orders (the empty group: <c>FirstOrDefault</c> is null,
 /// <c>ToList</c> is empty) and orders whose customer is dangling or null (never in any group).
 /// <para>
-/// Every mode must answer exactly, including the explicit <see cref="MongoQueryMode.DriverLinq"/> one. A shape the bridge
+/// Every mode must answer exactly, including the explicit <see cref="MongoQueryProvider.DriverLinq"/> one. A shape the bridge
 /// cannot answer must fail loudly, never come back empty.
 /// </para>
 /// </summary>
@@ -88,7 +88,7 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
     private void Strict3<T>(bool withNavigation, Func<Ctx, IQueryable<T>> query, Func<T, string> format, List<string> expected)
     {
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(names, mode, withNavigation);
             var rows = query(db).AsEnumerable().Select(format).OrderBy(s => s).ToList();
@@ -143,7 +143,7 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
         // The driver-LINQ shaper reads whole documents, so a computed sibling leaf (the Count) cannot be read there: it fails loudly at
         // compile time rather than answering. The native modes answer.
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = Create(names, mode, withNavigation: true);
             var rows = db.Set<Cust>().Select(c => new { c.Id, N = c.Orders.Count, Os = c.Orders.OrderBy(o => o.Id).ToList() })
@@ -151,7 +151,7 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
             Assert.Equal(["A1:3:1,2,3", "A2:1:4", "B1:1:5", "C0:0:"], rows);
         }
 
-        using var driver = Create(names, MongoQueryMode.DriverLinq, withNavigation: true);
+        using var driver = Create(names, MongoQueryProvider.DriverLinq, withNavigation: true);
         Assert.ThrowsAny<Exception>(() => driver.Set<Cust>()
             .Select(c => new { c.Id, N = c.Orders.Count, Os = c.Orders.OrderBy(o => o.Id).ToList() })
             .AsEnumerable().ToList());
@@ -233,7 +233,7 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
         // The page is the group's first two orders (1:10, 2:20 for A1); the filter then keeps the one above 15. Applying the filter before
         // the page would answer A1:2,3 instead. The shape is declined, so native-only fails loudly rather than answering either.
         var names = Seed();
-        using var db = Create(names, MongoQueryMode.NativeOnly, withNavigation: true);
+        using var db = Create(names, MongoQueryProvider.NativeOnly, withNavigation: true);
 
         Assert.ThrowsAny<Exception>(() => db.Set<Cust>()
             .Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Take(2).Where(o => o.Total > 15).ToList() })
@@ -248,14 +248,14 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
         // The driver-LINQ translation copies the group's array to the member's alias in the whole document; `Name` is also a stored field of
         // the customer, so that would clobber it. The native modes project under the alias and are unaffected.
         var names = Seed();
-        using (var native = Create(names, MongoQueryMode.NativeOnly, withNavigation: true))
+        using (var native = Create(names, MongoQueryProvider.NativeOnly, withNavigation: true))
         {
             var rows = native.Set<Cust>().Select(c => new { c.Id, Name = c.Orders.OrderBy(o => o.Id).ToList() })
                 .AsEnumerable().Select(z => z.Id + ":" + Ids(z.Name)).OrderBy(s => s).ToList();
             Assert.Equal(["A1:1,2,3", "A2:4", "B1:5", "C0:"], rows);
         }
 
-        using var driver = Create(names, MongoQueryMode.DriverLinq, withNavigation: true);
+        using var driver = Create(names, MongoQueryProvider.DriverLinq, withNavigation: true);
         Assert.ThrowsAny<Exception>(() => driver.Set<Cust>()
             .Select(c => new { c.Id, Name = c.Orders.OrderBy(o => o.Id).ToList() })
             .AsEnumerable().ToList());
@@ -268,10 +268,10 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
             .AsEnumerable().Select(z => z.Id + ":" + Id(z.F)).OrderBy(s => s).ToList();
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Parameterized_FirstOrDefault_predicate_is_read_per_execution(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Parameterized_FirstOrDefault_predicate_is_read_per_execution(MongoQueryProvider mode)
     {
         var names = Seed();
 
@@ -295,10 +295,10 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
             .AsEnumerable().Select(z => z.Id + ":" + Ids(z.Os)).OrderBy(s => s).ToList();
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Parameterized_Take_is_read_per_execution(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Parameterized_Take_is_read_per_execution(MongoQueryProvider mode)
     {
         var names = Seed();
 
@@ -315,10 +315,10 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Parameterized_Skip_is_read_per_execution(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Parameterized_Skip_is_read_per_execution(MongoQueryProvider mode)
     {
         var names = Seed();
         using var db = Create(names, mode, withNavigation: true);
@@ -331,10 +331,10 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Parameterized_Skip_with_a_constant_Take_is_read_per_execution(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Parameterized_Skip_with_a_constant_Take_is_read_per_execution(MongoQueryProvider mode)
     {
         var names = Seed();
         using var db = Create(names, mode, withNavigation: true);
@@ -344,9 +344,9 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Two_leaves_with_different_Take_parameters_do_not_share_an_array(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Two_leaves_with_different_Take_parameters_do_not_share_an_array(MongoQueryProvider mode)
     {
         // The parameters are told apart by name, not by value: two leaves over one group with different parameters get their own arrays.
         var names = Seed();
@@ -361,10 +361,10 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
         Assert.Equal(["A1:1:1,2", "A2:4:4", "B1:5:5", "C0::"], rows);
     }
 
-    private Ctx Create(string[] names, MongoQueryMode mode, bool withNavigation)
+    private Ctx Create(string[] names, MongoQueryProvider mode, bool withNavigation)
     {
         var options = new DbContextOptionsBuilder<Ctx>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;

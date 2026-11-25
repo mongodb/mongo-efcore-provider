@@ -1418,7 +1418,7 @@ internal static class NativeProjectionBinder
     /// Invariant: the alias-addressed read and the navigation's document-path read must coincide, because a late fallback (e.g. explicit <c>DriverLinq</c>) hands the same alias-addressed shaper a whole
     /// un-projected document. That holds when the array is reachable from the root through single embedded references only (<see cref="TryGetRootRelativeArrayPath"/>; <c>Home.Notes</c> qualifies,
     /// <c>Posts.Comments</c> does not) and the alias equals that path; without the alias check, <c>new { b.Title, P = b.Posts }</c> silently returns an empty collection under <c>DriverLinq</c>.
-    /// The element type's eager-loaded navigations must all be embedded (recursively): EF's auto-include for one makes shaper build fail in every <see cref="Infrastructure.MongoQueryMode"/> (a separate
+    /// The element type's eager-loaded navigations must all be embedded (recursively): EF's auto-include for one makes shaper build fail in every <see cref="Infrastructure.MongoQueryProvider"/> (a separate
     /// defect; <c>NativeArrayProjectionTests.Element_with_its_own_navigation_is_declined_and_still_fails_identically_in_every_mode</c>). Lazy navigations such as a <c>WithOwner</c> back-reference are fine.
     /// </remarks>
     /// <param name="navigation">The candidate navigation; <see langword="null"/> (e.g. a skip navigation) declines.</param>
@@ -1931,7 +1931,7 @@ internal static class NativeProjectionBinder
         };
 
     /// <summary>
-    /// True when <paramref name="leaf"/> reads back correctly from a whole, un-projected document (a late <see cref="Infrastructure.MongoQueryMode.DriverLinq"/> fallback or EF's mixed shaper): only a plain
+    /// True when <paramref name="leaf"/> reads back correctly from a whole, un-projected document (a late <see cref="Infrastructure.MongoQueryProvider.DriverLinq"/> fallback or EF's mixed shaper): only a plain
     /// top-level property-backed field; its alias needn't match its element name (a projected key, alias <c>"Id"</c> vs. <c>"_id"</c>) since the mixed read side resolves it through its <see cref="IProperty"/>.
     /// Dotted and computed leaves decline.
     /// </summary>

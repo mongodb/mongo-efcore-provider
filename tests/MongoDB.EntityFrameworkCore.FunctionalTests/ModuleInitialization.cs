@@ -31,8 +31,8 @@ public static class ModuleInitialization
             Console.Error.WriteLine("WARNING: " + TestServer.EncryptionSkippedMessage);
         }
 
-        // Process-wide default query mode (MONGODB_EF_QUERY_MODE); explicit UseQueryMode calls still win.
-        Utilities.TestQueryMode.ApplyProcessDefault();
+        // Process-wide default query provider (MONGODB_EF_QUERY_PROVIDER); explicit UseQueryProvider calls still win.
+        Utilities.TestQueryProvider.ApplyProcessDefault();
 
         // We always need to do this before any of the test and just once
         try

@@ -74,10 +74,10 @@ public class NativeClientFilteredReferenceIncludeTests(TemporaryDatabaseFixture 
         }
     }
 
-    private ArticleContext Db(MongoQueryMode mode, string suffix, ILoggerFactory? loggerFactory = null)
+    private ArticleContext Db(MongoQueryProvider mode, string suffix, ILoggerFactory? loggerFactory = null)
     {
         var builder = new DbContextOptionsBuilder<ArticleContext>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         if (loggerFactory != null)
@@ -141,7 +141,7 @@ public class NativeClientFilteredReferenceIncludeTests(TemporaryDatabaseFixture 
     public async Task The_async_query_drops_them_too()
     {
         var suffix = Seed();
-        await using var db = Db(MongoQueryMode.NativeOnly, suffix);
+        await using var db = Db(MongoQueryProvider.NativeOnly, suffix);
 
         var results = await db.Articles.AsNoTracking().OrderBy(a => a.Id).Include(a => a.Category).Include(a => a.Author).ToListAsync();
 
@@ -152,7 +152,7 @@ public class NativeClientFilteredReferenceIncludeTests(TemporaryDatabaseFixture 
     public void A_tracked_query_tracks_nothing_of_a_dropped_document()
     {
         var suffix = Seed();
-        using var db = Db(MongoQueryMode.NativeOnly, suffix);
+        using var db = Db(MongoQueryProvider.NativeOnly, suffix);
 
         var results = db.Articles.AsTracking().OrderBy(a => a.Id).Include(a => a.Category).Include(a => a.Author).ToList();
 
@@ -169,7 +169,7 @@ public class NativeClientFilteredReferenceIncludeTests(TemporaryDatabaseFixture 
     {
         var suffix = Seed();
         var (loggerFactory, spy) = SpyLoggerProvider.Create();
-        using var db = Db(MongoQueryMode.NativeOnly, suffix, loggerFactory);
+        using var db = Db(MongoQueryProvider.NativeOnly, suffix, loggerFactory);
 
         var results = db.Articles.AsNoTracking().OrderBy(a => a.Id).Include(a => a.Category).Include(a => a.Author).ToList();
 
@@ -204,7 +204,7 @@ public class NativeClientFilteredReferenceIncludeTests(TemporaryDatabaseFixture 
 
         var results = NativeModeAssert.NativeAndParity(mode =>
         {
-            using var db = Db(mode, suffix, mode == MongoQueryMode.NativeOnly ? loggerFactory : null);
+            using var db = Db(mode, suffix, mode == MongoQueryProvider.NativeOnly ? loggerFactory : null);
             return db.Articles.AsNoTracking().Include(a => a.Category).OrderBy(a => a.Category.Name).ThenBy(a => a.Id)
                 .ToList().Select(a => $"{a.Id}:{a.Category.Name}").ToList();
         });
@@ -217,7 +217,7 @@ public class NativeClientFilteredReferenceIncludeTests(TemporaryDatabaseFixture 
     public void A_first_that_would_be_a_dropped_document_finds_none()
     {
         var suffix = Seed();
-        using var db = Db(MongoQueryMode.NativeOnly, suffix);
+        using var db = Db(MongoQueryProvider.NativeOnly, suffix);
 
         Assert.Null(db.Articles.AsNoTracking().Include(a => a.Category).Include(a => a.Author).FirstOrDefault(a => a.Id == 3));
         Assert.Throws<InvalidOperationException>(

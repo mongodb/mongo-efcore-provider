@@ -63,7 +63,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
         },
     ];
 
-    private SingleEntityDbContext<Owner> CreateContext(Owner[] seed, MongoQueryMode mode, string name)
+    private SingleEntityDbContext<Owner> CreateContext(Owner[] seed, MongoQueryProvider mode, string name)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Owner>(collectionName);
@@ -76,7 +76,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -85,7 +85,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
     {
         // Must hard-fail in every mode, never silently return whole outer rows.
         var seed = SeedOwners();
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode, nameof(Union_then_SelectMany_hard_fails_cleanly_in_every_mode) + mode);
 
@@ -101,7 +101,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
     public void Concat_then_SelectMany_hard_fails_cleanly_in_every_mode()
     {
         var seed = SeedOwners();
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode, nameof(Concat_then_SelectMany_hard_fails_cleanly_in_every_mode) + mode);
 
@@ -119,7 +119,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
         // Projecting only an outer member doesn't crash, so this is the pure wrong-data case (2 owner rows instead
         // of 3 item rows). Must throw, or if it ever succeeds, return the correct count.
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.Native,
+        using var db = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Union_then_SelectMany_projecting_only_outer_member_does_not_silently_return_wrong_rows));
 
         var query = db.Entities.Where(o => o.Name == "Alice")
@@ -143,7 +143,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
     public void Plain_SelectMany_without_a_preceding_terminal_still_goes_native()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Plain_SelectMany_without_a_preceding_terminal_still_goes_native));
 
         var result = db.Entities
@@ -184,19 +184,19 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
         public Blog? Blog { get; set; }
     }
 
-    private sealed class BlogDbContext(TemporaryDatabaseFixture database, string blogs, string posts, MongoQueryMode mode)
+    private sealed class BlogDbContext(TemporaryDatabaseFixture database, string blogs, string posts, MongoQueryProvider mode)
         : DbContext(BuildOptions(database, mode))
     {
         public DbSet<Blog> Blogs { get; set; } = null!;
         public DbSet<Post> Posts { get; set; } = null!;
 
-        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode)
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryProvider mode)
         {
             var ob = new DbContextOptionsBuilder<BlogDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(ob).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(ob).UseQueryProvider(mode);
             return ob.Options;
         }
 
@@ -235,7 +235,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
         };
         var bob = new Blog { Id = ObjectId.GenerateNewId(), Title = "Bob", Tags = [new Tag { Label = "z" }] };
 
-        using (var seed = new BlogDbContext(database, blogsName, postsName, MongoQueryMode.Native))
+        using (var seed = new BlogDbContext(database, blogsName, postsName, MongoQueryProvider.Native))
         {
             seed.Blogs.AddRange(alice, bob);
             seed.Posts.AddRange(
@@ -244,7 +244,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
             seed.SaveChanges();
         }
 
-        using var db = new BlogDbContext(database, blogsName, postsName, MongoQueryMode.Native);
+        using var db = new BlogDbContext(database, blogsName, postsName, MongoQueryProvider.Native);
 
         List<(string, string)> Run() =>
             db.Blogs.Include(b => b.Posts)

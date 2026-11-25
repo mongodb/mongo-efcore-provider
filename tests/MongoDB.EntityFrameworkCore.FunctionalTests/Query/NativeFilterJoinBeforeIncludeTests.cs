@@ -106,12 +106,12 @@ public class NativeFilterJoinBeforeIncludeTests(TemporaryDatabaseFixture databas
 
     private sealed record Names(string Lines, string Orders, string Products);
 
-    private SingleContext Create(Names names, MongoQueryMode mode, Type lineType)
+    private SingleContext Create(Names names, MongoQueryProvider mode, Type lineType)
     {
         var builder = new DbContextOptionsBuilder<SingleContext>()
             .UseMongoDB(
                 database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                o => o.UseQueryMode(mode))
+                o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         return new SingleContext(builder.Options, lineType, names);

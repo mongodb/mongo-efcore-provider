@@ -147,7 +147,7 @@ public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) :
         //
         // Hand-computed oracle for the boxed form: driver-LINQ is not one, as it throws serializing the captured
         // List<Item> through ObjectSerializer (the type isn't in its allowed-types list).
-        List<string> RunBoxed(MongoQueryMode mode)
+        List<string> RunBoxed(MongoQueryProvider mode)
         {
             using var context = CreateContext(collection, mode);
             return context.Entities.AsNoTracking()
@@ -158,8 +158,8 @@ public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) :
                 .ToList();
         }
 
-        Assert.Equal(["a|7", "a|7", "b|7", "c|7"], RunBoxed(MongoQueryMode.NativeOnly));
-        Assert.Equal(["a|7", "a|7", "b|7", "c|7"], RunBoxed(MongoQueryMode.Native));
+        Assert.Equal(["a|7", "a|7", "b|7", "c|7"], RunBoxed(MongoQueryProvider.NativeOnly));
+        Assert.Equal(["a|7", "a|7", "b|7", "c|7"], RunBoxed(MongoQueryProvider.Native));
 
         var upcast = NativeModeAssert.NativeAndParity(mode =>
         {
@@ -263,7 +263,7 @@ public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) :
         var collection = Seed(nameof(MemberInit_with_parameter_only_constructor_arguments_goes_native));
         var value = "random";
 
-        List<string> Run(MongoQueryMode mode)
+        List<string> Run(MongoQueryProvider mode)
         {
             using var context = CreateContext(collection, mode);
             return context.Entities.AsNoTracking()
@@ -278,8 +278,8 @@ public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) :
         // oracle here: it renders `Nested` as a $literal document and deserializes it, and the get-only Value
         // property doesn't round-trip, so it answers Nested.Value = null.
         string[] expected = ["random|a|random|", "random|a|random|", "random|b|random|", "random|c|random|"];
-        Assert.Equal(expected, Run(MongoQueryMode.NativeOnly));
-        Assert.Equal(expected, Run(MongoQueryMode.Native));
+        Assert.Equal(expected, Run(MongoQueryProvider.NativeOnly));
+        Assert.Equal(expected, Run(MongoQueryProvider.Native));
     }
 
     [Fact]
@@ -568,12 +568,12 @@ public class NativeClientEvaluatedLeafTests(TemporaryDatabaseFixture database) :
         return collection;
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

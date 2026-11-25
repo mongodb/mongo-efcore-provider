@@ -36,7 +36,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContextWithLogging<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
         where T : class
     {
@@ -51,7 +51,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -78,7 +78,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
     public void Entity_equality_self_goes_native()
     {
         var collection = SeedCustomers(nameof(Entity_equality_self_goes_native));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, null, out var spyLogger);
 
 #pragma warning disable CS1718 // Comparison made to same variable — deliberate: this is the shape under test.
         var results = db.Entities.AsNoTracking().Where(c => c == c).ToList();
@@ -92,7 +92,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
     public void Entity_equality_self_negated_returns_no_rows()
     {
         var collection = SeedCustomers(nameof(Entity_equality_self_negated_returns_no_rows));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, null, out var spyLogger);
 
 #pragma warning disable CS1718 // Comparison made to same variable — deliberate: this is the shape under test.
         var results = db.Entities.AsNoTracking().Where(c => c != c).ToList();
@@ -138,7 +138,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
     public void Owned_reference_navigation_null_check_goes_native()
     {
         var collection = SeedBlogs(nameof(Owned_reference_navigation_null_check_goes_native));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spyLogger);
 
         var results = db.Entities.AsNoTracking().Where(b => b.Address == null).ToList();
 
@@ -151,7 +151,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
     public void Owned_reference_navigation_not_null_check_goes_native()
     {
         var collection = SeedBlogs(nameof(Owned_reference_navigation_not_null_check_goes_native));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spyLogger);
 
         var results = db.Entities.AsNoTracking().Where(b => b.Address != null).ToList();
 
@@ -169,7 +169,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         var existingId = collection.Find(FilterDefinition<Customer>.Empty)
             .ToList().Single(c => c.Name == "Alpha").Id;
 
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, null, out var spyLogger);
         var other = new Customer { Id = existingId, Name = "Ignored — only the key is compared" };
 
         var results = db.Entities.AsNoTracking().Where(c => c == other).ToList();
@@ -184,7 +184,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
     public void Entity_equality_against_a_captured_local_with_no_match_returns_empty()
     {
         var collection = SeedCustomers(nameof(Entity_equality_against_a_captured_local_with_no_match_returns_empty));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out _);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, null, out _);
 
         var other = new Customer { Id = ObjectId.GenerateNewId(), Name = "Other" };
 
@@ -200,7 +200,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         var existingId = collection.Find(FilterDefinition<Customer>.Empty)
             .ToList().Single(c => c.Name == "Alpha").Id;
 
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, null, out var spyLogger);
         var customers = new List<Customer?> { null, new Customer { Id = existingId, Name = "Ignored — only the key is compared" } };
 
         var results = db.Entities.AsNoTracking().Where(c => customers.Contains(c)).ToList();
@@ -214,7 +214,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
     public void Entity_list_contains_with_no_match_returns_empty()
     {
         var collection = SeedCustomers(nameof(Entity_list_contains_with_no_match_returns_empty));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out _);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, null, out _);
 
         var customers = new List<Customer?> { null, new Customer { Id = ObjectId.GenerateNewId(), Name = "Other" } };
 

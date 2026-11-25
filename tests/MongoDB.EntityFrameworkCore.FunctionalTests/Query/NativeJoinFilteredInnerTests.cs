@@ -31,7 +31,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// A join whose inner side carries its own <c>Where</c>. Expectations are hand-computed over raw seeds, because the
 /// driver-LINQ oracle is wrong or absent here: with an <c>Include</c> it silently drops the inner filter, without one it
-/// throws. The explicit <see cref="MongoQueryMode.DriverLinq"/> leg therefore asserts a LOUD failure, never rows.
+/// throws. The explicit <see cref="MongoQueryProvider.DriverLinq"/> leg therefore asserts a LOUD failure, never rows.
 /// </summary>
 public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -141,7 +141,7 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
         ]);
 
         // Animals go through EF so the TPH discriminator is stored exactly as the provider reads it.
-        using (var seeding = Create(names, MongoQueryMode.DriverLinq))
+        using (var seeding = Create(names, MongoQueryProvider.DriverLinq))
         {
             seeding.AddRange(
                 new Dog { Id = 1, Name = "Rex", OwnerId = "A1" },
@@ -158,13 +158,13 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
     {
         var names = Seed();
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = Create(names, mode);
             Assert.True(expected.SequenceEqual(query(db)), $"{mode}: expected [{string.Join(", ", expected)}]");
         }
 
-        using var driverDb = Create(names, MongoQueryMode.DriverLinq);
+        using var driverDb = Create(names, MongoQueryProvider.DriverLinq);
         if (driverLeg == DriverLeg.Throws)
         {
             Assert.ThrowsAny<Exception>(() => query(driverDb));
@@ -248,9 +248,9 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
             .Select(x => $"{x.c.Id}:{x.o.Id}").OrderBy(s => s).ToList();
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Parameterized_inner_filter_is_read_per_execution(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Parameterized_inner_filter_is_read_per_execution(MongoQueryProvider mode)
     {
         var names = Seed();
 
@@ -267,7 +267,7 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
     public void Parameterized_inner_filter_refuses_under_explicit_DriverLinq()
     {
         var names = Seed();
-        using var db = Create(names, MongoQueryMode.DriverLinq);
+        using var db = Create(names, MongoQueryProvider.DriverLinq);
         Assert.ThrowsAny<Exception>(() => ParameterizedQuery(db, 25));
     }
 
@@ -290,14 +290,14 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
                         .Join(db.Set<Cust>(), o => o.CustId, c => c.Id, (o, c) => new { o, c }))
                 .AsNoTracking().AsEnumerable().Select(x => $"{x.o.Id}:{x.c.Id}").OrderBy(s => s).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = Create(names, mode);
             try
             {
                 Assert.Empty(Run(db));
             }
-            catch (NativeTranslationNotSupportedException) when (mode == MongoQueryMode.NativeOnly)
+            catch (NativeTranslationNotSupportedException) when (mode == MongoQueryProvider.NativeOnly)
             {
             }
         }
@@ -311,7 +311,7 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
     {
         var names = Seed();
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = Create(names, mode);
             try
@@ -321,7 +321,7 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
                         .Join(db.Set<Cust>().Where(c => c.Id == "B1"), o => o.CustId, c => c.Id, (o, c) => new { o, c })
                         .AsNoTracking().AsEnumerable().Select(x => $"{x.o.Id}:{x.c.Id}").OrderBy(s => s).ToList());
             }
-            catch (NativeTranslationNotSupportedException) when (mode == MongoQueryMode.NativeOnly)
+            catch (NativeTranslationNotSupportedException) when (mode == MongoQueryProvider.NativeOnly)
             {
             }
         }
@@ -343,14 +343,14 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
                         .Join(db.Set<Cust>(), o => o.CustId, c => c.Id, (o, c) => new { o, c }))
                 .AsNoTracking().AsEnumerable().Select(x => $"{x.o.Id}:{x.c.Id}").OrderBy(s => s).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = Create(names, mode);
             try
             {
                 Assert.Equal(["1:A1", "2:A1"], Run(db));
             }
-            catch (NativeTranslationNotSupportedException) when (mode == MongoQueryMode.NativeOnly)
+            catch (NativeTranslationNotSupportedException) when (mode == MongoQueryProvider.NativeOnly)
             {
             }
         }
@@ -449,12 +449,12 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
     {
         var names = Seed();
 
-        using (var nativeOnly = Create(names, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = Create(names, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() => query(nativeOnly));
         }
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(names, mode);
             List<string>? rows = null;
@@ -506,7 +506,7 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
     {
         var names = Seed();
 
-        using (var nativeOnly = Create(names, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = Create(names, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() => query(nativeOnly));
         }
@@ -523,8 +523,8 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
             }
         }
 
-        using var nativeDb = Create(names, MongoQueryMode.Native);
-        using var driverDb = Create(names, MongoQueryMode.DriverLinq);
+        using var nativeDb = Create(names, MongoQueryProvider.Native);
+        using var driverDb = Create(names, MongoQueryProvider.DriverLinq);
         var native = Run(() => query(nativeDb));
         var driver = Run(() => query(driverDb));
 
@@ -535,12 +535,12 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
         }
     }
 
-    private Ctx Create(Names names, MongoQueryMode mode)
+    private Ctx Create(Names names, MongoQueryProvider mode)
     {
         var builder = new DbContextOptionsBuilder<Ctx>()
             .UseMongoDB(
                 database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                o => o.UseQueryMode(mode))
+                o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         return new Ctx(builder.Options, names);

@@ -140,7 +140,7 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Coalesced_Substring_member_projection_reads_the_server_value()
     {
-        using var db = CreateContext(Seed(nameof(Coalesced_Substring_member_projection_reads_the_server_value)), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(nameof(Coalesced_Substring_member_projection_reads_the_server_value)), MongoQueryProvider.NativeOnly);
         Assert.Equal(
             ["missing:none", "null:none", "value:A"],
             db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => new { x.Label, V = x.S!.Substring(0, 1) ?? "none" })
@@ -192,7 +192,7 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Declined_Length_beside_a_case_mapping_is_computed_client_side()
     {
-        using var db = CreateContext(Seed(nameof(Declined_Length_beside_a_case_mapping_is_computed_client_side)), MongoQueryMode.Native);
+        using var db = CreateContext(Seed(nameof(Declined_Length_beside_a_case_mapping_is_computed_client_side)), MongoQueryProvider.Native);
         Assert.Equal(
             ["ABC:3"],
             db.Entities.Where(x => x.Label == "value").Select(x => new { U = x.S!.ToUpper(), L = x.S!.Length }).AsEnumerable()
@@ -204,7 +204,7 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Declined_computed_Length_beside_a_case_mapping_is_computed_client_side()
     {
-        using var db = CreateContext(Seed(nameof(Declined_computed_Length_beside_a_case_mapping_is_computed_client_side)), MongoQueryMode.Native);
+        using var db = CreateContext(Seed(nameof(Declined_computed_Length_beside_a_case_mapping_is_computed_client_side)), MongoQueryProvider.Native);
         Assert.Equal(
             ["ABC:3:4"],
             db.Entities.Where(x => x.Label == "value").Select(x => new { U = x.S!.ToUpper(), T = x.S!.Trim().Length, P = x.S!.Length + 1 })
@@ -247,14 +247,14 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Terminal_Sum_of_Length_stays_native()
     {
-        using var db = CreateContext(Seed(nameof(Terminal_Sum_of_Length_stays_native)), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(nameof(Terminal_Sum_of_Length_stays_native)), MongoQueryProvider.NativeOnly);
         Assert.Equal(3, db.Entities.Sum(x => x.S!.Length));
     }
 
     [Fact]
     public void Terminal_Max_of_nullable_Length_stays_native()
     {
-        using var db = CreateContext(Seed(nameof(Terminal_Max_of_nullable_Length_stays_native)), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(nameof(Terminal_Max_of_nullable_Length_stays_native)), MongoQueryProvider.NativeOnly);
         Assert.Equal(3, db.Entities.Max(x => (int?)x.S!.Length));
     }
 
@@ -271,14 +271,14 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Not_null_guarded_Length_member_projection_stays_native()
     {
-        using var db = CreateContext(Seed(nameof(Not_null_guarded_Length_member_projection_stays_native)), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(nameof(Not_null_guarded_Length_member_projection_stays_native)), MongoQueryProvider.NativeOnly);
         Assert.Equal([-1, -1, 3], db.Entities.OrderBy(x => x.Label).Select(x => new { L = x.S != null ? x.S.Length : -1 }).AsEnumerable().Select(x => x.L).ToList());
     }
 
     [Fact]
     public void IsNullOrEmpty_guarded_Length_with_label_projection_stays_native()
     {
-        using var db = CreateContext(Seed(nameof(IsNullOrEmpty_guarded_Length_with_label_projection_stays_native)), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(nameof(IsNullOrEmpty_guarded_Length_with_label_projection_stays_native)), MongoQueryProvider.NativeOnly);
         Assert.Equal(
             ["missing:0", "null:0", "value:3"],
             db.Entities.OrderBy(x => x.Label).Select(x => new { x.Label, L = string.IsNullOrEmpty(x.S) ? 0 : x.S.Length })
@@ -288,14 +288,14 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Null_guarded_Length_terminal_Max_stays_native()
     {
-        using var db = CreateContext(Seed(nameof(Null_guarded_Length_terminal_Max_stays_native)), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(nameof(Null_guarded_Length_terminal_Max_stays_native)), MongoQueryProvider.NativeOnly);
         Assert.Equal(3, db.Entities.Max(x => x.S == null ? 0 : x.S.Length));
     }
 
     [Fact]
     public void Null_guarded_Length_max_accumulator_stays_native()
     {
-        using var db = CreateContext(Seed(nameof(Null_guarded_Length_max_accumulator_stays_native)), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(nameof(Null_guarded_Length_max_accumulator_stays_native)), MongoQueryProvider.NativeOnly);
         Assert.Equal([3], db.Entities.GroupBy(x => x.Label != "").Select(g => g.Max(x => x.S == null ? 0 : x.S.Length)).ToList());
     }
 
@@ -303,11 +303,11 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     // a Length is re-evaluated client-side as written. The released driver-LINQ provider (v10.0.4) answers the null and
     // value rows the same, and fails the missing row on the server ($eq: [missing, null] is false).
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Null_guarded_Length_beside_a_case_mapping_stays_correct(string mode)
     {
-        using var db = CreateContext(Seed(nameof(Null_guarded_Length_beside_a_case_mapping_stays_correct) + mode), Enum.Parse<MongoQueryMode>(mode));
+        using var db = CreateContext(Seed(nameof(Null_guarded_Length_beside_a_case_mapping_stays_correct) + mode), Enum.Parse<MongoQueryProvider>(mode));
         Assert.Equal(
             ["missing::-1", "null::-1", "value:ABC:3"],
             db.Entities.OrderBy(x => x.Label).Select(x => new { x.Label, U = x.S!.ToUpper(), L = x.S == null ? -1 : x.S.Length })
@@ -319,11 +319,11 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Coalesced_Length_beside_a_case_mapping_is_computed_client_side(string mode)
     {
-        using var db = CreateContext(Seed(nameof(Coalesced_Length_beside_a_case_mapping_is_computed_client_side) + mode), Enum.Parse<MongoQueryMode>(mode));
+        using var db = CreateContext(Seed(nameof(Coalesced_Length_beside_a_case_mapping_is_computed_client_side) + mode), Enum.Parse<MongoQueryProvider>(mode));
         Assert.Equal(
             ["missing::0", "null::0", "value:ABC:3"],
             db.Entities.OrderBy(x => x.Label).Select(x => new { x.Label, U = x.S!.ToUpper(), L = (x.S ?? "").Length })
@@ -333,11 +333,11 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     // A nullable cast answers null when a document read its operand null-propagates from is null, wherever the cast sits:
     // around the member's binding, inside the leaf, or over a string operator whose receiver is the null read.
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Nullable_cast_Length_beside_a_case_mapping_is_null_when_a_read_is_null(string mode)
     {
-        using var db = CreateContext(SeedWithIndependentNulls(nameof(Nullable_cast_Length_beside_a_case_mapping_is_null_when_a_read_is_null) + mode), Enum.Parse<MongoQueryMode>(mode));
+        using var db = CreateContext(SeedWithIndependentNulls(nameof(Nullable_cast_Length_beside_a_case_mapping_is_null_when_a_read_is_null) + mode), Enum.Parse<MongoQueryProvider>(mode));
         // Rows: missing, null, sNull (S null, T "b"), tNull (S "Abc", T null), value (S "Abc", T "b").
         Assert.Equal(
             ["missing:<null>", "null:<null>", "sNull:<null>", "tNull:<null>", "value:4"],
@@ -372,11 +372,11 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
 
     // Each operand of a computed Length leaf read from whole documents must read its own value, not the last one bound.
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Computed_Length_leaf_read_from_whole_documents_reads_every_operand(string mode)
     {
-        using var db = CreateContext(Seed(nameof(Computed_Length_leaf_read_from_whole_documents_reads_every_operand) + mode), Enum.Parse<MongoQueryMode>(mode));
+        using var db = CreateContext(Seed(nameof(Computed_Length_leaf_read_from_whole_documents_reads_every_operand) + mode), Enum.Parse<MongoQueryProvider>(mode));
         var value = db.Entities.Where(x => x.Label == "value");
         Assert.Equal(
             ["ABC:3:3:6"],
@@ -407,11 +407,11 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
             q => q.Select(x => x.S == null && x.T == null ? -1 : x.S!.Length).ToList(), [-1, -1, 3]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Nullable_Length_beside_a_case_mapping_is_null_for_null_and_missing(string mode)
     {
-        using var db = CreateContext(Seed(nameof(Nullable_Length_beside_a_case_mapping_is_null_for_null_and_missing) + mode), Enum.Parse<MongoQueryMode>(mode));
+        using var db = CreateContext(Seed(nameof(Nullable_Length_beside_a_case_mapping_is_null_for_null_and_missing) + mode), Enum.Parse<MongoQueryProvider>(mode));
         Assert.Equal(
             ["missing::<null>", "null::<null>", "value:ABC:3"],
             db.Entities.OrderBy(x => x.Label).Select(x => new { x.Label, U = x.S!.ToUpper(), L = (int?)x.S!.Length })
@@ -421,7 +421,7 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Nullable_Length_group_key_stays_native()
     {
-        using var db = CreateContext(Seed(nameof(Nullable_Length_group_key_stays_native)), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(nameof(Nullable_Length_group_key_stays_native)), MongoQueryProvider.NativeOnly);
         Assert.Equal(
             ["3:1", "<null>:2"],
             db.Entities.GroupBy(x => (int?)x.S!.Length).Select(g => new { g.Key, C = g.Count() }).AsEnumerable()
@@ -431,7 +431,7 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Length_sum_accumulator_stays_native()
     {
-        using var db = CreateContext(Seed(nameof(Length_sum_accumulator_stays_native)), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(nameof(Length_sum_accumulator_stays_native)), MongoQueryProvider.NativeOnly);
         Assert.Equal(
             ["missing:0", "null:0", "value:3"],
             db.Entities.GroupBy(x => x.Label).Select(g => new { g.Key, T = g.Sum(x => x.S!.Length) }).AsEnumerable()
@@ -445,7 +445,7 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
         Func<IQueryable<Row>, List<T>> query, T[] valueRow, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
     {
         var collection = Seed(name);
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = CreateContext(collection, mode);
             foreach (var label in new[] { "null", "missing" })
@@ -463,12 +463,12 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     private void AssertGuardedLengthThrowsOnUnguardedNull(
         Func<IQueryable<Row>, List<int>> query, int[] plainSeed, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
     {
-        using (var db = CreateContext(Seed(name), MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(Seed(name), MongoQueryProvider.NativeOnly))
         {
             Assert.Equal(plainSeed, query(db.Entities.OrderBy(x => x.Label)));
         }
 
-        using (var db = CreateContext(SeedWithIndependentNulls(name + "I"), MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(SeedWithIndependentNulls(name + "I"), MongoQueryProvider.NativeOnly))
         {
             var exception = Assert.Throws<InvalidOperationException>(() => query(db.Entities.OrderBy(x => x.Label)));
             NullableValueMessage.AssertIs(exception.Message);
@@ -478,14 +478,14 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     // A group key flagged as null-propagated is read back strictly: the null group throws EF's error instead of reading 0.
     private void AssertThrowsOnNull<T>(Func<SingleEntityDbContext<Row>, T> query, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
     {
-        using var db = CreateContext(Seed(name), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(name), MongoQueryProvider.NativeOnly);
         var exception = Assert.Throws<InvalidOperationException>(() => query(db));
         NullableValueMessage.AssertIs(exception.Message);
     }
 
     private void AssertDeclines<T>(Func<SingleEntityDbContext<Row>, T> query, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
     {
-        using var db = CreateContext(Seed(name), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(name), MongoQueryProvider.NativeOnly);
         Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(() => query(db));
     }
 
@@ -543,13 +543,13 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
     [Fact]
     public void FirstOrDefault_projection_still_reads_NUL_for_null_and_missing()
     {
-        using var db = CreateContext(SeedWithEmpty(nameof(FirstOrDefault_projection_still_reads_NUL_for_null_and_missing)), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(SeedWithEmpty(nameof(FirstOrDefault_projection_still_reads_NUL_for_null_and_missing)), MongoQueryProvider.NativeOnly);
         Assert.Equal(['\0', '\0', '\0', 'A'], db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => x.S!.FirstOrDefault()).ToList());
     }
 
     private void AssertCharFilter(Expression<Func<Row, bool>> predicate, string[] expected, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
     {
-        using var db = CreateContext(SeedWithEmpty(name), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(SeedWithEmpty(name), MongoQueryProvider.NativeOnly);
         Assert.Equal(expected, db.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList());
     }
 
@@ -576,13 +576,13 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
 
     private void AssertProjection<T>(Expression<Func<Row, T>> selector, T[] expected, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
     {
-        using var db = CreateContext(Seed(name), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(name), MongoQueryProvider.NativeOnly);
         Assert.Equal(expected, db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(selector).ToList());
     }
 
     private void AssertFilter(Expression<Func<Row, bool>> predicate, string[] expected, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
     {
-        using var db = CreateContext(Seed(name), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(Seed(name), MongoQueryProvider.NativeOnly);
         Assert.Equal(expected, db.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList());
     }
 
@@ -598,12 +598,12 @@ public class NativeStringNullPropagationTests(TemporaryDatabaseFixture database)
         return database.MongoDatabase.GetCollection<Row>(collectionName);
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

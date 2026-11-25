@@ -32,7 +32,7 @@ public class NativeStreamingCompositeKeyTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? model = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? model = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -40,7 +40,7 @@ public class NativeStreamingCompositeKeyTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private class Invoice
@@ -58,7 +58,7 @@ public class NativeStreamingCompositeKeyTests(TemporaryDatabaseFixture database)
     private IMongoCollection<Invoice> SeedInvoices([CallerMemberName] string? name = null)
     {
         var collection = database.CreateCollection<Invoice>(name);
-        using var seed = CreateContext(collection, MongoQueryMode.Native, InvoiceModel);
+        using var seed = CreateContext(collection, MongoQueryProvider.Native, InvoiceModel);
         seed.Entities.AddRange(
             new Invoice { Region = "eu", Number = 1, Customer = "ann", Total = 10m, City = "Oslo" },
             new Invoice { Region = "eu", Number = 2, Customer = "bob", Total = null },
@@ -87,7 +87,7 @@ public class NativeStreamingCompositeKeyTests(TemporaryDatabaseFixture database)
     public void Composite_key_entity_query_streams()
     {
         var collection = SeedInvoices();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, InvoiceModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, InvoiceModel);
 
         Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Entities.AsNoTracking()));
         Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Entities));
@@ -141,7 +141,7 @@ public class NativeStreamingCompositeKeyTests(TemporaryDatabaseFixture database)
         var raw = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName);
         raw.InsertOne(new BsonDocument { { "_id", new BsonDocument { { "Region", "xx" } } }, { "Customer", "dan" } });
 
-        foreach (var mode in new[] { MongoQueryMode.DriverLinq, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.DriverLinq, MongoQueryProvider.Native })
         {
             using var db = CreateContext(collection, mode, InvoiceModel);
             Assert.Throws<InvalidOperationException>(() => db.Entities.AsNoTracking().Where(i => i.Customer == "dan").ToList());

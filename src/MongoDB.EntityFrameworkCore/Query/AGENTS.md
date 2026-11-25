@@ -7,11 +7,11 @@ adjacent-areas: [Storage, Metadata, Serializers, "C# driver LINQ v3"]
 
 # Query — AGENTS.md
 
-Translates `IQueryable<T>` into aggregation pipelines via two paths, chosen at compile time by `MongoQueryMode`:
+Translates `IQueryable<T>` into aggregation pipelines via two paths, chosen at compile time by `MongoQueryProvider`:
 
 - **Native (default):** the provider builds the `BsonDocument[]` pipeline from its own query tree.
 - **Driver-LINQ (fallback):** anything not representable natively goes to the driver's LINQ v3 provider.
-  `MongoQueryMode.NativeOnly` throws at compile time instead of falling back.
+  `MongoQueryProvider.NativeOnly` throws at compile time instead of falling back.
 
 Which path a query takes, the exact MQL, and the exception type for an unsupported shape are not contract.
 
@@ -425,7 +425,7 @@ Shapers and projections:
 
 ## Testing
 
-- **MQL shape cannot prove a query went native**; use `MongoQueryMode.NativeOnly` (`MONGODB_EF_QUERY_MODE=NativeOnly`
+- **MQL shape cannot prove a query went native**; use `MongoQueryProvider.NativeOnly` (`MONGODB_EF_QUERY_PROVIDER=NativeOnly`
   flips every spec and functional context; `MONGODB_EF_NATIVE_ONLY=1` is an alias).
 - For result-affecting native shapes, write a `[Theory]` comparing native results to an in-memory LINQ oracle over
   ragged/missing/null/empty data (`NativeOwnedCollectionAllTests`, `NativeModeAssert`).

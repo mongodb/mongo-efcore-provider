@@ -43,13 +43,13 @@ public class MongoDbContextOptionsBuilder : IMongoDbContextOptionsBuilderInfrast
     /// <summary>
     /// Specifies how the provider translates LINQ queries to MongoDB.
     /// </summary>
-    /// <param name="queryMode">The <see cref="MongoQueryMode"/> to use.</param>
+    /// <param name="queryProvider">The <see cref="MongoQueryProvider"/> to use.</param>
     /// <returns>This builder, so that further configuration can be chained.</returns>
-    public virtual MongoDbContextOptionsBuilder UseQueryMode(MongoQueryMode queryMode)
+    public virtual MongoDbContextOptionsBuilder UseQueryProvider(MongoQueryProvider queryProvider)
     {
         var extension = (OptionsBuilder.Options.FindExtension<MongoOptionsExtension>()
                          ?? new MongoOptionsExtension())
-            .WithQueryMode(queryMode);
+            .WithQueryProvider(queryProvider);
         ((IDbContextOptionsBuilderInfrastructure)OptionsBuilder).AddOrUpdateExtension(extension);
         return this;
     }

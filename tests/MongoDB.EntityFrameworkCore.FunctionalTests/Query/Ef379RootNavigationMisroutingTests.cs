@@ -51,9 +51,9 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     // Tier 1 (FK-property name): PRoot and PMid both declare "LeafId".
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Colliding_fk_name_transitive_hop_reads_the_intermediate_not_the_root(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Colliding_fk_name_transitive_hop_reads_the_intermediate_not_the_root(MongoQueryProvider mode)
     {
         using var db = CreateCollidingContext(
             nameof(Colliding_fk_name_transitive_hop_reads_the_intermediate_not_the_root), mode);
@@ -78,7 +78,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     public void Colliding_fk_name_transitive_hop_prefixes_the_second_localField()
     {
         using var db = CreateCollidingContext(
-            nameof(Colliding_fk_name_transitive_hop_prefixes_the_second_localField), MongoQueryMode.Native,
+            nameof(Colliding_fk_name_transitive_hop_prefixes_the_second_localField), MongoQueryProvider.Native,
             out var spyLogger);
 
         var results = db.PRoots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList();
@@ -97,7 +97,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     {
         // reference ThenInclude chain goes native.
         using var db = CreateCollidingContext(
-            nameof(Colliding_fk_name_transitive_hop_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
+            nameof(Colliding_fk_name_transitive_hop_now_goes_native_under_NativeOnly), MongoQueryProvider.NativeOnly);
 
         var results = db.PRoots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList();
 
@@ -109,9 +109,9 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     // navigation to the leaf type.
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Renamed_fk_transitive_hop_reads_the_intermediate_not_the_root(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Renamed_fk_transitive_hop_reads_the_intermediate_not_the_root(MongoQueryProvider mode)
     {
         using var db = CreateRenamedContext(
             nameof(Renamed_fk_transitive_hop_reads_the_intermediate_not_the_root), mode);
@@ -134,7 +134,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     public void Renamed_fk_transitive_hop_prefixes_the_second_localField()
     {
         using var db = CreateRenamedContext(
-            nameof(Renamed_fk_transitive_hop_prefixes_the_second_localField), MongoQueryMode.Native,
+            nameof(Renamed_fk_transitive_hop_prefixes_the_second_localField), MongoQueryProvider.Native,
             out var spyLogger);
 
         var results = db.RRoots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList();
@@ -153,7 +153,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     public void Renamed_fk_transitive_hop_now_goes_native_under_NativeOnly()
     {
         using var db = CreateRenamedContext(
-            nameof(Renamed_fk_transitive_hop_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
+            nameof(Renamed_fk_transitive_hop_now_goes_native_under_NativeOnly), MongoQueryProvider.NativeOnly);
 
         var results = db.RRoots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList();
 
@@ -167,9 +167,9 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     // here that catches a gate tightened to "skip the root tiers only when a transitive candidate exists".
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void No_intermediate_navigation_transitive_hop_still_skips_the_root_tiers(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void No_intermediate_navigation_transitive_hop_still_skips_the_root_tiers(MongoQueryProvider mode)
     {
         using var db = CreateNoNavContext(
             nameof(No_intermediate_navigation_transitive_hop_still_skips_the_root_tiers), mode);
@@ -194,9 +194,9 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     // depth can't be the discriminator. Must keep unprefixed localFields.
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Sibling_root_reference_Includes_stay_root_scoped(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Sibling_root_reference_Includes_stay_root_scoped(MongoQueryProvider mode)
     {
         using var db = CreateSiblingContext(nameof(Sibling_root_reference_Includes_stay_root_scoped), mode);
 
@@ -215,7 +215,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     public void Sibling_root_reference_Includes_emit_unprefixed_localFields()
     {
         using var db = CreateSiblingContext(
-            nameof(Sibling_root_reference_Includes_emit_unprefixed_localFields), MongoQueryMode.Native,
+            nameof(Sibling_root_reference_Includes_emit_unprefixed_localFields), MongoQueryProvider.Native,
             out var spyLogger);
 
         var results = db.SRoots.Include(r => r.Alpha).Include(r => r.Beta).ToList();
@@ -233,9 +233,9 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     // classification keys on the member-name chain, not the receiver type. Classified transitive.
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Self_referencing_two_hop_chain_now_returns_the_correct_chain(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Self_referencing_two_hop_chain_now_returns_the_correct_chain(MongoQueryProvider mode)
     {
         using var db = CreateSelfRefContext(nameof(Self_referencing_two_hop_chain_now_returns_the_correct_chain), mode);
 
@@ -259,7 +259,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         // A linear ThenInclude chain goes native, including the self-referencing case (per-join JoinInfo and
         // uniquified aliases disambiguate the hops).
         using var db = CreateSelfRefContext(
-            nameof(Self_referencing_two_hop_chain_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
+            nameof(Self_referencing_two_hop_chain_now_goes_native_under_NativeOnly), MongoQueryProvider.NativeOnly);
 
         var nodes = db.FNodes.Include(n => n.Parent).ThenInclude(p => p.Parent).OrderBy(n => n.Label).ToList();
 
@@ -273,9 +273,9 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     // "transitive hop with no navigation declines" rule would hard-fail this user-authored join in every mode.
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Owned_SelectMany_then_join_off_the_unwound_element_still_works(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Owned_SelectMany_then_join_off_the_unwound_element_still_works(MongoQueryProvider mode)
     {
         using var db = CreateOwnedJoinContext(
             nameof(Owned_SelectMany_then_join_off_the_unwound_element_still_works), mode);
@@ -297,7 +297,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     {
         // Control: a shallow self-reference must keep working.
         using var db = CreateSelfRefContext(nameof(Self_referencing_single_hop_still_works),
-            MongoQueryMode.Native, out var spyLogger);
+            MongoQueryProvider.Native, out var spyLogger);
 
         var results = db.FNodes.Include(n => n.Parent).OrderBy(n => n.Label).ToList();
 
@@ -308,7 +308,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     private CollidingChainDbContext CreateCollidingContext(
-        string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+        string name, MongoQueryProvider mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var roots = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "PR" + suffix;
@@ -344,7 +344,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     private CollidingChainDbContext CreateCollidingContext(
-        string name, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+        string name, MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -352,7 +352,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     private RenamedChainDbContext CreateRenamedContext(
-        string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+        string name, MongoQueryProvider mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var roots = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "RR" + suffix;
@@ -386,7 +386,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     private RenamedChainDbContext CreateRenamedContext(
-        string name, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+        string name, MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -394,7 +394,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     private NoNavChainDbContext CreateNoNavContext(
-        string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+        string name, MongoQueryProvider mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var roots = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "NR" + suffix;
@@ -429,7 +429,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     private SiblingRootDbContext CreateSiblingContext(
-        string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+        string name, MongoQueryProvider mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var roots = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "SR" + suffix;
@@ -461,7 +461,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     private SiblingRootDbContext CreateSiblingContext(
-        string name, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+        string name, MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -469,7 +469,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     private SelfRefDbContext CreateSelfRefContext(
-        string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+        string name, MongoQueryProvider mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var nodes = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "FN" + suffix;
@@ -490,14 +490,14 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         return new SelfRefDbContext(database, nodes, mode, loggerFactory);
     }
 
-    private SelfRefDbContext CreateSelfRefContext(string name, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+    private SelfRefDbContext CreateSelfRefContext(string name, MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
         return CreateSelfRefContext(name, mode, loggerFactory);
     }
 
-    private OwnedJoinDbContext CreateOwnedJoinContext(string name, MongoQueryMode mode)
+    private OwnedJoinDbContext CreateOwnedJoinContext(string name, MongoQueryProvider mode)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var orders = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "JO" + suffix;
@@ -525,12 +525,12 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     private static DbContextOptions<TContext> Configure<TContext>(
-        TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+        TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         where TContext : DbContext
     {
         var builder = new DbContextOptionsBuilder<TContext>()
             .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                b => b.UseQueryMode(mode))
+                b => b.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
@@ -584,7 +584,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
 
         public CollidingChainDbContext(
             TemporaryDatabaseFixture database, string roots, string mids, string leaves,
-            MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            MongoQueryProvider mode, ILoggerFactory? loggerFactory)
             : base(Configure<CollidingChainDbContext>(database, mode, loggerFactory))
         {
             _roots = roots;
@@ -642,7 +642,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
 
         public RenamedChainDbContext(
             TemporaryDatabaseFixture database, string roots, string mids, string leaves,
-            MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            MongoQueryProvider mode, ILoggerFactory? loggerFactory)
             : base(Configure<RenamedChainDbContext>(database, mode, loggerFactory))
         {
             _roots = roots;
@@ -702,7 +702,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
 
         public NoNavChainDbContext(
             TemporaryDatabaseFixture database, string roots, string mids, string leaves,
-            MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            MongoQueryProvider mode, ILoggerFactory? loggerFactory)
             : base(Configure<NoNavChainDbContext>(database, mode, loggerFactory))
         {
             _roots = roots;
@@ -757,7 +757,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
 
         public SiblingRootDbContext(
             TemporaryDatabaseFixture database, string roots, string alphas, string betas,
-            MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            MongoQueryProvider mode, ILoggerFactory? loggerFactory)
             : base(Configure<SiblingRootDbContext>(database, mode, loggerFactory))
         {
             _roots = roots;
@@ -812,7 +812,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     private class OwnedJoinDbContext(
-        TemporaryDatabaseFixture database, string orders, string products, MongoQueryMode mode)
+        TemporaryDatabaseFixture database, string orders, string products, MongoQueryProvider mode)
         : DbContext(Configure<OwnedJoinDbContext>(database, mode, null))
     {
         public DbSet<JOrder> JOrders { get; set; } = null!;
@@ -832,7 +832,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         private readonly string _nodes;
 
         public SelfRefDbContext(
-            TemporaryDatabaseFixture database, string nodes, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            TemporaryDatabaseFixture database, string nodes, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
             : base(Configure<SelfRefDbContext>(database, mode, loggerFactory))
             => _nodes = nodes;
 

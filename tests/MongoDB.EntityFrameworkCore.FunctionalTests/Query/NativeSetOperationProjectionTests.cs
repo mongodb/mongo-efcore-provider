@@ -74,7 +74,7 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
         });
 
     private static SingleEntityDbContext<Entity> CreateContext(
-        IMongoCollection<Entity> collection, MongoQueryMode mode, List<string>? logs = null)
+        IMongoCollection<Entity> collection, MongoQueryProvider mode, List<string>? logs = null)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
@@ -85,7 +85,7 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
                 }
 
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private List<int> Run(string name, Func<SingleEntityDbContext<Entity>, IQueryable<int>> query)
@@ -159,7 +159,7 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
     {
         var collection = Seed(nameof(Union_of_column_and_computed_scalar_re_aliases_the_second_operand));
         var logs = new List<string>();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Select(x => x.Id).Union(db.Entities.Select(x => x.N + 1)).ToList();
 
@@ -231,7 +231,7 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
         public int N { get; set; }
     }
 
-    private SingleEntityDbContext<Coded> CreateCodedContext(string name, MongoQueryMode mode)
+    private SingleEntityDbContext<Coded> CreateCodedContext(string name, MongoQueryProvider mode)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         database.MongoDatabase.GetCollection<BsonDocument>(collectionName).InsertMany([
@@ -246,13 +246,13 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
     private void AssertCodedSetOperationDeclines(string name, Func<SingleEntityDbContext<Coded>, IQueryable<int>> query)
     {
-        using var db = CreateCodedContext(name, MongoQueryMode.NativeOnly);
+        using var db = CreateCodedContext(name, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => query(db).ToList());
     }
 
@@ -399,7 +399,7 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
     {
         var collection = SeedWithAnEight(nameof(Union_of_constant_and_column_reads_the_first_operand_from_the_document));
         var logs = new List<string>();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, logs);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, logs);
 
         var result = db.Entities.Select(x => 8).Union(db.Entities.Select(x => x.N)).ToList();
 
@@ -416,7 +416,7 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
     // Ids {1, 2, 3, 4}; N + 1 = {11, 21, 2, 11}.
     private static List<T> RunNativeOnlySorted<T>(IMongoCollection<Entity> collection, Func<SingleEntityDbContext<Entity>, IQueryable<T>> query)
     {
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         return query(db).ToList().OrderBy(v => v).ToList();
     }
 
@@ -612,7 +612,7 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
     public void Union_of_single_member_anonymous_operands_with_a_constant_member_declines()
     {
         var collection = SeedWithAnEight(nameof(Union_of_single_member_anonymous_operands_with_a_constant_member_declines));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Select(x => new { A = 8 }).Union(db.Entities.Select(x => new { A = x.N })).ToList());
     }
@@ -625,7 +625,7 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
     public void Union_of_string_constructor_operands_with_a_constant_argument_declines()
     {
         var collection = SeedWithAnEight(nameof(Union_of_string_constructor_operands_with_a_constant_argument_declines));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Select(x => new string('a', x.N)).Union(db.Entities.Select(x => new string('b', x.Id))).ToList());
     }
@@ -638,7 +638,7 @@ public class NativeSetOperationProjectionTests(TemporaryDatabaseFixture database
     public void Union_with_a_client_evaluated_first_operand_declines()
     {
         var collection = SeedWithAnEight(nameof(Union_with_a_client_evaluated_first_operand_declines));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Select(x => ClientTwice(x.N)).Union(db.Entities.Select(x => x.N)).ToList());
     }

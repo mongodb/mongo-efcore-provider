@@ -63,10 +63,10 @@ public class NativeCollectionJoinStreamingTests(TemporaryDatabaseFixture databas
         }
     }
 
-    private ShopContext Db(MongoQueryMode mode, string suffix)
+    private ShopContext Db(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<ShopContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)).Options,
             suffix);
@@ -127,7 +127,7 @@ public class NativeCollectionJoinStreamingTests(TemporaryDatabaseFixture databas
         Assert.Equal(tracked ? "shared=True" : "shared=False", results[1]);
         Assert.Equal(tracked ? "entries=5" : "entries=0", results[2]);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Categories.Join(streaming.Articles, c => c.Id, a => a.CategoryId, (c, a) => new { c, a }));
     }
 
@@ -156,7 +156,7 @@ public class NativeCollectionJoinStreamingTests(TemporaryDatabaseFixture databas
         Assert.Equal("t1,t2", results[0]);
         Assert.Equal("c1,c2", results[1]);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Categories.Join(streaming.Articles, c => c.Id, a => a.CategoryId, (c, a) => a));
         AssertStreams(streaming.Categories.Join(streaming.Articles, c => c.Id, a => a.CategoryId, (c, a) => c));
     }
@@ -177,7 +177,7 @@ public class NativeCollectionJoinStreamingTests(TemporaryDatabaseFixture databas
 
         Assert.Equal(["c1/t1", "c1/t2", "c2/t3", "c3/-"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Categories.LeftJoin(streaming.Articles, c => c.Id, a => a.CategoryId, (c, a) => new { c, a }));
     }
 #endif

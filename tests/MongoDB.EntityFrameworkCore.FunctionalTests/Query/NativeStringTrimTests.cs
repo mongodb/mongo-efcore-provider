@@ -78,16 +78,16 @@ public class NativeStringTrimTests(TemporaryDatabaseFixture database) : IClassFi
     // `selector` must be an Expression, not a Func (see NativeStringConcatTests.AssertConcatMatchesOracle).
     private static void AssertSelectMatchesOracle(IMongoCollection<Row> collection, Expression<Func<Row, string>> selector)
     {
-        using var oracleDb = CreateContext(collection, MongoQueryMode.Native);
+        using var oracleDb = CreateContext(collection, MongoQueryProvider.Native);
         var oracle = oracleDb.Entities.AsNoTracking().ToList().Select(selector.Compile())
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Select(selector).ToList()
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
         Assert.Equal(oracle, nativeOnlyResult);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeResult = native.Entities.AsNoTracking().Select(selector).ToList()
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
         Assert.Equal(oracle, nativeResult);
@@ -103,12 +103,12 @@ public class NativeStringTrimTests(TemporaryDatabaseFixture database) : IClassFi
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

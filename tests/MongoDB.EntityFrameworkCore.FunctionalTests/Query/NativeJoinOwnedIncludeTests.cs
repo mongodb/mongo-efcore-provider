@@ -72,12 +72,12 @@ public class NativeJoinOwnedIncludeTests(TemporaryDatabaseFixture database) : IC
         Assert.Equal(4, results.Count);
     }
 
-    private SingleContext Create(string owners, string tags, MongoQueryMode mode)
+    private SingleContext Create(string owners, string tags, MongoQueryProvider mode)
     {
         var builder = new DbContextOptionsBuilder<SingleContext>()
             .UseMongoDB(
                 database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                o => o.UseQueryMode(mode))
+                o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         return new SingleContext(builder.Options, owners, tags);

@@ -33,7 +33,7 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? model = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? model = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -41,7 +41,7 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private abstract class Animal
@@ -86,7 +86,7 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
     private IMongoCollection<Animal> SeedAnimals([CallerMemberName] string? name = null)
     {
         var collection = database.CreateCollection<Animal>(name);
-        using var seed = CreateContext(collection, MongoQueryMode.Native, AnimalModel);
+        using var seed = CreateContext(collection, MongoQueryProvider.Native, AnimalModel);
         seed.Entities.AddRange(
             new Dog { Id = 1, Name = "rex", Breed = "lab", Tricks = 3 },
             new Cat { Id = 2, Name = "tom", Color = "grey", Lives = 9 },
@@ -124,7 +124,7 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
     public void Hierarchy_root_query_streams()
     {
         var collection = SeedAnimals();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, AnimalModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, AnimalModel);
 
         Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Entities.AsNoTracking()));
         Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Entities));
@@ -201,7 +201,7 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
         var raw = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName);
         raw.UpdateOne(Builders<BsonDocument>.Filter.Eq("_id", 5), Builders<BsonDocument>.Update.Unset("Breed"));
 
-        foreach (var mode in new[] { MongoQueryMode.DriverLinq, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.DriverLinq, MongoQueryProvider.Native })
         {
             using var db = CreateContext(collection, mode, AnimalModel);
 
@@ -287,7 +287,7 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
     private IMongoCollection<Vehicle> SeedVehicles([CallerMemberName] string? name = null)
     {
         var collection = database.CreateCollection<Vehicle>(name);
-        using var seed = CreateContext(collection, MongoQueryMode.Native, VehicleModel);
+        using var seed = CreateContext(collection, MongoQueryProvider.Native, VehicleModel);
         seed.Entities.AddRange(
             new Car
             {
@@ -320,7 +320,7 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
     public void A_hierarchy_whose_derived_types_own_navigations_streams()
     {
         var collection = SeedVehicles();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, VehicleModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, VehicleModel);
 
         Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Entities.AsNoTracking()));
         Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Entities));
@@ -404,7 +404,7 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
         var raw = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName);
         raw.UpdateOne(Builders<BsonDocument>.Filter.Eq("_id", 2), Builders<BsonDocument>.Update.Unset("Bed"));
 
-        foreach (var mode in new[] { MongoQueryMode.DriverLinq, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.DriverLinq, MongoQueryProvider.Native })
         {
             using var db = CreateContext(collection, mode, mb =>
             {
@@ -459,7 +459,7 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
     public void Siblings_that_own_different_navigations_under_one_element_name_still_read_correctly()
     {
         var collection = database.CreateCollection<Fruit>();
-        using (var seed = CreateContext(collection, MongoQueryMode.Native, FruitModel))
+        using (var seed = CreateContext(collection, MongoQueryProvider.Native, FruitModel))
         {
             seed.Entities.AddRange(new Apple { Id = 1, Info = new Seed { Count = 5 } }, new Pear { Id = 2, Info = new Stone { Kind = "hard" } });
             seed.SaveChanges();
@@ -505,7 +505,7 @@ public class NativeStreamingHierarchyTests(TemporaryDatabaseFixture database)
     public void Siblings_that_store_a_shared_element_differently_still_read_correctly()
     {
         var collection = database.CreateCollection<Shape>();
-        using (var seed = CreateContext(collection, MongoQueryMode.Native, ShapeModel))
+        using (var seed = CreateContext(collection, MongoQueryProvider.Native, ShapeModel))
         {
             seed.Entities.AddRange(new Circle { Id = 1, Size = 2.5 }, new Label { Id = 2, Size = "big" });
             seed.SaveChanges();

@@ -32,7 +32,7 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Tests covering <c>Include</c> behavior under the query-mode gate.
+/// Tests covering <c>Include</c> behavior under the query-provider gate.
 /// <para>
 /// Not version-gated: a required reference <c>Include</c> lowers to <c>Queryable.Join</c> on every EF major
 /// (only an optional one uses the EF10-only <c>LeftJoin</c>).
@@ -42,7 +42,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// A recognized single-level reference Include goes native (root-level <c>_lookup_&lt;NavigationName&gt;</c> alias);
 /// a declined shape falls back to the driver-LINQ LeftJoin path (<c>_outer</c> / <c>$$ROOT</c> / <c>_inner</c>).
 /// </remarks>
-public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
+public class QueryProviderGateIncludeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private class Order
@@ -71,10 +71,10 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
 
         public OrderCustomerDbContext(
             TemporaryDatabaseFixture db, string orders, string customers, List<string> logs,
-            MongoQueryMode mode = MongoQueryMode.Native)
+            MongoQueryProvider mode = MongoQueryProvider.Native)
             : base(new DbContextOptionsBuilder<OrderCustomerDbContext>()
                 .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    o => o.UseQueryMode(mode))
+                    o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .LogTo(logs.Add)
@@ -160,7 +160,7 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         ]);
 
         var logs = new List<string>();
-        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.NativeOnly);
+        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Customers.Include(c => c.Orders).ToList();
 
@@ -183,7 +183,7 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         ]);
 
         var logs = new List<string>();
-        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.Native);
+        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryProvider.Native);
 
         var _ = db.Customers.Include(c => c.Orders).ToList();
 
@@ -212,7 +212,7 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         ]);
 
         var logs = new List<string>();
-        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.NativeOnly);
+        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryProvider.NativeOnly);
 
         var customers = db.Customers.Include(c => c.Orders).OrderBy(c => c.FullName).ToList();
 
@@ -239,7 +239,7 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         ]);
 
         var logs = new List<string>();
-        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.NativeOnly);
+        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryProvider.NativeOnly);
 
         var customers = db.Customers.AsNoTracking().Include(c => c.Orders).ToList();
 
@@ -280,10 +280,10 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
 
         public NestedOrderCustomerDbContext(
             TemporaryDatabaseFixture db, string orders, string customers, string orderDetails,
-            MongoQueryMode mode = MongoQueryMode.NativeOnly, ILoggerFactory? loggerFactory = null)
+            MongoQueryProvider mode = MongoQueryProvider.NativeOnly, ILoggerFactory? loggerFactory = null)
             : base(Configure(new DbContextOptionsBuilder<NestedOrderCustomerDbContext>()
                 .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    o => o.UseQueryMode(mode))
+                    o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)), loggerFactory)
                 .Options)
@@ -387,7 +387,7 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
 
         var (loggerFactory, spy) = SpyLoggerProvider.Create();
         using var db = new NestedOrderCustomerDbContext(
-            database, ordersName, customersName, orderDetailsName, MongoQueryMode.DriverLinq, loggerFactory);
+            database, ordersName, customersName, orderDetailsName, MongoQueryProvider.DriverLinq, loggerFactory);
 
         var results = db.Customers
             .Include(c => c.Orders).ThenInclude(o => o.OrderDetails)
@@ -432,7 +432,7 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
 
         var (loggerFactory, spy) = SpyLoggerProvider.Create();
         using var db = new NestedOrderCustomerDbContext(
-            database, ordersName, customersName, orderDetailsName, MongoQueryMode.NativeOnly, loggerFactory);
+            database, ordersName, customersName, orderDetailsName, MongoQueryProvider.NativeOnly, loggerFactory);
 
         var results = db.Customers
             .Include(c => c.Orders).ThenInclude(o => o.OrderDetails)
@@ -484,7 +484,7 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         ]);
 
         var logs = new List<string>();
-        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.NativeOnly);
+        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryProvider.NativeOnly);
 
         var counts = db.Customers
             .Select(c => new { c._id, OrderCount = c.Orders.Count })
@@ -508,7 +508,7 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         ]);
 
         var logs = new List<string>();
-        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.Native);
+        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryProvider.Native);
 
         var _ = db.Customers
             .Select(c => new { c._id, OrderCount = c.Orders.Count })
@@ -536,7 +536,7 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         ]);
 
         var logs = new List<string>();
-        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.NativeOnly);
+        using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryProvider.NativeOnly);
 
         // c.Orders.Count(o => ...) is a correlated Count-with-predicate: a `$size` of a `$filter` over the `$lookup` array (it
         // used to throw InvalidOperationException in every mode). NativeOnly proves it is native; the empty description

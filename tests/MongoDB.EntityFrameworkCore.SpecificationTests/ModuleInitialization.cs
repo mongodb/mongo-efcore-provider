@@ -22,7 +22,7 @@ internal static class ModuleInitialization
 {
     [ModuleInitializer]
     internal static void ModuleInitializer()
-        // Covers contexts that bypass MongoTestStore; explicit UseQueryMode calls still win. The functional assembly's
+        // Covers contexts that bypass MongoTestStore; explicit UseQueryProvider calls still win. The functional assembly's
         // module initializer (it runs once that assembly loads) applies the same value from the same resolver.
-        => TestQueryMode.ApplyProcessDefault();
+        => TestQueryProvider.ApplyProcessDefault();
 }

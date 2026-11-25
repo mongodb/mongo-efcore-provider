@@ -36,7 +36,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// </summary>
 /// <remarks>
 /// <c>Name</c> converts <c>v =&gt; "pfx-" + v</c> and <c>Num</c> converts <c>v =&gt; v * 2</c>; each case is run under
-/// <see cref="MongoQueryMode.Native"/>, <see cref="MongoQueryMode.NativeOnly"/> and <see cref="MongoQueryMode.DriverLinq"/>
+/// <see cref="MongoQueryProvider.Native"/>, <see cref="MongoQueryProvider.NativeOnly"/> and <see cref="MongoQueryProvider.DriverLinq"/>
 /// against an oracle computed in memory over the materialized entities.
 /// </remarks>
 public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -130,7 +130,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         ["Select_numeric_cast_plus"] = q => q.OrderBy(x => x.Seq).Select(x => x.Wide + 1).ToList()
     };
 
-    private static readonly MongoQueryMode[] Modes = [MongoQueryMode.Native, MongoQueryMode.NativeOnly, MongoQueryMode.DriverLinq];
+    private static readonly MongoQueryProvider[] Modes = [MongoQueryProvider.Native, MongoQueryProvider.NativeOnly, MongoQueryProvider.DriverLinq];
 
     public static IEnumerable<object[]> RefusedCases()
         => from query in RefusedQueries.Keys from mode in Modes select new object[] { query, mode };
@@ -143,7 +143,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
 
     [Theory]
     [MemberData(nameof(RefusedCases))]
-    public void Function_over_converted_property_is_refused(string query, MongoQueryMode mode)
+    public void Function_over_converted_property_is_refused(string query, MongoQueryProvider mode)
     {
         var (oracle, run) = Arrange(query, RefusedQueries[query], mode);
 
@@ -154,7 +154,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         }
 
         Assert.NotNull(ex);
-        if (mode == MongoQueryMode.NativeOnly)
+        if (mode == MongoQueryProvider.NativeOnly)
         {
             Assert.IsType<NativeTranslationNotSupportedException>(ex);
         }
@@ -171,7 +171,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
 
     [Theory]
     [MemberData(nameof(AllowedCases))]
-    public void Reading_or_comparing_converted_property_keeps_working(string query, MongoQueryMode mode)
+    public void Reading_or_comparing_converted_property_keeps_working(string query, MongoQueryProvider mode)
     {
         var (oracle, run) = Arrange(query, AllowedQueries[query], mode);
 
@@ -180,7 +180,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
 
     [Theory]
     [MemberData(nameof(NotRefusedCases))]
-    public void Function_over_exactly_stored_property_is_not_refused(string query, MongoQueryMode mode)
+    public void Function_over_exactly_stored_property_is_not_refused(string query, MongoQueryProvider mode)
     {
         var (oracle, run) = Arrange(query, NotRefusedQueries[query], mode);
 
@@ -194,7 +194,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         Assert.DoesNotContain("value converter or a BsonRepresentation", ex.Message);
     }
 
-    private (string Oracle, Func<string> Run) Arrange(string query, Func<IQueryable<Item>, object> shape, MongoQueryMode mode)
+    private (string Oracle, Func<string> Run) Arrange(string query, Func<IQueryable<Item>, object> shape, MongoQueryProvider mode)
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(ConvertedPropertyFunctionTests), query, mode)
                    + Guid.NewGuid().ToString("N")[..8];
@@ -216,7 +216,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
 
         var collection = database.MongoDatabase.GetCollection<Item>(name);
 
-        using var materializing = CreateContext(collection, MongoQueryMode.Native);
+        using var materializing = CreateContext(collection, MongoQueryProvider.Native);
         var entities = materializing.Entities.AsNoTracking().ToList();
         Assert.Equal(Rows.Select(r => r.Name), entities.OrderBy(e => e.Seq).Select(e => e.Name));
         Assert.Equal(Rows.Select(r => r.Num), entities.OrderBy(e => e.Seq).Select(e => e.Num));
@@ -229,7 +229,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         });
     }
 
-    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: mb =>
@@ -244,7 +244,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static string Normalize(object? value)

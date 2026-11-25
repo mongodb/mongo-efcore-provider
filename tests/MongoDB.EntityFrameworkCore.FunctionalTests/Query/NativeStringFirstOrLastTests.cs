@@ -123,40 +123,40 @@ public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : I
     {
         var expected = expectedLabels.OrderBy(x => x, StringComparer.Ordinal).ToList();
 
-        using var nativeOnly = CreateNullableContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateNullableContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList()
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
         Assert.Equal(expected, nativeOnlyResult);
 
-        using var native = CreateNullableContext(collection, MongoQueryMode.Native);
+        using var native = CreateNullableContext(collection, MongoQueryProvider.Native);
         var nativeResult = native.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList()
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
         Assert.Equal(expected, nativeResult);
     }
 
-    private static SingleEntityDbContext<NullableRow> CreateNullableContext(IMongoCollection<NullableRow> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<NullableRow> CreateNullableContext(IMongoCollection<NullableRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // `predicate` must be an Expression; a Func would silently filter client-side and bypass translation.
     private static void AssertWhereMatchesOracle(IMongoCollection<Row> collection, Expression<Func<Row, bool>> predicate)
     {
-        using var oracleDb = CreateContext(collection, MongoQueryMode.Native);
+        using var oracleDb = CreateContext(collection, MongoQueryProvider.Native);
         var oracle = oracleDb.Entities.AsNoTracking().ToList().Where(predicate.Compile()).Select(x => x.Label)
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
 
         // OrderBy(comparer) runs after ToList(); a custom IComparer has no MQL translation.
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList()
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
         Assert.Equal(oracle, nativeOnlyResult);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeResult = native.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList()
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
         Assert.Equal(oracle, nativeResult);
@@ -172,12 +172,12 @@ public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : I
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

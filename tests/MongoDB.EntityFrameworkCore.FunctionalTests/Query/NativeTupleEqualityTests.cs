@@ -63,13 +63,13 @@ public class NativeTupleEqualityTests(TemporaryDatabaseFixture database) : IClas
         return database.MongoDatabase.GetCollection<Doc>(collectionName);
     }
 
-    private static SingleEntityDbContext<Doc> CreateContext(IMongoCollection<Doc> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Doc> CreateContext(IMongoCollection<Doc> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private void Check(string name, Func<IQueryable<Doc>, IQueryable<Doc>> where, params string[] expected)
@@ -151,10 +151,10 @@ public class NativeTupleEqualityTests(TemporaryDatabaseFixture database) : IClas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Tuple_with_guid_equals_twice_with_different_values(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Tuple_with_guid_equals_twice_with_different_values(MongoQueryProvider mode)
     {
         var collection = Seed(nameof(Tuple_with_guid_equals_twice_with_different_values) + mode);
         using var db = CreateContext(collection, mode);
@@ -171,10 +171,10 @@ public class NativeTupleEqualityTests(TemporaryDatabaseFixture database) : IClas
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Whole_tuple_parameter_twice_with_different_values(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Whole_tuple_parameter_twice_with_different_values(MongoQueryProvider mode)
     {
         var collection = Seed(nameof(Whole_tuple_parameter_twice_with_different_values) + mode);
         using var db = CreateContext(collection, mode);

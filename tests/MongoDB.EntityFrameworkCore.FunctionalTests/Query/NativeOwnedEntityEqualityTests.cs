@@ -84,7 +84,7 @@ public class NativeOwnedEntityEqualityTests(TemporaryDatabaseFixture database) :
     public void Owned_collection_Contains_and_Any_equality_go_native_over_stored_state(string shape, string[] expected)
     {
         var collection = Seed();
-        List<string> Run(MongoQueryMode mode)
+        List<string> Run(MongoQueryProvider mode)
         {
             using var db = Create(collection, mode);
             var x = new Addr { City = "X", Zip = 1 };
@@ -98,8 +98,8 @@ public class NativeOwnedEntityEqualityTests(TemporaryDatabaseFixture database) :
             return q.Select(p => p.Id).OrderBy(id => id).ToList();
         }
 
-        Assert.Equal(expected, Run(MongoQueryMode.NativeOnly));
-        Assert.Equal(expected, Run(MongoQueryMode.Native));
+        Assert.Equal(expected, Run(MongoQueryProvider.NativeOnly));
+        Assert.Equal(expected, Run(MongoQueryProvider.Native));
     }
 
     [Fact]
@@ -116,7 +116,7 @@ public class NativeOwnedEntityEqualityTests(TemporaryDatabaseFixture database) :
         });
     }
 
-    private static SingleEntityDbContext<Person> Create(IMongoCollection<Person> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Person> Create(IMongoCollection<Person> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             mb =>
@@ -127,7 +127,7 @@ public class NativeOwnedEntityEqualityTests(TemporaryDatabaseFixture database) :
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static BsonDocument AddrDoc(string city, int zip) => new() { { "City", city }, { "Zip", zip } };

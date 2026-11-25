@@ -263,22 +263,22 @@ public class SameTargetTypeJoinTests(TemporaryDatabaseFixture database)
         private readonly CollectionNames _names;
 
         public StJoinDbContext(
-            TemporaryDatabaseFixture database, CollectionNames names, Action<string>? logTo, MongoQueryMode? mode = null)
+            TemporaryDatabaseFixture database, CollectionNames names, Action<string>? logTo, MongoQueryProvider? mode = null)
             : base(Build(database, logTo, mode))
         {
             _names = names;
         }
 
-        private static DbContextOptions Build(TemporaryDatabaseFixture database, Action<string>? logTo, MongoQueryMode? mode)
+        private static DbContextOptions Build(TemporaryDatabaseFixture database, Action<string>? logTo, MongoQueryProvider? mode)
         {
             var builder = new DbContextOptionsBuilder<StJoinDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
-            if (mode is { } queryMode)
+            if (mode is { } queryProvider)
             {
-                new MongoDbContextOptionsBuilder(builder).UseQueryMode(queryMode);
+                new MongoDbContextOptionsBuilder(builder).UseQueryProvider(queryProvider);
             }
 
             if (logTo != null)

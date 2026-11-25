@@ -39,7 +39,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <remarks>
 /// Data assertions pin order (or a score), never a row count alone: a dropped <c>$vectorSearch</c> stage returns
 /// the right number of rows in insertion order, so the seed is inserted deliberately out of score order. Routing is
-/// proven by <see cref="MongoQueryMode.NativeOnly"/> succeeding (or throwing for a decline), never by MQL shape,
+/// proven by <see cref="MongoQueryProvider.NativeOnly"/> succeeding (or throwing for a decline), never by MQL shape,
 /// since both paths emit a structurally identical stage.
 /// </remarks>
 public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
@@ -57,9 +57,9 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     private static readonly string[] InsertionOrder = ["D", "C", "A", "B", "E"];
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_vector_search_returns_score_order(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_vector_search_returns_score_order(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -76,9 +76,9 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     }
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Pre_filter_restricts_and_preserves_score_order(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Pre_filter_restricts_and_preserves_score_order(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -92,9 +92,9 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     }
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Exact_search_returns_score_order(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Exact_search_returns_score_order(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -109,9 +109,9 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     }
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Num_candidates_returns_score_order(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Num_candidates_returns_score_order(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -125,9 +125,9 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     }
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Where_after_vector_search_preserves_score_order(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Where_after_vector_search_preserves_score_order(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -146,9 +146,9 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     // and is read raw via BsonBinding.CreateGetElementValue.
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Score_projection_via_EF_Property_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Score_projection_via_EF_Property_goes_native(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -161,9 +161,9 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     }
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Score_projection_via_Mql_Field_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Score_projection_via_Mql_Field_goes_native(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -183,7 +183,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     {
         var prefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        using (var nativeOnly = CreateContext(MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(MongoQueryProvider.NativeOnly))
         {
             var nativeOnlyRows = nativeOnly.Docs
                 .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
@@ -193,7 +193,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
             Assert.Single(nativeOnlyRows);
         }
 
-        using var db = CreateContext(MongoQueryMode.Native, out var spyLogger);
+        using var db = CreateContext(MongoQueryProvider.Native, out var spyLogger);
 
         var rows = db.Docs
             .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
@@ -241,9 +241,9 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     // Streaming materializer skipping the unmapped __score element.
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Whole_entity_vector_search_streams_and_skips_the_score_field(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Whole_entity_vector_search_streams_and_skips_the_score_field(MongoQueryProvider mode)
     {
         // A bare vector search materializes through the one-pass streaming materializer over documents carrying an
         // extra top-level "__score" element (the $addFields companion is always emitted). Nothing maps it, so
@@ -280,7 +280,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     {
         // `Weight` is a real double-typed element and the receiver is the selector's parameter, so it is not the
         // vector-search score leaf (the literal "__score" name) and resolves like any mapped field.
-        using (var db = CreateContext(MongoQueryMode.Native))
+        using (var db = CreateContext(MongoQueryProvider.Native))
         {
             // Values are asserted in order so a dropped
             // $vectorSearch stage is still caught.
@@ -293,7 +293,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal([1.0, 2.0, 3.0, 4.0], values.Select(v => v.Value));
         }
 
-        using (var db = CreateContext(MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(MongoQueryProvider.NativeOnly))
         {
             // A real, default-mapped element resolves as an ordinary field (TryResolveMqlField), so NativeOnly now serves it.
             var values = db.Docs
@@ -308,7 +308,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         // Guard B: the double/double? CLR type. The name is "__score", so only the type declines it. The native
         // read-back ignores any caller-supplied serializer and reads through CreateTypeSerializer(<requested type>),
         // so admitting a non-double would read through a serializer the fallback would never use.
-        using (var db = CreateContext(MongoQueryMode.Native))
+        using (var db = CreateContext(MongoQueryProvider.Native))
         {
             var scores = db.Docs
                 .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
@@ -324,7 +324,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
             }
         }
 
-        using (var db = CreateContext(MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => db.Docs
@@ -339,7 +339,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     {
         // Guard C: Select.VectorSearch is not null. With no vector search nothing writes "__score", so admitting the
         // leaf would emit a $project alias reading an element no stage writes.
-        using (var db = CreateContext(MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => db.Docs
@@ -349,8 +349,8 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
 
         // Default mode declines and falls back to driver-LINQ. Asserting it agrees with an explicit DriverLinq run
         // pins "stayed on the fallback path" without pinning the driver's behaviour for a nonexistent element.
-        using (var native = CreateContext(MongoQueryMode.Native))
-        using (var driverLinq = CreateContext(MongoQueryMode.DriverLinq))
+        using (var native = CreateContext(MongoQueryProvider.Native))
+        using (var driverLinq = CreateContext(MongoQueryProvider.DriverLinq))
         {
             var underNative = Record.Exception(
                 () => native.Docs.Select(e => new { e.Label, Score = EF.Property<double>(e, "__score") }).ToList());
@@ -368,7 +368,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     {
         // Raised by QueryingEnumerable from AdditionalState, filled by the deferred $vectorSearch slot at Build time.
         // NativeOnly forbids the fallback, so this is the native path's own diagnostic.
-        using var db = CreateContext(MongoQueryMode.NativeOnly,
+        using var db = CreateContext(MongoQueryProvider.NativeOnly,
             warnings: w => w.Throw(MongoEventId.VectorSearchReturnedZeroResults));
 
         var message = Assert.Throws<InvalidOperationException>(
@@ -384,7 +384,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     public void Unmatched_index_name_warns_natively()
     {
         // Raised in VectorSearchStageBuilder.Resolve, shared by the native deferred slot and the driver-LINQ bridge.
-        using var db = CreateContext(MongoQueryMode.NativeOnly,
+        using var db = CreateContext(MongoQueryProvider.NativeOnly,
             warnings: w => w.Throw(MongoEventId.VectorSearchNeedsIndex));
 
         var message = Assert.Throws<InvalidOperationException>(
@@ -399,10 +399,10 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     // Exception parity across all three modes; pins why VectorSearchStageBuilder keeps its reflection boundary.
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Exact_with_num_candidates_throws_InvalidOperationException_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Exact_with_num_candidates_throws_InvalidOperationException_in_every_mode(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -420,10 +420,10 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     }
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Limit_zero_throws_identically_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Limit_zero_throws_identically_in_every_mode(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -446,7 +446,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         // Not a routing proof: both paths emit an identical $vectorSearch + $addFields pair. Pins only that
         // $vectorSearch is stage 0 (the server rejects it elsewhere — Location40602) and the __score companion
         // immediately follows it, ahead of user-composed stages.
-        using var db = CreateContext(MongoQueryMode.Native, out var spyLogger);
+        using var db = CreateContext(MongoQueryProvider.Native, out var spyLogger);
 
         db.Docs
             .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
@@ -473,7 +473,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     {
         // `Tags.Contains("keep")` (array field contains value) translates natively via MongoArrayContainsExpression.
         // Routing proven by NativeOnly; both paths render an identical $vectorSearch.filter.
-        using (var db = CreateContext(MongoQueryMode.Native))
+        using (var db = CreateContext(MongoQueryProvider.Native))
         {
             var labels = db.Docs
                 .VectorSearch(e => e.Embedding, e => e.Tags.Contains("keep"), QueryVector, limit: 4)
@@ -484,7 +484,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(["A", "C", "D"], labels);
         }
 
-        using (var db = CreateContext(MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(MongoQueryProvider.NativeOnly))
         {
             var labels = db.Docs
                 .VectorSearch(e => e.Embedding, e => e.Tags.Contains("keep"), QueryVector, limit: 4)
@@ -504,7 +504,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         var wanted = "keep"; // captured local -> a query PARAMETER, not a ConstantExpression, once EF
                               // parameterizes the closure before the native translator ever sees it.
 
-        using (var db = CreateContext(MongoQueryMode.Native))
+        using (var db = CreateContext(MongoQueryProvider.Native))
         {
             var labels = db.Docs
                 .VectorSearch(e => e.Embedding, e => e.Tags.Contains(wanted), QueryVector, limit: 4)
@@ -515,7 +515,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
             Assert.Equal(["A", "C", "D"], labels);
         }
 
-        using (var db = CreateContext(MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => db.Docs
@@ -528,9 +528,9 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     // server-side, so this throws in every mode: native declines at translate time; the fallback builds the rejected $expr.
 
     [AtlasTheory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Untranslatable_pre_filter_throws_from_the_server_in_every_fallback_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Untranslatable_pre_filter_throws_from_the_server_in_every_fallback_mode(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -545,7 +545,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     [AtlasFact]
     public void Untranslatable_pre_filter_declines_at_translate_time_under_native_only()
     {
-        using var db = CreateContext(MongoQueryMode.NativeOnly);
+        using var db = CreateContext(MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Docs
@@ -557,12 +557,12 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     private static string? SeededCollection;
 
     private VectorDocContext CreateContext(
-        MongoQueryMode mode,
+        MongoQueryProvider mode,
         ILoggerFactory? loggerFactory = null,
         Action<WarningsConfigurationBuilder>? warnings = null)
         => new(database, EnsureSeeded(), mode, loggerFactory, warnings);
 
-    private VectorDocContext CreateContext(MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+    private VectorDocContext CreateContext(MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -583,7 +583,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
             var collection = TemporaryDatabaseFixtureBase.CreateCollectionName("NativeVectorSearch")
                              + Guid.NewGuid().ToString("N")[..8];
 
-            using var db = new VectorDocContext(database, collection, MongoQueryMode.Native, null, null);
+            using var db = new VectorDocContext(database, collection, MongoQueryProvider.Native, null, null);
 
             db.Database.EnsureCreated(
                 new MongoDatabaseCreationOptions(CreateMissingVectorIndexes: false, WaitForVectorIndexes: false));
@@ -649,7 +649,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     private class VectorDocContext(
         AtlasTemporaryDatabaseFixture database,
         string collection,
-        MongoQueryMode mode,
+        MongoQueryProvider mode,
         ILoggerFactory? loggerFactory,
         Action<WarningsConfigurationBuilder>? warnings)
         : DbContext(Configure(database, mode, loggerFactory, warnings))
@@ -658,13 +658,13 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
 
         private static DbContextOptions<VectorDocContext> Configure(
             AtlasTemporaryDatabaseFixture database,
-            MongoQueryMode mode,
+            MongoQueryProvider mode,
             ILoggerFactory? loggerFactory,
             Action<WarningsConfigurationBuilder>? warnings)
         {
             var builder = new DbContextOptionsBuilder<VectorDocContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x =>
                 {

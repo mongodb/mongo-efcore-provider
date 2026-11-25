@@ -21,16 +21,16 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.Query;
 
 /// <inheritdoc />
-public class MongoQueryCompilationContext(QueryCompilationContextDependencies dependencies, bool async, MongoQueryMode queryMode)
+public class MongoQueryCompilationContext(QueryCompilationContextDependencies dependencies, bool async, MongoQueryProvider queryProvider)
     : QueryCompilationContext(dependencies, async)
 {
     /// <summary>
-    /// Creates a <see cref="MongoQueryCompilationContext"/> using the default <see cref="MongoQueryMode.Native"/> query mode.
+    /// Creates a <see cref="MongoQueryCompilationContext"/> using the default <see cref="MongoQueryProvider.Native"/> query provider.
     /// </summary>
     /// <param name="dependencies">The <see cref="QueryCompilationContextDependencies"/> this context depends upon.</param>
     /// <param name="async">Whether the query is asynchronous.</param>
     public MongoQueryCompilationContext(QueryCompilationContextDependencies dependencies, bool async)
-        : this(dependencies, async, MongoQueryMode.Native)
+        : this(dependencies, async, MongoQueryProvider.Native)
     {
     }
 
@@ -40,10 +40,10 @@ public class MongoQueryCompilationContext(QueryCompilationContextDependencies de
     public Expression? OriginalExpression { get; internal set; }
 
     /// <summary>
-    /// The <see cref="MongoQueryMode"/> that controls how LINQ queries are translated for this compilation. This is the
+    /// The <see cref="MongoQueryProvider"/> that controls how LINQ queries are translated for this compilation. This is the
     /// context-wide mode unless the query specified its own with <c>WithQueryProvider</c>.
     /// </summary>
-    public MongoQueryMode QueryMode { get; internal set; } = queryMode;
+    public MongoQueryProvider QueryProvider { get; internal set; } = queryProvider;
 
     /// <inheritdoc/>
     public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression query)
@@ -53,7 +53,7 @@ public class MongoQueryCompilationContext(QueryCompilationContextDependencies de
         query = WithQueryProviderExtractor.Extract(query, out var mode);
         if (mode != null)
         {
-            QueryMode = mode.Value;
+            QueryProvider = mode.Value;
         }
 
         OriginalExpression = query;

@@ -61,13 +61,13 @@ public class NativeRepresentedStringMethodTests(TemporaryDatabaseFixture databas
         return database.MongoDatabase.GetCollection<Doc>(name);
     }
 
-    private static SingleEntityDbContext<Doc> Create(IMongoCollection<Doc> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Doc> Create(IMongoCollection<Doc> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static List<string> Run(SingleEntityDbContext<Doc> db, Expression<Func<Doc, bool>> predicate)
@@ -77,13 +77,13 @@ public class NativeRepresentedStringMethodTests(TemporaryDatabaseFixture databas
     {
         var collection = Seed();
 
-        using (var nativeOnly = Create(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = Create(collection, MongoQueryProvider.NativeOnly))
             Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly, predicate));
 
-        using var driver = Create(collection, MongoQueryMode.DriverLinq);
+        using var driver = Create(collection, MongoQueryProvider.DriverLinq);
         var driverEx = Assert.ThrowsAny<Exception>(() => Run(driver, predicate));
 
-        using var native = Create(collection, MongoQueryMode.Native);
+        using var native = Create(collection, MongoQueryProvider.Native);
         var nativeEx = Assert.ThrowsAny<Exception>(() => Run(native, predicate));
 
         Assert.IsType<NotSupportedException>(driverEx); // the bridge refuses the function over the stored form (EF-465)
@@ -94,8 +94,8 @@ public class NativeRepresentedStringMethodTests(TemporaryDatabaseFixture databas
     {
         var collection = Seed();
         foreach (var mode in driverSupported
-                     ? new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq }
-                     : new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+                     ? new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq }
+                     : new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = Create(collection, mode);
             Assert.Equal(expected, Run(db, predicate).OrderBy(x => x, StringComparer.Ordinal).ToArray());

@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
 /// A top-level <c>EF.Property&lt;T&gt;(param, "Name")</c> leaf resolves as a field in predicate, sort-key and
-/// projection positions. Routing is proven via <see cref="MongoQueryMode.NativeOnly"/>, not MQL (both paths emit
+/// projection positions. Routing is proven via <see cref="MongoQueryProvider.NativeOnly"/>, not MQL (both paths emit
 /// identical pipelines here).
 /// </summary>
 public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -60,7 +60,7 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = Seed(nameof(Predicate_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var titles = db.Entities.AsNoTracking()
             .Where(c => EF.Property<int>(c, "Rank") > 1)
@@ -76,7 +76,7 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = Seed(nameof(Sort_key_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var titles = db.Entities.AsNoTracking()
             .OrderBy(c => EF.Property<string>(c, "Title"))
@@ -91,7 +91,7 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = Seed(nameof(Projection_leaf_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.AsNoTracking()
             .OrderBy(c => c.Title)
@@ -110,7 +110,7 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = Seed(nameof(Bare_projection_leaf_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var titles = db.Entities.AsNoTracking()
             .OrderBy(c => c.Title)
@@ -126,7 +126,7 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
         var collection = Seed(nameof(Bare_projection_leaf_behind_a_parameterized_predicate_returns_correct_values));
         var prefix = "a"; // captured local — the mandatory late-decline leg, mirroring test 4 below.
 
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
 
         var titles = db.Entities.AsNoTracking()
             .Where(c => c.Title.StartsWith(prefix))
@@ -148,7 +148,7 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
 
         // Native mode: a parameterized StartsWith has no native regex rendering, so the native factory declines late
         // and the query runs on driver-LINQ. NativeOnly would throw at the gate instead.
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
 
         var results = db.Entities.AsNoTracking()
             .Where(c => c.Title.StartsWith(prefix))
@@ -181,8 +181,8 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
                 .Select(r => (r.Title, r.R))
                 .ToList();
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
 
         Assert.Equal(Run(driverLinq), Run(native));
     }
@@ -204,7 +204,7 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         var results = db.Entities.AsNoTracking()
@@ -224,7 +224,7 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedComposite(nameof(Composite_key_component_resolves_natively));
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly})
         {
             using var db = CreateCompositeContext(collection, mode);
 
@@ -271,24 +271,24 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
     private static void ConfigureComposite(ModelBuilder mb)
         => mb.Entity<CompositeItem>().HasKey(x => new {x.KeyA, x.KeyB});
 
-    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static SingleEntityDbContext<CompositeItem> CreateCompositeContext(
-        IMongoCollection<CompositeItem> collection, MongoQueryMode mode)
+        IMongoCollection<CompositeItem> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: ConfigureComposite,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)

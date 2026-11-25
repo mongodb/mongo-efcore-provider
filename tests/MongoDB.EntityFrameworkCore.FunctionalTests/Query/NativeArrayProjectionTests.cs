@@ -31,7 +31,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// An owned entity-collection leaf inside a terminal anonymous-type projection —
 /// <c>Select(b =&gt; new { b.Title, b.Posts })</c> — goes native as a server-side <c>$project</c> including the array.
-/// Routing is proven by <see cref="MongoQueryMode.NativeOnly"/>, never by MQL shape.
+/// Routing is proven by <see cref="MongoQueryProvider.NativeOnly"/>, never by MQL shape.
 /// </summary>
 public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -198,7 +198,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedKeyed(nameof(Owned_array_leaf_in_an_anonymous_projection_goes_native));
 
-        using var db = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.AsNoTracking()
             .OrderBy(b => b.Title)
@@ -216,7 +216,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedKeyed(nameof(Owned_array_leaf_projection_emits_a_project_stage_and_no_longer_fetches_whole_documents));
 
-        using var db = CreateContextWithLogging(collection, KeyedModel, MongoQueryMode.Native, out var spy);
+        using var db = CreateContextWithLogging(collection, KeyedModel, MongoQueryProvider.Native, out var spy);
         _ = db.Entities.AsNoTracking().Select(b => new {b.Title, b.Posts}).ToList();
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
@@ -241,8 +241,8 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.Posts.Count, string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        using var native = CreateContext(collection, KeyedModel, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, KeyedModel, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, KeyedModel, MongoQueryProvider.DriverLinq);
 
         Assert.Equal(Run(driver), Run(native));
     }
@@ -261,7 +261,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.P.Count))
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal(new[] {0, 1, 2}, Run(db).Select(r => r.Count));
@@ -284,8 +284,8 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.Notes.Count, string.Join("|", r.Notes.Select(n => n.Text ?? "<null>"))))
                 .ToList();
 
-        using (var native = CreateNestedOwnerContext(collection, MongoQueryMode.Native))
-        using (var driver = CreateNestedOwnerContext(collection, MongoQueryMode.DriverLinq))
+        using (var native = CreateNestedOwnerContext(collection, MongoQueryProvider.Native))
+        using (var driver = CreateNestedOwnerContext(collection, MongoQueryProvider.DriverLinq))
         {
             var actual = Run(native);
 
@@ -295,7 +295,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal(Run(driver), actual);
         }
 
-        using var nativeOnly = CreateNestedOwnerContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateNestedOwnerContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(new[] {"", "n1", "n2|n3"}, Run(nativeOnly).Select(r => r.Texts));
     }
 
@@ -307,7 +307,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedShadow(nameof(Owned_array_leaf_with_a_shadow_key_element_goes_native));
 
-        using var db = CreateContext(collection, ShadowKeyModel, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, ShadowKeyModel, MongoQueryProvider.NativeOnly);
 
         var results = db.Set<Blog>().AsNoTracking().OrderBy(b => b.Title)
             .Select(b => new {b.Title, b.Posts})
@@ -322,7 +322,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedShadow(nameof(Owned_array_leaf_projection_emits_the_owner_key));
 
-        using var db = CreateContextWithLogging(collection, ShadowKeyModel, MongoQueryMode.Native, out var spy);
+        using var db = CreateContextWithLogging(collection, ShadowKeyModel, MongoQueryProvider.Native, out var spy);
         _ = db.Set<Blog>().AsNoTracking().Select(b => new {b.Title, b.Posts}).ToList();
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
@@ -335,7 +335,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedNested(nameof(Element_with_its_own_owned_collection_goes_native_and_returns_correct_rows));
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, NestedModel, mode);
 
@@ -379,7 +379,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         static List<string> Summarize(string title, IEnumerable<NestedPost> posts)
             => [title, .. posts.Select(p => $"{p.Heading}=[{string.Join("|", p.Comments.Select(c => c.Text))}]")];
 
-        using var oracleDb = CreateContext(collection, NestedModel, MongoQueryMode.Native);
+        using var oracleDb = CreateContext(collection, NestedModel, MongoQueryProvider.Native);
         var expected = oracleDb.Set<NestedBlog>().AsNoTracking().OrderBy(b => b.Title).ToList()
             .Select(b => Summarize(b.Title, b.Posts)).ToList();
 
@@ -387,7 +387,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             ["c_mixed", "comments_missing=[]", "comments_null=[]", "comments_empty=[]", "comments_two=[x|y]"],
             expected[2]);
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, NestedModel, mode);
             var actual = db.Set<NestedBlog>().AsNoTracking().OrderBy(b => b.Title)
@@ -407,7 +407,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedOwnerRef(nameof(Array_leaf_whose_element_has_only_a_lazy_inverse_owner_navigation_goes_native));
 
-        using var db = CreateOwnerRefContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateOwnerRefContext(collection, MongoQueryProvider.NativeOnly);
 
         var elementNavigations = db.Model.FindEntityType(typeof(OwnerRefBlog))!
             .FindNavigation(nameof(OwnerRefBlog.Posts))!.TargetEntityType.GetNavigations().ToList();
@@ -437,8 +437,8 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.Posts.Count, string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        using var native = CreateOwnerRefContext(collection, MongoQueryMode.Native);
-        using var driver = CreateOwnerRefContext(collection, MongoQueryMode.DriverLinq);
+        using var native = CreateOwnerRefContext(collection, MongoQueryProvider.Native);
+        using var driver = CreateOwnerRefContext(collection, MongoQueryProvider.DriverLinq);
 
         Assert.Equal(Run(driver), Run(native));
     }
@@ -448,7 +448,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedNested(nameof(Bare_array_projection_of_an_element_with_its_own_navigation_still_works));
 
-        using var db = CreateContext(collection, NestedModel, MongoQueryMode.Native);
+        using var db = CreateContext(collection, NestedModel, MongoQueryProvider.Native);
 
         var results = db.Set<NestedBlog>().AsNoTracking().OrderBy(b => b.Title)
             .Select(b => b.Posts)
@@ -469,14 +469,14 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.Posts.Count, string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         var actual = Run(nativeOnly.Entities.AsNoTracking());
 
         Assert.Equal(new[] {"a_empty", "b_one", "c_two"}, actual.Select(r => r.Title));
         Assert.Equal(new[] {0, 1, 2}, actual.Select(r => r.Count));
         Assert.Equal(new[] {"", "h1", "h2|h3"}, actual.Select(r => r.Headings));
 
-        using var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq);
+        using var driver = CreateContext(collection, KeyedModel, MongoQueryProvider.DriverLinq);
         Assert.Equal(Run(driver.Entities.AsNoTracking()), actual);
     }
 
@@ -492,13 +492,13 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.Posts.Count, string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         var actual = Run(nativeOnly.Entities.AsNoTracking());
 
         Assert.Equal(new[] {0, 1, 2}, actual.Select(r => r.Count));
         Assert.Equal(new[] {"", "h1", "h2|h3"}, actual.Select(r => r.Headings));
 
-        using var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq);
+        using var driver = CreateContext(collection, KeyedModel, MongoQueryProvider.DriverLinq);
         Assert.Equal(Run(driver.Entities.AsNoTracking()), actual);
     }
 
@@ -517,7 +517,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.P.Count, string.Join("|", r.P.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             var actual = Run(db);
@@ -541,14 +541,14 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                     string.Join("|", r.Drafts.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        using var nativeOnly = CreateTwoArrayContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateTwoArrayContext(collection, MongoQueryProvider.NativeOnly);
         var actual = Run(nativeOnly.Entities.AsNoTracking());
 
         Assert.Equal(new[] {"a_empty", "b_mixed"}, actual.Select(r => r.Title));
         Assert.Equal(new[] {"", "p1"}, actual.Select(r => r.PostHeadings));
         Assert.Equal(new[] {"", "d1|d2"}, actual.Select(r => r.DraftHeadings));
 
-        using var driver = CreateTwoArrayContext(collection, MongoQueryMode.DriverLinq);
+        using var driver = CreateTwoArrayContext(collection, MongoQueryProvider.DriverLinq);
         Assert.Equal(Run(driver.Entities.AsNoTracking()), actual);
     }
 
@@ -570,7 +570,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.N, r.Posts.Count))
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             var actual = Run(db.Entities.AsNoTracking());
@@ -580,7 +580,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal(new[] {0, 1, 2}, actual.Select(r => r.N));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly.Entities.AsNoTracking()));
     }
 
@@ -596,7 +596,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.X, r.Posts.Count))
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             var actual = Run(db.Entities.AsNoTracking());
@@ -605,7 +605,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal(new[] {0, 1, 2}, actual.Select(r => r.PostsCount));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly.Entities.AsNoTracking()));
     }
 
@@ -624,7 +624,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.Rank, r.Posts.Count))
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             var actual = Run(db.Entities.AsNoTracking());
@@ -633,7 +633,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal(new[] {0, 1, 2}, actual.Select(r => r.PostsCount));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly.Entities.AsNoTracking()));
     }
 
@@ -642,7 +642,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedHashSet(nameof(HashSet_navigation_goes_native));
 
-        using var nativeOnly = CreateHashSetContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateHashSetContext(collection, MongoQueryProvider.NativeOnly);
         var results = nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title)
             .Select(b => new {b.Title, b.Posts})
             .ToList();
@@ -652,7 +652,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.IsType<HashSet<Post>>(results[1].Posts);
         Assert.Equal(new[] {"h1", "h2"}, results[1].Posts.Select(p => p.Heading).OrderBy(h => h));
 
-        using var driver = CreateHashSetContext(collection, MongoQueryMode.DriverLinq);
+        using var driver = CreateHashSetContext(collection, MongoQueryProvider.DriverLinq);
         var driverResults = driver.Entities.AsNoTracking().OrderBy(b => b.Title)
             .Select(b => new {b.Title, b.Posts})
             .ToList();
@@ -670,7 +670,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedKeyed(nameof(Tracking_query_with_an_array_leaf_throws_EF_Cores_owned_tracking_guard_in_every_mode));
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             var ex = Assert.Throws<InvalidOperationException>(
@@ -691,13 +691,13 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, string.Join(",", r.Tags), r.Posts.Count))
                 .ToList();
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         var actual = Run(nativeOnly.Entities.AsNoTracking());
 
         Assert.Equal(new[] {"x", "y,z", ""}, actual.Select(r => r.Tags));
         Assert.Equal(new[] {0, 1, 2}, actual.Select(r => r.PostsCount));
 
-        using var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq);
+        using var driver = CreateContext(collection, KeyedModel, MongoQueryProvider.DriverLinq);
         Assert.Equal(Run(driver.Entities.AsNoTracking()), actual);
     }
 
@@ -713,8 +713,8 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.Posts.Count, string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        using var native = CreateContext(collection, ShadowKeyModel, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, ShadowKeyModel, MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, ShadowKeyModel, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, ShadowKeyModel, MongoQueryProvider.DriverLinq);
 
         var nativeResult = Run(native);
 
@@ -735,7 +735,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedFiveStates(nameof(Native_array_projection_normalizes_missing_and_null_arrays_to_empty));
 
-        using var db = CreateContext(collection, ShadowKeyModel, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, ShadowKeyModel, MongoQueryProvider.NativeOnly);
 
         var results = db.Set<Blog>().AsNoTracking().OrderBy(b => b.Title)
             .Select(b => new {b.Title, b.Posts})
@@ -761,13 +761,13 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         static (string Title, int Count, string Headings) Summarize(string title, IEnumerable<Post> posts)
             => (title, posts.Count(), string.Join("|", posts.Select(p => p.Heading ?? "<null>")));
 
-        using var oracleDb = CreateContext(collection, ShadowKeyModel, MongoQueryMode.Native);
+        using var oracleDb = CreateContext(collection, ShadowKeyModel, MongoQueryProvider.Native);
         var expected = oracleDb.Set<Blog>().AsNoTracking().OrderBy(b => b.Title)
             .ToList()
             .Select(b => Summarize(b.Title, b.Posts))
             .ToList();
 
-        using var db = CreateContext(collection, ShadowKeyModel, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, ShadowKeyModel, MongoQueryProvider.NativeOnly);
         var actual = db.Set<Blog>().AsNoTracking().OrderBy(b => b.Title)
             .Select(b => new {b.Title, b.Posts})
             .ToList()
@@ -794,7 +794,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         var (collection, expectedRefA, expectedRefB) =
             SeedConverters(nameof(Element_converters_round_trip_through_the_alias_read));
 
-        using var db = CreateConverterContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateConverterContext(collection, MongoQueryProvider.NativeOnly);
 
         // ToList() before Single(): a server-side Single() would add a reducer Cardinality, an unrelated axis.
         var posts = db.Entities.AsNoTracking()
@@ -832,13 +832,13 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .OrderBy(r => r.Title)
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal([("b_one", "h1"), ("c_two", "h2|h3")], Run(db));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
@@ -870,13 +870,13 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal([("same", "h1")], Run(db));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
@@ -896,13 +896,13 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal([("same", "h1"), ("same", "h1")], Run(db));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
@@ -921,7 +921,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         static IQueryable<Blog> Right(SingleEntityDbContext<Blog> db)
             => db.Set<Blog>().AsNoTracking().Where(b => b.Rank == 2);
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
 
@@ -959,13 +959,13 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .OrderBy(r => r.Title)
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, ShadowKeyModel, mode);
             Assert.Equal([("b_one", "h1"), ("c_two", "h2,h3")], Run(db));
         }
 
-        using var nativeOnly = CreateContext(collection, ShadowKeyModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, ShadowKeyModel, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
@@ -985,11 +985,11 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
         foreach (var model in new[] {KeyedModel, ShadowKeyModel})
         {
-            using var nativeOnly = CreateContext(collection, model, MongoQueryMode.NativeOnly);
+            using var nativeOnly = CreateContext(collection, model, MongoQueryProvider.NativeOnly);
             var actual = Run(nativeOnly);
             Assert.Equal([("b_one", "h1"), ("c_two", "h2|h3")], actual);
 
-            using var driver = CreateContext(collection, model, MongoQueryMode.DriverLinq);
+            using var driver = CreateContext(collection, model, MongoQueryProvider.DriverLinq);
             Assert.Equal(Run(driver), actual);
         }
     }
@@ -1005,7 +1005,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         var overlapping = SeedKeyedWithRank(
             nameof(Trailing_projection_after_a_union_dedups_whole_documents_and_never_compares_the_array));
 
-        using (var db = CreateContext(overlapping, KeyedModel, MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(overlapping, KeyedModel, MongoQueryProvider.NativeOnly))
         {
             // Rank <= 2 => {a_empty, b_one}; Rank == 2 => {b_one}. b_one is the same DOCUMENT on both sides.
             var rows = db.Set<Blog>().AsNoTracking().Where(b => b.Rank <= 2)
@@ -1022,7 +1022,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         var twins = SeedArrayStateTwins(
             nameof(Trailing_projection_after_a_union_dedups_whole_documents_and_never_compares_the_array));
 
-        using (var db = CreateContext(twins, KeyedModel, MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(twins, KeyedModel, MongoQueryProvider.NativeOnly))
         {
             var rows = db.Set<Blog>().AsNoTracking().Where(b => b.Rank == 1)
                 .Union(db.Set<Blog>().AsNoTracking().Where(b => b.Rank == 1))
@@ -1043,7 +1043,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     {
         var collection = SeedKeyedWithRank(nameof(Array_leaf_in_a_trailing_projection_after_an_intersect_goes_native));
 
-        using var db = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
 
         var rows = db.Set<Blog>().AsNoTracking().Where(b => b.Rank <= 2)
             .Intersect(db.Set<Blog>().AsNoTracking().Where(b => b.Rank == 2))
@@ -1067,11 +1067,11 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>")))
                 .ToList();
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         var actual = Run(nativeOnly);
         Assert.Equal(["", "h1", "h2|h3"], actual);
 
-        using var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq);
+        using var driver = CreateContext(collection, KeyedModel, MongoQueryProvider.DriverLinq);
         Assert.Equal(Run(driver), actual);
     }
 
@@ -1088,11 +1088,11 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             return (r.Title, string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>")));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         var actual = Run(nativeOnly);
         Assert.Equal(("a_empty", ""), actual);
 
-        using var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq);
+        using var driver = CreateContext(collection, KeyedModel, MongoQueryProvider.DriverLinq);
         Assert.Equal(Run(driver), actual);
     }
 
@@ -1109,11 +1109,11 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, string.Join("|", r.Posts.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         var actual = Run(nativeOnly);
         Assert.Equal([("b_one", "h1")], actual);
 
-        using var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq);
+        using var driver = CreateContext(collection, KeyedModel, MongoQueryProvider.DriverLinq);
         Assert.Equal(Run(driver), actual);
     }
 
@@ -1134,7 +1134,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.Posts.Count))
                 .ToList();
 
-        using (var probe = CreateContext(collection, KeyedModel, MongoQueryMode.Native))
+        using (var probe = CreateContext(collection, KeyedModel, MongoQueryProvider.Native))
         {
             var key = probe.Model.FindEntityType(typeof(Blog))!.FindPrimaryKey()!.Properties[0];
             Assert.Equal(nameof(Blog.Id), key.Name);
@@ -1143,14 +1143,14 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
         var expected = new List<(string, int)> {("a_empty", 0), ("b_one", 1), ("c_two", 2)};
 
-        using (var native = CreateContext(collection, KeyedModel, MongoQueryMode.Native))
-        using (var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq))
+        using (var native = CreateContext(collection, KeyedModel, MongoQueryProvider.Native))
+        using (var driver = CreateContext(collection, KeyedModel, MongoQueryProvider.DriverLinq))
         {
             Assert.Equal(expected, Run(native));
             Assert.Equal(expected, Run(driver));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         Assert.Equal(expected, Run(nativeOnly));
     }
 
@@ -1168,32 +1168,32 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
         var expected = new List<(string, int)> {("a_empty", 1), ("b_one", 2), ("c_two", 3)};
 
-        using (var native = CreateContext(collection, KeyedModel, MongoQueryMode.Native))
-        using (var driver = CreateContext(collection, KeyedModel, MongoQueryMode.DriverLinq))
+        using (var native = CreateContext(collection, KeyedModel, MongoQueryProvider.Native))
+        using (var driver = CreateContext(collection, KeyedModel, MongoQueryProvider.DriverLinq))
         {
             Assert.Equal(expected, Run(native));
             Assert.Equal(expected, Run(driver));
         }
 
         // A computed sibling (no backing IProperty) must still decline; if this flips, the rule went too far.
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
     private static SingleEntityDbContext<Blog> CreateContext(
-        IMongoCollection<Blog> collection, Action<ModelBuilder> modelBuilderAction, MongoQueryMode mode)
+        IMongoCollection<Blog> collection, Action<ModelBuilder> modelBuilderAction, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: modelBuilderAction,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // FunctionalTests has no AssertMql (that's in SpecificationTests), so MQL is captured via SpyLoggerProvider.
     private static SingleEntityDbContext<Blog> CreateContextWithLogging(
-        IMongoCollection<Blog> collection, Action<ModelBuilder> modelBuilderAction, MongoQueryMode mode,
+        IMongoCollection<Blog> collection, Action<ModelBuilder> modelBuilderAction, MongoQueryProvider mode,
         out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
@@ -1207,7 +1207,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -1243,14 +1243,14 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         => SeedKeyed(name);
 
     private static SingleEntityDbContext<NestedOwnerBlog> CreateNestedOwnerContext(
-        IMongoCollection<NestedOwnerBlog> collection, MongoQueryMode mode)
+        IMongoCollection<NestedOwnerBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: NestedOwnerModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<NestedOwnerBlog> SeedNestedOwner(string name)
@@ -1277,14 +1277,14 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         => new() {{"NoteId", noteId}, {"Text", text}};
 
     private static SingleEntityDbContext<NestedBlog> CreateContext(
-        IMongoCollection<NestedBlog> collection, Action<ModelBuilder> modelBuilderAction, MongoQueryMode mode)
+        IMongoCollection<NestedBlog> collection, Action<ModelBuilder> modelBuilderAction, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: modelBuilderAction,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<NestedBlog> SeedNested(string name)
@@ -1310,14 +1310,14 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         => new() {{"Heading", heading}, {"Comments", new BsonArray()}};
 
     private static SingleEntityDbContext<OwnerRefBlog> CreateOwnerRefContext(
-        IMongoCollection<OwnerRefBlog> collection, MongoQueryMode mode)
+        IMongoCollection<OwnerRefBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: OwnerRefModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<OwnerRefBlog> SeedOwnerRef(string name)
@@ -1375,14 +1375,14 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     }
 
     private static SingleEntityDbContext<TwoArrayBlog> CreateTwoArrayContext(
-        IMongoCollection<TwoArrayBlog> collection, MongoQueryMode mode)
+        IMongoCollection<TwoArrayBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: TwoArrayModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static BsonDocument TwoArrayRow(string title, BsonDocument[]? posts = null, BsonDocument[]? drafts = null)
@@ -1406,14 +1406,14 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     }
 
     private static SingleEntityDbContext<HashSetBlog> CreateHashSetContext(
-        IMongoCollection<HashSetBlog> collection, MongoQueryMode mode)
+        IMongoCollection<HashSetBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: HashSetModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<HashSetBlog> SeedHashSet(string name)
@@ -1515,14 +1515,14 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     }
 
     private static SingleEntityDbContext<ConvBlog> CreateConverterContext(
-        IMongoCollection<ConvBlog> collection, MongoQueryMode mode)
+        IMongoCollection<ConvBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: ConverterModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // One ConvBlog whose element Ref and Code are stored as BSON strings. The driver reads a string leniently
@@ -1604,13 +1604,13 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         return database.MongoDatabase.GetCollection<ScalarRow>(coll.CollectionNamespace.CollectionName);
     }
 
-    private static SingleEntityDbContext<ScalarRow> CreateScalarContext(IMongoCollection<ScalarRow> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<ScalarRow> CreateScalarContext(IMongoCollection<ScalarRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static string DescribeElement(object? element)
@@ -1658,9 +1658,9 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     // with the non-nullable Int32 serializer and throws FormatException ("Cannot deserialize a 'Int32' from BsonType
     // 'Null'"), as it did before this shape went native. Hand-computed oracle instead.
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Boxed_nullable_object_array_element_reads_null_and_keeps_runtime_types(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Boxed_nullable_object_array_element_reads_null_and_keeps_runtime_types(MongoQueryProvider mode)
     {
         var collection = SeedScalarRows(nameof(Boxed_nullable_object_array_element_reads_null_and_keeps_runtime_types) + mode);
         using var db = CreateScalarContext(collection, mode);
@@ -1683,9 +1683,9 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     // Explicit DriverLinq pushes $toUpper down instead, which maps null/missing to "" (server semantics), so it is
     // not an oracle here; the native null is the EF-faithful answer and is kept. Hand-computed oracle.
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Case_mapped_container_element_over_a_null_string_reads_null(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Case_mapped_container_element_over_a_null_string_reads_null(MongoQueryProvider mode)
     {
         var collection = SeedScalarRows(nameof(Case_mapped_container_element_over_a_null_string_reads_null) + mode);
         using var db = CreateScalarContext(collection, mode);
@@ -1702,9 +1702,9 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     // pinned against a hand-computed oracle: the characters for a non-null string, and C#'s own ArgumentNullException
     // (`((string)null).ToList()`) for a null/missing one.
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void String_sequence_container_element_matches_the_hand_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void String_sequence_container_element_matches_the_hand_oracle(MongoQueryProvider mode)
     {
         var collection = SeedScalarRows(nameof(String_sequence_container_element_matches_the_hand_oracle) + mode);
         using var db = CreateScalarContext(collection, mode);
@@ -1746,7 +1746,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     public void Non_nullable_Length_container_element_throws_on_null_instead_of_reading_zero()
     {
         var collection = SeedScalarRows(nameof(Non_nullable_Length_container_element_throws_on_null_instead_of_reading_zero));
-        using var db = CreateScalarContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateScalarContext(collection, MongoQueryProvider.NativeOnly);
 
         foreach (var label in new[] { "b", "c" })
         {
@@ -1783,9 +1783,9 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     // client construction instead (NativeClientWholeEntityShape): whole documents fetched, the pair built client-side
     // over the materialized entity. Oracle is hand-computed: driver-LINQ throws NotImplementedException for this shape.
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Whole_entity_positional_ctor_argument_is_not_read_as_a_scalar(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Whole_entity_positional_ctor_argument_is_not_read_as_a_scalar(MongoQueryProvider mode)
     {
         var collection = SeedCodedRows(nameof(Whole_entity_positional_ctor_argument_is_not_read_as_a_scalar) + mode);
         using var db = SingleEntityDbContext.Create(
@@ -1798,7 +1798,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
         var results = db.Entities.OrderBy(x => x.Code).Select(x => new KeyValuePair<CodedRow, string?>(x, x.City)).ToList();
@@ -1826,7 +1826,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         Assert.Throws<NativeTranslationNotSupportedException>(

@@ -30,14 +30,14 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// Native-gate parity tests for mis-routing: the gate claiming a query is native-eligible when the native
 /// pipeline can't reproduce driver-LINQ semantics. Each shape gets a parity test (same results under
-/// <see cref="MongoQueryMode.Native"/> and <see cref="MongoQueryMode.DriverLinq"/>) and a routing test under
-/// <see cref="MongoQueryMode.NativeOnly"/>, the only reliable routing signal (MQL shape can't prove it).
+/// <see cref="MongoQueryProvider.Native"/> and <see cref="MongoQueryProvider.DriverLinq"/>) and a routing test under
+/// <see cref="MongoQueryProvider.NativeOnly"/>, the only reliable routing signal (MQL shape can't prove it).
 /// </summary>
 public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -45,7 +45,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     /// <summary>Asserts <paramref name="query"/> returns equal (order-sensitive) results under Native and DriverLinq.</summary>
@@ -56,11 +56,11 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
         where T : class
     {
         List<TResult> native;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, modelBuilderAction))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, modelBuilderAction))
             native = query(db.Entities).ToList();
 
         List<TResult> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, modelBuilderAction))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, modelBuilderAction))
             driver = query(db.Entities).ToList();
 
         Assert.Equal(driver, native);
@@ -73,7 +73,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
         Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
     {
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, modelBuilderAction);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, modelBuilderAction);
         try
         {
             _ = query(db.Entities).ToList();
@@ -164,15 +164,15 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     // Sorting an enum stored as its name would order alphabetically ("Active" < "Closed" < "Suspended"), not by the
     // enum's value as C# does, so it is refused on every path (EF-337, StoredOrdering); equality above still works.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void A_enum_as_string_order_by_is_refused(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void A_enum_as_string_order_by_is_refused(MongoQueryProvider mode)
     {
         var collection = SeedEnum(nameof(A_enum_as_string_order_by_is_refused) + mode);
         using var db = CreateContext(collection, mode, EnumModel);
         var ex = Record.Exception(() => db.Entities.OrderBy(e => e.Status).ThenBy(e => e.Name).Select(e => e.Name).ToList());
-        if (mode == MongoQueryMode.NativeOnly)
+        if (mode == MongoQueryProvider.NativeOnly)
         {
             Assert.IsType<NativeTranslationNotSupportedException>(ex);
         }
@@ -278,7 +278,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
         // Projecting the whole owned entity (e.Address) goes native, but a tracking query projecting an owned entity
         // without its owner is rejected by EF Core's InjectStructuralTypeMaterializers guard in every mode.
         var collection = SeedAddress(nameof(B_owned_entity_projection_tracking_query_throws_EFCore_guard));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, AddressModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, AddressModel);
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => db.Entities.Select(e => new { e.Address }).ToList());
@@ -403,7 +403,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedCustomer(nameof(D_anonymous_member_projection_runs_native_under_NativeOnly));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var results = db.Entities
             .Where(c => c.Age > 21)
             .Select(c => new { c.Name, c.Age })
@@ -422,7 +422,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
 
         AssertParity(collection, q => q.OrderBy(c => c.Name).Select(c => new { c.Name, Doubled = c.Age * 2 }));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var results = db.Entities.OrderBy(c => c.Name).Select(c => new { c.Name, Doubled = c.Age * 2 }).ToList();
         Assert.Equal(
             [("Alice", 60), ("Bob", 34), ("Carol", 90)],
@@ -436,7 +436,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
         // PadLeft has no native translation, so NativeOnly throws.
         var collection = SeedCustomer(nameof(D_string_computed_projection_throws_under_NativeOnly));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Select(c => new { Greeting = c.Name.PadLeft(10) }).ToList());
     }
@@ -446,7 +446,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedCustomer(nameof(D_renamed_alias_projection_runs_native_under_NativeOnly_and_carries_correct_values));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var results = db.Entities
             .OrderBy(c => c.Name)
             .Select(c => new { Renamed = c.Name, c.Age })
@@ -470,7 +470,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedCustomer(nameof(D_member_init_dto_projection_runs_native_under_NativeOnly_and_carries_correct_values));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var results = db.Entities
             .OrderBy(c => c.Name)
             .Select(c => new CustomerDto { Name = c.Name, Age = c.Age })
@@ -508,7 +508,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedKeyedDoc(nameof(E_projected_id_member_runs_native_under_NativeOnly_and_preserves_id), out var ids);
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var results = db.Entities
             .OrderBy(e => e.Name)
             .Select(e => new { e._id, e.Name })

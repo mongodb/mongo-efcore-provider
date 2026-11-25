@@ -30,7 +30,7 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Pins the emitted pipeline for the <c>$lookup</c>-based join shapes. <see cref="MongoQueryMode.NativeOnly"/> proves
+/// Pins the emitted pipeline for the <c>$lookup</c>-based join shapes. <see cref="MongoQueryProvider.NativeOnly"/> proves
 /// a join did not fall back, but not that the server does the join: these tests also assert the one executed
 /// pipeline contains the expected number of <c>$lookup</c> stages (and no driver-LINQ <c>_outer</c>/<c>_inner</c>
 /// join shape), so a regression that joined on the client, or fetched a collection per row, fails here.
@@ -253,7 +253,7 @@ public class NativeJoinPipelineShapeTests(TemporaryDatabaseFixture database) : I
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .UseLoggerFactory(loggerFactory)
                 .EnableSensitiveDataLogging();
-            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(MongoQueryMode.NativeOnly);
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(MongoQueryProvider.NativeOnly);
             return optionsBuilder.Options;
         }
 

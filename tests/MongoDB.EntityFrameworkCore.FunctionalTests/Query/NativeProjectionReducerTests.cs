@@ -32,7 +32,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 ///
 /// Bare <c>First</c>/<c>FirstOrDefault</c>/<c>Single</c>/<c>SingleOrDefault</c>/<c>Any</c> over a materialized
 /// owned-collection leaf (e.g. <c>Select(b => b.Posts.First().Heading)</c>) fold client-side under
-/// <see cref="MongoQueryMode.Native"/>, like the Count/LongCount arms in <see cref="NativeOwnedCollectionCountTests"/>;
+/// <see cref="MongoQueryProvider.Native"/>, like the Count/LongCount arms in <see cref="NativeOwnedCollectionCountTests"/>;
 /// they are not natively representable.
 ///
 /// A filtered <c>Count(pred)</c> under a pure arithmetic/cast spine (e.g.
@@ -42,7 +42,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -50,7 +50,7 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -108,7 +108,7 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
     public void Bare_collection_reducer_projection_leaf_no_longer_throws(string reducerName)
     {
         var collection = SeedForReducers(reducerName);
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel);
 
         var query = reducerName switch
         {
@@ -148,7 +148,7 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
     public void Bare_collection_Any_projection_leaf_no_longer_throws()
     {
         var collection = SeedForAny(nameof(Bare_collection_Any_projection_leaf_no_longer_throws));
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel);
 
         var result = db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts.Any()).ToList();
 
@@ -170,7 +170,7 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
 
         int[] expected = [0, 2, 4];
 
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             var results = db.Entities.AsNoTracking().OrderBy(b => b.Title)
                 .Select(b => b.Posts.Count(p => p.Rank > 0) * 2)
@@ -178,7 +178,7 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
             Assert.Equal(expected, results);
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             var results = db.Entities.AsNoTracking().OrderBy(b => b.Title)
                 .Select(b => b.Posts.Count(p => p.Rank > 0) * 2)
@@ -186,7 +186,7 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
             Assert.Equal(expected, results);
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => db.Entities.AsNoTracking().OrderBy(b => b.Title)

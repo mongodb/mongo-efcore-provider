@@ -137,7 +137,7 @@ public class NativeChainedReferenceNavigationFilterTests(TemporaryDatabaseFixtur
         var (orders, customers, regions, employees) = CreateCollectionNames(nameof(Paging_before_a_second_hop_filter_pages_first));
         SeedOrders(orders, customers, regions, employees);
 
-        List<int> Run(MongoQueryMode mode)
+        List<int> Run(MongoQueryProvider mode)
         {
             using var db = new ChainDbContext(database, orders, customers, regions, employees, mode);
             return db.Set<Order>().OrderBy(o => o.OrderNo).Take(3)
@@ -145,8 +145,8 @@ public class NativeChainedReferenceNavigationFilterTests(TemporaryDatabaseFixtur
                 .AsEnumerable().Select(o => o.OrderNo).OrderBy(n => n).ToList();
         }
 
-        Assert.Equal([2, 3], Run(MongoQueryMode.Native));
-        Assert.Equal([2, 3], Run(MongoQueryMode.DriverLinq));
+        Assert.Equal([2, 3], Run(MongoQueryProvider.Native));
+        Assert.Equal([2, 3], Run(MongoQueryProvider.DriverLinq));
     }
 
     // a self-referencing chain must test the SECOND level's own $lookup alias.
@@ -179,7 +179,7 @@ public class NativeChainedReferenceNavigationFilterTests(TemporaryDatabaseFixtur
     {
         var (orders, customers, regions, employees) = CreateCollectionNames(testName);
 
-        using (var seed = new ChainDbContext(database, orders, customers, regions, employees, MongoQueryMode.DriverLinq))
+        using (var seed = new ChainDbContext(database, orders, customers, regions, employees, MongoQueryProvider.DriverLinq))
         {
             var boss = new Employee { Id = ObjectId.GenerateNewId(), Name = "Boss" };
             var mid = new Employee { Id = ObjectId.GenerateNewId(), Name = "Mid", ManagerId = boss.Id };
@@ -198,7 +198,7 @@ public class NativeChainedReferenceNavigationFilterTests(TemporaryDatabaseFixtur
 
     private void SeedOrders(string orders, string customers, string regions, string employees)
     {
-        using var seed = new ChainDbContext(database, orders, customers, regions, employees, MongoQueryMode.DriverLinq);
+        using var seed = new ChainDbContext(database, orders, customers, regions, employees, MongoQueryProvider.DriverLinq);
 
         var north = new Region { Id = ObjectId.GenerateNewId(), Name = "North" };
         var cA = new Customer { Id = ObjectId.GenerateNewId(), Name = "North", RegionId = north.Id };
@@ -232,10 +232,10 @@ public class NativeChainedReferenceNavigationFilterTests(TemporaryDatabaseFixtur
 
         public ChainDbContext(
             TemporaryDatabaseFixture database, string orders, string customers, string regions, string employees,
-            MongoQueryMode mode)
+            MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<ChainDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)

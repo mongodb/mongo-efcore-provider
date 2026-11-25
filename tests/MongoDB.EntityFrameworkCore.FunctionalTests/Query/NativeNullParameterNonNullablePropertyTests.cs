@@ -75,13 +75,13 @@ public class NativeNullParameterNonNullablePropertyTests(TemporaryDatabaseFixtur
         return database.MongoDatabase.GetCollection<Row>(collectionName);
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private void Check(string name, Func<IQueryable<Row>, IQueryable<Row>> where, params string[] expected)
@@ -218,10 +218,10 @@ public class NativeNullParameterNonNullablePropertyTests(TemporaryDatabaseFixtur
             q => q.Where(x => new DateTime?[] {null}.Contains(x.When)), "c");
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Rank_equals_parameter_twice_with_different_values(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Rank_equals_parameter_twice_with_different_values(MongoQueryProvider mode)
     {
         var collection = Seed(nameof(Rank_equals_parameter_twice_with_different_values) + mode);
         using var db = SingleEntityDbContext.Create(
@@ -229,7 +229,7 @@ public class NativeNullParameterNonNullablePropertyTests(TemporaryDatabaseFixtur
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
         NativeModeAssert.TwiceWithDifferentValues(
@@ -244,10 +244,10 @@ public class NativeNullParameterNonNullablePropertyTests(TemporaryDatabaseFixtur
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Rank_in_list_parameter_twice_with_different_values(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Rank_in_list_parameter_twice_with_different_values(MongoQueryProvider mode)
     {
         var collection = Seed(nameof(Rank_in_list_parameter_twice_with_different_values) + mode);
         using var db = SingleEntityDbContext.Create(
@@ -255,7 +255,7 @@ public class NativeNullParameterNonNullablePropertyTests(TemporaryDatabaseFixtur
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
         NativeModeAssert.TwiceWithDifferentValues(

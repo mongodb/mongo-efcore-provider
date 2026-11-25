@@ -56,12 +56,12 @@ public class NativeStringLengthTests(TemporaryDatabaseFixture database) : IClass
 
         Assert.Equal(3, "a\U0001F600".Length);
 
-        using var oracle = CreateContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Equal(
             ["ascii", "emoji"],
             oracle.Entities.AsNoTracking().ToList().Where(x => x.S.Length == 3).Select(x => x.Label).Order().ToList());
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode);
 
@@ -75,7 +75,7 @@ public class NativeStringLengthTests(TemporaryDatabaseFixture database) : IClass
 
             // Projection: same count. A projected Length isn't native yet (it takes the driver-LINQ path under
             // Native), so NativeOnly is skipped here; the filter legs above are the native proof.
-            if (mode == MongoQueryMode.NativeOnly)
+            if (mode == MongoQueryProvider.NativeOnly)
                 continue;
 
             Assert.Equal(
@@ -93,12 +93,12 @@ public class NativeStringLengthTests(TemporaryDatabaseFixture database) : IClass
         return collection;
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

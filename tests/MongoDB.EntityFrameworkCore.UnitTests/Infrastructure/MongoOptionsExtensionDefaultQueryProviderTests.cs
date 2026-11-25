@@ -19,32 +19,32 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Infrastructure;
 
 /// <summary>
-/// Tests that mutate process-wide query-mode state (<c>MongoOptionsExtension.DefaultQueryMode</c>, environment
+/// Tests that mutate process-wide query-provider state (<c>MongoOptionsExtension.DefaultQueryProvider</c>, environment
 /// variables). UnitTests run in parallel, so these must not overlap with any other test.
 /// </summary>
 [CollectionDefinition(Name, DisableParallelization = true)]
-public sealed class ProcessWideQueryModeStateCollection
+public sealed class ProcessWideQueryProviderStateCollection
 {
-    public const string Name = "Process-wide query-mode state";
+    public const string Name = "Process-wide query-provider state";
 }
 
-[Collection(ProcessWideQueryModeStateCollection.Name)]
-public class MongoOptionsExtensionDefaultQueryModeTests
+[Collection(ProcessWideQueryProviderStateCollection.Name)]
+public class MongoOptionsExtensionDefaultQueryProviderTests
 {
     [Fact]
-    public void New_extension_uses_DefaultQueryMode_and_explicit_mode_wins()
+    public void New_extension_uses_DefaultQueryProvider_and_explicit_mode_wins()
     {
-        var saved = MongoOptionsExtension.DefaultQueryMode;
+        var saved = MongoOptionsExtension.DefaultQueryProvider;
         try
         {
-            MongoOptionsExtension.DefaultQueryMode = MongoQueryMode.NativeOnly;
+            MongoOptionsExtension.DefaultQueryProvider = MongoQueryProvider.NativeOnly;
             var ext = new MongoOptionsExtension();
-            Assert.Equal(MongoQueryMode.NativeOnly, ext.QueryMode);
-            Assert.Equal(MongoQueryMode.DriverLinq, ext.WithQueryMode(MongoQueryMode.DriverLinq).QueryMode);
+            Assert.Equal(MongoQueryProvider.NativeOnly, ext.QueryProvider);
+            Assert.Equal(MongoQueryProvider.DriverLinq, ext.WithQueryProvider(MongoQueryProvider.DriverLinq).QueryProvider);
         }
         finally
         {
-            MongoOptionsExtension.DefaultQueryMode = saved;
+            MongoOptionsExtension.DefaultQueryProvider = saved;
         }
     }
 }

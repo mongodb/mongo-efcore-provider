@@ -31,7 +31,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// <c>Nullable&lt;T&gt;.Value</c> (peeled to the underlying field) and <c>Nullable&lt;T&gt;.HasValue</c> (same as
 /// <c>!= null</c>) in predicate, sort-key and projection position. Routing is proven by
-/// <see cref="MongoQueryMode.NativeOnly"/>, not MQL shape.
+/// <see cref="MongoQueryProvider.NativeOnly"/>, not MQL shape.
 /// </summary>
 /// <remarks>
 /// The oracle is <c>Native == DriverLinq</c>, not in-memory LINQ, which throws for <c>x.Score.Value</c> on a null
@@ -65,7 +65,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Value_in_a_predicate_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Equal(
             ["r1_ten"],
@@ -110,7 +110,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Value_in_a_sort_key_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Equal(
             ["r2_null", "r3_missing", "r4_three", "r1_ten"],
@@ -123,7 +123,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Value_in_a_projection_goes_native));
 
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Equal(
                 ["r1_ten=10", "r4_three=3"],
@@ -142,7 +142,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         // connection error) and legitimately differ: native reads through the `Score` property's binding and a
         // narrowing Convert (.NET's "Nullable object must have a value"), while the driver fails in its
         // deserializer. The type isn't contract for erroneous input.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.NativeOnly})
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() =>
@@ -151,7 +151,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             NullableValueMessage.AssertIs(ex.Message);
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             var ex = Assert.Throws<FormatException>(() =>
                 db.Entities.AsNoTracking().OrderBy(x => x.Title)
@@ -165,7 +165,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(HasValue_and_negated_HasValue_go_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var withValue = db.Entities.AsNoTracking().Where(x => x.Score.HasValue)
             .OrderBy(x => x.Title).Select(x => x.Title).ToList();
@@ -192,7 +192,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Negated_HasValue_emits_not_over_ne_null));
 
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, out var spy);
 
         var titles = db.Entities.AsNoTracking().Where(x => !x.Score.HasValue)
             .OrderBy(x => x.Title).Select(x => x.Title).ToList();
@@ -248,7 +248,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         // own case.
         var prefix = "r";
 
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
 
         // Nullable leaves first: an alias miss there is silent (null), while a non-nullable leaf throws and would
         // abort the test before the silent case is observed.
@@ -288,7 +288,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         // `(int?)x.Score.Value` is a Convert that TranslateOperand unwraps to a bare MongoFieldExpression, which
         // NativeProjectionBinder's cast gate admits when the original leaf was a Convert. It's the same field
         // access as the un-cast leaf, and Score has default serialization, so there's no read-side hazard.
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(
@@ -308,7 +308,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         // Deliberate: for a missing element DriverLinq answers True while CLR semantics (and, by $expr semantics,
         // a native rendering) answer False, so going native would diverge from the DriverLinq oracle — though it
         // would move toward CLR semantics. Pinned so a widening flips this tripwire.
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 db.Entities.AsNoTracking().OrderBy(x => x.Title)
@@ -332,7 +332,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         var collection = SeedConverted(
             nameof(Value_converted_nullable_Value_projection_leaf_goes_native_and_reads_through_the_converter));
 
-        using var db = CreateConvertedContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateConvertedContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Equal(
             [7, 2],
@@ -360,7 +360,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Non_nullable_computed_leaf_over_null_or_missing_operand_throws) + shape);
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.NativeOnly})
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() => Run(db, shape));
@@ -368,7 +368,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         }
 
         // The oracle throws too (its deserializer can't read BSON null as Int32); exception types legitimately differ.
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             var ex = Assert.Throws<FormatException>(() => Run(db, shape));
             Assert.Contains("Cannot deserialize a 'Int32' from BsonType 'Null'", ex.ToString());
@@ -393,7 +393,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Non_nullable_computed_leaf_inside_a_construction_over_null_operand_throws));
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.NativeOnly})
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() =>
@@ -408,7 +408,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Non_nullable_computed_leaf_over_a_proven_or_coalesced_operand_is_unchanged));
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             var q = db.Entities.AsNoTracking().OrderBy(x => x.Title);
@@ -429,7 +429,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
                     return db.Entities.AsNoTracking().OrderBy(x => x.Title)
                         .Select(x => x.Score != null ? x.Score.Value + 1 : 0).ToList();
                 }
-                catch (FormatException ex) when (mode == MongoQueryMode.DriverLinq
+                catch (FormatException ex) when (mode == MongoQueryProvider.DriverLinq
                                                  && ex.ToString().Contains("Cannot deserialize a 'Int32' from BsonType 'Null'"))
                 {
                     return [];
@@ -455,7 +455,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
                     .Select(x => x.Score!.Value + 1).Distinct().AsEnumerable().Order().ToList();
             }));
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.NativeOnly})
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() =>
@@ -501,8 +501,8 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     // differ (see Value_in_a_projection_goes_native).
     private void AssertParity<T>(IMongoCollection<Item> collection, Func<SingleEntityDbContext<Item>, List<T>> query)
     {
-        var (nativeOk, nativeResult, nativeError) = Attempt(collection, MongoQueryMode.Native, query);
-        var (driverOk, driverResult, driverError) = Attempt(collection, MongoQueryMode.DriverLinq, query);
+        var (nativeOk, nativeResult, nativeError) = Attempt(collection, MongoQueryProvider.Native, query);
+        var (driverOk, driverResult, driverError) = Attempt(collection, MongoQueryProvider.DriverLinq, query);
 
         if (!nativeOk || !driverOk)
         {
@@ -520,7 +520,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         => ok ? "returned" : $"threw {error!.GetType().Name}: {error.Message}";
 
     private (bool Ok, List<T>? Result, Exception? Error) Attempt<T>(
-        IMongoCollection<Item> collection, MongoQueryMode mode, Func<SingleEntityDbContext<Item>, List<T>> query)
+        IMongoCollection<Item> collection, MongoQueryProvider mode, Func<SingleEntityDbContext<Item>, List<T>> query)
     {
         using var db = CreateContext(collection, mode);
         try
@@ -578,7 +578,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     }
 
     private static SingleEntityDbContext<ConvertedItem> CreateConvertedContext(
-        IMongoCollection<ConvertedItem> collection, MongoQueryMode mode)
+        IMongoCollection<ConvertedItem> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: mb => mb.Entity<ConvertedItem>()
@@ -587,21 +587,21 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
-    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // FunctionalTests has no TestMqlLoggerFactory/AssertMql, so MQL is captured through SpyLoggerProvider.
     private static SingleEntityDbContext<Item> CreateContextWithLogging(
-        IMongoCollection<Item> collection, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+        IMongoCollection<Item> collection, MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -613,7 +613,7 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 

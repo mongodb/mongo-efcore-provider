@@ -82,25 +82,25 @@ public class NativeRelabelCastProjectionTests(TemporaryDatabaseFixture database)
     public void Narrowing_cast_over_a_string_stored_long_declines_cleanly()
     {
         var collection = Seed();
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.OrderBy(x => x.Id).Select(x => (int)x.LongAsString).ToList());
     }
 
-    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Row> Seed()
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName("relabel") + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Row>(name);
-        using var db = Create(collection, MongoQueryMode.DriverLinq);
+        using var db = Create(collection, MongoQueryProvider.DriverLinq);
         db.Entities.AddRange(
             new Row { Id = 1, IntAsString = 7, LongAsString = 70 },
             new Row { Id = 2, IntAsString = 12, LongAsString = 120 });

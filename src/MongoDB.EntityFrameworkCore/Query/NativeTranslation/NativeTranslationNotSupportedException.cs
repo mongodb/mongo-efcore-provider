@@ -19,7 +19,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
 /// Thrown by the native translator for an unsupported query shape; the compile-time gate falls back to driver-LINQ under
-/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native"/>, and it propagates under <c>NativeOnly</c>.
+/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryProvider.Native"/>, and it propagates under <c>NativeOnly</c>.
 /// Internal: the exception type for an unsupported shape isn't public contract.
 /// </summary>
 internal sealed class NativeTranslationNotSupportedException : Exception

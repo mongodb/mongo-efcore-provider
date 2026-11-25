@@ -34,7 +34,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -42,7 +42,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -85,7 +85,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     private List<string> AssertNativeOnlyMatches(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
     {
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
         return query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
     }
 
@@ -219,14 +219,14 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
         foreach (var predicate in predicates)
         {
             List<string> expected;
-            using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+            using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
             {
                 expected = db.Entities.AsNoTracking().ToList()
                     .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t).ToList();
             }
 
             List<string> actual;
-            using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+            using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
             {
                 actual = db.Entities.AsNoTracking().Where(predicate).ToList()
                     .Select(b => b.Title).OrderBy(t => t).ToList();
@@ -292,7 +292,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             ("nomatch", [("p1", ["x", "y"]), ("p2", ["z"])]),
             ("empty", []));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, DeepBlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, DeepBlogModel);
 
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => p.Comments.Any(c => c.Title == b.Title)))
@@ -315,14 +315,14 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             b => b.Posts.Any(p => p.Comments.Any(c => c.Title == b.Title));
 
         List<string> expected;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, DeepBlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, DeepBlogModel))
         {
             expected = db.Entities.AsNoTracking().ToList()
                 .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t).ToList();
         }
 
         List<string> actual;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, DeepBlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, DeepBlogModel))
         {
             actual = db.Entities.AsNoTracking().Where(predicate).ToList()
                 .Select(b => b.Title).OrderBy(t => t).ToList();
@@ -362,7 +362,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             UniqueCollectionName(nameof(Correlated_Any_through_an_outer_owned_single_reference_hop_goes_native)));
         var collection = database.MongoDatabase.GetCollection<RefBlog>(raw.CollectionNamespace.CollectionName);
 
-        using (var seedDb = CreateContext(collection, MongoQueryMode.DriverLinq, RefBlogModel))
+        using (var seedDb = CreateContext(collection, MongoQueryProvider.DriverLinq, RefBlogModel))
         {
             seedDb.Entities.Add(new RefBlog
             {
@@ -377,7 +377,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             seedDb.SaveChanges();
         }
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, RefBlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, RefBlogModel);
 
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => p.City == b.Owner.City))
@@ -394,7 +394,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             ("b", [("x", 1), ("y", 2)]),       // 0 matching posts
             ("c", [("c", 1), ("c", 2)]));      // 2 matching posts
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var titles = db.Entities.AsNoTracking()
             .OrderBy(b => b.Posts.Count(p => p.Title == b.Title))
@@ -412,7 +412,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             ("match", [("match", 1)]),
             ("nomatch", [("x", 1)]));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var results = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, MatchingPostCount = b.Posts.Count(p => p.Title == b.Title) })
@@ -434,7 +434,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             ("mixed", [("mixed", 1), ("other", 2)]),
             ("neither", [("x", 1), ("y", 2)]));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         // Root-level All(pred) is a scalar-aggregate terminal whose own lambda parameter becomes SelfParam, so a
         // correlated Any/All/Count(pred) nested inside it can match against that root b.
@@ -459,13 +459,13 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
         System.Linq.Expressions.Expression<Func<Blog, bool>> predicate = b => !b.Posts.Any(p => p.Title == b.Title);
 
         bool expected;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             expected = db.Entities.AsNoTracking().ToList().All(predicate.Compile());
         }
 
         bool actual;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             actual = db.Entities.AsNoTracking().All(predicate);
         }
@@ -518,7 +518,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             nameof(Correlated_Any_over_a_bare_value_converted_outer_bool_declines_instead_of_answering_wrong),
             flag: false, ("x", 1));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, ConvertedBoolBlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, ConvertedBoolBlogModel);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.AsNoTracking().Where(b => b.Posts.Any(p => b.Flag)).ToList());
@@ -531,7 +531,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             nameof(Correlated_All_over_a_bare_value_converted_outer_bool_declines_instead_of_answering_wrong),
             flag: false, ("x", 1));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, ConvertedBoolBlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, ConvertedBoolBlogModel);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.AsNoTracking().Where(b => b.Posts.All(p => b.Flag)).ToList());
@@ -545,7 +545,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             nameof(Correlated_Any_over_an_AndAlso_wrapped_value_converted_outer_bool_declines_instead_of_answering_wrong),
             flag: false, ("x", 2));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, ConvertedBoolBlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, ConvertedBoolBlogModel);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.AsNoTracking().Where(b => b.Posts.Any(p => p.Rank > 1 && b.Flag)).ToList());
@@ -560,7 +560,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
             nameof(Correlated_filtered_Count_predicate_over_a_bare_value_converted_outer_bool_declines_instead_of_answering_wrong),
             flag: false, ("x", 1));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, ConvertedBoolBlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, ConvertedBoolBlogModel);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.AsNoTracking().Where(b => b.Posts.Count(p => b.Flag) > 0).ToList());
@@ -580,7 +580,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
         ]);
         var collection = database.MongoDatabase.GetCollection<Blog>(coll.CollectionNamespace.CollectionName);
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var anyResults = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => p.Title == b.Title))

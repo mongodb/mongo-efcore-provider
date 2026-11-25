@@ -126,14 +126,14 @@ public class NativeWideEntityDispatchTests(TemporaryDatabaseFixture database)
         row.OwnsMany(r => r.Tags);
     };
 
-    private static SingleEntityDbContext<WideRow> CreateContext(IMongoCollection<WideRow> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<WideRow> CreateContext(IMongoCollection<WideRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: WideModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -220,10 +220,10 @@ public class NativeWideEntityDispatchTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Wide_entity_reads_every_property_whatever_the_element_order(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Wide_entity_reads_every_property_whatever_the_element_order(MongoQueryProvider mode)
     {
         var collection = Seed(nameof(Wide_entity_reads_every_property_whatever_the_element_order) + mode);
 
@@ -238,7 +238,7 @@ public class NativeWideEntityDispatchTests(TemporaryDatabaseFixture database)
     {
         var collection = Seed(nameof(Wide_entity_tracked_reads_every_property_whatever_the_element_order));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         AssertRows(db.Entities.OrderBy(r => r.Name).ToList());
     }

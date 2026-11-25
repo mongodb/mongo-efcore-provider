@@ -33,7 +33,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -41,7 +41,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -103,7 +103,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     public void Owned_subproperty_equality_goes_native()
     {
         var collection = SeedPeople(nameof(Owned_subproperty_equality_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PersonModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, PersonModel);
 
         var names = db.Entities.AsNoTracking().Where(p => p.Home.City == "NYC").ToList().Select(p => p.Name).ToList();
 
@@ -114,7 +114,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     public void Nested_owned_subproperty_equality_goes_native()
     {
         var collection = SeedPeople(nameof(Nested_owned_subproperty_equality_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PersonModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, PersonModel);
 
         var names = db.Entities.AsNoTracking()
             .Where(p => p.Home.Geo.Country == "US").OrderBy(p => p.Name).ToList()
@@ -127,7 +127,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     public void Owned_bare_bool_subproperty_goes_native()
     {
         var collection = SeedPeople(nameof(Owned_bare_bool_subproperty_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PersonModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, PersonModel);
 
         var names = db.Entities.AsNoTracking().Where(p => p.Home.IsPrimary).ToList().Select(p => p.Name).ToList();
 
@@ -138,7 +138,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     public void Owned_subproperty_orderby_goes_native()
     {
         var collection = SeedPeople(nameof(Owned_subproperty_orderby_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PersonModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, PersonModel);
 
         var names = db.Entities.AsNoTracking()
             .Where(p => p.Name != "Cid").OrderBy(p => p.Home.City).ToList()
@@ -152,8 +152,8 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedPeople(nameof(Owned_subproperty_predicate_matches_driver_linq_including_absent_owned));
 
-        using var native = CreateContext(collection, MongoQueryMode.Native, PersonModel);
-        using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, PersonModel);
+        using var native = CreateContext(collection, MongoQueryProvider.Native, PersonModel);
+        using var driver = CreateContext(collection, MongoQueryProvider.DriverLinq, PersonModel);
 
         var nativeNames = native.Entities.AsNoTracking()
             .Where(p => p.Home.City == "NYC").Select(p => p.Name).OrderBy(n => n).ToList();
@@ -168,7 +168,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     public void Owned_subproperty_dto_projection_goes_native()
     {
         var collection = SeedPeople(nameof(Owned_subproperty_dto_projection_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PersonModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, PersonModel);
 
         var rows = db.Entities.AsNoTracking()
             .Where(p => p.Name != "Cid")
@@ -185,7 +185,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     public void Nested_owned_subproperty_dto_projection_goes_native()
     {
         var collection = SeedPeople(nameof(Nested_owned_subproperty_dto_projection_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PersonModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, PersonModel);
 
         var rows = db.Entities.AsNoTracking()
             .Where(p => p.Name == "Ann")
@@ -200,8 +200,8 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     public void Owned_subproperty_projection_matches_driver_linq_including_absent_owned()
     {
         var collection = SeedPeople(nameof(Owned_subproperty_projection_matches_driver_linq_including_absent_owned));
-        using var native = CreateContext(collection, MongoQueryMode.Native, PersonModel);
-        using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, PersonModel);
+        using var native = CreateContext(collection, MongoQueryProvider.Native, PersonModel);
+        using var driver = CreateContext(collection, MongoQueryProvider.DriverLinq, PersonModel);
 
         // Cid has no Home; through a nullable leaf both paths agree on null. The required-leaf case diverges and is
         // pinned by the next test.
@@ -227,14 +227,14 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         var collection = SeedPeople(
             nameof(Owned_required_subproperty_projection_over_absent_owned_reads_default_but_whole_entity_throws));
 
-        using (var probe = CreateContext(collection, MongoQueryMode.Native, PersonModel))
+        using (var probe = CreateContext(collection, MongoQueryProvider.Native, PersonModel))
         {
             var homeNav = probe.Model.FindEntityType(typeof(Person))!.FindNavigation(nameof(Person.Home))!;
             Assert.True(homeNav.ForeignKey.IsRequiredDependent);
             Assert.False(homeNav.TargetEntityType.FindProperty(nameof(Location.City))!.IsNullable);
         }
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.NativeOnly, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode, PersonModel);
             var rows = db.Entities.AsNoTracking()
@@ -244,7 +244,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         }
 
         // ...and the whole-entity read rejects this data in every mode, and stays strict.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode, PersonModel);
 
@@ -287,8 +287,8 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     public void Converted_owned_subproperty_projection_matches_driver_linq()
     {
         var collection = SeedCoded(nameof(Converted_owned_subproperty_projection_matches_driver_linq));
-        using var native = CreateContext(collection, MongoQueryMode.Native, CodedModel);
-        using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, CodedModel);
+        using var native = CreateContext(collection, MongoQueryProvider.Native, CodedModel);
+        using var driver = CreateContext(collection, MongoQueryProvider.DriverLinq, CodedModel);
 
         var nativeCode = native.Entities.AsNoTracking().Select(c => new { c.Home.Code }).Single().Code;
         var driverCode = driver.Entities.AsNoTracking().Select(c => new { c.Home.Code }).Single().Code;

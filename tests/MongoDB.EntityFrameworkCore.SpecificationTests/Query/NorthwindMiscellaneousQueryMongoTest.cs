@@ -4178,7 +4178,7 @@ public class NorthwindMiscellaneousQueryMongoTest
     {
         // Upstream asserts InvalidOperationException "Nullable object must have a value.", EF relational's answer for
         // the customers with a null Region. The native pipeline renders a null-safe $strLenCP, reads it as int? and
-        // throws exactly that, in every query mode that runs natively.
+        // throws exactly that, in every query provider that runs natively.
         try
         {
             await base.Non_nullable_property_through_optional_navigation(async);

@@ -73,8 +73,8 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
     private static readonly Action<ModelBuilder> ShadowKeyModel = mb =>
         mb.Entity<NestedOwnerBlog>().OwnsOne(b => b.Home, h => h.OwnsMany(x => x.Notes));
 
-    private static readonly MongoQueryMode[] AllModes =
-        [MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly];
+    private static readonly MongoQueryProvider[] AllModes =
+        [MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly];
 
     [Theory]
     [InlineData(false)]
@@ -132,7 +132,7 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
     {
         var collection = Seed(nameof(Owned_hop_array_leaf_emits_the_dotted_document_path_alias));
 
-        using var db = CreateContextWithLogging(collection, KeyedModel, MongoQueryMode.Native, out var spy);
+        using var db = CreateContextWithLogging(collection, KeyedModel, MongoQueryProvider.Native, out var spy);
         _ = db.Entities.AsNoTracking().Select(b => new {b.Title, b.Home.Notes}).ToList();
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
@@ -162,7 +162,7 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
 
         var expected = new[] {"a_populated=[n1|n2]", "b_empty=[]", "c_missing=[]", "d_null=[]"};
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal(expected, Run(db));
@@ -186,7 +186,7 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
 
         var expected = new[] {"NYC=[n1|n2]", "LA=[]", "SF=[]", "DC=[]"};
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal(expected, Run(db));
@@ -208,7 +208,7 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
 
         var expected = new[] {"NYC=[n1|n2]", "LA=[]", "SF=[]", "DC=[]"};
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal(expected, Run(db));
@@ -222,7 +222,7 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         // `Home` and `Home.City` collide as $project paths, so the dotted scalar can't take its path as its alias.
         var collection = Seed(nameof(Owned_hop_scalar_beside_the_whole_owned_reference_declines_on_the_path_collision));
 
-        List<string> Run(MongoQueryMode mode)
+        List<string> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             return db.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -232,9 +232,9 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
                 .ToList();
         }
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
-        Assert.Equal(["NYC", "LA", "SF", "DC"], Run(MongoQueryMode.Native));
-        Assert.Equal(["NYC", "LA", "SF", "DC"], Run(MongoQueryMode.DriverLinq));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryProvider.NativeOnly));
+        Assert.Equal(["NYC", "LA", "SF", "DC"], Run(MongoQueryProvider.Native));
+        Assert.Equal(["NYC", "LA", "SF", "DC"], Run(MongoQueryProvider.DriverLinq));
     }
 
     [Fact]
@@ -242,7 +242,7 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
     {
         var collection = Seed(nameof(Owned_hop_array_leaf_composed_with_filter_sort_and_paging_goes_native));
 
-        using var db = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, KeyedModel, MongoQueryProvider.NativeOnly);
 
         var rows = db.Entities.AsNoTracking()
             .Where(b => b.Title != "b_empty")
@@ -287,18 +287,18 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         => new() {{"NoteId", noteId}, {"Text", text}};
 
     private static SingleEntityDbContext<NestedOwnerBlog> CreateContext(
-        IMongoCollection<NestedOwnerBlog> collection, Action<ModelBuilder> modelBuilderAction, MongoQueryMode mode)
+        IMongoCollection<NestedOwnerBlog> collection, Action<ModelBuilder> modelBuilderAction, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: modelBuilderAction,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static SingleEntityDbContext<NestedOwnerBlog> CreateContextWithLogging(
-        IMongoCollection<NestedOwnerBlog> collection, Action<ModelBuilder> modelBuilderAction, MongoQueryMode mode,
+        IMongoCollection<NestedOwnerBlog> collection, Action<ModelBuilder> modelBuilderAction, MongoQueryProvider mode,
         out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
@@ -312,7 +312,7 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 }

@@ -28,14 +28,14 @@ namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 internal static class MongoSpecTestHelpers
 {
     /// <summary>
-    /// True when <c>MONGODB_EF_QUERY_MODE=NativeOnly</c> (or the alias <c>MONGODB_EF_NATIVE_ONLY=1</c>) flips every
-    /// spec context to <c>MongoQueryMode.NativeOnly</c> (see <see cref="Utilities.MongoTestStore.AddProviderOptions"/>).
+    /// True when <c>MONGODB_EF_QUERY_PROVIDER=NativeOnly</c> (or the alias <c>MONGODB_EF_NATIVE_ONLY=1</c>) flips every
+    /// spec context to <c>MongoQueryProvider.NativeOnly</c> (see <see cref="Utilities.MongoTestStore.AddProviderOptions"/>).
     /// Translation-failure baselines can differ: the driver-LINQ fallback may log a partial pipeline before failing,
     /// native-only may reject before logging. <c>MONGODB_EF_DIFFERENTIAL=1</c> (set only by the differential runner)
     /// makes this false so default-mode expectations are evaluated under both paths.
     /// </summary>
     internal static bool IsNativeOnly
-        => FunctionalTests.Utilities.TestQueryMode.IsNativeOnly;
+        => FunctionalTests.Utilities.TestQueryProvider.IsNativeOnly;
 
     /// <summary>
     /// True for the exceptions a not-yet-translatable query legitimately throws: the native translator's

@@ -30,9 +30,9 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// End-to-end filter → multi-key sort → skip → limit:
 /// <c>Where(predicate).OrderBy(A).ThenByDescending(B).Skip(skip).Take(take)</c> and the inverse direction.
 /// Primary sort keys are tied so a dropped <c>ThenBy</c> changes the order; <c>skip</c>/<c>take</c> are
-/// captured, so they bind as parameters. Each shape must succeed under <see cref="MongoQueryMode.NativeOnly"/>
-/// with the exact order, and match under <see cref="MongoQueryMode.Native"/> and
-/// <see cref="MongoQueryMode.DriverLinq"/>.
+/// captured, so they bind as parameters. Each shape must succeed under <see cref="MongoQueryProvider.NativeOnly"/>
+/// with the exact order, and match under <see cref="MongoQueryProvider.Native"/> and
+/// <see cref="MongoQueryProvider.DriverLinq"/>.
 /// </summary>
 public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
@@ -75,13 +75,13 @@ public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
         return database.MongoDatabase.GetCollection<Item>(collectionName);
     }
 
-    private SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryMode mode)
+    private SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -99,7 +99,7 @@ public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
         var take = 3;
         var expected = new[] { "a1b20", "a1b10", "a2b15" };
 
-        List<string> RunAscDesc(MongoQueryMode mode)
+        List<string> RunAscDesc(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, mode);
             return db.Entities
@@ -113,11 +113,11 @@ public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
                 .ToList();
         }
 
-        var nativeOnly = RunAscDesc(MongoQueryMode.NativeOnly);
+        var nativeOnly = RunAscDesc(MongoQueryProvider.NativeOnly);
         Assert.Equal(expected, nativeOnly);
 
-        var native = RunAscDesc(MongoQueryMode.Native);
-        var driver = RunAscDesc(MongoQueryMode.DriverLinq);
+        var native = RunAscDesc(MongoQueryProvider.Native);
+        var driver = RunAscDesc(MongoQueryProvider.DriverLinq);
         Assert.Equal(expected, native);
         Assert.Equal(expected, driver);
         Assert.Equal(driver, native);
@@ -139,7 +139,7 @@ public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
         var take = 3;
         var expected = new[] { "a2b15", "a1b10", "a1b20" };
 
-        List<string> RunDescAsc(MongoQueryMode mode)
+        List<string> RunDescAsc(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, mode);
             return db.Entities
@@ -153,11 +153,11 @@ public class NativeCombinationQueryTests(TemporaryDatabaseFixture database)
                 .ToList();
         }
 
-        var nativeOnly = RunDescAsc(MongoQueryMode.NativeOnly);
+        var nativeOnly = RunDescAsc(MongoQueryProvider.NativeOnly);
         Assert.Equal(expected, nativeOnly);
 
-        var native = RunDescAsc(MongoQueryMode.Native);
-        var driver = RunDescAsc(MongoQueryMode.DriverLinq);
+        var native = RunDescAsc(MongoQueryProvider.Native);
+        var driver = RunDescAsc(MongoQueryProvider.DriverLinq);
         Assert.Equal(expected, native);
         Assert.Equal(expected, driver);
         Assert.Equal(driver, native);

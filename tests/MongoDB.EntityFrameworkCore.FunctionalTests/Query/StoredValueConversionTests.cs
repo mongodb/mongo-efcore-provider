@@ -43,8 +43,8 @@ public class StoredValueConversionTests(TemporaryDatabaseFixture database)
     }
 
     // These tests exercise the driver-LINQ bridge's $convert read, which NativeOnly forbids: the native translator declines these shapes.
-    private static void PinDefaultQueryMode(DbContextOptionsBuilder optionsBuilder)
-        => new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(MongoQueryMode.Native);
+    private static void PinDefaultQueryProvider(DbContextOptionsBuilder optionsBuilder)
+        => new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(MongoQueryProvider.Native);
 
     private SingleEntityDbContext<Item> CreateDb(Storage storage, string name)
     {
@@ -70,7 +70,7 @@ public class StoredValueConversionTests(TemporaryDatabaseFixture database)
                     e.Property(i => i.NPrice).HasConversion<string>();
                 }
             },
-            optionsBuilderAction: PinDefaultQueryMode);
+            optionsBuilderAction: PinDefaultQueryProvider);
         db.Entities.AddRange(
             new Item { Seq = 1, Group = 1, Price = 9, Big = 9, Dbl = 9, Dec = 9, NPrice = 9 },
             new Item { Seq = 2, Group = 1, Price = 10, Big = 10, Dbl = 10, Dec = 10, NPrice = null },
@@ -228,7 +228,7 @@ public class StoredValueConversionTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(
             collection, mb => mb.Entity<Item>().Property(e => e.Price).HasBsonRepresentation(BsonType.String),
-            optionsBuilderAction: PinDefaultQueryMode);
+            optionsBuilderAction: PinDefaultQueryProvider);
 
         // Documented behaviour (BREAKING-CHANGES.md): a stored value that is not a number fails range/sort/aggregate
         // queries rather than being silently misordered or ignored. Equality compares the stored form and is unaffected.
@@ -243,7 +243,7 @@ public class StoredValueConversionTests(TemporaryDatabaseFixture database)
         var db = SingleEntityDbContext.Create(
             database.CreateCollection<Item>(TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Converter_with_string_representation_is_converted))),
             mb => mb.Entity<Item>().Property(e => e.Price).HasConversion<long>().HasBsonRepresentation(BsonType.String),
-            optionsBuilderAction: PinDefaultQueryMode);
+            optionsBuilderAction: PinDefaultQueryProvider);
         db.Entities.AddRange(
             new Item { Seq = 1, Price = 9 }, new Item { Seq = 2, Price = 10 }, new Item { Seq = 3, Price = 100 });
         db.SaveChanges();

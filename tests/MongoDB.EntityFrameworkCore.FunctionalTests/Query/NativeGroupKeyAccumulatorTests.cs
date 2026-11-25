@@ -109,7 +109,7 @@ public class NativeGroupKeyAccumulatorTests(TemporaryDatabaseFixture database) :
     public void Ordering_by_a_name_that_is_not_an_output_alias_declines()
     {
         var collection = Seed();
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
 
         // `t.N * 2` is a computed key over the output, which has no alias: refused rather than resolved against the entity.
         Assert.Throws<NativeTranslationNotSupportedException>(
@@ -117,13 +117,13 @@ public class NativeGroupKeyAccumulatorTests(TemporaryDatabaseFixture database) :
                 .OrderBy(t => t.N * 2).ToList());
     }
 
-    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Row> Seed()

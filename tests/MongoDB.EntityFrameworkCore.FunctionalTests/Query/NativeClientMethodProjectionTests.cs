@@ -34,7 +34,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -42,7 +42,7 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -71,7 +71,7 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
     public void Select_with_context_based_client_method_goes_native()
     {
         var collection = SeedCustomers(nameof(Select_with_context_based_client_method_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Select(c => ClientMethod(c)).ToList();
 
@@ -85,7 +85,7 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
     {
         var collection = SeedCustomers(
             nameof(Select_with_context_based_client_method_still_works_under_explicit_driver_linq_mode));
-        using var db = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var db = CreateContext(collection, MongoQueryProvider.DriverLinq);
 
         var results = db.Entities.Select(c => ClientMethod(c)).ToList();
 
@@ -98,7 +98,7 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
     public void Select_with_context_based_client_method_composed_with_take_goes_native()
     {
         var collection = SeedCustomers(nameof(Select_with_context_based_client_method_composed_with_take_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Select(c => ClientMethod(c)).Take(1).ToList();
 
@@ -111,7 +111,7 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
     public void Select_with_ef_property_still_goes_native_as_a_field_projection()
     {
         var collection = SeedCustomers(nameof(Select_with_ef_property_still_goes_native_as_a_field_projection));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Select(c => EF.Property<string>(c, nameof(Customer.CustomerID))).ToList();
 
@@ -129,7 +129,7 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
     {
         var collection = SeedCustomers(
             nameof(Select_with_client_method_referencing_entity_twice_still_declines_under_native_only));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Select(c => TwoOperandClientMethod(c, c.CustomerID)).ToList());
@@ -140,7 +140,7 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
     {
         var collection = SeedCustomers(
             nameof(Select_with_client_method_referencing_entity_twice_still_works_under_default_native_mode_via_fallback));
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
 
         var results = db.Entities.Select(c => TwoOperandClientMethod(c, c.CustomerID)).ToList();
 
@@ -154,7 +154,7 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
     public void Select_with_client_method_embedded_in_conditional_expression_goes_native()
     {
         var collection = SeedCustomers(nameof(Select_with_client_method_embedded_in_conditional_expression_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities
             .Select(c => c.IsLondon ? "London: " + ClientMethod(c) : "Other")
@@ -172,7 +172,7 @@ public class NativeClientMethodProjectionTests(TemporaryDatabaseFixture database
     public void Select_with_client_method_composed_with_union_still_declines_under_native_only()
     {
         var collection = SeedCustomers(nameof(Select_with_client_method_composed_with_union_still_declines_under_native_only));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Select(c => ClientMethod(c)).Union(db.Entities.Select(c => ClientMethod(c))).ToList());

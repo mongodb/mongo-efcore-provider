@@ -54,19 +54,19 @@ public class NativeAggregateReadBackTests(TemporaryDatabaseFixture database) : I
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName("agg") + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<AggDoc>(name);
-        using var db = Create(collection, MongoQueryMode.DriverLinq);
+        using var db = Create(collection, MongoQueryProvider.DriverLinq);
         db.Entities.AddRange(docs);
         db.SaveChanges();
         return collection;
     }
 
-    private static SingleEntityDbContext<AggDoc> Create(IMongoCollection<AggDoc> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<AggDoc> Create(IMongoCollection<AggDoc> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static AggDoc Doc(Level level, TimeSpan span, DateOnly day, char letter)
@@ -152,10 +152,10 @@ public class NativeAggregateReadBackTests(TemporaryDatabaseFixture database) : I
             new AggDoc { Id = ObjectId.GenerateNewId(), Count = 1, NCount = null, Big = 1 });
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Sum_int_overflow_throws_OverflowException(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Sum_int_overflow_throws_OverflowException(MongoQueryProvider mode)
     {
         var collection = SeedOverflow();
         using var db = Create(collection, mode);
@@ -163,10 +163,10 @@ public class NativeAggregateReadBackTests(TemporaryDatabaseFixture database) : I
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Sum_nullable_int_overflow_throws_OverflowException(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Sum_nullable_int_overflow_throws_OverflowException(MongoQueryProvider mode)
     {
         var collection = SeedOverflow();
         using var db = Create(collection, mode);
@@ -174,10 +174,10 @@ public class NativeAggregateReadBackTests(TemporaryDatabaseFixture database) : I
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Select_Sum_int_overflow_throws_OverflowException(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Select_Sum_int_overflow_throws_OverflowException(MongoQueryProvider mode)
     {
         var collection = SeedOverflow();
         using var db = Create(collection, mode);
@@ -185,10 +185,10 @@ public class NativeAggregateReadBackTests(TemporaryDatabaseFixture database) : I
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Sum_long_overflow_throws_OverflowException(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Sum_long_overflow_throws_OverflowException(MongoQueryProvider mode)
     {
         var collection = SeedOverflow();
         using var db = Create(collection, mode);

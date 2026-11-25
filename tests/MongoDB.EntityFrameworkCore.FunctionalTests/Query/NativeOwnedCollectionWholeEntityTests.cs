@@ -36,7 +36,7 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -44,7 +44,7 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -84,13 +84,13 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
     private List<Blog> AssertNativeAndParity(IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
     {
         List<Blog> nativeOnly;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             nativeOnly = query(db.Entities.AsNoTracking()).ToList();
         }
 
         List<Blog> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             driver = query(db.Entities.AsNoTracking()).ToList();
         }
@@ -181,14 +181,14 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
         });
         var collection = database.MongoDatabase.GetCollection<Shop>(coll.CollectionNamespace.CollectionName);
 
-        using (var native = CreateContext(collection, MongoQueryMode.NativeOnly, ShopModel))
+        using (var native = CreateContext(collection, MongoQueryProvider.NativeOnly, ShopModel))
         {
             var shop = Assert.Single(native.Entities.AsNoTracking().ToList());
             Assert.Equal("NYC", shop.Address.City);
             Assert.Equal(["A1", "B2"], shop.Items.Select(i => i.Sku));
         }
 
-        using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, ShopModel);
+        using var driver = CreateContext(collection, MongoQueryProvider.DriverLinq, ShopModel);
         var shopD = Assert.Single(driver.Entities.AsNoTracking().ToList());
         Assert.Equal("NYC", shopD.Address.City);
         Assert.Equal(["A1", "B2"], shopD.Items.Select(i => i.Sku));
@@ -232,14 +232,14 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
         });
         var collection = database.MongoDatabase.GetCollection<Team>(coll.CollectionNamespace.CollectionName);
 
-        using (var native = CreateContext(collection, MongoQueryMode.NativeOnly, TeamModel))
+        using (var native = CreateContext(collection, MongoQueryProvider.NativeOnly, TeamModel))
         {
             var team = Assert.Single(native.Entities.AsNoTracking().ToList());
             Assert.Equal(["Ann", "Bob"], team.Members.Select(m => m.Name));
             Assert.Equal(["X1", "X2"], team.Members.Select(m => m.Badge.Code));
         }
 
-        using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, TeamModel);
+        using var driver = CreateContext(collection, MongoQueryProvider.DriverLinq, TeamModel);
         var teamD = Assert.Single(driver.Entities.AsNoTracking().ToList());
         Assert.Equal(["Ann", "Bob"], teamD.Members.Select(m => m.Name));
         Assert.Equal(["X1", "X2"], teamD.Members.Select(m => m.Badge.Code));
@@ -286,7 +286,7 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
         });
         var collection = database.MongoDatabase.GetCollection<Library>(coll.CollectionNamespace.CollectionName);
 
-        using (var native = CreateContext(collection, MongoQueryMode.NativeOnly, LibraryModel))
+        using (var native = CreateContext(collection, MongoQueryProvider.NativeOnly, LibraryModel))
         {
             var lib = Assert.Single(native.Entities.AsNoTracking().ToList());
             var shelf = Assert.Single(lib.Shelves);
@@ -294,7 +294,7 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
             Assert.Equal(["Dune"], shelf.Books.Select(b => b.Title));
         }
 
-        using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, LibraryModel);
+        using var driver = CreateContext(collection, MongoQueryProvider.DriverLinq, LibraryModel);
         var libD = Assert.Single(driver.Entities.AsNoTracking().ToList());
         Assert.Equal(["Dune"], Assert.Single(libD.Shelves).Books.Select(b => b.Title));
     }

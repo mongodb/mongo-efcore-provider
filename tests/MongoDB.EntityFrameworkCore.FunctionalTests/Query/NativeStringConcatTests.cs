@@ -109,16 +109,16 @@ public class NativeStringConcatTests(TemporaryDatabaseFixture database) : IClass
     // evaluating client-side and never exercising the native $concat path.
     private static void AssertConcatMatchesOracle(IMongoCollection<Row> collection, Expression<Func<Row, string>> selector)
     {
-        using var oracleDb = CreateContext(collection, MongoQueryMode.Native);
+        using var oracleDb = CreateContext(collection, MongoQueryProvider.Native);
         var oracle = oracleDb.Entities.AsNoTracking().ToList().Select(selector.Compile()).ToList();
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(oracle, nativeOnly.Entities.AsNoTracking().Select(selector).ToList());
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Equal(oracle, native.Entities.AsNoTracking().Select(selector).ToList());
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         Assert.Equal(oracle, driverLinq.Entities.AsNoTracking().Select(selector).ToList());
     }
 
@@ -127,13 +127,13 @@ public class NativeStringConcatTests(TemporaryDatabaseFixture database) : IClass
     private static void AssertConcatMatchesDriverLinqAcceptedDivergence(
         IMongoCollection<Row> collection, Expression<Func<Row, string>> selector)
     {
-        using var oracleDb = CreateContext(collection, MongoQueryMode.Native);
+        using var oracleDb = CreateContext(collection, MongoQueryProvider.Native);
         var oracle = oracleDb.Entities.AsNoTracking().ToList().Select(selector.Compile()).ToList();
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Select(selector).ToList();
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqResult = driverLinq.Entities.AsNoTracking().Select(selector).ToList();
 
         Assert.Equal(driverLinqResult, nativeOnlyResult);
@@ -150,12 +150,12 @@ public class NativeStringConcatTests(TemporaryDatabaseFixture database) : IClass
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

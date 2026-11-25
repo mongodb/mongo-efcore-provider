@@ -114,13 +114,13 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList());
 
         // Native falls back to driver-LINQ, which throws for this shape
         // (see DriverLinq_field_to_field_OrdinalIgnoreCase_throws_for_every_case).
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(
             () => native.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList());
     }
@@ -146,7 +146,7 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
 
         Assert.StartsWith(t, s, StringComparison.OrdinalIgnoreCase);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(
             () => native.Entities.AsNoTracking()
                 .Where(x => x.S.StartsWith(x.T, StringComparison.OrdinalIgnoreCase))
@@ -162,7 +162,7 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
             nameof(DriverLinq_field_to_field_OrdinalIgnoreCase_throws_for_every_case),
             ("row", "Seattle", "Sea"));
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(
             () => driverLinq.Entities.AsNoTracking()
                 .Where(x => x.S.StartsWith(x.T, StringComparison.OrdinalIgnoreCase))
@@ -180,7 +180,7 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
             ("match", "École", ""),
             ("no-match", "Portland", ""));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var result = nativeOnly.Entities.AsNoTracking()
             .Where(x => x.S.Equals("éCOLE", StringComparison.OrdinalIgnoreCase))
             .Select(x => x.Label).ToList();
@@ -210,7 +210,7 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
             ("match", "Seattle", ""),
             ("trailing-newline", "seattle\n", ""));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(["match"], nativeOnly.Entities.AsNoTracking()
             .Where(x => x.S.Equals("seattle", StringComparison.OrdinalIgnoreCase)).Select(x => x.Label).ToList());
         Assert.Equal(["match"], nativeOnly.Entities.AsNoTracking()
@@ -236,7 +236,7 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
         string? term = null;
 
         // A parameter may be null per execution, which has no regex form, so the parameterized shape declines.
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
                 () => nativeOnly.Entities.AsNoTracking()
@@ -249,7 +249,7 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
                 .Where(x => string.Equals(x.S, "SEATTLE", StringComparison.OrdinalIgnoreCase)).Select(x => x.Label).ToList());
         }
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Equal(["missing", "null"], native.Entities.AsNoTracking()
             .Where(x => string.Equals(x.S, term, StringComparison.OrdinalIgnoreCase)).Select(x => x.Label).ToList()
             .OrderBy(x => x, StringComparer.Ordinal));
@@ -266,16 +266,16 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
     // exercise the translator.
     private static void AssertWhereMatchesOracle(IMongoCollection<Row> collection, Expression<Func<Row, bool>> predicate)
     {
-        using var oracleDb = CreateContext(collection, MongoQueryMode.Native);
+        using var oracleDb = CreateContext(collection, MongoQueryProvider.Native);
         var oracle = oracleDb.Entities.AsNoTracking().ToList().Where(predicate.Compile()).Select(x => x.Label)
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList()
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
         Assert.Equal(oracle, nativeOnlyResult);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeResult = native.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList()
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
         Assert.Equal(oracle, nativeResult);
@@ -291,13 +291,13 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    private static SingleEntityDbContext<T> CreateContext<T>(IMongoCollection<T> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<T> CreateContext<T>(IMongoCollection<T> collection, MongoQueryProvider mode)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

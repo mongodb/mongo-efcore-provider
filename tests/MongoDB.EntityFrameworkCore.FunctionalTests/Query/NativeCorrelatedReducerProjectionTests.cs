@@ -72,7 +72,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     }
 
     private AnimalDbContext CreateContext(
-        MongoQueryMode mode, string name, out ObjectId withMethods, out ObjectId withoutMethods,
+        MongoQueryProvider mode, string name, out ObjectId withMethods, out ObjectId withoutMethods,
         ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -108,7 +108,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void FirstOrDefault_member_returns_correct_value_when_a_related_row_exists()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly, nameof(FirstOrDefault_member_returns_correct_value_when_a_related_row_exists),
+            MongoQueryProvider.NativeOnly, nameof(FirstOrDefault_member_returns_correct_value_when_a_related_row_exists),
             out var withMethods, out _);
 
         var result = db.Animals
@@ -127,7 +127,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void FirstOrDefault_over_empty_reference_collection_reads_as_default()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly, nameof(FirstOrDefault_over_empty_reference_collection_reads_as_default),
+            MongoQueryProvider.NativeOnly, nameof(FirstOrDefault_over_empty_reference_collection_reads_as_default),
             out _, out var withoutMethods);
 
         var result = db.Animals
@@ -142,7 +142,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void First_member_returns_correct_value_when_a_related_row_exists()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly, nameof(First_member_returns_correct_value_when_a_related_row_exists),
+            MongoQueryProvider.NativeOnly, nameof(First_member_returns_correct_value_when_a_related_row_exists),
             out var withMethods, out _);
 
         var result = db.Animals
@@ -157,7 +157,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public async Task First_over_empty_reference_collection_throws()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly, nameof(First_over_empty_reference_collection_throws),
+            MongoQueryProvider.NativeOnly, nameof(First_over_empty_reference_collection_throws),
             out _, out var withoutMethods);
 
         var query = db.Animals
@@ -168,13 +168,13 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         Assert.Equal("Sequence contains no elements", ex.Message);
     }
 
-    /// <summary>Throw-on-empty under the default <see cref="MongoQueryMode.Native"/> mode too, not just
+    /// <summary>Throw-on-empty under the default <see cref="MongoQueryProvider.Native"/> mode too, not just
     /// <c>NativeOnly</c>.</summary>
     [Fact]
     public void First_over_empty_reference_collection_throws_under_default_native_mode()
     {
         using var db = CreateContext(
-            MongoQueryMode.Native, nameof(First_over_empty_reference_collection_throws_under_default_native_mode),
+            MongoQueryProvider.Native, nameof(First_over_empty_reference_collection_throws_under_default_native_mode),
             out _, out var withoutMethods);
 
         var query = db.Animals
@@ -194,7 +194,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void First_over_nullable_typed_member_declines()
     {
         using var db = CreateContext(
-            MongoQueryMode.Native, nameof(First_over_nullable_typed_member_declines),
+            MongoQueryProvider.Native, nameof(First_over_nullable_typed_member_declines),
             out var withMethods, out _);
 
         var query = db.Animals
@@ -213,7 +213,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void FirstOrDefault_over_nullable_typed_member_still_works()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly, nameof(FirstOrDefault_over_nullable_typed_member_still_works),
+            MongoQueryProvider.NativeOnly, nameof(FirstOrDefault_over_nullable_typed_member_still_works),
             out var withMethods, out _);
 
         var result = db.Animals
@@ -227,7 +227,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     // No driver-LINQ oracle: expected values are hand-computed from the seed, with several candidates per case so a
     // wrong pick gives a different answer.
 
-    private AnimalDbContext CreateEmptyContext(MongoQueryMode mode, string name, out string animals, out string methods)
+    private AnimalDbContext CreateEmptyContext(MongoQueryProvider mode, string name, out string animals, out string methods)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         animals = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "A" + suffix;
@@ -239,7 +239,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void FirstOrDefault_with_constant_predicate_returns_the_matching_row_not_the_positional_first()
     {
         using var db = CreateEmptyContext(
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(FirstOrDefault_with_constant_predicate_returns_the_matching_row_not_the_positional_first),
             out var animals, out var methods);
 
@@ -266,7 +266,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void OrderBy_and_OrderByDescending_FirstOrDefault_pick_opposite_rows()
     {
         using var db = CreateEmptyContext(
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(OrderBy_and_OrderByDescending_FirstOrDefault_pick_opposite_rows),
             out var animals, out var methods);
 
@@ -298,7 +298,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void OrderBy_combined_with_predicate_excludes_the_row_that_would_otherwise_sort_first()
     {
         using var db = CreateEmptyContext(
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(OrderBy_combined_with_predicate_excludes_the_row_that_would_otherwise_sort_first),
             out var animals, out var methods);
 
@@ -329,7 +329,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void Each_outer_document_picks_its_own_first_row_not_a_global_one()
     {
         using var db = CreateEmptyContext(
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(Each_outer_document_picks_its_own_first_row_not_a_global_one),
             out var animals, out var methods);
 
@@ -365,7 +365,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public async Task Correlated_reducer_projection_with_predicate_and_ordering_succeeds_under_NativeOnly()
     {
         using var db = CreateEmptyContext(
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(Correlated_reducer_projection_with_predicate_and_ordering_succeeds_under_NativeOnly),
             out var animals, out var methods);
 
@@ -397,7 +397,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void FirstOrDefault_over_a_non_nullable_int_member_returns_the_correct_value()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly, nameof(FirstOrDefault_over_a_non_nullable_int_member_returns_the_correct_value),
+            MongoQueryProvider.NativeOnly, nameof(FirstOrDefault_over_a_non_nullable_int_member_returns_the_correct_value),
             out var withMethods, out _);
 
         var result = db.Animals
@@ -418,7 +418,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void FirstOrDefault_over_a_non_nullable_int_member_reads_as_default_for_an_empty_collection()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(FirstOrDefault_over_a_non_nullable_int_member_reads_as_default_for_an_empty_collection),
             out _, out var withoutMethods);
 
@@ -434,7 +434,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void FirstOrDefault_over_an_enum_member_returns_the_correct_value()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly, nameof(FirstOrDefault_over_an_enum_member_returns_the_correct_value),
+            MongoQueryProvider.NativeOnly, nameof(FirstOrDefault_over_an_enum_member_returns_the_correct_value),
             out var withMethods, out _);
 
         var result = db.Animals
@@ -451,7 +451,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void FirstOrDefault_over_an_enum_member_reads_as_default_for_an_empty_collection()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(FirstOrDefault_over_an_enum_member_reads_as_default_for_an_empty_collection),
             out _, out var withoutMethods);
 
@@ -471,7 +471,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public async Task FirstOrDefault_over_a_value_type_member_mixes_populated_and_empty_rows_in_one_query()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(FirstOrDefault_over_a_value_type_member_mixes_populated_and_empty_rows_in_one_query),
             out var withMethods, out var withoutMethods);
 
@@ -499,7 +499,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void FirstOrDefault_over_a_value_type_member_with_predicate_and_ordering_returns_the_correct_value()
     {
         using var db = CreateEmptyContext(
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(FirstOrDefault_over_a_value_type_member_with_predicate_and_ordering_returns_the_correct_value),
             out var animals, out var methods);
 
@@ -549,7 +549,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public void Whole_root_entity_leaf_beside_a_reducer_leaf_reads_both_correctly()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly, nameof(Whole_root_entity_leaf_beside_a_reducer_leaf_reads_both_correctly),
+            MongoQueryProvider.NativeOnly, nameof(Whole_root_entity_leaf_beside_a_reducer_leaf_reads_both_correctly),
             out var withMethods, out var withoutMethods);
 
         var results = db.Animals
@@ -576,7 +576,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
     public async Task Whole_root_entity_leaf_beside_a_string_reducer_leaf_reads_both_correctly()
     {
         using var db = CreateContext(
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             nameof(Whole_root_entity_leaf_beside_a_string_reducer_leaf_reads_both_correctly),
             out var withMethods, out var withoutMethods);
 
@@ -599,7 +599,7 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         private readonly string _methods;
 
         public AnimalDbContext(
-            TemporaryDatabaseFixture database, string animals, string methods, MongoQueryMode mode,
+            TemporaryDatabaseFixture database, string animals, string methods, MongoQueryProvider mode,
             ILoggerFactory? loggerFactory)
             : base(Configure(database, mode, loggerFactory))
         {
@@ -608,11 +608,11 @@ public class NativeCorrelatedReducerProjectionTests(TemporaryDatabaseFixture dat
         }
 
         private static DbContextOptions<AnimalDbContext> Configure(
-            TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var builder = new DbContextOptionsBuilder<AnimalDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 

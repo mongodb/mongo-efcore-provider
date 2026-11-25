@@ -164,7 +164,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Computed_sort_over_a_whole_entity_streams()
     {
         var collection = Seed(nameof(Computed_sort_over_a_whole_entity_streams));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // The one-pass materializer's forward name-dispatch must SkipValue() the synthetic sort field.
         var entityType = db.Model.FindEntityType(typeof(SortItem))!;
@@ -179,7 +179,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Computed_sort_over_a_DOM_entity()
     {
         var collection = SeedDom(nameof(Computed_sort_over_a_DOM_entity));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, b => b.Entity<SortDomItemDerived>());
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, b => b.Entity<SortDomItemDerived>());
 
         // A derived sibling makes the base type ineligible for streaming, so this exercises the DOM shaper.
         var entityType = db.Model.FindEntityType(typeof(SortDomItem))!;
@@ -195,7 +195,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Computed_sort_then_projection()
     {
         var collection = Seed(nameof(Computed_sort_then_projection));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, out var spy);
 
         var result = db.Entities.AsNoTracking()
             .OrderBy(x => x.A + x.B)
@@ -218,7 +218,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Computed_sort_then_paging()
     {
         var collection = Seed(nameof(Computed_sort_then_paging));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.AsNoTracking()
             .OrderBy(x => x.A + x.B)
@@ -237,7 +237,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Computed_sort_tracking_round_trip()
     {
         var collection = Seed(nameof(Computed_sort_tracking_round_trip));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var first = db.Entities.OrderBy(x => x.A + x.B).ToList();
         Assert.Equal(MainSumOrderLabels, first.Select(x => x.Label));
@@ -268,7 +268,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Mixed_sort_keeps_the_field_key_as_a_plain_path()
     {
         var collection = SeedTies(nameof(Mixed_sort_keeps_the_field_key_as_a_plain_path));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.AsNoTracking()
             .OrderBy(x => x.A)
@@ -283,7 +283,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Computed_primary_then_field_secondary()
     {
         var collection = SeedTies(nameof(Computed_primary_then_field_secondary));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.AsNoTracking()
             .OrderBy(x => x.A + x.B)
@@ -302,7 +302,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Two_computed_keys()
     {
         var collection = SeedTies(nameof(Two_computed_keys));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.AsNoTracking()
             .OrderBy(x => x.A + x.B)
@@ -317,7 +317,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Constant_sort_key_goes_native()
     {
         var collection = Seed(nameof(Constant_sort_key_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // The .ThenBy(Label) is load-bearing: every row ties on the constant key, so without a secondary a
         // dropped $sort is indistinguishable (a fresh collection returns insertion order). With it, rows come back
@@ -331,7 +331,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Parameterized_sort_key_goes_native()
     {
         var collection = Seed(nameof(Parameterized_sort_key_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // As in case 9, the .ThenBy(Label) makes a dropped $sort observable.
         var capturedLocal = 7;
@@ -344,7 +344,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Field_sort_emits_no_set()
     {
         var collection = Seed(nameof(Field_sort_emits_no_set));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.Native, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.Native, out var spy);
 
         _ = db.Entities.AsNoTracking().OrderBy(x => x.A).ToList();
 
@@ -357,11 +357,11 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     {
         var collection = Seed(nameof(Unsupported_computed_key_declines_and_returns_correct_rows));
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var result = native.Entities.AsNoTracking().OrderBy(x => x.Label.ToUpper()).ToList();
         Assert.Equal(MainLabelOrderLabels, result.Select(x => x.Label));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label.ToUpper()).ToList());
     }
@@ -374,7 +374,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         // A captured local in StartsWith is natively representable (placeholder sentinel resolved at Build
         // time), so this goes fully native under default Native mode.
         var prefix = "p";
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
 
         var result = db.Entities.AsNoTracking()
             .Where(x => x.Label.StartsWith(prefix))
@@ -392,7 +392,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Dollar_prefixed_string_sort_key_does_not_get_interpreted_as_a_field_path()
     {
         var collection = Seed(nameof(Dollar_prefixed_string_sort_key_does_not_get_interpreted_as_a_field_path));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // "$Label" is a literal string, so every row ties and A decides the order. Unwrapped, MongoDB would read it
         // as a field path and sort by Label, a different sequence over this fixture.
@@ -418,12 +418,12 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         // Native: declines and falls back to correct rows (all tie, so order is unconstrained) rather than
         // letting BsonValue.Create's ArgumentException escape at pipeline-build time.
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeResult = Queryable.OrderBy(native.Entities.AsNoTracking(), keySelector).ToList();
         Assert.Equal(4, nativeResult.Count);
 
         // NativeOnly: a clean decline, never the raw ArgumentException.
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => Queryable.OrderBy(nativeOnly.Entities.AsNoTracking(), keySelector).ToList());
     }
@@ -434,7 +434,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Parameterized_computed_sort_key_value_is_correctly_substituted()
     {
         var collection = Seed(nameof(Parameterized_computed_sort_key_value_is_correctly_substituted));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // factor = -1 gives A-descending. An unsubstituted sentinel would make every row tie, yielding insertion
         // order instead, which differs from both A orders here.
@@ -456,7 +456,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         // Seeded via SaveChanges: the owned collection's shadow owner-key element is written by the provider's
         // serializer, which a raw driver InsertMany bypasses.
-        using (var seedDb = CreateContext(collection, MongoQueryMode.Native, PostOwnerModel))
+        using (var seedDb = CreateContext(collection, MongoQueryProvider.Native, PostOwnerModel))
         {
             seedDb.Entities.AddRange(
                 new PostOwner { Label = "pB", Posts = [new PostItem { PostId = 1 }, new PostItem { PostId = 2 }] },
@@ -465,7 +465,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             seedDb.SaveChanges();
         }
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PostOwnerModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, PostOwnerModel);
 
         // Insertion order [pB, pA, pC] differs from Count-ascending [pA, pC, pB].
         var result = db.Entities.AsNoTracking().OrderBy(x => x.Posts.Count).ToList();
@@ -481,7 +481,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     {
         var collection = Seed(nameof(Parameterized_where_leg_for_computed_sort_then_projection));
         var prefix = "p";
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
 
         var result = db.Entities.AsNoTracking()
             .Where(x => x.Label.StartsWith(prefix))
@@ -505,7 +505,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var uri = new Uri("http://example.com/");
 
         // Native: declines and falls back. Every row ties on the key, so ThenBy(Label) fixes the order.
-        using (var native = CreateContext(collection, MongoQueryMode.Native))
+        using (var native = CreateContext(collection, MongoQueryProvider.Native))
         {
             var labels = native.Entities.AsNoTracking()
                 .OrderBy(x => uri).ThenBy(x => x.Label)
@@ -514,7 +514,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         }
 
         // NativeOnly: a clean decline, never the raw ArgumentException.
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => nativeOnly.Entities.AsNoTracking()
@@ -523,7 +523,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         }
 
         var label = "zz";
-        using (var stringNativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var stringNativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             var labels = stringNativeOnly.Entities.AsNoTracking()
                 .OrderBy(x => label).ThenBy(x => x.Label)
@@ -538,7 +538,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Computed_sort_descending_primary_key()
     {
         var collection = Seed(nameof(Computed_sort_descending_primary_key));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.AsNoTracking().OrderByDescending(x => x.A + x.B).ToList();
 
@@ -574,7 +574,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         //
         // Seeded via SaveChanges (like case 17) so the provider's serializer writes the owner key and string
         // representation.
-        using (var seedDb = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
+        using (var seedDb = CreateContext(collection, MongoQueryProvider.Native, CodeOwnerModel))
         {
             seedDb.Entities.AddRange(
                 new CodeOwner
@@ -600,7 +600,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             .SelectMany(d => d["Posts"].AsBsonArray.Select(p => p["Code"])).ToList();
         Assert.All(storedCodes, c => Assert.Equal(BsonType.String, c.BsonType));
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, CodeOwnerModel))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, CodeOwnerModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnly.Entities.AsNoTracking()
                 .OrderBy(x => x.Posts.Count(p => p.Code > 5))
@@ -609,7 +609,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         // Legs 2 and 3 — default Native falls back, and DriverLinq goes straight to the bridge, which reads the numeric
         // property stored as a string through $convert (EF-337), so the order is the CLR one.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, CodeOwnerModel);
             Assert.Equal(["cB", "cC", "cA"], db.Entities.AsNoTracking()
@@ -617,7 +617,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
                 .Select(x => x.Label).ToList());
         }
 
-        using (var oracleDb = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
+        using (var oracleDb = CreateContext(collection, MongoQueryProvider.Native, CodeOwnerModel))
         {
             var inMemory = oracleDb.Entities.AsNoTracking().ToList()
                 .OrderBy(x => x.Posts.Count(p => p.Code > 5))
@@ -634,7 +634,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Computed_sort_key_using_client_collection_Contains_goes_native()
     {
         var collection = Seed(nameof(Computed_sort_key_using_client_collection_Contains_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var favored = new[] { "pA", "pD" };
 
@@ -652,7 +652,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     public void Negated_computed_sort_key_using_Contains_goes_native()
     {
         var collection = Seed(nameof(Negated_computed_sort_key_using_Contains_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var favored = new[] { "pA", "pD" };
 
@@ -678,7 +678,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             new SortItem { A = 3, B = 3, Label = "pZ", Flag = true },
             new SortItem { A = 4, B = 4, Label = "pW", Flag = false }
         ]);
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // !x.Flag over a bool field is a genuine MongoUnaryExpression{Not} (not the $in collapse above).
         // Ascending on !Flag puts Flag==true rows first; ThenBy(Label) makes a dropped $sort observable.
@@ -722,7 +722,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var collection = database.MongoDatabase.GetCollection<ConvertedFlagItem>(name);
 
         // NativeOnly: a clean decline, never silently-wrong data.
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, ConvertedFlagModel))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, ConvertedFlagModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
                 nativeOnly.Entities.AsNoTracking()
@@ -731,7 +731,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         }
 
         // Native declines to the bridge, which refuses; so does explicit DriverLinq.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, ConvertedFlagModel);
             var ex = Assert.Throws<NotSupportedException>(() => db.Entities.AsNoTracking()
@@ -741,7 +741,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         }
 
         // The C# answer the old stored-form order contradicted.
-        using var oracleDb = CreateContext(collection, MongoQueryMode.Native, ConvertedFlagModel);
+        using var oracleDb = CreateContext(collection, MongoQueryProvider.Native, ConvertedFlagModel);
         Assert.Equal(
             ["p2", "p3", "p1", "p4"],
             oracleDb.Entities.AsNoTracking().ToList().OrderBy(x => !x.Flag).ThenBy(x => x.Label).Select(x => x.Label));
@@ -813,7 +813,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         ]);
 
         using var db = CreateContextWithLogging(
-            database.MongoDatabase.GetCollection<ClashItem>(name), MongoQueryMode.NativeOnly, out var spy,
+            database.MongoDatabase.GetCollection<ClashItem>(name), MongoQueryProvider.NativeOnly, out var spy,
             mb => mb.Entity<ClashItemDerived>().Property(x => x.Special).HasElementName("__sort0"));
 
         // NativeOnly: a fallback would throw here.
@@ -867,7 +867,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             new BsonDocument {{"_id", ObjectId.GenerateNewId()}, {"X", 5}, {"Y", 1}, {"__sort0", "o2"}},
         ]);
 
-        using var db = new SetOpElementNameContext(database, mains, others, MongoQueryMode.NativeOnly);
+        using var db = new SetOpElementNameContext(database, mains, others, MongoQueryProvider.NativeOnly);
 
         // NativeOnly: a fallback would throw rather than mask the collision.
         var rows = db.Mains.AsNoTracking().Select(m => new {N = m.Name})
@@ -885,9 +885,9 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         private readonly string _mains;
         private readonly string _others;
 
-        public SetOpElementNameContext(TemporaryDatabaseFixture db, string mains, string others, MongoQueryMode mode)
+        public SetOpElementNameContext(TemporaryDatabaseFixture db, string mains, string others, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<SetOpElementNameContext>()
-                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryProvider(mode))
                 .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)
@@ -917,7 +917,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -925,12 +925,12 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // FunctionalTests has no TestMqlLoggerFactory/AssertMql, so MQL is captured through SpyLoggerProvider.
     private static SingleEntityDbContext<T> CreateContextWithLogging<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, out SpyLoggerProvider spyLogger,
+        IMongoCollection<T> collection, MongoQueryProvider mode, out SpyLoggerProvider spyLogger,
         Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
     {
@@ -945,7 +945,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 }

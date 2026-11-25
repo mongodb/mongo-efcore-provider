@@ -37,7 +37,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -45,11 +45,11 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private SingleEntityDbContext<T> CreateContextWithLogging<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
         where T : class
     {
@@ -64,7 +64,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -270,7 +270,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     public void Filtered_count_predicate_goes_native()
     {
         var collection = Seed(nameof(Filtered_count_predicate_goes_native), MatchRows());
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         // Materialize entities first and project titles client-side: a server-side bare-scalar Select would fall
         // back to driver-LINQ for an unrelated reason and fail under NativeOnly.
@@ -288,7 +288,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     public void Filtered_count_predicate_is_correct_for_every_threshold(int threshold, string[] expected)
     {
         var collection = Seed($"thresh_{threshold}", MatchRows());
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Count(p => p.Rank > 0) >= threshold)
@@ -302,7 +302,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     {
         var collection = Seed(
             nameof(Filtered_count_predicate_emits_expr_over_size_over_filter_never_an_array_index_test), MatchRows());
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spy);
 
         _ = db.Entities.AsNoTracking().Where(b => b.Posts.Count(p => p.Rank > 0) > 2).ToList();
 
@@ -318,7 +318,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     public void Filtered_count_predicate_with_a_parameterized_threshold_goes_native()
     {
         var collection = Seed(nameof(Filtered_count_predicate_with_a_parameterized_threshold_goes_native), MatchRows());
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
         var threshold = 1;
 
         var titles = db.Entities.AsNoTracking()
@@ -334,7 +334,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed(
             nameof(Filtered_count_predicate_through_an_owned_reference_hop_goes_native),
             RowWithNotes("two", 2), RowWithNotes("none", 0));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Home.Notes.Count(n => n.Length > 0) > 0)
@@ -354,14 +354,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
         // Wrong-rows check runs first, in its own block, so it is independently load-bearing: a by-name
         // resolution compares the element's Title to itself and returns the row.
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             // "p" (PostDoc's Title) != "x", so the correct answer is no rows.
             Assert.Empty(db.Entities.AsNoTracking().Where(b => b.Posts.Count(p => p.Title == b.Title) > 0).ToList());
         }
 
         // Correlation to the immediate enclosing scope goes native; still returns the correct (empty) result.
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             Assert.Empty(db.Entities.AsNoTracking().Where(b => b.Posts.Count(p => p.Title == b.Title) > 0).ToList());
         }
@@ -377,7 +377,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             Row("x", new BsonArray { PostDoc(rank: 1, heading: "hello") }),
             Row("z", new BsonArray { PostDoc(rank: 1, heading: "world") }));
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             var titles = db.Entities.AsNoTracking()
@@ -392,7 +392,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     public void Primitive_element_collection_filtered_count_declines()
     {
         var collection = Seed(nameof(Primitive_element_collection_filtered_count_declines), RowWithTags("x", "a", "bb"));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         // Tags is a primitive-collection property, not a navigation — TryResolveOwnedCollectionPath's final-hop
         // check declines it.
@@ -407,7 +407,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             nameof(Filtered_count_nested_inside_a_quantifier_declines_and_the_unfiltered_form_still_goes_native),
             Row("x", new BsonArray { PostWithComments("h", 2) }));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         // $expr is a server error inside $elemMatch, so a filtered count there must decline at translate time
         // rather than throw at execution under Native.
@@ -431,7 +431,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
         // Must return the exact complement of the un-negated predicate ("three"), asserted as real rows so an
         // all-or-nothing bug fails.
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             var titles = db.Entities.AsNoTracking()
                 .Where(b => !(b.Posts.Count(p => p.Rank > 0) > 1))
@@ -444,8 +444,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         // driver-LINQ renders a bare $size with no $ifNull and aborts on it (see
         // NativeOwnedCollectionCountTests.Wrapped_count_projection_under_DriverLinq_works_for_present_arrays_and_
         // aborts_on_a_missing_array).
-        using (var native = CreateContext(collection, MongoQueryMode.Native, BlogModel))
-        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var native = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
+        using (var driver = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             var nativeTitles = native.Entities.AsNoTracking()
                 .Where(b => !(b.Posts.Count(p => p.Rank > 0) > 1) && b.Title != "empty")
@@ -471,7 +471,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                 PostWithComments("few", 1), PostWithComments("mid", 2), PostWithComments("many", 3)
             }));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var headings = db.Entities.AsNoTracking()
             .SelectMany(b => b.Posts.Where(p => p.Comments.Count(c => c.Age > 0) > 1), (b, p) => new { p.Heading })
@@ -493,7 +493,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
         void AssertHardFailsEverywhere(Func<IQueryable<Blog>, IQueryable<object>> query)
         {
-            foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+            foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
             {
                 using var db = CreateContext(collection, mode, BlogModel);
                 var ex = Assert.Throws<InvalidOperationException>(() => query(db.Entities.AsNoTracking()).ToList());
@@ -594,7 +594,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     private void AssertElementPredicateGoesNative(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, List<string>> run, string[] expected)
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             Assert.Equal(expected, run(db.Entities.AsNoTracking()));
@@ -644,7 +644,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         // The CLR-correct answer is two-false=2, one-false=1, but the driver's own LINQ provider renders `!p.Flag`
         // as raw-field truthiness too and answers 0 for every row — a driver limitation out of scope here. What is
         // guaranteed: NativeOnly never succeeds with wrong data, and Native agrees with DriverLinq.
-        List<string> Run(MongoQueryMode mode)
+        List<string> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, mode, ConvertedFlagOwnerModel);
             return db.Entities.AsNoTracking()
@@ -654,7 +654,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
         // Load-bearing: NativeOnly declines cleanly rather than returning 0 for every count (raw-field $not over
         // "Y"/"N" is always false).
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, ConvertedFlagOwnerModel))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, ConvertedFlagOwnerModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => nativeOnly.Entities.AsNoTracking()
@@ -663,7 +663,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         }
 
         // Native must agree with the DriverLinq fallback it declines to.
-        Assert.Equal(Run(MongoQueryMode.DriverLinq), Run(MongoQueryMode.Native));
+        Assert.Equal(Run(MongoQueryProvider.DriverLinq), Run(MongoQueryProvider.Native));
     }
 
     [Fact]
@@ -698,7 +698,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed(nameof(Bare_nullable_bool_element_predicate_filtered_projection_still_hard_fails_EF365),
             Row("x", new BsonArray { PostDoc(rank: 1, heading: "hello", flagged: true) }));
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             var ex = Assert.Throws<InvalidOperationException>(
@@ -752,7 +752,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             nameof(Owned_collection_array_leaf_sibling_of_a_filtered_count_still_declines_before_mutating_EF365),
             TagsAndPostsRow("x", ["a"], matching: 2, nonMatching: 1));
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             Assert.Throws<InvalidOperationException>(
@@ -767,7 +767,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         // Select(b => new { b.Title, N = b.Posts.Count(pred) }). See also
         // NativeOwnedCollectionCountTests.Filtered_count_projection_now_goes_native_EF359.
         var collection = Seed(nameof(Filtered_count_projection_goes_native), MatchRows());
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var rows = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) })
@@ -782,7 +782,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     public void Filtered_count_projection_emits_size_over_filter_in_project()
     {
         var collection = Seed(nameof(Filtered_count_projection_emits_size_over_filter_in_project), MatchRows());
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spy);
 
         _ = db.Entities.AsNoTracking().Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) }).ToList();
 
@@ -796,7 +796,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     public void Filtered_LongCount_projection_goes_native()
     {
         var collection = Seed(nameof(Filtered_LongCount_projection_goes_native), MatchRows());
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var rows = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, N = b.Posts.LongCount(p => p.Rank > 0) })
@@ -810,7 +810,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     {
         // The DTO spelling reaches NativeProjectionBinder's MemberInit branch.
         var collection = Seed(nameof(Filtered_count_projection_into_a_named_dto_goes_native), MatchRows());
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var rows = db.Entities.AsNoTracking()
             .Select(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank > 0) })
@@ -823,7 +823,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     public void Filtered_count_projection_alongside_sibling_leaves_goes_native()
     {
         var collection = Seed(nameof(Filtered_count_projection_alongside_sibling_leaves_goes_native), MatchRows());
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var rows = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, Filtered = b.Posts.Count(p => p.Rank > 0), All = b.Posts.Count })
@@ -842,7 +842,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed(
             nameof(Filtered_count_projection_through_an_owned_reference_hop_goes_native),
             RowWithNotes("two", 2), RowWithNotes("none", 0));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var rows = db.Entities.AsNoTracking()
             .Select(b => new { b.Title, N = b.Home.Notes.Count(n => n.Length > 0) })
@@ -859,7 +859,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         // $ifNull wrap, so missing/null Posts arrays agree across modes.
         var collection = Seed(nameof(Arithmetic_projection_leaf_containing_a_filtered_count_goes_native), MatchRows());
 
-        List<(string Title, int X)> Run(MongoQueryMode mode)
+        List<(string Title, int X)> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, mode, BlogModel);
             return db.Entities.AsNoTracking()
@@ -873,9 +873,9 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             ("empty", 0), ("missing", 0), ("none", 0), ("null", 0), ("one", 2), ("three", 6)
         };
 
-        Assert.Equal(expected, Run(MongoQueryMode.NativeOnly));
-        Assert.Equal(expected, Run(MongoQueryMode.Native));
-        Assert.Equal(expected, Run(MongoQueryMode.DriverLinq));
+        Assert.Equal(expected, Run(MongoQueryProvider.NativeOnly));
+        Assert.Equal(expected, Run(MongoQueryProvider.Native));
+        Assert.Equal(expected, Run(MongoQueryProvider.DriverLinq));
     }
 
     // Bare spelling Select(b => b.Posts.Count(pred)) goes native as a tier-2 leaf (`_v` / Synthetic).
@@ -885,7 +885,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed(
             nameof(Bare_filtered_count_projection_returns_correct_values_under_Native_and_DriverLinq), MatchRows());
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             var counts = db.Entities.AsNoTracking()
@@ -909,7 +909,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         const string expected = "[0,0,0,0,1,3]";
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             legs.Add(($"{mode} direct", LegOutcome(
@@ -919,8 +919,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
         // Late-decline legs: a captured-local StartsWith declines at render time, after the alias-addressed
         // shaper is committed — the one route where a bare projection's alias miss is silent. The explicit
-        // DriverLinq leg verifies UseQueryMode(DriverLinq) still restores the previous path.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        // DriverLinq leg verifies UseQueryProvider(DriverLinq) still restores the previous path.
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             legs.Add(($"{mode} late-decline", LegOutcome(
@@ -947,7 +947,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed(
             nameof(Bare_filtered_count_projection_emits_a_native_size_over_filter_under_the_reserved_alias),
             MatchRows());
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spy);
 
         var counts = db.Entities.AsNoTracking().OrderBy(b => b.Title)
             .Select(b => b.Posts.Count(p => p.Rank > 0)).ToList();
@@ -978,7 +978,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Expression<Func<Blog, int>> selector = b => b.Posts.Count(p => p.Rank > threshold);
 
         List<int> oracle;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             oracle = db.Entities.AsNoTracking().ToList()
                 .OrderBy(b => b.Title).Select(selector.Compile()).ToList();
@@ -988,14 +988,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             legs.Add(($"{mode} direct", LegOutcome(
                 () => db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(selector).ToList())));
         }
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             legs.Add(($"{mode} late-decline", LegOutcome(
@@ -1028,7 +1028,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             Row("x", new BsonArray { PostDoc(rank: 1, heading: "hello") }));
 
         // PostDoc writes Title = "p", never equal to "x", so the correct count is 0.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             var result = db.Entities.AsNoTracking().Select(b => b.Posts.Count(p => p.Title == b.Title)).ToList();
@@ -1096,14 +1096,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed($"diff_{name}", DifferentialRows());
 
         List<(string, int)> expected;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             expected = db.Entities.AsNoTracking().ToList()
                 .Select(selector.Compile()).Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
         }
 
         List<(string, int)> actual;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             actual = db.Entities.AsNoTracking().Select(selector).ToList()
                 .Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
@@ -1118,7 +1118,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     public void Filtered_count_oracle_is_non_vacuous_on_the_element_axis()
     {
         var collection = Seed(nameof(Filtered_count_oracle_is_non_vacuous_on_the_element_axis), DifferentialRows());
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         Expression<Func<Blog, TitleCount>> ne =
             b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank != 5) };
@@ -1133,7 +1133,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         IMongoCollection<Blog> collection, Expression<Func<Blog, TitleCount>> selector, int expectedMultiMixedN)
     {
         List<(string, int)> linqOracle;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             linqOracle = db.Entities.AsNoTracking().ToList()
                 .Select(selector.Compile()).Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
@@ -1141,14 +1141,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
         // NativeOnly, not Native: Native would fall back silently if the shape declined.
         List<(string, int)> nativeOnly;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             nativeOnly = db.Entities.AsNoTracking().Select(selector).ToList()
                 .Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
         }
 
         List<(string, int)> driverLinq;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             driverLinq = db.Entities.AsNoTracking().Select(selector).ToList()
                 .Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
@@ -1168,21 +1168,21 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         int expectedMultiMixedN, int driverLinqMultiMixedN)
     {
         List<(string, int)> linqOracle;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             linqOracle = db.Entities.AsNoTracking().ToList()
                 .Select(selector.Compile()).Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
         }
 
         List<(string, int)> nativeOnly;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             nativeOnly = db.Entities.AsNoTracking().Select(selector).ToList()
                 .Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
         }
 
         List<(string, int)> driverLinq;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             driverLinq = db.Entities.AsNoTracking().Select(selector).ToList()
                 .Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
@@ -1247,14 +1247,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed($"guarded_{name}", DifferentialRows());
 
         List<(string, int)> expected;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             expected = db.Entities.AsNoTracking().ToList()
                 .Select(selector.Compile()).Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
         }
 
         List<(string, int)> actual;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             actual = db.Entities.AsNoTracking().Select(selector).ToList()
                 .Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
@@ -1272,7 +1272,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed(
             nameof(Filtered_count_relational_element_predicate_in_where_excludes_null_and_missing_elements),
             DifferentialRows());
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         // C#: exactly one element below 0 in multi_mixed (-5), multi_mixed_no_ragged (-5) and single_no_match (-7).
         // multi_none_match has two. Unguarded, multi_mixed would count 3.
@@ -1290,14 +1290,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed(
             nameof(Filtered_count_element_guard_references_the_element_scoped_field), DifferentialRows());
 
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy))
+        using (var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spy))
         {
             _ = db.Entities.AsNoTracking().Select(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank < 0) }).ToList();
             var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
             Assert.Contains("""{ "$and" : [{ "$gt" : ["$$e.Rank", null] }, { "$lt" : ["$$e.Rank", 0] }] }""", mql);
         }
 
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy))
+        using (var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spy))
         {
             _ = db.Entities.AsNoTracking().Select(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank >= 5) }).ToList();
             var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
@@ -1349,14 +1349,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed($"quant_{name}", QuantifierRows());
 
         List<string> linqOracle;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             linqOracle = db.Entities.AsNoTracking().ToList()
                 .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t, StringComparer.Ordinal).ToList();
         }
 
         List<string> actual;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             actual = db.Entities.AsNoTracking().Where(predicate).ToList()
                 .Select(b => b.Title).OrderBy(t => t, StringComparer.Ordinal).ToList();
@@ -1401,14 +1401,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed($"diffpred_{name}", DifferentialRows());
 
         List<string> expected;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             expected = db.Entities.AsNoTracking().ToList()
                 .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t).ToList();
         }
 
         List<string> actual;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             actual = db.Entities.AsNoTracking().Where(predicate).ToList()
                 .Select(b => b.Title).OrderBy(t => t).ToList();

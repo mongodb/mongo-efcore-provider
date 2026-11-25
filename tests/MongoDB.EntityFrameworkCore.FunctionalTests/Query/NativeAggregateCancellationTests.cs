@@ -38,7 +38,7 @@ public class NativeAggregateCancellationTests(TemporaryDatabaseFixture database)
         public int Value { get; set; }
     }
 
-    private SingleEntityDbContext<ValueEntity> CreateContext(MongoQueryMode mode, string name)
+    private SingleEntityDbContext<ValueEntity> CreateContext(MongoQueryProvider mode, string name)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<ValueEntity>(collectionName);
@@ -50,7 +50,7 @@ public class NativeAggregateCancellationTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -62,10 +62,10 @@ public class NativeAggregateCancellationTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public async Task CountAsync_with_cancelled_token_throws(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public async Task CountAsync_with_cancelled_token_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, nameof(CountAsync_with_cancelled_token_throws) + mode);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => db.Entities.CountAsync(Cancelled()));
@@ -73,20 +73,20 @@ public class NativeAggregateCancellationTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public async Task SumAsync_with_cancelled_token_throws(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public async Task SumAsync_with_cancelled_token_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, nameof(SumAsync_with_cancelled_token_throws) + mode);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => db.Entities.SumAsync(e => e.Value, Cancelled()));
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public async Task AnyAsync_with_cancelled_token_throws(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public async Task AnyAsync_with_cancelled_token_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, nameof(AnyAsync_with_cancelled_token_throws) + mode);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => db.Entities.AnyAsync(Cancelled()));
@@ -94,20 +94,20 @@ public class NativeAggregateCancellationTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public async Task MaxAsync_with_cancelled_token_throws(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public async Task MaxAsync_with_cancelled_token_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, nameof(MaxAsync_with_cancelled_token_throws) + mode);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => db.Entities.MaxAsync(e => e.Value, Cancelled()));
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public async Task Aggregates_with_live_token_return_values(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public async Task Aggregates_with_live_token_return_values(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, nameof(Aggregates_with_live_token_return_values) + mode);
         var token = CancellationToken.None;
@@ -119,10 +119,10 @@ public class NativeAggregateCancellationTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Sync_aggregates_return_values(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Sync_aggregates_return_values(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, nameof(Sync_aggregates_return_values) + mode);
 

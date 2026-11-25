@@ -63,7 +63,7 @@ Three ideas carry most of the design:
 | **Capability.** The driver's LINQ provider cannot express some EF shapes: cross-collection joins, collection or multi-hop `$lookup`, Include, owned-array projections. | `MongoQueryExpression.Lookup.cs` |
 | **C# semantics.** The driver sometimes answers a different question than the C# expression asks. | `See BREAKING-CHANGES.md`: a dropped narrowing cast, `null` vs missing in projections, derived-type queries reading sibling types. The native path deliberately returns the C#-correct answer. |
 | **Performance.** The fallback re-runs bridge translation plus the driver's translation on every execution, and materializes through an intermediate DOM. | Fallback translation happens in `TranslateQuery` per execution. Native builds once and has a one-pass *streaming* materializer. `benchmarks/.../perf-baseline.md` measures EF against driver-only. |
-| **Control.** Provider-specific features (`$vectorSearch`, exact MQL shape) are easier to own. | `NativeVectorSearchBinder`, `MongoQueryMode`. |
+| **Control.** Provider-specific features (`$vectorSearch`, exact MQL shape) are easier to own. | `NativeVectorSearchBinder`, `MongoQueryProvider`. |
 
 Where compatibility with established behavior matters more than purity, the code keeps the driver's behavior. Example: "driver-LINQ is the oracle" for how a malformed document reads back (`AGENTS.md`, "Read modes").
 
@@ -74,7 +74,7 @@ Where compatibility with established behavior matters more than purity, the code
 - **Whether a query is native is only known at the end.** Any later operator can decline. So every operator both records itself into the native IR *and* leaves the EF-shaped query and captured chain intact for the fallback.
 - **Correctness failures are silent.** The server accepts an almost-right pipeline. Hence the "stage locally, commit only after every gate passes" rule, the structural-classification rules and the exhaustive-dispatch tests (section 9).
 - **Three EF versions ship in parallel** (EF8, EF9, EF10, via `#if EF8 || EF9` / `#if !EF8`). EF's own rewrites differ across versions in places, for example the GroupJoin composite-key guard and the LeftJoin shim.
-- **Native is not a break.** Native becoming the default is explicitly *not* a break: results are unchanged, unsupported shapes fall back, and `UseQueryMode(MongoQueryMode.DriverLinq)` restores the old path (`AGENTS.md`, "Versioning").
+- **Native is not a break.** Native becoming the default is explicitly *not* a break: results are unchanged, unsupported shapes fall back, and `UseQueryProvider(MongoQueryProvider.DriverLinq)` restores the old path (`AGENTS.md`, "Versioning").
 
 ### 2.3 Design principles you will see everywhere
 
@@ -149,9 +149,9 @@ Other work must be done on each query execution:
 | **Emit side: lowering and rendering** | Typed stages, then a BSON template with placeholders. | `MongoSelectLowerer`, `Stages/*`, `MongoPipelineFactory`, two renderers | Only the renderer and factory |
 | **Read side** | A compiled function from a returned document (or reader) to an entity or projection. | `MongoProjectionBindingExpressionVisitor`, `...RemovingExpressionVisitor`, `MongoStreamingEntityMaterializerRewriter` | Yes, reads BSON stream |
 
-### 3.3 Query modes and the gate
+### 3.3 Query providers and the gate
 
-`MongoQueryMode` is set with `UseQueryMode(...)` on the options builder.
+`MongoQueryProvider` is set with `UseQueryProvider(...)` on the options builder.
 
 | **Mode** | **Behavior** |
 |---|---|
@@ -553,7 +553,7 @@ EF8/EF9 versus EF10 differ in the `LeftJoin` shim, GroupJoin composite-key guard
 | FunctionalTests | Real server. Differential theories compare native results to an in-memory oracle over ragged data (`NativeOwnedCollectionAllTests`, `NativeModeAssert`). | `tests/.../FunctionalTests/Query/` (~170 files) |
 | SpecificationTests | EF Core's conformance suite plus MQL baselines (`AssertMql`) | `tests/.../SpecificationTests/Query/` |
 
-- **MQL shape does not prove native.** Use `MongoQueryMode.NativeOnly`, or set `MONGODB_EF_QUERY_MODE=NativeOnly` to flip every spec and functional context.
+- **MQL shape does not prove native.** Use `MongoQueryProvider.NativeOnly`, or set `MONGODB_EF_QUERY_PROVIDER=NativeOnly` to flip every spec and functional context.
 - `tests/tools/native-parity-diff.sh` runs the suites under `DriverLinq` and `NativeOnly` and diffs outcomes: *regress* means it passes on the driver but fails natively, *improve* is the reverse.
 - Baselines regenerate with `EF_TEST_REWRITE_BASELINES=1` and a tight `--filter`. See `tests/.../SpecificationTests/AGENTS.md`.
 - Agents: `.claude/agents/query-reviewer.md` plus the cross-cutting reviewers run via `/review-ef-core-provider`.

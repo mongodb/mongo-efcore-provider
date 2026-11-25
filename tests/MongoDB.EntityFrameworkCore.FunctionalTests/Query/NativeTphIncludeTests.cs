@@ -61,11 +61,11 @@ public class NativeTphIncludeTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     private sealed class TphContext(
-        TemporaryDatabaseFixture database, string owners, string rows, MongoQueryMode mode, bool convertedDiscriminator)
+        TemporaryDatabaseFixture database, string owners, string rows, MongoQueryProvider mode, bool convertedDiscriminator)
         : DbContext(new DbContextOptionsBuilder<TphContext>()
             .UseMongoDB(
                 database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                o => o.UseQueryMode(mode))
+                o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, FreshModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options)
