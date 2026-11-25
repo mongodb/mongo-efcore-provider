@@ -124,12 +124,12 @@ public class NativeJoinScopeLeafTests(TemporaryDatabaseFixture database) : IClas
             TemporaryDatabaseFixtureBase.CreateCollectionName("jlEmployees") + suffix);
     }
 
-    private SingleContext Create(CollectionNames names, MongoQueryMode mode)
+    private SingleContext Create(CollectionNames names, MongoQueryProvider mode)
     {
         var builder = new DbContextOptionsBuilder<SingleContext>()
             .UseMongoDB(
                 database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                o => o.UseQueryMode(mode))
+                o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         return new SingleContext(builder.Options, names);

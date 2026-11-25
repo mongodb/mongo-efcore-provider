@@ -72,7 +72,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
     }
 
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? model = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? model = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -80,7 +80,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -96,13 +96,13 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
         }));
 
         List<SimpleItem> driver;
-        using (var ctx = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             driver = ctx.Entities.AsNoTracking().OrderBy(e => e.Count).ToList();
         }
 
         List<SimpleItem> native;
-        using (var ctx = CreateContext(collection, MongoQueryMode.Native))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.Native))
         {
             native = ctx.Entities.AsNoTracking().OrderBy(e => e.Count).ToList();
         }
@@ -116,7 +116,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             Assert.Equal(d.Active, n.Active);
         }
 
-        using (var ctx = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Equal(25, ctx.Entities.AsNoTracking().ToList().Count);
         }
@@ -138,7 +138,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
         }));
 
         ObjectId targetId;
-        using (var ctx = CreateContext(collection, MongoQueryMode.Native))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.Native))
         {
             var loaded = ctx.Entities.OrderBy(e => e.Count).ToList();
             Assert.Equal(10, loaded.Count);
@@ -151,7 +151,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             ctx.SaveChanges();
         }
 
-        using (var ctx = CreateContext(collection, MongoQueryMode.Native))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.Native))
         {
             var reread = ctx.Entities.AsNoTracking().Single(e => e.Id == targetId);
             Assert.Equal("mutated", reread.Name);
@@ -176,7 +176,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
         var id2 = ObjectId.GenerateNewId();
 
         // Seed via a DbContext so the owned nested shapes are written with the EF-configured element names.
-        using (var seed = CreateContext(collection, MongoQueryMode.DriverLinq, model))
+        using (var seed = CreateContext(collection, MongoQueryProvider.DriverLinq, model))
         {
             seed.Entities.AddRange(
                 new OrderRoot
@@ -220,17 +220,17 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             Assert.Equal(1, globex.Lines[0].Qty);
         }
 
-        using (var ctx = CreateContext(collection, MongoQueryMode.DriverLinq, model))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.DriverLinq, model))
         {
             AssertNesting(ctx.Entities.AsNoTracking().OrderBy(o => o.Customer).ToList(), id1);
         }
 
-        using (var ctx = CreateContext(collection, MongoQueryMode.Native, model))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.Native, model))
         {
             AssertNesting(ctx.Entities.AsNoTracking().OrderBy(o => o.Customer).ToList(), id1);
         }
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, model))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, model))
         {
             AssertNesting(nativeOnly.Entities.AsNoTracking().ToList(), id1);
         }
@@ -290,7 +290,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             }
         };
 
-        using (var seed = CreateContext(collection, MongoQueryMode.DriverLinq, model))
+        using (var seed = CreateContext(collection, MongoQueryProvider.DriverLinq, model))
         {
             seed.Entities.AddRange(rows);
             seed.SaveChanges();
@@ -316,13 +316,13 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
         }
 
         List<WideEntity> native;
-        using (var ctx = CreateContext(collection, MongoQueryMode.Native, model))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.Native, model))
         {
             native = ctx.Entities.AsNoTracking().OrderBy(e => e.StrVal).ToList();
         }
 
         List<WideEntity> driver;
-        using (var ctx = CreateContext(collection, MongoQueryMode.DriverLinq, model))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.DriverLinq, model))
         {
             driver = ctx.Entities.AsNoTracking().OrderBy(e => e.StrVal).ToList();
         }
@@ -335,7 +335,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             AssertEqualRow(driver[i], native[i]);
         }
 
-        using (var ctx = CreateContext(collection, MongoQueryMode.NativeOnly, model))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.NativeOnly, model))
         {
             Assert.Equal(2, ctx.Entities.AsNoTracking().ToList().Count);
         }
@@ -368,7 +368,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
         }));
 
         List<DisposableItem> native;
-        using (var ctx = CreateContext(collection, MongoQueryMode.Native))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.Native))
         {
             native = ctx.Entities.AsNoTracking().OrderBy(e => e.Value).ToList();
         }
@@ -381,7 +381,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             Assert.False(native[i].Disposed);
         }
 
-        using (var ctx = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var ctx = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             var nativeOnly = ctx.Entities.AsNoTracking().OrderBy(e => e.Value).ToList();
             Assert.Equal(5, nativeOnly.Count);
@@ -400,7 +400,7 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             Value = i
         }));
 
-        using var ctx = CreateContext(collection, MongoQueryMode.Native);
+        using var ctx = CreateContext(collection, MongoQueryProvider.Native);
         var tracked = ctx.Entities.OrderBy(e => e.Value).ToList();
 
         Assert.Equal(5, tracked.Count);
@@ -417,20 +417,20 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
         raw.InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() } });
 
         InvalidOperationException driverEx;
-        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var driver = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             driverEx = Assert.Throws<InvalidOperationException>(() => driver.Entities.AsNoTracking().ToList());
         }
 
         InvalidOperationException nativeEx;
-        using (var native = CreateContext(collection, MongoQueryMode.Native))
+        using (var native = CreateContext(collection, MongoQueryProvider.Native))
         {
             nativeEx = Assert.Throws<InvalidOperationException>(() => native.Entities.AsNoTracking().ToList());
         }
 
         Assert.Equal(driverEx.Message, nativeEx.Message);
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.AsNoTracking().ToList());
         }

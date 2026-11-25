@@ -36,7 +36,7 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         public DateTime Created { get; set; }
     }
 
-    private SingleEntityDbContext<Row> CreateContext(MongoQueryMode mode, string name)
+    private SingleEntityDbContext<Row> CreateContext(MongoQueryProvider mode, string name)
     {
         var collection = database.CreateCollection<Row>(name);
         collection.InsertMany(
@@ -48,12 +48,12 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         return SingleEntityDbContext.Create(collection, optionsBuilderAction: b =>
         {
             b.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
         });
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Random_in_predicate_throws_rather_than_being_evaluated_once(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Random_in_predicate_throws_rather_than_being_evaluated_once(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"rp_{mode}");
         var ex = Assert.Throws<InvalidOperationException>(
@@ -61,8 +61,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         Assert.Contains("Next", ex.Message);
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void EF_Functions_Random_in_predicate_throws(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void EF_Functions_Random_in_predicate_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"rf_{mode}");
         var ex = Assert.Throws<InvalidOperationException>(
@@ -70,24 +70,24 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         Assert.Contains("Random", ex.Message);
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Random_compared_to_column_in_predicate_throws(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Random_compared_to_column_in_predicate_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"rc_{mode}");
         Assert.Throws<InvalidOperationException>(
             () => db.Entities.Where(o => o.Foo > Random.Shared.Next()).ToList());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Random_in_ordering_throws(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Random_in_ordering_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"ro_{mode}");
         Assert.Throws<InvalidOperationException>(
             () => db.Entities.OrderBy(o => o.Foo + Random.Shared.Next()).ToList());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Guid_NewGuid_in_predicate_throws(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Guid_NewGuid_in_predicate_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"gp_{mode}");
         Assert.Throws<InvalidOperationException>(
@@ -97,8 +97,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
     // EF leaves Guid.NewGuid() in the tree, so a closed DateTime receiver of a native $dateAdd that contains one reaches
     // MongoExpressionTranslator.TryEvaluateClosedSubtree, which would otherwise evaluate it once at translation time.
     // The central non-deterministic-call scan refuses it in every mode, before the native/fallback decision.
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq), InlineData(MongoQueryMode.NativeOnly)]
-    public void Guid_NewGuid_in_closed_date_add_receiver_throws(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.DriverLinq), InlineData(MongoQueryProvider.NativeOnly)]
+    public void Guid_NewGuid_in_closed_date_add_receiver_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"gd_{mode}");
 
@@ -110,29 +110,29 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         Assert.Contains("Guid.NewGuid", Assert.Throws<InvalidOperationException>(query).Message);
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void UtcNow_in_predicate_still_works(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void UtcNow_in_predicate_still_works(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"un_{mode}");
         Assert.Equal(2, db.Entities.Where(o => o.Created < DateTime.UtcNow).Count());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Now_in_predicate_still_works(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Now_in_predicate_still_works(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"nw_{mode}");
         Assert.Equal(2, db.Entities.Where(o => o.Created < DateTime.Now).Count());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Today_add_days_in_predicate_works(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Today_add_days_in_predicate_works(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"td_{mode}");
         Assert.Equal(2, db.Entities.Where(o => o.Created < DateTime.Today.AddDays(-1)).Count());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void DateTimeOffset_UtcNow_add_days_in_predicate_works(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void DateTimeOffset_UtcNow_add_days_in_predicate_works(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"do_{mode}");
         Assert.Equal(2, db.Entities.Where(o => o.Created < DateTimeOffset.UtcNow.AddDays(-1).UtcDateTime).Count());
@@ -144,8 +144,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
     private static int CountRecent(SingleEntityDbContext<Row> db)
         => db.Entities.Count(r => r.Created <= DateTime.UtcNow.AddMilliseconds(0));
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public async Task UtcNow_add_receiver_is_evaluated_per_execution_not_baked_into_the_cached_plan(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public async Task UtcNow_add_receiver_is_evaluated_per_execution_not_baked_into_the_cached_plan(MongoQueryProvider mode)
     {
         var collection = database.CreateCollection<Row>($"st_{mode}");
 
@@ -169,8 +169,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
     // The correct answer is time-zone independent: only the past row. Relabelling Local `Now` as UTC (rather than
     // converting it) answers wrongly whenever the host's |UTC offset| exceeds 30 minutes. Run under
     // TZ=Pacific/Auckland and TZ=America/Los_Angeles to exercise it (TZ is read at process start).
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Local_Now_add_receiver_compares_instants_in_any_time_zone(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Local_Now_add_receiver_compares_instants_in_any_time_zone(MongoQueryProvider mode)
     {
         var collection = database.CreateCollection<Row>($"lz_{mode}");
         var now = DateTime.UtcNow;
@@ -190,8 +190,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
 
     // A row-independent predicate holding a clock (the spec Where_datetime_* shape) goes native as a per-execution
     // boolean, and is re-evaluated on the cached plan's second execution.
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public async Task Closed_clock_predicate_is_evaluated_per_execution(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public async Task Closed_clock_predicate_is_evaluated_per_execution(MongoQueryProvider mode)
     {
         var collection = database.CreateCollection<Row>($"cp_{mode}");
         collection.InsertOne(new Row { Id = ObjectId.GenerateNewId(), Foo = 1, Created = DateTime.UtcNow });
@@ -218,8 +218,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         => db.Entities.Select(r => new { r.Foo, Shifted = DateTime.UtcNow.AddDays(1), Now = DateTime.Now })
             .AsEnumerable().Select(x => (x.Shifted, x.Now)).Single();
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Projected_clock_is_evaluated_per_execution(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Projected_clock_is_evaluated_per_execution(MongoQueryProvider mode)
     {
         var collection = database.CreateCollection<Row>($"pj_{mode}");
         collection.InsertOne(new Row { Id = ObjectId.GenerateNewId(), Foo = 1, Created = DateTime.UtcNow });
@@ -268,11 +268,11 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
     }
 
     private static SingleEntityDbContext<Row> CreateClockContext(
-        IMongoCollection<Row> collection, MongoQueryMode mode, Action? onCompilation = null)
+        IMongoCollection<Row> collection, MongoQueryProvider mode, Action? onCompilation = null)
         => SingleEntityDbContext.Create(collection, optionsBuilderAction: b =>
         {
             b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             if (onCompilation is not null)
                 b.LogTo(_ => onCompilation(), [CoreEventId.QueryCompilationStarting]);
         });
@@ -284,8 +284,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         => db.Entities.Where(r => candidates.Where(d => d < DateTime.UtcNow).Contains(r.Created))
             .OrderBy(r => r.Foo).Select(r => r.Foo).ToList();
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public async Task Folded_local_collection_filter_reading_the_clock_is_evaluated_per_execution(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public async Task Folded_local_collection_filter_reading_the_clock_is_evaluated_per_execution(MongoQueryProvider mode)
     {
         static DateTime Ms(DateTime d) => new(d.Ticks - d.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
 
@@ -330,8 +330,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         return db.Entities.Where(Expression.Lambda<Func<Row, bool>>(contains, row));
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public async Task Folded_constant_local_collection_filter_reading_the_clock_is_evaluated_per_execution(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public async Task Folded_constant_local_collection_filter_reading_the_clock_is_evaluated_per_execution(MongoQueryProvider mode)
     {
         // The constant array is part of the query tree, so there is no warm-up: the compile happens on the first
         // execution, which is why the "not yet" assertion is skipped if it overran the margin.
@@ -357,8 +357,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
 
     // A non-deterministic call in a folded predicate must not be evaluated once at compile time: it reaches the same
     // EF-255 guard as without folding.
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Folded_local_collection_filter_with_Guid_NewGuid_is_not_evaluated_once(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Folded_local_collection_filter_with_Guid_NewGuid_is_not_evaluated_once(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"fg_{mode}");
 
@@ -371,8 +371,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
 
     // Pinned: before EF-255 a Random call in a projection was also evaluated once and returned the same value for every
     // row (the driver folds it into a constant), so it was never a working per-row client evaluation. It now fails loudly.
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Random_in_projection_throws_rather_than_repeating_one_value(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Random_in_projection_throws_rather_than_repeating_one_value(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"rj_{mode}");
         Assert.Throws<InvalidOperationException>(
@@ -381,32 +381,32 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
 
     // EF-464: EF parameterizes these calls before the provider sees the tree, so the per-call check never fires and the
     // one value read per execution is used for every row.
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Random_NextDouble_in_projection_throws(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Random_NextDouble_in_projection_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"nd_{mode}");
         Assert.Throws<InvalidOperationException>(
             () => db.Entities.Select(o => new { o.Foo, R = Random.Shared.NextDouble() }).ToList());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Random_NextDouble_in_predicate_throws(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Random_NextDouble_in_predicate_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"np_{mode}");
         Assert.Throws<InvalidOperationException>(
             () => db.Entities.Where(o => o.Foo > Random.Shared.NextDouble()).ToList());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Random_NextSingle_in_projection_throws(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Random_NextSingle_in_projection_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"ns_{mode}");
         Assert.Throws<InvalidOperationException>(
             () => db.Entities.Select(o => new { o.Foo, R = Random.Shared.NextSingle() }).ToList());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Random_NextInt64_in_ordering_throws(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Random_NextInt64_in_ordering_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"ni_{mode}");
         Assert.Throws<InvalidOperationException>(
@@ -414,8 +414,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
     }
 
 #if !EF8 && !EF9
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Guid_CreateVersion7_in_projection_throws(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Guid_CreateVersion7_in_projection_throws(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"g7_{mode}");
         Assert.Throws<InvalidOperationException>(
@@ -423,8 +423,8 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
     }
 #endif
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
-    public void Random_evaluated_client_side_before_the_query_works(MongoQueryMode mode)
+    [Theory, InlineData(MongoQueryProvider.Native), InlineData(MongoQueryProvider.NativeOnly), InlineData(MongoQueryProvider.DriverLinq)]
+    public void Random_evaluated_client_side_before_the_query_works(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, $"rv_{mode}");
         var threshold = Random.Shared.Next(-10, 0);

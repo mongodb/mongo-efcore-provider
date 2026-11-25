@@ -103,10 +103,10 @@ public class NativeStreamingNestedCollectionIncludeTests(TemporaryDatabaseFixtur
         }
     }
 
-    private ChainContext Db(MongoQueryMode mode, string suffix)
+    private ChainContext Db(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<ChainContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,
@@ -115,7 +115,7 @@ public class NativeStreamingNestedCollectionIncludeTests(TemporaryDatabaseFixtur
     private string Seed()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        using var seed = Db(MongoQueryMode.Native, suffix);
+        using var seed = Db(MongoQueryProvider.Native, suffix);
         seed.Customers.AddRange(
             new Customer { Id = 1, Name = "ann" },
             new Customer { Id = 2, Name = "bob" },
@@ -155,7 +155,7 @@ public class NativeStreamingNestedCollectionIncludeTests(TemporaryDatabaseFixtur
     public void Collection_then_collection_include_streams()
     {
         var suffix = Seed();
-        using var db = Db(MongoQueryMode.NativeOnly, suffix);
+        using var db = Db(MongoQueryProvider.NativeOnly, suffix);
 
         Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Customers.AsNoTracking().Include(c => c.Orders).ThenInclude(o => o.Items)));
         Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Customers.Include(c => c.Orders).ThenInclude(o => o.Items)));
@@ -168,7 +168,7 @@ public class NativeStreamingNestedCollectionIncludeTests(TemporaryDatabaseFixtur
     public void Sibling_collection_includes_stream()
     {
         var suffix = Seed();
-        using var db = Db(MongoQueryMode.NativeOnly, suffix);
+        using var db = Db(MongoQueryProvider.NativeOnly, suffix);
 
         Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Customers.AsNoTracking().Include(c => c.Orders).Include(c => c.Tags)));
         Assert.NotEqual(typeof(BsonDocument), CursorRowType(db.Customers.Include(c => c.Orders).Include(c => c.Tags)));

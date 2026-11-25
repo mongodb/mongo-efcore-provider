@@ -67,7 +67,7 @@ public class NativeReferenceNavigationEntityListContainsTests(TemporaryDatabaseF
         return new Seed([alice, bob], children);
     }
 
-    private ReferenceNavContainsDbContext CreateContext(Seed seed, MongoQueryMode mode, string name, out SpyLoggerProvider spyLogger)
+    private ReferenceNavContainsDbContext CreateContext(Seed seed, MongoQueryProvider mode, string name, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -87,7 +87,7 @@ public class NativeReferenceNavigationEntityListContainsTests(TemporaryDatabaseF
     {
         var seed = SeedParentsAndChildren();
         using var db = CreateContext(
-            seed, MongoQueryMode.NativeOnly, nameof(Reference_navigation_entity_list_contains_goes_native_under_NativeOnly),
+            seed, MongoQueryProvider.NativeOnly, nameof(Reference_navigation_entity_list_contains_goes_native_under_NativeOnly),
             out var spyLogger);
 
         List<Parent?> parents = seed.Parents.Where(p => p.Name == "Alice").ToList<Parent?>();
@@ -105,7 +105,7 @@ public class NativeReferenceNavigationEntityListContainsTests(TemporaryDatabaseF
     {
         var seed = SeedParentsAndChildren();
         using var db = CreateContext(
-            seed, MongoQueryMode.NativeOnly, nameof(Reference_navigation_entity_list_contains_with_no_match_returns_empty),
+            seed, MongoQueryProvider.NativeOnly, nameof(Reference_navigation_entity_list_contains_with_no_match_returns_empty),
             out _);
 
         var parents = new List<Parent?> { new() { Id = ObjectId.GenerateNewId(), Name = "Nobody" } };
@@ -125,7 +125,7 @@ public class NativeReferenceNavigationEntityListContainsTests(TemporaryDatabaseF
 
         public ReferenceNavContainsDbContext(
             TemporaryDatabaseFixture database, string parentsCollection, string childrenCollection,
-            MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            MongoQueryProvider mode, ILoggerFactory? loggerFactory)
             : base(BuildOptions(database, mode, loggerFactory))
         {
             _parentsCollection = parentsCollection;
@@ -133,13 +133,13 @@ public class NativeReferenceNavigationEntityListContainsTests(TemporaryDatabaseF
         }
 
         private static DbContextOptions BuildOptions(
-            TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var optionsBuilder = new DbContextOptionsBuilder<ReferenceNavContainsDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(mode);
             if (loggerFactory != null)
             {
                 optionsBuilder = optionsBuilder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();

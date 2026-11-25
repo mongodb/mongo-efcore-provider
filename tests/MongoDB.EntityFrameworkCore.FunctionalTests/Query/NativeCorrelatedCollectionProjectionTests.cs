@@ -65,10 +65,10 @@ public class NativeCorrelatedCollectionProjectionTests(TemporaryDatabaseFixture 
         }
     }
 
-    private ShopContext Db(MongoQueryMode mode, string suffix)
+    private ShopContext Db(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<ShopContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)).Options,
             suffix);
@@ -131,7 +131,7 @@ public class NativeCorrelatedCollectionProjectionTests(TemporaryDatabaseFixture 
         Assert.Equal("1:t1,2:t3,3:", results[0]);
         Assert.Equal(tracked ? "entries=2" : "entries=0", results[1]);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         var query = tracked ? streaming.Categories.AsTracking() : streaming.Categories.AsNoTracking();
         AssertStreams(query.Select(c => new { c.Id, Articles = c.Articles.Where(a => a.Title != "t2").ToList() }));
     }

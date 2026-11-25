@@ -27,11 +27,11 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// <c>DbSet.WithQueryProvider</c> sets the <see cref="MongoQueryMode"/> for one query, overriding the context-wide mode.
+/// <c>DbSet.WithQueryProvider</c> sets the <see cref="MongoQueryProvider"/> for one query, overriding the context-wide mode.
 /// </summary>
 /// <remarks>
 /// The mode is observed through a query the native translator declines (a whole-collection value converter has no
-/// per-element serializer): under <see cref="MongoQueryMode.NativeOnly"/> that throws
+/// per-element serializer): under <see cref="MongoQueryProvider.NativeOnly"/> that throws
 /// <see cref="NativeTranslationNotSupportedException"/> at translate time; under the other modes it does not.
 /// </remarks>
 public class PerQueryProviderTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -50,7 +50,7 @@ public class PerQueryProviderTests(TemporaryDatabaseFixture database) : IClassFi
             v => v.Select(x => x.ToString()).ToList(),
             v => v.Select(x => Enum.Parse<Tier>(x)).ToList());
 
-    private SingleEntityDbContext<Row> CreateContext(string name, MongoQueryMode? contextMode)
+    private SingleEntityDbContext<Row> CreateContext(string name, MongoQueryProvider? contextMode)
     {
         var collection = database.MongoDatabase.GetCollection<Row>(
             TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8]);
@@ -64,7 +64,7 @@ public class PerQueryProviderTests(TemporaryDatabaseFixture database) : IClassFi
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 if (contextMode != null)
                 {
-                    new MongoDbContextOptionsBuilder(b).UseQueryMode(contextMode.Value);
+                    new MongoDbContextOptionsBuilder(b).UseQueryProvider(contextMode.Value);
                 }
             });
     }
@@ -72,10 +72,10 @@ public class PerQueryProviderTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Query_can_opt_in_to_NativeOnly_when_the_context_is_Native()
     {
-        using var db = CreateContext(nameof(Query_can_opt_in_to_NativeOnly_when_the_context_is_Native), MongoQueryMode.Native);
+        using var db = CreateContext(nameof(Query_can_opt_in_to_NativeOnly_when_the_context_is_Native), MongoQueryProvider.Native);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.WithQueryProvider(MongoQueryMode.NativeOnly).Where(e => e.Ratings.Contains(Tier.Gold)).ToList());
+            () => db.Entities.WithQueryProvider(MongoQueryProvider.NativeOnly).Where(e => e.Ratings.Contains(Tier.Gold)).ToList());
 
         // Other queries on the same context are unaffected.
         Assert.Equal(2, db.Entities.Count());
@@ -84,44 +84,44 @@ public class PerQueryProviderTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Query_can_opt_out_of_NativeOnly_when_the_context_is_NativeOnly()
     {
-        using var db = CreateContext(nameof(Query_can_opt_out_of_NativeOnly_when_the_context_is_NativeOnly), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(nameof(Query_can_opt_out_of_NativeOnly_when_the_context_is_NativeOnly), MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Where(e => e.Ratings.Contains(Tier.Gold)).ToList());
 
         var ex = Record.Exception(
-            () => db.Entities.WithQueryProvider(MongoQueryMode.Native).Where(e => e.Ratings.Contains(Tier.Gold)).ToList());
+            () => db.Entities.WithQueryProvider(MongoQueryProvider.Native).Where(e => e.Ratings.Contains(Tier.Gold)).ToList());
         Assert.IsNotType<NativeTranslationNotSupportedException>(ex);
     }
 
     [Fact]
     public void Query_can_opt_out_of_NativeOnly_with_DriverLinq()
     {
-        using var db = CreateContext(nameof(Query_can_opt_out_of_NativeOnly_with_DriverLinq), MongoQueryMode.NativeOnly);
+        using var db = CreateContext(nameof(Query_can_opt_out_of_NativeOnly_with_DriverLinq), MongoQueryProvider.NativeOnly);
 
-        var labels = db.Entities.WithQueryProvider(MongoQueryMode.DriverLinq).OrderBy(e => e.Label).Select(e => e.Label).ToList();
+        var labels = db.Entities.WithQueryProvider(MongoQueryProvider.DriverLinq).OrderBy(e => e.Label).Select(e => e.Label).ToList();
 
         Assert.Equal(["A", "B"], labels);
     }
 
     [Fact]
-    public void Per_query_mode_applies_when_the_context_mode_is_not_configured()
+    public void Per_query_provider_applies_when_the_context_mode_is_not_configured()
     {
-        using var db = CreateContext(nameof(Per_query_mode_applies_when_the_context_mode_is_not_configured), null);
+        using var db = CreateContext(nameof(Per_query_provider_applies_when_the_context_mode_is_not_configured), null);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.WithQueryProvider(MongoQueryMode.NativeOnly).Where(e => e.Ratings.Contains(Tier.Gold)).ToList());
+            () => db.Entities.WithQueryProvider(MongoQueryProvider.NativeOnly).Where(e => e.Ratings.Contains(Tier.Gold)).ToList());
     }
 
     [Fact]
     public void Compiled_query_cache_keeps_modes_apart_for_the_same_query_shape()
     {
-        using var db = CreateContext(nameof(Compiled_query_cache_keeps_modes_apart_for_the_same_query_shape), MongoQueryMode.Native);
+        using var db = CreateContext(nameof(Compiled_query_cache_keeps_modes_apart_for_the_same_query_shape), MongoQueryProvider.Native);
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             var ex = Record.Exception(() => db.Entities.WithQueryProvider(mode).Where(e => e.Ratings.Contains(Tier.Gold)).ToList());
-            if (mode == MongoQueryMode.NativeOnly)
+            if (mode == MongoQueryProvider.NativeOnly)
             {
                 Assert.IsType<NativeTranslationNotSupportedException>(ex);
             }
@@ -133,11 +133,11 @@ public class PerQueryProviderTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public async Task Per_query_mode_works_for_async_queries()
+    public async Task Per_query_provider_works_for_async_queries()
     {
-        using var db = CreateContext(nameof(Per_query_mode_works_for_async_queries), MongoQueryMode.Native);
+        using var db = CreateContext(nameof(Per_query_provider_works_for_async_queries), MongoQueryProvider.Native);
 
-        var labels = await db.Entities.WithQueryProvider(MongoQueryMode.NativeOnly).OrderBy(e => e.Label).Select(e => e.Label).ToListAsync();
+        var labels = await db.Entities.WithQueryProvider(MongoQueryProvider.NativeOnly).OrderBy(e => e.Label).Select(e => e.Label).ToListAsync();
 
         Assert.Equal(["A", "B"], labels);
     }
@@ -145,17 +145,17 @@ public class PerQueryProviderTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Same_mode_on_two_roots_is_allowed_but_conflicting_modes_throw()
     {
-        using var db = CreateContext(nameof(Same_mode_on_two_roots_is_allowed_but_conflicting_modes_throw), MongoQueryMode.Native);
+        using var db = CreateContext(nameof(Same_mode_on_two_roots_is_allowed_but_conflicting_modes_throw), MongoQueryProvider.Native);
 
-        var labels = db.Entities.WithQueryProvider(MongoQueryMode.Native)
-            .Join(db.Entities.WithQueryProvider(MongoQueryMode.Native), e => e.Label, o => o.Label, (e, o) => e.Label)
+        var labels = db.Entities.WithQueryProvider(MongoQueryProvider.Native)
+            .Join(db.Entities.WithQueryProvider(MongoQueryProvider.Native), e => e.Label, o => o.Label, (e, o) => e.Label)
             .OrderBy(l => l)
             .ToList();
         Assert.Equal(["A", "B"], labels);
 
         var ex = Assert.Throws<InvalidOperationException>(
-            () => db.Entities.WithQueryProvider(MongoQueryMode.Native)
-                .Join(db.Entities.WithQueryProvider(MongoQueryMode.NativeOnly), e => e.Label, o => o.Label, (e, o) => e.Label)
+            () => db.Entities.WithQueryProvider(MongoQueryProvider.Native)
+                .Join(db.Entities.WithQueryProvider(MongoQueryProvider.NativeOnly), e => e.Label, o => o.Label, (e, o) => e.Label)
                 .ToList());
         Assert.Contains("conflicting", ex.Message);
     }

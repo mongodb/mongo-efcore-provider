@@ -31,7 +31,7 @@ public class NativeStreamingSingleResultTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? model = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? model = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -39,7 +39,7 @@ public class NativeStreamingSingleResultTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private class Order
@@ -146,7 +146,7 @@ public class NativeStreamingSingleResultTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedOrders();
 
-        foreach (var mode in new[] { MongoQueryMode.DriverLinq, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.DriverLinq, MongoQueryProvider.Native })
         {
             using var db = CreateContext(collection, mode, OrderModel);
 

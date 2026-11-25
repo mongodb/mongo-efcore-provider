@@ -70,9 +70,9 @@ public class NativeOwnedThenIncludeTests(TemporaryDatabaseFixture database) : IC
         public object Create(DbContext context, bool designTime) => Interlocked.Increment(ref _count);
     }
 
-    private sealed class Ctx(TemporaryDatabaseFixture database, string orders, string buyers, string regions, MongoQueryMode mode)
+    private sealed class Ctx(TemporaryDatabaseFixture database, string orders, string buyers, string regions, MongoQueryProvider mode)
         : DbContext(new DbContextOptionsBuilder<Ctx>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, FreshModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options)

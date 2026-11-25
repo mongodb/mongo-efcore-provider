@@ -151,7 +151,7 @@ public class NativeChainedJoinPagingTests(TemporaryDatabaseFixture database)
 
     private void SeedData(string owners, string ords, string lines)
     {
-        using var seed = new PagingDbContext(database, owners, ords, lines, MongoQueryMode.DriverLinq);
+        using var seed = new PagingDbContext(database, owners, ords, lines, MongoQueryProvider.DriverLinq);
         seed.Owners.AddRange(new Owner { Id = 1, Name = "Ann" }, new Owner { Id = 2, Name = "Bob" });
         seed.Ords.AddRange(
             new Ord { Id = 10, OwnerId = 1, Total = 5 },
@@ -178,10 +178,10 @@ public class NativeChainedJoinPagingTests(TemporaryDatabaseFixture database)
         private readonly string _lines;
 
         public PagingDbContext(
-            TemporaryDatabaseFixture database, string owners, string ords, string lines, MongoQueryMode mode)
+            TemporaryDatabaseFixture database, string owners, string ords, string lines, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<PagingDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)

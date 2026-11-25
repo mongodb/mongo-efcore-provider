@@ -55,13 +55,13 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
         return database.MongoDatabase.GetCollection<Item>(collectionName);
     }
 
-    private SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryMode mode)
+    private SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -71,7 +71,7 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
 
         var expected = new[] { "L00002", "L00003", "L00004", "L00005" };
 
-        List<string> RunInTransaction(MongoQueryMode mode)
+        List<string> RunInTransaction(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, mode);
             using var tx = db.Database.BeginTransaction();
@@ -85,10 +85,10 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
             return result;
         }
 
-        var native = RunInTransaction(MongoQueryMode.Native);
+        var native = RunInTransaction(MongoQueryProvider.Native);
         Assert.Equal(expected, native);
 
-        var driver = RunInTransaction(MongoQueryMode.DriverLinq);
+        var driver = RunInTransaction(MongoQueryProvider.DriverLinq);
         Assert.Equal(expected, driver);
         Assert.Equal(driver, native);
     }
@@ -99,7 +99,7 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
         var collection = SeedRange(nameof(NativeOnly_query_inside_transaction_goes_native_and_returns_correct_rows), 6);
         var expected = new[] { "L00002", "L00003", "L00004", "L00005" };
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         using var tx = db.Database.BeginTransaction();
 
         var result = db.Entities
@@ -120,7 +120,7 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
         // (read-your-own-writes). Pre-transaction seeding wouldn't catch a dropped Session assignment.
         var collection = SeedRange(nameof(NativeOnly_query_inside_transaction_sees_own_uncommitted_write), 3);
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         using var tx = db.Database.BeginTransaction();
 
         db.Entities.Add(new Item { Label = "L99999", Value = 99 });
@@ -165,14 +165,14 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
     }
 
     private SingleEntityDbContext<DiscriminatedItem> CreateDiscriminatedContext(
-        IMongoCollection<DiscriminatedItem> collection, MongoQueryMode mode)
+        IMongoCollection<DiscriminatedItem> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: b => b.Entity<SpecialDiscriminatedItem>(),
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -182,7 +182,7 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
             nameof(NativeOnly_query_over_non_streaming_eligible_entity_inside_transaction_returns_correct_rows), 6);
         var expected = new[] { "L00002", "L00003", "L00004", "L00005" };
 
-        using var db = CreateDiscriminatedContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateDiscriminatedContext(collection, MongoQueryProvider.NativeOnly);
 
         // Premise: a derived type makes StreamingEligibility.IsEligible false, so the DOM shaper is used.
         var entityType = db.Model.FindEntityType(typeof(DiscriminatedItem))!;
@@ -208,7 +208,7 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
         const int rowCount = 5000;
         var collection = SeedRange(nameof(Native_async_enumeration_observes_cancellation_mid_stream), rowCount);
 
-        await using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        await using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         using var cts = new CancellationTokenSource();
 
         var seen = 0;
@@ -240,7 +240,7 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
     {
         var collection = SeedRange(nameof(Native_ToListAsync_honors_already_cancelled_token), 100);
 
-        await using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        await using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 

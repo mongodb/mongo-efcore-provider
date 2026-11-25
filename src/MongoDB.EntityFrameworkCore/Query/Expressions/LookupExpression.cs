@@ -424,7 +424,7 @@ internal sealed class LookupExpression
     /// <remarks>
     /// Without it, <see cref="MongoQueryExpression.AddLookup"/>'s bare-then-pipelined merge would fold a later
     /// filtered/paged <c>Include</c>'s array into this one, corrupting the count in every
-    /// <see cref="Infrastructure.MongoQueryMode"/>. The Include is renamed instead (see <see cref="RenamedToAvoidJoinCollision"/>).
+    /// <see cref="Infrastructure.MongoQueryProvider"/>. The Include is renamed instead (see <see cref="RenamedToAvoidJoinCollision"/>).
     /// </remarks>
     public bool IsBareCountSizeSource { get; set; }
 

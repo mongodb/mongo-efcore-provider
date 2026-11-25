@@ -86,22 +86,22 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // sort client-side, never sending the sort to the server.
 
         // NativeOnly: TryTranslateField declines the order-changing cast and TryTranslateValue renders $toInt.
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .OrderBy(x => (int)x.D).ThenBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(IntDOrder, nativeOnlyLabels);
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .OrderBy(x => (int)x.D).ThenBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(IntDOrder, driverLinqLabels);
 
-        using var oracle = CreateContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateContext(collection, MongoQueryProvider.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .OrderBy(x => (int)x.D).ThenBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(IntDOrder, inMemoryLabels);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .OrderBy(x => (int)x.D).ThenBy(x => x.Label).Select(x => x.Label).ToList();
 
@@ -114,24 +114,24 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var collection = Seed(nameof(Unsigned_reinterpreting_cast_sort_key_declines));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().OrderBy(x => (uint)x.I).ToList());
 
-        using var oracle = CreateContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateContext(collection, MongoQueryProvider.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .OrderBy(x => (uint)x.I).Select(x => x.Label).ToList();
         Assert.Equal(UIntIOrder, inMemoryLabels);
         Assert.NotEqual(RawIOrder, inMemoryLabels);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         // The driver can't translate a (uint) reinterpretation of a signed field either, so the fallback throws
         // ExpressionNotSupportedException rather than returning a wrong order. Asserted by type so a regression to
         // a silent wrong order is caught.
         Assert.IsType<ExpressionNotSupportedException>(
             Record.Exception(() => native.Entities.AsNoTracking().OrderBy(x => (uint)x.I).ToList()));
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         Assert.IsType<ExpressionNotSupportedException>(
             Record.Exception(() => driverLinq.Entities.AsNoTracking().OrderBy(x => (uint)x.I).ToList()));
     }
@@ -141,22 +141,22 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var collection = Seed(nameof(Narrowing_integral_cast_sort_key_declines));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().OrderBy(x => (short)x.I).ToList());
 
-        using var oracle = CreateContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateContext(collection, MongoQueryProvider.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .OrderBy(x => (short)x.I).Select(x => x.Label).ToList();
         Assert.Equal(ShortIOrder, inMemoryLabels);
         Assert.NotEqual(RawIOrder, inMemoryLabels);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         // As case 2: loud, with the driver's own exception type.
         Assert.IsType<ExpressionNotSupportedException>(
             Record.Exception(() => native.Entities.AsNoTracking().OrderBy(x => (short)x.I).ToList()));
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         Assert.IsType<ExpressionNotSupportedException>(
             Record.Exception(() => driverLinq.Entities.AsNoTracking().OrderBy(x => (short)x.I).ToList()));
     }
@@ -165,7 +165,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Widening_cast_sort_keys_are_unchanged_and_native()
     {
         var collection = Seed(nameof(Widening_cast_sort_keys_are_unchanged_and_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // Widening/boxing conversions are order-preserving, so they resolve to the raw field and stay native.
         Assert.Equal(
@@ -189,7 +189,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         // TryTranslateField declines the cast (UnwrapOrderPreserving leaves it), then TryTranslateComputedSortKey
         // succeeds via TryTranslateValue, rendering an explicit MongoConvertExpression ($toInt).
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, logs);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, logs);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .OrderBy(x => (int)x.D).ThenBy(x => x.Label).Select(x => x.Label).ToList();
 
@@ -227,22 +227,22 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     private void AssertCastComparisonGoesNative(
         IMongoCollection<Row> collection, Expression<Func<Row, bool>> predicate, string[] expectedLabels)
     {
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeOnlyLabels);
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, driverLinqLabels);
 
-        using var oracle = CreateContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateContext(collection, MongoQueryProvider.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList().AsQueryable()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, inMemoryLabels);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeLabels);
@@ -263,16 +263,16 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     private void AssertCastComparisonDeclinesLoudly(
         IMongoCollection<Row> collection, Expression<Func<Row, bool>> predicate)
     {
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().Where(predicate).ToList());
 
         // The driver refuses these too, so the default-mode fallback fails loudly, never a different row set.
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         Assert.IsType<ExpressionNotSupportedException>(
             Record.Exception(() => native.Entities.AsNoTracking().Where(predicate).ToList()));
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         Assert.IsType<ExpressionNotSupportedException>(
             Record.Exception(() => driverLinq.Entities.AsNoTracking().Where(predicate).ToList()));
     }
@@ -313,12 +313,12 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             }
         ]);
 
-        using var nativeOnly = CreateQuantContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateQuantContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking()
                 .Where(b => b.Posts.Any(p => (int)p.Weight > p.Rank)).ToList());
 
-        using var native = CreateQuantContext(collection, MongoQueryMode.Native);
+        using var native = CreateQuantContext(collection, MongoQueryProvider.Native);
         var titles = native.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => (int)p.Weight > p.Rank)).Select(b => b.Title).ToList();
         Assert.Equal(["match"], titles);
@@ -348,7 +348,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         ]);
 
         // A second server-side Select after the SelectMany is a different shape; Heading is extracted client-side.
-        using var nativeOnly = CreateQuantContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateQuantContext(collection, MongoQueryProvider.NativeOnly);
         var results = nativeOnly.Entities.AsNoTracking()
             .SelectMany(b => b.Posts.Where(p => (int)p.Weight > p.Rank), (b, p) => new { p.Heading })
             .ToList();
@@ -397,7 +397,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             }
         ]);
 
-        using var nativeOnlyPredicate = CreateQuantContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyPredicate = CreateQuantContext(collection, MongoQueryProvider.NativeOnly);
         var matchingTitles = nativeOnlyPredicate.Entities.AsNoTracking()
             .Where(b => b.Posts.Count(p => (int)p.Weight > p.Rank) > 1)
             .Select(b => b.Title)
@@ -405,7 +405,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .ToList();
         Assert.Equal(["b2"], matchingTitles);
 
-        using var nativeOnlyProjection = CreateQuantContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnlyProjection = CreateQuantContext(collection, MongoQueryProvider.NativeOnly);
         var counts = nativeOnlyProjection.Entities.AsNoTracking()
             .Select(b => new { b.Title, N = b.Posts.Count(p => (int)p.Weight > p.Rank) })
             .OrderBy(x => x.Title)
@@ -445,19 +445,19 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     private void AssertFractionalConstantRows(IMongoCollection<Row> collection, Expression<Func<Row, bool>> predicate)
     {
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(FractionalCorrect, nativeOnlyLabels);
         Assert.NotEqual(FractionalTruncated, nativeOnlyLabels);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(FractionalCorrect, nativeLabels);
         Assert.NotEqual(FractionalTruncated, nativeLabels);
 
-        using var oracle = CreateContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateContext(collection, MongoQueryProvider.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList().AsQueryable()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(FractionalCorrect, inMemoryLabels);
@@ -471,7 +471,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Stage-shape pin (case 9 is the routing proof): the constant is 2.5, not the property-coerced 2, and the
         // MQL is byte-identical to driver-LINQ's.
         var nativeLogs = new List<string>();
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, nativeLogs);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, nativeLogs);
         _ = nativeOnly.Entities.AsNoTracking().Where(x => (double)x.I >= 2.5).ToList();
         var nativeMql = MqlPipeline(nativeLogs);
 
@@ -480,7 +480,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Contains("{ \"I\" : { \"$gte\" : 2.5 } }", nativeMql);
 
         var driverLogs = new List<string>();
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq, driverLogs);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq, driverLogs);
         _ = driverLinq.Entities.AsNoTracking().Where(x => (double)x.I >= 2.5).ToList();
 
         // Byte-identical to driver-LINQ (MqlPipeline strips the log timestamp).
@@ -500,11 +500,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     private void AssertNativeMatchesDriverLinq(IMongoCollection<Row> collection, Expression<Func<Row, bool>> predicate)
     {
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
 
@@ -544,14 +544,14 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Equality: the constant renders as the string "2" (property serializer), not the number 2, which MongoDB would
         // type-bracket against the string field and match nothing.
         var logs = new List<string>();
-        using var nativeOnly = CreateConvContext(collection, MongoQueryMode.NativeOnly, logs);
+        using var nativeOnly = CreateConvContext(collection, MongoQueryProvider.NativeOnly, logs);
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => (long)x.Coded == 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Contains("\"Coded\" : { \"$eq\" : \"2\" }", MqlPipeline(logs));
         Assert.Equal(["q"], nativeLabels);
 
         var uncastLogs = new List<string>();
-        using var uncast = CreateConvContext(collection, MongoQueryMode.NativeOnly, uncastLogs);
+        using var uncast = CreateConvContext(collection, MongoQueryProvider.NativeOnly, uncastLogs);
         var uncastLabels = uncast.Entities.AsNoTracking()
             .Where(x => x.Coded == 2).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Contains("\"Coded\" : { \"$eq\" : \"2\" }", MqlPipeline(uncastLogs));
@@ -559,10 +559,10 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         // A relational comparison would compare the stored strings ("10" < "2"), so native declines it (EF-337, StoredOrdering);
         // the driver-LINQ fallback converts the stored string and answers numerically.
-        using var refusedNativeOnly = CreateConvContext(collection, MongoQueryMode.NativeOnly);
+        using var refusedNativeOnly = CreateConvContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => refusedNativeOnly.Entities.AsNoTracking()
             .Where(x => x.Coded >= 2).Select(x => x.Label).ToList());
-        using var fallbackNative = CreateConvContext(collection, MongoQueryMode.Native);
+        using var fallbackNative = CreateConvContext(collection, MongoQueryProvider.Native);
         Assert.Equal(["q", "r"], fallbackNative.Entities.AsNoTracking()
             .Where(x => x.Coded >= 2).OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
@@ -570,13 +570,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // ValueConverterSerializer ("does not implement IHasRepresentationSerializer"), so DriverLinq throws where
         // native answers. Asserted as "threw", not by type: unsupported-shape exception types aren't contract and
         // CI overrides DRIVER_VERSION.
-        using var driverLinq = CreateConvContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateConvContext(collection, MongoQueryProvider.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
             .Where(x => (long)x.Coded == 2L).Select(x => x.Label).ToList()));
     }
 
     private static SingleEntityDbContext<ConvRow> CreateConvContext(
-        IMongoCollection<ConvRow> collection, MongoQueryMode mode, List<string>? logs = null)
+        IMongoCollection<ConvRow> collection, MongoQueryProvider mode, List<string>? logs = null)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: ConvRowModel,
@@ -585,7 +585,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 if (logs is not null)
                     b.LogTo(logs.Add).EnableSensitiveDataLogging();
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -621,31 +621,31 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Equality: the constant goes through the converter (model 2 -> stored 4); the wrong rule would emit 2 and
         // select p (stored 2).
         var logs = new List<string>();
-        using var nativeOnly = CreateScaledContext(collection, MongoQueryMode.NativeOnly, logs);
+        using var nativeOnly = CreateScaledContext(collection, MongoQueryProvider.NativeOnly, logs);
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => (long)x.Scaled == 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Contains("\"Scaled\" : { \"$eq\" : 4 }", MqlPipeline(logs));
         Assert.Equal(["q"], nativeLabels);
 
-        using var oracle = CreateScaledContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateScaledContext(collection, MongoQueryProvider.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .Where(x => (long)x.Scaled == 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(inMemoryLabels, nativeLabels);
 
         // A relational comparison over a custom converter is refused (EF-337): this one happens to be monotone, but
         // a converter can't be proven so, and the old answer was only right by that accident.
-        using var refused = CreateScaledContext(collection, MongoQueryMode.NativeOnly);
+        using var refused = CreateScaledContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => refused.Entities.AsNoTracking()
             .Where(x => (long)x.Scaled > 2L).Select(x => x.Label).ToList());
 
         // No driver-LINQ oracle, as in case 12.
-        using var driverLinq = CreateScaledContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateScaledContext(collection, MongoQueryProvider.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
             .Where(x => (long)x.Scaled == 2L).Select(x => x.Label).ToList()));
     }
 
     private static SingleEntityDbContext<ScaledRow> CreateScaledContext(
-        IMongoCollection<ScaledRow> collection, MongoQueryMode mode, List<string>? logs = null)
+        IMongoCollection<ScaledRow> collection, MongoQueryProvider mode, List<string>? logs = null)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: ScaledRowModel,
@@ -654,7 +654,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 if (logs is not null)
                     b.LogTo(logs.Add).EnableSensitiveDataLogging();
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -685,36 +685,36 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         Assert.Equal(rounded, (double)justAbove);
 
-        using var nativeOnly = CreateLongContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateLongContext(collection, MongoQueryProvider.NativeOnly);
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => (double)x.L == rounded).OrderBy(x => x.Label).Select(x => x.Label).ToList();
 
-        using var driverLinq = CreateLongContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateLongContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(x => (double)x.L == rounded).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(driverLinqLabels, nativeLabels);
 
         // The CLR differs because it rounds the operand before comparing.
-        using var oracle = CreateLongContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateLongContext(collection, MongoQueryProvider.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .Where(x => (double)x.L == rounded).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(["big"], inMemoryLabels);
         Assert.NotEqual(inMemoryLabels, nativeLabels);
 
-        using var control = CreateLongContext(collection, MongoQueryMode.NativeOnly);
+        using var control = CreateLongContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(
             ["small"],
             control.Entities.AsNoTracking().Where(x => (double)x.L == 1.0).Select(x => x.Label).ToList());
     }
 
     private static SingleEntityDbContext<LongRow> CreateLongContext(
-        IMongoCollection<LongRow> collection, MongoQueryMode mode)
+        IMongoCollection<LongRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // EF emits `(int)e.Status == (int)Status.Active`. HasNumericConvert treats this as identity-like: the field ref
@@ -750,7 +750,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var collection = database.MongoDatabase.GetCollection<EnumRow>(name);
 
         var logs = new List<string>();
-        using var nativeOnly = CreateEnumContext(collection, MongoQueryMode.NativeOnly, logs);
+        using var nativeOnly = CreateEnumContext(collection, MongoQueryProvider.NativeOnly, logs);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => x.Status == Status.Active).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(["p", "r"], nativeOnlyLabels);
@@ -758,24 +758,24 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Discriminator: the constant renders as the string "Active", not the underlying int.
         Assert.Contains("\"Status\" : { \"$eq\" : \"Active\" }", MqlPipeline(logs));
 
-        using var native = CreateEnumContext(collection, MongoQueryMode.Native);
+        using var native = CreateEnumContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .Where(x => x.Status == Status.Active).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(["p", "r"], nativeLabels);
 
-        using var driverLinq = CreateEnumContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateEnumContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(x => x.Status == Status.Active).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(driverLinqLabels, nativeLabels);
 
-        using var oracle = CreateEnumContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateEnumContext(collection, MongoQueryProvider.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .Where(x => x.Status == Status.Active).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(["p", "r"], inMemoryLabels);
     }
 
     private static SingleEntityDbContext<EnumRow> CreateEnumContext(
-        IMongoCollection<EnumRow> collection, MongoQueryMode mode, List<string>? logs = null)
+        IMongoCollection<EnumRow> collection, MongoQueryProvider mode, List<string>? logs = null)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: EnumRowModel,
@@ -784,7 +784,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 if (logs is not null)
                     b.LogTo(logs.Add).EnableSensitiveDataLogging();
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -828,17 +828,17 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .AsQueryable().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Empty(clrLabels);
 
-        using var nativeOnly = CreateCharBoxContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateCharBoxContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeOnlyLabels);
 
-        using var driverLinq = CreateCharBoxContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateCharBoxContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, driverLinqLabels);
 
-        using var native = CreateCharBoxContext(collection, MongoQueryMode.Native);
+        using var native = CreateCharBoxContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeLabels);
@@ -847,22 +847,22 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     private void AssertCharBoxComparisonGoesNative(
         IMongoCollection<CharBoxRow> collection, Expression<Func<CharBoxRow, bool>> predicate, string[] expectedLabels)
     {
-        using var nativeOnly = CreateCharBoxContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateCharBoxContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeOnlyLabels);
 
-        using var driverLinq = CreateCharBoxContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateCharBoxContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, driverLinqLabels);
 
-        using var oracle = CreateCharBoxContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateCharBoxContext(collection, MongoQueryProvider.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList().AsQueryable()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, inMemoryLabels);
 
-        using var native = CreateCharBoxContext(collection, MongoQueryMode.Native);
+        using var native = CreateCharBoxContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeLabels);
@@ -876,13 +876,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     private static SingleEntityDbContext<CharBoxRow> CreateCharBoxContext(
-        IMongoCollection<CharBoxRow> collection, MongoQueryMode mode)
+        IMongoCollection<CharBoxRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -911,30 +911,30 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             new ShortEnumRow { Label = "r", Status = ShortStatus.Suspended }
         ]);
 
-        using var nativeOnly = CreateShortEnumContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateShortEnumContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => x.Status == ShortStatus.Suspended).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(["q", "r"], nativeOnlyLabels);
 
-        using var native = CreateShortEnumContext(collection, MongoQueryMode.Native);
+        using var native = CreateShortEnumContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .Where(x => x.Status == ShortStatus.Suspended).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(["q", "r"], nativeLabels);
 
-        using var driverLinq = CreateShortEnumContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateShortEnumContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(x => x.Status == ShortStatus.Suspended).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(driverLinqLabels, nativeLabels);
     }
 
     private static SingleEntityDbContext<ShortEnumRow> CreateShortEnumContext(
-        IMongoCollection<ShortEnumRow> collection, MongoQueryMode mode)
+        IMongoCollection<ShortEnumRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // IsWideningNumericConvert(Int32, Double) is true, so without restriction (double)x.Level >= n would be admitted
@@ -976,32 +976,32 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     private void AssertEnumToFloatingIsNativeAndCorrect(
         IMongoCollection<RankRow> collection, Expression<Func<RankRow, bool>> predicate, string[] expectedLabels)
     {
-        using var native = CreateRankContext(collection, MongoQueryMode.Native);
+        using var native = CreateRankContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeLabels);
 
-        using var nativeOnly = CreateRankContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateRankContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeOnlyLabels);
 
         // No divergence here, unlike case 27: for an int-backed enum the driver renders the same comparison
         // and agrees with both native and the CLR.
-        using var driverLinq = CreateRankContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateRankContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, driverLinqLabels);
     }
 
     private static SingleEntityDbContext<RankRow> CreateRankContext(
-        IMongoCollection<RankRow> collection, MongoQueryMode mode)
+        IMongoCollection<RankRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // MongoExpressionTranslatorTests.Boxing_over_a_widening_cast_lets_the_widening_arm_win_precedence pins the node
@@ -1022,19 +1022,19 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     private void AssertBoxingOverWideningPrecedenceReturnsNoRows(
         IMongoCollection<Row> collection, Expression<Func<Row, bool>> predicate)
     {
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList();
 
         // If boxing won, the constant would render as 2 and match "b"; widening wins, so it stays 2.5.
         Assert.Empty(nativeOnlyLabels);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList();
         Assert.Empty(nativeLabels);
     }
 
     private static SingleEntityDbContext<QuantBlog> CreateQuantContext(
-        IMongoCollection<QuantBlog> collection, MongoQueryMode mode, List<string>? logs = null)
+        IMongoCollection<QuantBlog> collection, MongoQueryProvider mode, List<string>? logs = null)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: QuantBlogModel,
@@ -1043,7 +1043,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 if (logs is not null)
                     b.LogTo(logs.Add).EnableSensitiveDataLogging();
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -1060,20 +1060,20 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var collection = Seed(nameof(Wrapped_cast_projection_leaf_goes_native));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (int)x.D }).ToList();
         Assert.Equal(
             [("a", 1), ("b", 1), ("c", 2), ("d", -1), ("e", 0)],
             nativeOnlyResult.Select(r => (r.Label, r.X)));
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeResult = native.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (int)x.D }).ToList();
         Assert.Equal(
             nativeOnlyResult.Select(r => (r.Label, r.X)), nativeResult.Select(r => (r.Label, r.X)));
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqResult = driverLinq.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (int)x.D }).ToList();
         Assert.Equal(
@@ -1091,14 +1091,14 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var collection = Seed(nameof(Wrapped_cast_projection_leaf_behind_a_parameterized_predicate_returns_correct_values));
         var prefix = "a";
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var result = native.Entities.AsNoTracking()
             .Where(x => x.Label.StartsWith(prefix)).OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (int)x.D }).ToList();
 
         Assert.Equal([("a", 1)], result.Select(r => (r.Label, r.X)));
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqResult = driverLinq.Entities.AsNoTracking()
             .Where(x => x.Label.StartsWith(prefix)).OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (int)x.D }).ToList();
@@ -1133,7 +1133,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var expected = "[1,1,2,-1,0]";
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             legs.Add(($"{mode}", LegOutcome(
@@ -1184,17 +1184,17 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var prefix = "a"; // a captured local, not a constant — a genuine query parameter
 
         // Goes fully native: a parameterized StartsWith is natively representable (placeholder sentinel).
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking()
             .Where(x => x.Label.StartsWith(prefix)).Select(x => (int)x.D).ToList();
         Assert.Equal([1], nativeOnlyResult);
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeResult = native.Entities.AsNoTracking()
             .Where(x => x.Label.StartsWith(prefix)).Select(x => (int)x.D).ToList();
         Assert.Equal([1], nativeResult);
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqResult = driverLinq.Entities.AsNoTracking()
             .Where(x => x.Label.StartsWith(prefix)).Select(x => (int)x.D).ToList();
         Assert.Equal(nativeResult, driverLinqResult);
@@ -1210,19 +1210,19 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var collection = Seed(nameof(Constant_leaf_now_goes_native_via_the_project_literal_wrap));
         var captured = 0;
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = captured }).ToList();
         Assert.All(nativeOnlyResult, r => Assert.Equal(0, r.X));
         Assert.Equal(Rows.Select(r => r.Label).ToList(), nativeOnlyResult.Select(r => r.Label).ToList());
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeResult = native.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = captured }).ToList();
         Assert.All(nativeResult, r => Assert.Equal(0, r.X));
         Assert.Equal(Rows.Select(r => r.Label).ToList(), nativeResult.Select(r => r.Label).ToList());
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqResult = driverLinq.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = captured }).ToList();
         Assert.All(driverLinqResult, r => Assert.Equal(0, r.X));
@@ -1256,7 +1256,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         ]);
         var collection = database.MongoDatabase.GetCollection<ConvertedWeightRow>(name);
 
-        using var nativeOnly = CreateConvertedWeightContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateConvertedWeightContext(collection, MongoQueryProvider.NativeOnly);
         var outcome = DescribeOutcome(
             () => nativeOnly.Entities.AsNoTracking()
                 .Select(x => new { x.Label, X = (int)x.Weight }).AsEnumerable()
@@ -1266,11 +1266,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         // No driver-LINQ oracle: the ValueConverterSerializer limitation from cases 12/13 fires here too, under
         // Native's fallback and DriverLinq. Asserted as "threw", not by type.
-        using var native = CreateConvertedWeightContext(collection, MongoQueryMode.Native);
+        using var native = CreateConvertedWeightContext(collection, MongoQueryProvider.Native);
         Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
             .Select(x => new { x.Label, X = (int)x.Weight }).ToList()));
 
-        using var driverLinq = CreateConvertedWeightContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateConvertedWeightContext(collection, MongoQueryProvider.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
             .Select(x => new { x.Label, X = (int)x.Weight }).ToList()));
     }
@@ -1292,14 +1292,14 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     private static SingleEntityDbContext<ConvertedWeightRow> CreateConvertedWeightContext(
-        IMongoCollection<ConvertedWeightRow> collection, MongoQueryMode mode)
+        IMongoCollection<ConvertedWeightRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: ConvertedWeightRowModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -1312,21 +1312,21 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var collection = Seed(nameof(Widening_cast_projection_leaf_now_goes_native));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (long)x.I }).ToList();
         Assert.Equal(
             Rows.OrderBy(r => r.Label).Select(r => (r.Label, (long)r.I)).ToList(),
             nativeOnlyResult.Select(r => (r.Label, r.X)).ToList());
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeResult = native.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (long)x.I }).ToList();
         Assert.Equal(
             nativeOnlyResult.Select(r => (r.Label, r.X)).ToList(),
             nativeResult.Select(r => (r.Label, r.X)).ToList());
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqResult = driverLinq.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (long)x.I }).ToList();
         Assert.Equal(
@@ -1344,7 +1344,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var expected = "[1,2,3,-1,50000]";
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             legs.Add(($"{mode}", LegOutcome(
@@ -1365,7 +1365,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     // This is the opposite of the accepted-divergence family (case 14, NativeOwnedCollectionFilteredCountTests),
     // where native and driver-LINQ agree and the CLR is the odd one out. Here driver-LINQ is the odd one out, so
     // restoring parity would be a regression. Consequences: this is a result change under default Native, and
-    // UseQueryMode(MongoQueryMode.DriverLinq) restores the driver's (CLR-wrong) answer, not the same one.
+    // UseQueryProvider(MongoQueryProvider.DriverLinq) restores the driver's (CLR-wrong) answer, not the same one.
 
     [Fact]
     public void Narrowing_cast_vs_constant_returns_the_CLR_answer_and_diverges_from_driver_linq()
@@ -1378,23 +1378,23 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // The driver's answer, with the cast dropped: D > 0 additionally admits e (0.5).
         string[] driverLabels = ["a", "b", "c", "e"];
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(
             clrLabels,
             nativeOnly.Entities.AsNoTracking().Where(x => (int)x.D > 0)
                 .OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking().Where(x => (int)x.D > 0)
             .OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(clrLabels, nativeLabels);
 
-        using var oracle = CreateContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateContext(collection, MongoQueryProvider.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList().Where(x => (int)x.D > 0)
             .OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(clrLabels, inMemoryLabels);
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLabels_ = driverLinq.Entities.AsNoTracking().Where(x => (int)x.D > 0)
             .OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(driverLabels, driverLabels_);
@@ -1413,24 +1413,24 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         string[] clrLabels = ["a", "b", "c"];
         string[] driverLabels = ["a", "b", "c", "e"];
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(
             clrLabels,
             nativeOnly.Entities.AsNoTracking().Where(x => 0 < (int)x.D)
                 .OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities.AsNoTracking().Where(x => 0 < (int)x.D)
             .OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(clrLabels, nativeLabels);
 
-        using var oracle = CreateContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Equal(
             clrLabels,
             oracle.Entities.AsNoTracking().ToList().Where(x => 0 < (int)x.D)
                 .OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking().Where(x => 0 < (int)x.D)
             .OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(driverLabels, driverLinqLabels);
@@ -1455,7 +1455,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         ]);
         var collection = database.MongoDatabase.GetCollection<ConvertedWeightRow>(name);
 
-        using var nativeOnly = CreateConvertedWeightContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateConvertedWeightContext(collection, MongoQueryProvider.NativeOnly);
         var outcome = DescribeOutcome(
             () => nativeOnly.Entities.AsNoTracking().Where(x => (int)x.Weight > 3).Select(x => x.Label).ToList(),
             label => label);
@@ -1463,11 +1463,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         // No working driver-LINQ oracle (the ValueConverterSerializer limitation of cases 12/13/25), so both the
         // fallback and DriverLinq throw. Asserted as "threw"; the NativeOnly assertion is the real check.
-        using var native = CreateConvertedWeightContext(collection, MongoQueryMode.Native);
+        using var native = CreateConvertedWeightContext(collection, MongoQueryProvider.Native);
         Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
             .Where(x => (int)x.Weight > 3).Select(x => x.Label).ToList()));
 
-        using var driverLinq = CreateConvertedWeightContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateConvertedWeightContext(collection, MongoQueryProvider.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
             .Where(x => (int)x.Weight > 3).Select(x => x.Label).ToList()));
     }
@@ -1499,18 +1499,18 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var collection = database.MongoDatabase.GetCollection<ConvertedWeightPairRow>(name);
 
         // Outcome string, as in case 29.
-        using var nativeOnly = CreatePairContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreatePairContext(collection, MongoQueryProvider.NativeOnly);
         var outcome = DescribeOutcome(
             () => nativeOnly.Entities.AsNoTracking().Where(x => (int)x.Weight > x.Other).Select(x => x.Label).ToList(),
             label => label);
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
         // No working driver-LINQ oracle (as cases 12/13/25/29); both routes throw.
-        using var native = CreatePairContext(collection, MongoQueryMode.Native);
+        using var native = CreatePairContext(collection, MongoQueryProvider.Native);
         Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
             .Where(x => (int)x.Weight > x.Other).Select(x => x.Label).ToList()));
 
-        using var driverLinq = CreatePairContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreatePairContext(collection, MongoQueryProvider.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
             .Where(x => (int)x.Weight > x.Other).Select(x => x.Label).ToList()));
     }
@@ -1528,13 +1528,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         ]);
         var collection = database.MongoDatabase.GetCollection<PlainWeightPairRow>(name);
 
-        using var nativeOnly = CreatePlainPairContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreatePlainPairContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(
             ["p"],
             nativeOnly.Entities.AsNoTracking().Where(x => (int)x.Weight > x.Other)
                 .OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
-        using var native = CreatePlainPairContext(collection, MongoQueryMode.Native);
+        using var native = CreatePlainPairContext(collection, MongoQueryProvider.Native);
         Assert.Equal(
             ["p"],
             native.Entities.AsNoTracking().Where(x => (int)x.Weight > x.Other)
@@ -1550,24 +1550,24 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     private static SingleEntityDbContext<ConvertedWeightPairRow> CreatePairContext(
-        IMongoCollection<ConvertedWeightPairRow> collection, MongoQueryMode mode)
+        IMongoCollection<ConvertedWeightPairRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: ConvertedWeightPairRowModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static SingleEntityDbContext<PlainWeightPairRow> CreatePlainPairContext(
-        IMongoCollection<PlainWeightPairRow> collection, MongoQueryMode mode)
+        IMongoCollection<PlainWeightPairRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -1619,7 +1619,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         AssertRelationalCastGoesNative(collection, x => (double?)x.Amount < 100, ["p1_50"]);
         AssertRelationalCastGoesNative(collection, x => (double?)x.Amount > 100, ["p2_150"]);
 
-        using (var eqNativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
+        using (var eqNativeOnly = CreateNullablePriceContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Equal(
                 ["p1_50"],
@@ -1627,7 +1627,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                     .OrderBy(x => x.Label).Select(x => x.Label).ToList());
         }
 
-        using (var relNativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
+        using (var relNativeOnly = CreateNullablePriceContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Equal(
                 ["p1_50", "p3_null"],
@@ -1669,13 +1669,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         AssertRelationalCastGoesNative(collection, x => !((int)x.Weight < 2), ["p3_null", "p4_missing"]);
 
         // Count never materializes the entity, so it would have counted p4_missing.
-        using (var nativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateNullablePriceContext(collection, MongoQueryProvider.NativeOnly))
             Assert.Equal(2, nativeOnly.Entities.Count(x => (int)x.Weight < 2));
-        using (var driverLinq = CreateNullablePriceContext(collection, MongoQueryMode.DriverLinq))
+        using (var driverLinq = CreateNullablePriceContext(collection, MongoQueryProvider.DriverLinq))
             Assert.Equal(2, driverLinq.Entities.Count(x => (int)x.Weight < 2));
 
         // A ternary projection renders the bracket in the aggregation dialect ($isNumber) and agrees with Where.
-        using (var nativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateNullablePriceContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Equal(
                 ["y", "y", "n", "n"],
@@ -1683,7 +1683,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                     .Select(x => (int)x.Weight < 2 ? "y" : "n").ToList());
         }
 
-        using var oracle = CreateNullablePriceContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateNullablePriceContext(collection, MongoQueryProvider.Native);
         Assert.Throws<InvalidOperationException>(() => oracle.Entities.AsNoTracking().ToList());
     }
 
@@ -1708,17 +1708,17 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         // Legs project labels, not entities: materializing p4_missing (no required Weight) throws and would hide the
         // rows (see case 34b).
-        using var nativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateNullablePriceContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(
             expectedLabels,
             nativeOnly.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
-        using var native = CreateNullablePriceContext(collection, MongoQueryMode.Native);
+        using var native = CreateNullablePriceContext(collection, MongoQueryProvider.Native);
         Assert.Equal(
             expectedLabels,
             native.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
-        using var driverLinq = CreateNullablePriceContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateNullablePriceContext(collection, MongoQueryProvider.DriverLinq);
         Assert.Equal(
             expectedLabels,
             driverLinq.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList());
@@ -1756,13 +1756,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     private static SingleEntityDbContext<NullablePriceRow> CreateNullablePriceContext(
-        IMongoCollection<NullablePriceRow> collection, MongoQueryMode mode)
+        IMongoCollection<NullablePriceRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -1782,14 +1782,14 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             new QuantBlog { Title = "b3", Posts = [new QuantPost(), new QuantPost(), new QuantPost()] }
         ]);
 
-        using var nativeOnly = CreateQuantContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateQuantContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(
             ["b3"],
             nativeOnly.Entities.AsNoTracking().Where(b => b.Posts.Count > 2.5)
                 .OrderBy(b => b.Title).Select(b => b.Title).ToList());
 
         var logs = new List<string>();
-        using (var native = CreateQuantContext(collection, MongoQueryMode.Native, logs))
+        using (var native = CreateQuantContext(collection, MongoQueryProvider.Native, logs))
         {
             Assert.Equal(
                 ["b3"],
@@ -1803,13 +1803,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Not the array-index tier: {"Posts.2": {$exists: true}} answers Count > 2.
         Assert.DoesNotContain("Posts.2", mql);
 
-        using var oracle = CreateQuantContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateQuantContext(collection, MongoQueryProvider.Native);
         Assert.Equal(
             ["b3"],
             oracle.Entities.AsNoTracking().ToList().Where(b => b.Posts.Count > 2.5)
                 .OrderBy(b => b.Title).Select(b => b.Title).ToList());
 
-        using var driverLinq = CreateQuantContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateQuantContext(collection, MongoQueryProvider.DriverLinq);
         Assert.Equal(
             ["b3"],
             driverLinq.Entities.AsNoTracking().Where(b => b.Posts.Count > 2.5)
@@ -1833,7 +1833,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var collection = Seed(nameof(Cast_truncates_toward_zero_rather_than_flooring_or_rounding));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Equal(
             ["a", "b", "c", "d", "e"],
@@ -1845,7 +1845,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             nativeOnly.Entities.AsNoTracking().Where(x => (int)x.D == 2)
                 .OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
-        using var oracle = CreateContext(collection, MongoQueryMode.Native);
+        using var oracle = CreateContext(collection, MongoQueryProvider.Native);
         var materialized = oracle.Entities.AsNoTracking().ToList();
         Assert.Equal(
             ["a", "b", "c", "d", "e"],
@@ -1877,7 +1877,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             new BigRow { Label = "big", D = 1e30 }
         ]);
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateBigContext(collection, mode);
 
@@ -1894,7 +1894,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         }
 
         // DriverLinq (the escape hatch) drops the cast, so both queries answer.
-        using var driverLinq = CreateBigContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateBigContext(collection, MongoQueryProvider.DriverLinq);
         Assert.Equal(
             ["big", "small"],
             driverLinq.Entities.AsNoTracking().Where(x => (int)x.D > 0)
@@ -1905,13 +1905,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     private static SingleEntityDbContext<BigRow> CreateBigContext(
-        IMongoCollection<BigRow> collection, MongoQueryMode mode)
+        IMongoCollection<BigRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // The cast-free counterpart of case 30: `x.Weight > x.Other` goes to TranslateComparison's general $expr path,
@@ -1940,31 +1940,31 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         ]);
         var collection = database.MongoDatabase.GetCollection<OneSideTransformRow>(name);
 
-        using var nativeOnly = CreateOneSideTransformContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateOneSideTransformContext(collection, MongoQueryProvider.NativeOnly);
         var outcome = DescribeOutcome(
             () => nativeOnly.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList(),
             label => label);
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
         // No driver-LINQ oracle: both routes throw.
-        using var native = CreateOneSideTransformContext(collection, MongoQueryMode.Native);
+        using var native = CreateOneSideTransformContext(collection, MongoQueryProvider.Native);
         Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
             .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
 
-        using var driverLinq = CreateOneSideTransformContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateOneSideTransformContext(collection, MongoQueryProvider.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
             .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
     }
 
     private static SingleEntityDbContext<OneSideTransformRow> CreateOneSideTransformContext(
-        IMongoCollection<OneSideTransformRow> collection, MongoQueryMode mode)
+        IMongoCollection<OneSideTransformRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: OneSideTransformRowModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private class BothSideTransformRow
@@ -1992,30 +1992,30 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         ]);
         var collection = database.MongoDatabase.GetCollection<BothSideTransformRow>(name);
 
-        using var nativeOnly = CreateBothSideTransformContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateBothSideTransformContext(collection, MongoQueryProvider.NativeOnly);
         var outcome = DescribeOutcome(
             () => nativeOnly.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList(),
             label => label);
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
-        using var native = CreateBothSideTransformContext(collection, MongoQueryMode.Native);
+        using var native = CreateBothSideTransformContext(collection, MongoQueryProvider.Native);
         Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
             .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
 
-        using var driverLinq = CreateBothSideTransformContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateBothSideTransformContext(collection, MongoQueryProvider.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
             .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
     }
 
     private static SingleEntityDbContext<BothSideTransformRow> CreateBothSideTransformContext(
-        IMongoCollection<BothSideTransformRow> collection, MongoQueryMode mode)
+        IMongoCollection<BothSideTransformRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: BothSideTransformRowModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private class OneSideReencodeRow
@@ -2040,29 +2040,29 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         ]);
         var collection = database.MongoDatabase.GetCollection<OneSideReencodeRow>(name);
 
-        using var nativeOnly = CreateOneSideReencodeContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateOneSideReencodeContext(collection, MongoQueryProvider.NativeOnly);
         var outcome = DescribeOutcome(
             () => nativeOnly.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList(),
             label => label);
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
         // The driver-LINQ fallback reads the numeric property stored as a string through $convert (EF-337): 9 > 10 is false.
-        using var native = CreateOneSideReencodeContext(collection, MongoQueryMode.Native);
+        using var native = CreateOneSideReencodeContext(collection, MongoQueryProvider.Native);
         Assert.Empty(native.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList());
 
-        using var driverLinq = CreateOneSideReencodeContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateOneSideReencodeContext(collection, MongoQueryProvider.DriverLinq);
         Assert.Empty(driverLinq.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList());
     }
 
     private static SingleEntityDbContext<OneSideReencodeRow> CreateOneSideReencodeContext(
-        IMongoCollection<OneSideReencodeRow> collection, MongoQueryMode mode)
+        IMongoCollection<OneSideReencodeRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: OneSideReencodeRowModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private class BothSideReencodeRow
@@ -2090,29 +2090,29 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         ]);
         var collection = database.MongoDatabase.GetCollection<BothSideReencodeRow>(name);
 
-        using var nativeOnly = CreateBothSideReencodeContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateBothSideReencodeContext(collection, MongoQueryProvider.NativeOnly);
         var outcome = DescribeOutcome(
             () => nativeOnly.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList(),
             label => label);
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
         // The driver-LINQ fallback reads the numeric property stored as a string through $convert (EF-337): 9 > 10 is false.
-        using var native = CreateBothSideReencodeContext(collection, MongoQueryMode.Native);
+        using var native = CreateBothSideReencodeContext(collection, MongoQueryProvider.Native);
         Assert.Empty(native.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList());
 
-        using var driverLinq = CreateBothSideReencodeContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateBothSideReencodeContext(collection, MongoQueryProvider.DriverLinq);
         Assert.Empty(driverLinq.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList());
     }
 
     private static SingleEntityDbContext<BothSideReencodeRow> CreateBothSideReencodeContext(
-        IMongoCollection<BothSideReencodeRow> collection, MongoQueryMode mode)
+        IMongoCollection<BothSideReencodeRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: BothSideReencodeRowModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // Case 38's control (default-serialized fields go native) is
@@ -2136,7 +2136,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
     private static SingleEntityDbContext<Row> CreateContext(
-        IMongoCollection<Row> collection, MongoQueryMode mode, List<string>? logs = null)
+        IMongoCollection<Row> collection, MongoQueryProvider mode, List<string>? logs = null)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
@@ -2144,7 +2144,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 if (logs is not null)
                     b.LogTo(logs.Add).EnableSensitiveDataLogging();
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static string Mql(List<string> logs)

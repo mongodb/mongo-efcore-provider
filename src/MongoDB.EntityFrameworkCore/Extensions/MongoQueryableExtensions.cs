@@ -40,23 +40,23 @@ public static class MongoQueryableExtensions
 
     // One marker method per mode rather than a mode argument: EF turns a constant argument into a query parameter, which
     // would hide the mode from the compiled-query cache key. The method identity is part of the key.
-    private static readonly Dictionary<MethodInfo, MongoQueryMode> QueryModeMarkers
+    private static readonly Dictionary<MethodInfo, MongoQueryProvider> QueryProviderMarkers
         = typeof(MongoQueryableExtensions)
             .GetTypeInfo().GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
-            .Where(mi => mi.Name.StartsWith("QueryModeMarker", StringComparison.Ordinal))
-            .ToDictionary(mi => mi, mi => Enum.Parse<MongoQueryMode>(mi.Name["QueryModeMarker".Length..]));
+            .Where(mi => mi.Name.StartsWith("QueryProviderMarker", StringComparison.Ordinal))
+            .ToDictionary(mi => mi, mi => Enum.Parse<MongoQueryProvider>(mi.Name["QueryProviderMarker".Length..]));
 
-    internal static bool TryGetWithQueryProvider(this MethodCallExpression methodCallExpression, out MongoQueryMode queryMode)
+    internal static bool TryGetWithQueryProvider(this MethodCallExpression methodCallExpression, out MongoQueryProvider queryProvider)
     {
         var method = methodCallExpression.Method;
         if (method.DeclaringType == typeof(MongoQueryableExtensions)
             && method.IsGenericMethod
-            && QueryModeMarkers.TryGetValue(method.GetGenericMethodDefinition(), out queryMode))
+            && QueryProviderMarkers.TryGetValue(method.GetGenericMethodDefinition(), out queryProvider))
         {
             return true;
         }
 
-        queryMode = default;
+        queryProvider = default;
         return false;
     }
 
@@ -171,10 +171,10 @@ public static class MongoQueryableExtensions
     }
 
     /// <summary>
-    /// Sets the <see cref="MongoQueryMode"/> used to translate this query, overriding the mode configured for the context
-    /// with <see cref="MongoDbContextOptionsBuilder.UseQueryMode"/>, in either direction. For example, a query can run through
+    /// Sets the <see cref="MongoQueryProvider"/> used to translate this query, overriding the mode configured for the context
+    /// with <see cref="MongoDbContextOptionsBuilder.UseQueryProvider"/>, in either direction. For example, a query can run through
     /// the driver's LINQ provider while the rest of the context uses native translation, or can require native translation
-    /// with <see cref="MongoQueryMode.NativeOnly"/> while the rest of the context allows fallback.
+    /// with <see cref="MongoQueryProvider.NativeOnly"/> while the rest of the context allows fallback.
     /// </summary>
     /// <remarks>
     /// This method is only available on a <see cref="DbSet{TEntity}"/>, so it is applied at the root of the query. If a query
@@ -183,23 +183,23 @@ public static class MongoQueryableExtensions
     /// </remarks>
     /// <typeparam name="TEntity">The type of the entity.</typeparam>
     /// <param name="source">The <see cref="DbSet{TEntity}"/> at the root of the query.</param>
-    /// <param name="queryMode">The <see cref="MongoQueryMode"/> to use for this query.</param>
-    /// <returns>An <see cref="IQueryable{TEntity}"/> that will be translated using <paramref name="queryMode"/>.</returns>
-    public static IQueryable<TEntity> WithQueryProvider<TEntity>(this DbSet<TEntity> source, MongoQueryMode queryMode)
+    /// <param name="queryProvider">The <see cref="MongoQueryProvider"/> to use for this query.</param>
+    /// <returns>An <see cref="IQueryable{TEntity}"/> that will be translated using <paramref name="queryProvider"/>.</returns>
+    public static IQueryable<TEntity> WithQueryProvider<TEntity>(this DbSet<TEntity> source, MongoQueryProvider queryProvider)
         where TEntity : class
-        => WithQueryProvider((IQueryable<TEntity>)source, queryMode);
+        => WithQueryProvider((IQueryable<TEntity>)source, queryProvider);
 
-    private static IQueryable<TEntity> WithQueryProvider<TEntity>(this IQueryable<TEntity> source, MongoQueryMode queryMode)
+    private static IQueryable<TEntity> WithQueryProvider<TEntity>(this IQueryable<TEntity> source, MongoQueryProvider queryProvider)
         where TEntity : class
     {
         Check.IsEfQueryProvider(source);
 
-        var marker = queryMode switch
+        var marker = queryProvider switch
         {
-            MongoQueryMode.Native => nameof(QueryModeMarkerNative),
-            MongoQueryMode.DriverLinq => nameof(QueryModeMarkerDriverLinq),
-            MongoQueryMode.NativeOnly => nameof(QueryModeMarkerNativeOnly),
-            _ => throw new ArgumentOutOfRangeException(nameof(queryMode), queryMode, null)
+            MongoQueryProvider.Native => nameof(QueryProviderMarkerNative),
+            MongoQueryProvider.DriverLinq => nameof(QueryProviderMarkerDriverLinq),
+            MongoQueryProvider.NativeOnly => nameof(QueryProviderMarkerNativeOnly),
+            _ => throw new ArgumentOutOfRangeException(nameof(queryProvider), queryProvider, null)
         };
 
         var method = typeof(MongoQueryableExtensions)
@@ -210,11 +210,11 @@ public static class MongoQueryableExtensions
         return source.Provider.CreateQuery<TEntity>(Expression.Call(instance: null, method: method, source.Expression));
     }
 
-    private static IQueryable<TEntity> QueryModeMarkerNative<TEntity>(this IQueryable<TEntity> source) => Marker(source);
+    private static IQueryable<TEntity> QueryProviderMarkerNative<TEntity>(this IQueryable<TEntity> source) => Marker(source);
 
-    private static IQueryable<TEntity> QueryModeMarkerDriverLinq<TEntity>(this IQueryable<TEntity> source) => Marker(source);
+    private static IQueryable<TEntity> QueryProviderMarkerDriverLinq<TEntity>(this IQueryable<TEntity> source) => Marker(source);
 
-    private static IQueryable<TEntity> QueryModeMarkerNativeOnly<TEntity>(this IQueryable<TEntity> source) => Marker(source);
+    private static IQueryable<TEntity> QueryProviderMarkerNativeOnly<TEntity>(this IQueryable<TEntity> source) => Marker(source);
 
     private static IQueryable<TEntity> Marker<TEntity>(IQueryable<TEntity> source)
         => throw new InvalidOperationException($"{nameof(WithQueryProvider)} can only be used in a query run by the MongoDB EF Core provider.");

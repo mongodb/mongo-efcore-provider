@@ -38,7 +38,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// </summary>
 /// <remarks>
 /// Stored forms are seeded as <see cref="BsonDocument"/> (the driver's POCO serializer ignores the converters). Each case runs under
-/// <see cref="MongoQueryMode.Native"/>, <see cref="MongoQueryMode.NativeOnly"/> and <see cref="MongoQueryMode.DriverLinq"/> against an
+/// <see cref="MongoQueryProvider.Native"/>, <see cref="MongoQueryProvider.NativeOnly"/> and <see cref="MongoQueryProvider.DriverLinq"/> against an
 /// oracle computed in memory over the materialized entities.
 /// </remarks>
 public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -179,7 +179,7 @@ public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IC
         ["Undeclared_Max"] = q => q.Max(e => e.Undeclared)
     };
 
-    private static readonly MongoQueryMode[] Modes = [MongoQueryMode.Native, MongoQueryMode.NativeOnly, MongoQueryMode.DriverLinq];
+    private static readonly MongoQueryProvider[] Modes = [MongoQueryProvider.Native, MongoQueryProvider.NativeOnly, MongoQueryProvider.DriverLinq];
 
     public static IEnumerable<object[]> SupportedCases()
         => from query in Supported.Keys from mode in Modes select new object[] { query, mode };
@@ -195,7 +195,7 @@ public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(SupportedCases))]
-    public void Declared_or_built_in_order_preserving_storage_runs_on_the_server_and_is_correct(string query, MongoQueryMode mode)
+    public void Declared_or_built_in_order_preserving_storage_runs_on_the_server_and_is_correct(string query, MongoQueryProvider mode)
     {
         var (oracle, run) = Arrange(query, Supported[query], mode);
 
@@ -204,13 +204,13 @@ public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(StillRefusedCases))]
-    public void Declaration_does_not_cover_sums_computations_or_mixed_keys(string query, MongoQueryMode mode)
+    public void Declaration_does_not_cover_sums_computations_or_mixed_keys(string query, MongoQueryProvider mode)
     {
         var (_, run) = Arrange(query, StillRefused[query], mode);
 
         var ex = Record.Exception(run);
         Assert.NotNull(ex);
-        if (mode == MongoQueryMode.NativeOnly)
+        if (mode == MongoQueryProvider.NativeOnly)
         {
             Assert.IsType<NativeTranslationNotSupportedException>(ex);
         }
@@ -222,7 +222,7 @@ public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(LeakCases))]
-    public void Declaration_does_not_leak_into_values_that_mix_or_add_stored_forms(string query, MongoQueryMode mode)
+    public void Declaration_does_not_leak_into_values_that_mix_or_add_stored_forms(string query, MongoQueryProvider mode)
     {
         var shape = Leaks.TryGetValue(query, out var leak) ? leak : UnderscoreParameters[query];
         var (oracle, run) = Arrange(query, shape, mode);
@@ -244,20 +244,20 @@ public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IC
     public void Mixed_or_added_stored_forms_are_refused_when_the_property_is_declared(string query)
     {
         var shape = Leaks.TryGetValue(query, out var leak) ? leak : UnderscoreParameters[query];
-        var (_, run) = Arrange(query, shape, MongoQueryMode.DriverLinq);
+        var (_, run) = Arrange(query, shape, MongoQueryProvider.DriverLinq);
 
         Assert.NotNull(Record.Exception(run));
     }
 
     [Theory]
     [MemberData(nameof(UndeclaredCases))]
-    public void Undeclared_converter_is_refused_and_the_message_names_the_opt_out(string query, MongoQueryMode mode)
+    public void Undeclared_converter_is_refused_and_the_message_names_the_opt_out(string query, MongoQueryProvider mode)
     {
         var (_, run) = Arrange(query, Undeclared[query], mode);
 
         var ex = Record.Exception(run);
         Assert.NotNull(ex);
-        if (mode == MongoQueryMode.NativeOnly)
+        if (mode == MongoQueryProvider.NativeOnly)
         {
             Assert.IsType<NativeTranslationNotSupportedException>(ex);
         }
@@ -275,7 +275,7 @@ public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IC
     {
         var collection = database.MongoDatabase.GetCollection<Doc>(
             TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Declaration_can_be_set_and_removed_through_the_model)));
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
 
         var entity = db.Model.FindEntityType(typeof(Doc))!;
         Assert.True(entity.FindProperty(nameof(Doc.Declared))!.IsOrderPreservingStorage());
@@ -291,7 +291,7 @@ public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IC
         Assert.False(property.Metadata.IsOrderPreservingStorage());
     }
 
-    private (string Oracle, Func<string> Run) Arrange(string query, Func<IQueryable<Doc>, object> shape, MongoQueryMode mode)
+    private (string Oracle, Func<string> Run) Arrange(string query, Func<IQueryable<Doc>, object> shape, MongoQueryProvider mode)
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(OrderPreservingStorageTests), query, mode)
                    + Guid.NewGuid().ToString("N")[..8];
@@ -313,7 +313,7 @@ public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IC
 
         var collection = database.MongoDatabase.GetCollection<Doc>(name);
 
-        using var materializing = CreateContext(collection, MongoQueryMode.Native);
+        using var materializing = CreateContext(collection, MongoQueryProvider.Native);
         var entities = materializing.Entities.AsNoTracking().OrderBy(e => e.Seq).ToList();
         Assert.Equal(Values, entities.Select(e => e.Declared));
         Assert.Equal(Slots, entities.Select(e => e.Strong.Value));
@@ -328,7 +328,7 @@ public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IC
         });
     }
 
-    private static SingleEntityDbContext<Doc> CreateContext(IMongoCollection<Doc> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Doc> CreateContext(IMongoCollection<Doc> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: mb =>
@@ -345,7 +345,7 @@ public class OrderPreservingStorageTests(TemporaryDatabaseFixture database) : IC
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static string Normalize(object? value)

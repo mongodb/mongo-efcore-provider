@@ -54,7 +54,7 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     private static SingleEntityDbContext<Entity> CreateContext(
-        IMongoCollection<Entity> collection, List<string> logs, MongoQueryMode mode)
+        IMongoCollection<Entity> collection, List<string> logs, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
@@ -62,7 +62,7 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
                 b.LogTo(logs.Add)
                     .EnableSensitiveDataLogging()
                     .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static string Mql(List<string> logs)
@@ -72,7 +72,7 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
     public void NativeOnly_not_over_field_to_field_comparison_succeeds_with_expected_mql()
     {
         var (collection, logs) = Seed(nameof(NativeOnly_not_over_field_to_field_comparison_succeeds_with_expected_mql));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.AsNoTracking().Where(x => !(x.A == x.B)).ToList();
 
@@ -88,8 +88,8 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
     public void Not_over_field_to_field_comparison_matches_driver_linq_results()
     {
         var (collection, logs) = Seed(nameof(Not_over_field_to_field_comparison_matches_driver_linq_results));
-        using var native = CreateContext(collection, logs, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, logs, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
 
         var nativeIds = native.Entities.AsNoTracking().Where(x => !(x.A == x.B))
             .Select(x => x.Id).OrderBy(id => id).ToList();
@@ -103,7 +103,7 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
     public void NativeOnly_not_over_field_to_field_comparison_composed_with_and_succeeds()
     {
         var (collection, logs) = Seed(nameof(NativeOnly_not_over_field_to_field_comparison_composed_with_and_succeeds));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.AsNoTracking().Where(x => x.A > 0 && !(x.A == x.B)).ToList();
 
@@ -116,7 +116,7 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
     public void NativeOnly_not_over_boolean_ternary_succeeds_with_expected_mql()
     {
         var (collection, logs) = Seed(nameof(NativeOnly_not_over_boolean_ternary_succeeds_with_expected_mql));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.AsNoTracking().Where(x => !(x.A >= 2 ? false : true)).ToList();
 
@@ -131,8 +131,8 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
     public void Not_over_boolean_ternary_matches_driver_linq_results()
     {
         var (collection, logs) = Seed(nameof(Not_over_boolean_ternary_matches_driver_linq_results));
-        using var native = CreateContext(collection, logs, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, logs, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
 
         var nativeIds = native.Entities.AsNoTracking().Where(x => !(x.A >= 2 ? false : true))
             .Select(x => x.Id).OrderBy(id => id).ToList();
@@ -175,7 +175,7 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     private static SingleEntityDbContext<LogicalFlagItem> CreateLogicalFlagContext(
-        IMongoCollection<LogicalFlagItem> collection, List<string> logs, MongoQueryMode mode)
+        IMongoCollection<LogicalFlagItem> collection, List<string> logs, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: LogicalFlagModel,
@@ -184,7 +184,7 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
                 b.LogTo(logs.Add)
                     .EnableSensitiveDataLogging()
                     .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -194,15 +194,15 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
             nameof(Not_over_and_of_a_value_converted_bare_bool_field_negates_exactly_via_per_field_ne));
 
         // De Morgan's to !Flag || !Other (each a converter-aware $ne); never the truthiness-hazard answer a raw $and gives (only ["p3"]).
-        using (var nativeOnly = CreateLogicalFlagContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateLogicalFlagContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking().Where(x => !(x.Flag && x.Other))
                 .ToList().Select(x => x.Label).OrderBy(l => l).ToList();
             Assert.Equal(["p2", "p3"], nativeOnlyLabels);
         }
 
-        using (var native = CreateLogicalFlagContext(collection, [], MongoQueryMode.Native))
-        using (var driver = CreateLogicalFlagContext(collection, [], MongoQueryMode.DriverLinq))
+        using (var native = CreateLogicalFlagContext(collection, [], MongoQueryProvider.Native))
+        using (var driver = CreateLogicalFlagContext(collection, [], MongoQueryProvider.DriverLinq))
         {
             var nativeLabels = native.Entities.AsNoTracking().Where(x => !(x.Flag && x.Other))
                 .ToList().Select(x => x.Label).OrderBy(l => l).ToList();
@@ -225,15 +225,15 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         var (collection, logs) = SeedLogicalFlag(
             nameof(Not_over_or_of_a_value_converted_bare_bool_field_negates_exactly_via_per_field_ne));
 
-        using (var nativeOnly = CreateLogicalFlagContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateLogicalFlagContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking().Where(x => !(x.Flag || x.Other))
                 .ToList().Select(x => x.Label).OrderBy(l => l).ToList();
             Assert.Equal(["p3"], nativeOnlyLabels);
         }
 
-        using (var native = CreateLogicalFlagContext(collection, [], MongoQueryMode.Native))
-        using (var driver = CreateLogicalFlagContext(collection, [], MongoQueryMode.DriverLinq))
+        using (var native = CreateLogicalFlagContext(collection, [], MongoQueryProvider.Native))
+        using (var driver = CreateLogicalFlagContext(collection, [], MongoQueryProvider.DriverLinq))
         {
             var nativeLabels = native.Entities.AsNoTracking().Where(x => !(x.Flag || x.Other))
                 .ToList().Select(x => x.Label).OrderBy(l => l).ToList();
@@ -275,7 +275,7 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         using var nativeOnly = SingleEntityDbContext.Create(collection, optionsBuilderAction: b =>
         {
             b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
         });
 
         var oracle = nativeOnly.Entities.AsNoTracking().ToList()

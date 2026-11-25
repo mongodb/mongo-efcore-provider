@@ -25,10 +25,10 @@ namespace MongoDB.EntityFrameworkCore.Query.Factories;
 /// </summary>
 public class MongoQueryCompilationContextFactory : IQueryCompilationContextFactory
 {
-    private readonly MongoQueryMode _queryMode;
+    private readonly MongoQueryProvider _queryProvider;
 
     /// <summary>
-    /// Create a <see cref="MongoQueryCompilationContextFactory"/> using the default <see cref="MongoQueryMode.Native"/> query mode.
+    /// Create a <see cref="MongoQueryCompilationContextFactory"/> using the default <see cref="MongoQueryProvider.Native"/> query provider.
     /// </summary>
     /// <remarks>
     /// Shipped in v10.0.2; kept for binary/source compatibility. DI picks the two-argument overload, but a subclass
@@ -39,20 +39,20 @@ public class MongoQueryCompilationContextFactory : IQueryCompilationContextFacto
     public MongoQueryCompilationContextFactory(QueryCompilationContextDependencies dependencies)
     {
         Dependencies = dependencies;
-        _queryMode = MongoQueryMode.Native;
+        _queryProvider = MongoQueryProvider.Native;
     }
 
     /// <summary>
     /// Create a <see cref="MongoQueryContextFactory"/>.
     /// </summary>
     /// <param name="dependencies">The <see cref="QueryCompilationContextDependencies"/> passed to each created <see cref="MongoQueryCompilationContext" /> instance.</param>
-    /// <param name="dbContextOptions">The <see cref="IDbContextOptions"/> used to find the configured query mode.</param>
+    /// <param name="dbContextOptions">The <see cref="IDbContextOptions"/> used to find the configured query provider.</param>
     public MongoQueryCompilationContextFactory(
         QueryCompilationContextDependencies dependencies,
         IDbContextOptions dbContextOptions)
     {
         Dependencies = dependencies;
-        _queryMode = dbContextOptions.FindExtension<MongoOptionsExtension>()?.QueryMode ?? MongoQueryMode.Native;
+        _queryProvider = dbContextOptions.FindExtension<MongoOptionsExtension>()?.QueryProvider ?? MongoQueryProvider.Native;
     }
 
     /// <summary>
@@ -66,5 +66,5 @@ public class MongoQueryCompilationContextFactory : IQueryCompilationContextFacto
     /// <param name="async"><see langword="true"/> if the query to process is asynchronous, <see langword="false"/> if it is synchronous.</param>
     /// <returns>The newly created <see cref="MongoQueryCompilationContext"/>.</returns>
     public virtual QueryCompilationContext Create(bool async)
-        => new MongoQueryCompilationContext(Dependencies, async, _queryMode);
+        => new MongoQueryCompilationContext(Dependencies, async, _queryProvider);
 }

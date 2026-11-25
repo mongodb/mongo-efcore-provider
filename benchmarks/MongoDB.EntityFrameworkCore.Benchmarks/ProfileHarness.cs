@@ -53,13 +53,13 @@ internal static class ProfileHarness
         }
         var client = new MongoClient(settings);
         var useConnectionString = args.Contains("--connstr");
-        DbContextOptions<BenchmarkDbContext> Options(MongoQueryMode mode) => (useConnectionString
-                ? new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(conn, dbName, o => o.UseQueryMode(mode))
-                : new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(client, dbName, o => o.UseQueryMode(mode)))
+        DbContextOptions<BenchmarkDbContext> Options(MongoQueryProvider mode) => (useConnectionString
+                ? new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(conn, dbName, o => o.UseQueryProvider(mode))
+                : new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(client, dbName, o => o.UseQueryProvider(mode)))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .EnableThreadSafetyChecks(args.Contains("--threadsafety")).Options;
-        var dl = Options(MongoQueryMode.DriverLinq);
-        var nat = Options(MongoQueryMode.Native);
+        var dl = Options(MongoQueryProvider.DriverLinq);
+        var nat = Options(MongoQueryProvider.Native);
 
         try
         {

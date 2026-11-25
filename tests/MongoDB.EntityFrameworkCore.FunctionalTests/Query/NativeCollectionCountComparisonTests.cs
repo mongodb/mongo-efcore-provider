@@ -80,12 +80,12 @@ public class NativeCollectionCountComparisonTests(TemporaryDatabaseFixture datab
             [.. expected]);
     }
 
-    private SingleContext Create(string customers, string orders, MongoQueryMode mode)
+    private SingleContext Create(string customers, string orders, MongoQueryProvider mode)
     {
         var builder = new DbContextOptionsBuilder<SingleContext>()
             .UseMongoDB(
                 database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                o => o.UseQueryMode(mode))
+                o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
         return new SingleContext(builder.Options, customers, orders);

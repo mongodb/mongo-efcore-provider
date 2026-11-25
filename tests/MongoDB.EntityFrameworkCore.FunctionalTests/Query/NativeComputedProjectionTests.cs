@@ -28,7 +28,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
 /// Numeric arithmetic computed projection leaves bound into <c>$project</c> (comparison operands are in
-/// <see cref="NativeExprComparisonTests"/>). Each shape is proven native under <see cref="MongoQueryMode.NativeOnly"/>,
+/// <see cref="NativeExprComparisonTests"/>). Each shape is proven native under <see cref="MongoQueryProvider.NativeOnly"/>,
 /// checked for Native/driver-LINQ parity and the expected MQL operator; unrepresentable leaves fall back and throw
 /// under <c>NativeOnly</c>. Also covers a whole-root-entity leaf mixed with computed/scalar/count siblings
 /// (<c>NativeRoute.Projection</c>, distinct from bare <c>Select(c => c)</c>'s <c>NativeRoute.WholeEntity</c>).
@@ -74,7 +74,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     }
 
     private SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, List<string> logs, MongoQueryMode mode,
+        IMongoCollection<T> collection, List<string> logs, MongoQueryProvider mode,
         Action<ModelBuilder>? modelBuilderAction = null) where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -84,7 +84,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
                 b.LogTo(logs.Add)
                     .EnableSensitiveDataLogging()
                     .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private class CustomerWithPosts
@@ -141,7 +141,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(nameof(Multiply_projection_goes_native_and_matches_driver));
 
-        using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             var results = nativeOnly.Entities.Select(c => new { c.Name, P = c.Age * c.Score })
                 .OrderBy(r => r.Name).ToList();
@@ -151,8 +151,8 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             Assert.Contains("$multiply", mql);
         }
 
-        using var native = CreateContext(collection, [], MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, [], MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
         var nativeResults = native.Entities.Select(c => new { c.Name, P = c.Age * c.Score })
             .OrderBy(r => r.Name).ToList();
         var driverResults = driver.Entities.Select(c => new { c.Name, P = c.Age * c.Score })
@@ -165,7 +165,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(nameof(Subtract_projection_goes_native));
 
-        using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             var results = nativeOnly.Entities.Select(c => new { c.Name, D = c.Age - c.Score })
                 .OrderBy(r => r.Name).ToList();
@@ -175,8 +175,8 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             Assert.Contains("$subtract", mql);
         }
 
-        using var native = CreateContext(collection, [], MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, [], MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
         var nativeResults = native.Entities.Select(c => new { c.Name, D = c.Age - c.Score })
             .OrderBy(r => r.Name).ToList();
         var driverResults = driver.Entities.Select(c => new { c.Name, D = c.Age - c.Score })
@@ -189,7 +189,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(nameof(Add_projection_goes_native));
 
-        using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             var results = nativeOnly.Entities.Select(c => new { c.Name, S = c.Age + c.Score })
                 .OrderBy(r => r.Name).ToList();
@@ -199,8 +199,8 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             Assert.Contains("$add", mql);
         }
 
-        using var native = CreateContext(collection, [], MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, [], MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
         var nativeResults = native.Entities.Select(c => new { c.Name, S = c.Age + c.Score })
             .OrderBy(r => r.Name).ToList();
         var driverResults = driver.Entities.Select(c => new { c.Name, S = c.Age + c.Score })
@@ -213,7 +213,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(nameof(Modulo_projection_goes_native));
 
-        using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             var results = nativeOnly.Entities.Select(c => new { c.Name, M = c.Age % c.Score })
                 .OrderBy(r => r.Name).ToList();
@@ -223,8 +223,8 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             Assert.Contains("$mod", mql);
         }
 
-        using var native = CreateContext(collection, [], MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, [], MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
         var nativeResults = native.Entities.Select(c => new { c.Name, M = c.Age % c.Score })
             .OrderBy(r => r.Name).ToList();
         var driverResults = driver.Entities.Select(c => new { c.Name, M = c.Age % c.Score })
@@ -237,7 +237,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(nameof(Floating_division_projection_goes_native));
 
-        using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             // c.Weight / c.Score: the compiler inserts an implicit int->double widening Convert on Score,
             // which TryTranslateValue must unwrap (allowNumericWidening: true) to go native.
@@ -249,8 +249,8 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             Assert.Contains("$divide", mql);
         }
 
-        using var native = CreateContext(collection, [], MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, [], MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
         var nativeResults = native.Entities.Select(c => new { c.Name, R = c.Weight / c.Score })
             .OrderBy(r => r.Name).ToList();
         var driverResults = driver.Entities.Select(c => new { c.Name, R = c.Weight / c.Score })
@@ -263,7 +263,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(nameof(Mixed_member_and_arithmetic_projection_goes_native));
 
-        using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             var results = nativeOnly.Entities.Select(c => new { c.Name, T = c.Age * c.Score })
                 .OrderBy(r => r.Name).ToList();
@@ -274,8 +274,8 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             Assert.Contains("$multiply", mql);
         }
 
-        using var native = CreateContext(collection, [], MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, [], MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
         var nativeResults = native.Entities.Select(c => new { c.Name, T = c.Age * c.Score })
             .OrderBy(r => r.Name).ToList();
         var driverResults = driver.Entities.Select(c => new { c.Name, T = c.Age * c.Score })
@@ -288,7 +288,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(nameof(Nullable_operand_arithmetic_matches_driver));
 
-        using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             var results = nativeOnly.Entities.Select(c => new { c.Name, X = c.MaybeAge * 2 })
                 .OrderBy(r => r.Name).ToList();
@@ -298,8 +298,8 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             Assert.Contains("$multiply", mql);
         }
 
-        using var native = CreateContext(collection, [], MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, [], MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
 
         var nativeResults = native.Entities.Select(c => new { c.Name, X = c.MaybeAge * 2 })
             .OrderBy(r => r.Name).ToList();
@@ -317,10 +317,10 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     // a BinaryExpression. All three modes: under DriverLinq, Select.Projection is populated too, so the
     // IsWholeRootEntityAlias null-out in MongoProjectionBindingRemovingExpressionVisitor is load-bearing.
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Mixed_whole_entity_and_scalar_member_leaf_works_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Mixed_whole_entity_and_scalar_member_leaf_works_in_every_mode(MongoQueryProvider mode)
     {
         var (collection, logs) = SeedCustomers(
             nameof(Mixed_whole_entity_and_scalar_member_leaf_works_in_every_mode) + mode);
@@ -337,9 +337,9 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     // Entity leaf + owned-collection .Count sibling: the whole-entity and count-leaf branches in one NewExpression.
     // DriverLinq is excluded; see the _still_fails_under_explicit_DriverLinq test below.
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Mixed_whole_entity_and_owned_collection_count_leaf_works_in_both_native_modes(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Mixed_whole_entity_and_owned_collection_count_leaf_works_in_both_native_modes(MongoQueryProvider mode)
     {
         var (collection, logs) = SeedCustomersWithPosts(
             nameof(Mixed_whole_entity_and_owned_collection_count_leaf_works_in_both_native_modes) + mode);
@@ -362,7 +362,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomersWithPosts(
             nameof(Mixed_whole_entity_and_owned_collection_count_leaf_still_fails_under_explicit_DriverLinq));
-        using var db = CreateContext(collection, logs, MongoQueryMode.DriverLinq, CustomerWithPostsModel);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.DriverLinq, CustomerWithPostsModel);
 
         Assert.ThrowsAny<Exception>(
             () => db.Entities.Select(c => new { c, PostCount = c.Posts.Count }).OrderBy(r => r.c.Name).ToList());
@@ -372,10 +372,10 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     // a change conflating the two routes breaks one of them. All three modes, since the $$ROOT alias reaches the
     // mixed removing visitor under DriverLinq too.
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Wrapped_and_bare_whole_entity_leaves_both_go_native_and_work_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Wrapped_and_bare_whole_entity_leaves_both_go_native_and_work_in_every_mode(MongoQueryProvider mode)
     {
         var (collection, logs) = SeedCustomers(
             nameof(Wrapped_and_bare_whole_entity_leaves_both_go_native_and_work_in_every_mode) + mode);
@@ -404,7 +404,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(
             nameof(Mixed_whole_entity_and_computed_leaf_ordered_by_the_computed_sibling_goes_native));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Select(c => new { c, Total = c.Age * c.Score })
             .OrderBy(r => r.Total).ToList();
@@ -432,7 +432,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
         var logs = new List<string>();
 
-        using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             var results = nativeOnly.Entities.Select(c => new { c.Name, X = c.Age / c.Score })
                 .ToList().OrderBy(r => r.Name).ToList();
@@ -443,7 +443,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
 
         // Not compared against driver-LINQ, which emits raw $divide and throws on non-integral quotients (the
         // released-behavior bug fixed on the native path).
-        using var native = CreateContext(collection, [], MongoQueryMode.Native);
+        using var native = CreateContext(collection, [], MongoQueryProvider.Native);
         Assert.Equal([3, 6, -3],
             native.Entities.Select(c => new { c.Name, X = c.Age / c.Score })
                 .ToList().OrderBy(r => r.Name).Select(r => r.X).ToArray());
@@ -456,14 +456,14 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(nameof(String_method_call_projection_falls_back_gracefully_except_under_NativeOnly));
 
-        using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly))
         {
             var query = nativeOnly.Entities.Select(c => new { X = c.Name.Split('o', StringSplitOptions.None)[0] });
             Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
         }
 
-        using var native = CreateContext(collection, [], MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, [], MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
 
         var nativeResults = native.Entities.Select(c => new { X = c.Name.Split('o', StringSplitOptions.None)[0] })
             .OrderBy(r => r.X).ToList();
@@ -480,7 +480,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     public void Mixed_whole_entity_and_computed_leaf_returns_the_correct_computed_value()
     {
         var (collection, _) = SeedCustomers(nameof(Mixed_whole_entity_and_computed_leaf_returns_the_correct_computed_value));
-        using var db = CreateContext(collection, [], MongoQueryMode.Native);
+        using var db = CreateContext(collection, [], MongoQueryProvider.Native);
 
         var results = db.Entities.Select(c => new { c, Total = c.Age * c.Score }).OrderBy(r => r.c.Name).ToList();
 
@@ -499,7 +499,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     public void Mixed_whole_entity_and_computed_leaf_goes_native()
     {
         var (collection, _) = SeedCustomers(nameof(Mixed_whole_entity_and_computed_leaf_goes_native));
-        using var db = CreateContext(collection, [], MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, [], MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Select(c => new { c, Total = c.Age * c.Score }).OrderBy(r => r.c.Name).ToList();
 
@@ -511,9 +511,9 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     // alias names no element; without the read-side handling this fails with "Field 'c' required but not present".
     // This worked on DriverLinq before, so a failure here is a regression.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Mixed_whole_entity_and_computed_leaf_works_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Mixed_whole_entity_and_computed_leaf_works_in_every_mode(MongoQueryProvider mode)
     {
         var (collection, _) = SeedCustomers(nameof(Mixed_whole_entity_and_computed_leaf_works_in_every_mode) + mode);
         using var db = CreateContext(collection, [], mode);
@@ -534,7 +534,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
 
         var namePrefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        using (var nativeOnly = CreateContext(collection, [], MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, [], MongoQueryProvider.NativeOnly))
         {
             var nativeOnlyResults = nativeOnly.Entities
                 .Where(c => c.Name.StartsWith(namePrefix))
@@ -546,7 +546,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             Assert.Equal(14, nativeOnlyRow.Total);
         }
 
-        using var db = CreateContext(collection, logs, MongoQueryMode.Native);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.Native);
 
         var results = db.Entities
             .Where(c => c.Name.StartsWith(namePrefix))

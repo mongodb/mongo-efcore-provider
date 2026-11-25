@@ -10,8 +10,8 @@ namespace MongoDB.EntityFrameworkCore.Benchmarks;
 
 // A catalogue of query shapes from trivial to complex, each run three ways like the other benchmark classes:
 //   DriverOnly     - the same LINQ written directly against the driver (the floor; no EF Core).
-//   EF_DriverLinq  - EF provider with UseQueryMode(DriverLinq).   (EF contexts come from a context pool, as in AddDbContextPool.)
-//   EF_Native      - EF provider with UseQueryMode(Native).
+//   EF_DriverLinq  - EF provider with UseQueryProvider(DriverLinq).   (EF contexts come from a context pool, as in AddDbContextPool.)
+//   EF_Native      - EF provider with UseQueryProvider(Native).
 // A shape is a (driver, EF) pair of delegates returning a checksum, so every shape is validated at setup: all three configs must return
 // the same number before any timing is taken. Run with --shapes; narrow with --filter '*Native*shape: Group*'. Tiers, in order:
 //   scalar      - Count/Any/Sum/Max/Average over FlatItems
@@ -353,12 +353,12 @@ public class QueryShapeBenchmarks
         var client = new MongoClient(conn);
 
         _efOptionsDriverLinq = new DbContextOptionsBuilder<BenchmarkDbContext>()
-            .UseMongoDB(client, _dbName, o => o.UseQueryMode(MongoQueryMode.DriverLinq))
+            .UseMongoDB(client, _dbName, o => o.UseQueryProvider(MongoQueryProvider.DriverLinq))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .EnableThreadSafetyChecks(false)
             .Options;
         _efOptionsNative = new DbContextOptionsBuilder<BenchmarkDbContext>()
-            .UseMongoDB(client, _dbName, o => o.UseQueryMode(MongoQueryMode.Native))
+            .UseMongoDB(client, _dbName, o => o.UseQueryProvider(MongoQueryProvider.Native))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .EnableThreadSafetyChecks(false)
             .Options;

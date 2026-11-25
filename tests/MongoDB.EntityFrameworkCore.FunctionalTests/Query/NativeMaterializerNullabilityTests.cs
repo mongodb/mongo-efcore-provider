@@ -70,7 +70,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     }
 
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? model = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? model = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -78,7 +78,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -89,20 +89,20 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         raw.InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() } });
 
         InvalidOperationException driverEx;
-        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var driver = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             driverEx = Assert.Throws<InvalidOperationException>(() => driver.Entities.ToList());
         }
 
         InvalidOperationException nativeEx;
-        using (var native = CreateContext(collection, MongoQueryMode.Native))
+        using (var native = CreateContext(collection, MongoQueryProvider.Native))
         {
             nativeEx = Assert.Throws<InvalidOperationException>(() => native.Entities.ToList());
         }
 
         Assert.Equal(driverEx.Message, nativeEx.Message);
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.ToList());
         }
@@ -116,13 +116,13 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         raw.InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Score", BsonNull.Value } });
 
         int driverScore;
-        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var driver = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             driverScore = driver.Entities.ToList().Single().Score;
         }
 
         int nativeScore;
-        using (var native = CreateContext(collection, MongoQueryMode.Native))
+        using (var native = CreateContext(collection, MongoQueryProvider.Native))
         {
             nativeScore = native.Entities.ToList().Single().Score;
         }
@@ -138,7 +138,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         var raw = database.GetCollection<BsonDocument>(collection.CollectionNamespace);
         raw.InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Score", BsonNull.Value } });
 
-        using var native = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var native = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var score = native.Entities.ToList().Single().Score;
         Assert.Equal(default, score);
     }
@@ -151,13 +151,13 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         raw.InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Score", 7 }, { "Bonus", BsonNull.Value } });
 
         int? driverBonus;
-        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var driver = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             driverBonus = driver.Entities.ToList().Single().Bonus;
         }
 
         int? nativeBonus;
-        using (var native = CreateContext(collection, MongoQueryMode.Native))
+        using (var native = CreateContext(collection, MongoQueryProvider.Native))
         {
             nativeBonus = native.Entities.ToList().Single().Bonus;
         }
@@ -187,20 +187,20 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         raw.InsertOne(doc);
 
         InvalidOperationException driverEx;
-        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var driver = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             driverEx = Assert.Throws<InvalidOperationException>(() => driver.Entities.ToList());
         }
 
         InvalidOperationException nativeEx;
-        using (var native = CreateContext(collection, MongoQueryMode.Native))
+        using (var native = CreateContext(collection, MongoQueryProvider.Native))
         {
             nativeEx = Assert.Throws<InvalidOperationException>(() => native.Entities.ToList());
         }
 
         Assert.Equal(driverEx.Message, nativeEx.Message);
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             var nativeOnlyEx = Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.ToList());
             Assert.Equal(driverEx.Message, nativeOnlyEx.Message);
@@ -214,13 +214,13 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         collection.InsertOne(new Scored { Id = ObjectId.GenerateNewId(), Score = 42, Bonus = 5 });
 
         Scored driverEntity;
-        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var driver = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             driverEntity = driver.Entities.ToList().Single();
         }
 
         Scored nativeEntity;
-        using (var native = CreateContext(collection, MongoQueryMode.Native))
+        using (var native = CreateContext(collection, MongoQueryProvider.Native))
         {
             nativeEntity = native.Entities.ToList().Single();
         }
@@ -248,20 +248,20 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
 
         Exception? driverEx = Record.Exception(() =>
         {
-            using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, model);
+            using var driver = CreateContext(collection, MongoQueryProvider.DriverLinq, model);
             _ = driver.Entities.ToList();
         });
 
         Exception? nativeEx = Record.Exception(() =>
         {
-            using var native = CreateContext(collection, MongoQueryMode.Native, model);
+            using var native = CreateContext(collection, MongoQueryProvider.Native, model);
             _ = native.Entities.ToList();
         });
 
         Assert.Equal(driverEx?.GetType(), nativeEx?.GetType());
 
         // Under NativeOnly this must throw InvalidOperationException from the streaming materializer, not NativeTranslationNotSupportedException.
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, model))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, model))
         {
             Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.ToList());
         }
@@ -283,14 +283,14 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         int? driverScore = null;
         Exception? driverEx = Record.Exception(() =>
         {
-            using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, model);
+            using var driver = CreateContext(collection, MongoQueryProvider.DriverLinq, model);
             driverScore = driver.Entities.ToList().Single().Stats.Score;
         });
 
         int? nativeScore = null;
         Exception? nativeEx = Record.Exception(() =>
         {
-            using var native = CreateContext(collection, MongoQueryMode.Native, model);
+            using var native = CreateContext(collection, MongoQueryProvider.Native, model);
             nativeScore = native.Entities.ToList().Single().Stats.Score;
         });
 
@@ -298,7 +298,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         Assert.Equal(driverScore, nativeScore);
 
         // Under NativeOnly a present-but-null required owned scalar materializes to default(T), matching the driver-LINQ oracle.
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, model))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, model))
         {
             var nativeOnlyScore = nativeOnly.Entities.ToList().Single().Stats.Score;
             Assert.Equal(driverScore, nativeOnlyScore);
@@ -350,9 +350,9 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
 
     // Native (default) and NativeOnly both run the native pipeline and throw EF's exception. DriverLinq is not asserted:
     // it sends an unguarded $strLenCP/$indexOfCP, which fails server-side on a null string.
-    private static void AssertThrowsNullableObjectMustHaveAValue(Action<MongoQueryMode> run)
+    private static void AssertThrowsNullableObjectMustHaveAValue(Action<MongoQueryProvider> run)
     {
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             var exception = Assert.Throws<InvalidOperationException>(() => run(mode));
             NullableValueMessage.AssertIs(exception.Message);
@@ -362,7 +362,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     // Each shape reads a null-propagated scalar (Length/IndexOf over a nullable string) behind a non-nullable type. The
     // result is widened to long client-side, after ToList, so one theory covers int and long leaves.
     private static List<long> RunNullableStringScalarShape(
-        IMongoCollection<StringKeyed> collection, MongoQueryMode mode, string shape)
+        IMongoCollection<StringKeyed> collection, MongoQueryProvider mode, string shape)
     {
         using var context = CreateContext(collection, mode, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         var ordered = context.Entities.OrderBy(e => e.Id);
@@ -423,7 +423,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         var collection = database.CreateCollection<StringKeyed>(values: [function]);
         collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
 
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         var ordered = context.Entities.OrderBy(e => e.Id);
         Assert.Throws<NativeTranslationNotSupportedException>(() => function switch
         {
@@ -440,7 +440,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         var collection = database.CreateCollection<StringKeyed>();
         collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
 
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         var result = context.Entities.OrderBy(e => e.Id).Select(e => new { L = (int?)e.Label!.Length }).ToList();
 
         Assert.Equal([1, null], result.Select(r => r.L));
@@ -490,7 +490,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         var collection = database.CreateCollection<StringKeyed>(values: [op]);
         collection.InsertMany([new StringKeyed { Id = "ab", Label = null }, new StringKeyed { Id = "abcde", Label = null }]);
 
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         var lengths = context.Entities.Select(e => e.Label!.Length);
         Assert.Throws<NativeTranslationNotSupportedException>(() => op switch
         {
@@ -523,7 +523,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
             new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abc", Label = null },
             new StringKeyed { Id = "abcde", Label = "yy" }
         ]);
-        using var nativeOnly = CreateContext(mixed, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var nativeOnly = CreateContext(mixed, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         Assert.Equal(3, nativeOnly.Entities.Select(e => e.Label!.Length).Sum());
     }
 
@@ -545,7 +545,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     public void Selectorless_aggregate_over_distinct_nullable_string_length_declines(string op)
     {
         var collection = CreateAllNullLabelCollection(nameof(Selectorless_aggregate_over_distinct_nullable_string_length_declines), op);
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         var lengths = context.Entities.Select(e => e.Label!.Length).Distinct();
         Assert.Throws<NativeTranslationNotSupportedException>(() => op switch
         {
@@ -563,7 +563,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     public void Selector_aggregate_over_distinct_nullable_string_length_declines(string op)
     {
         var collection = CreateAllNullLabelCollection(nameof(Selector_aggregate_over_distinct_nullable_string_length_declines), op);
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         var rows = context.Entities.Select(e => new { L = e.Label!.Length }).Distinct();
         Assert.Throws<NativeTranslationNotSupportedException>(() => op switch
         {
@@ -579,7 +579,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     public void Nullable_selector_aggregate_over_distinct_nullable_string_length_reads_null()
     {
         var collection = CreateAllNullLabelCollection(nameof(Nullable_selector_aggregate_over_distinct_nullable_string_length_reads_null), "n");
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         Assert.Null(context.Entities.Select(e => new { L = e.Label!.Length }).Distinct().Max(a => (int?)a.L));
     }
 
@@ -591,7 +591,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     public void GroupBy_over_distinct_nullable_string_length_key_throws_on_null(string shape)
     {
         var collection = CreateAllNullLabelCollection(nameof(GroupBy_over_distinct_nullable_string_length_key_throws_on_null), shape);
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         var rows = context.Entities.Select(e => new { e.Id, L = e.Label!.Length }).Distinct();
         var ex = Assert.Throws<InvalidOperationException>(() => shape switch
         {
@@ -610,7 +610,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     public void GroupBy_over_distinct_nullable_string_length_declines(string shape)
     {
         var collection = CreateAllNullLabelCollection(nameof(GroupBy_over_distinct_nullable_string_length_declines), shape);
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         var rows = context.Entities.Select(e => new { e.Id, L = e.Label!.Length }).Distinct();
         Assert.Throws<NativeTranslationNotSupportedException>(() => shape switch
         {
@@ -626,7 +626,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     public void GroupBy_over_distinct_nullable_cast_of_string_length_reads_null()
     {
         var collection = CreateAllNullLabelCollection(nameof(GroupBy_over_distinct_nullable_cast_of_string_length_reads_null), "n");
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         var result = context.Entities.Select(e => new { e.Id, L = e.Label!.Length }).Distinct()
             .GroupBy(x => (int?)x.L).Select(g => new { g.Key, C = g.Count() }).ToList();
         var group = Assert.Single(result);
@@ -642,7 +642,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     {
         var collection = database.CreateCollection<StringKeyed>();
         collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
 
         var result = context.Entities.Select(e => new { L = e.Label!.Length }).Distinct().Where(x => x.L < 3).ToList();
 
@@ -656,7 +656,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     {
         var collection = database.CreateCollection<StringKeyed>();
         collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
 
         var result = context.Entities.Select(e => e.Label!.Length).Distinct().Where(l => l < 3).ToList();
 
@@ -668,7 +668,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     public void Aggregate_over_set_op_operand_nullable_string_length_never_reads_null_as_zero()
     {
         var collection = CreateAllNullLabelCollection(nameof(Aggregate_over_set_op_operand_nullable_string_length_never_reads_null_as_zero), "c");
-        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+        using var context = CreateContext(collection, MongoQueryProvider.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
         var exception = Record.Exception(() => context.Entities.Where(e => e.Id == "none").Select(e => e.Id.Length)
             .Concat(context.Entities.Select(e => e.Label!.Length)).Max());
         Assert.True(
@@ -690,9 +690,9 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     }
 
     private class JoinDbContext(
-        TemporaryDatabaseFixture database, string owners, string pets, MongoQueryMode mode)
+        TemporaryDatabaseFixture database, string owners, string pets, MongoQueryProvider mode)
         : DbContext(new DbContextOptionsBuilder<JoinDbContext>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UncachedModelKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options)
@@ -728,7 +728,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         database.MongoDatabase.GetCollection<JoinPet>(pets).InsertMany(
             [new JoinPet { Id = "pet1", OwnerId = "o1" }, new JoinPet { Id = "pet22", OwnerId = "o2" }]);
 
-        List<(string Name, int L)> Run(MongoQueryMode mode)
+        List<(string Name, int L)> Run(MongoQueryProvider mode)
         {
             using var context = new JoinDbContext(database, owners, pets, mode);
             return context.Owners
@@ -758,7 +758,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
             [new JoinOwner { Id = "o1", Name = "A" }, new JoinOwner { Id = "o2", Name = "B" }]);
         database.MongoDatabase.GetCollection<JoinPet>(pets).InsertMany([new JoinPet { Id = "pet1", OwnerId = "o1" }]);
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var context = new JoinDbContext(database, owners, pets, mode);
             var exception = Record.Exception(() => context.Owners
@@ -766,9 +766,9 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
                 .SelectMany(x => x.ps.DefaultIfEmpty(), (x, p) => p!.Id.Length)
                 .ToList());
             Assert.True(
-                exception is NativeTranslationNotSupportedException && mode == MongoQueryMode.NativeOnly
+                exception is NativeTranslationNotSupportedException && mode == MongoQueryProvider.NativeOnly
                 || exception is InvalidOperationException { Message: var nullableMessage } && NullableValueMessage.Is(nullableMessage)
-                || exception is MongoCommandException && mode == MongoQueryMode.Native,
+                || exception is MongoCommandException && mode == MongoQueryProvider.Native,
                 $"{mode}: expected a decline or EF's exception, got {exception?.GetType().Name ?? "a result"}: {exception?.Message}");
         }
     }

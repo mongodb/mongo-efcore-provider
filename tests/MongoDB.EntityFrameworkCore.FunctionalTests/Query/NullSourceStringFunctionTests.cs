@@ -162,7 +162,7 @@ public class NullSourceStringFunctionTests(TemporaryDatabaseFixture database)
         // projection then yields a null: Contains(null) is true. The native translator guards that predicate itself (a null source is not "", as in
         // SQL), so it filters the null and missing rows out before Contains looks, and Contains(null) is false. In neither mode does Contains add a
         // guard of its own to the predicate.
-        var predicateKeepsNullRows = TestQueryMode.Current == MongoQueryMode.DriverLinq;
+        var predicateKeepsNullRows = TestQueryProvider.Current == MongoQueryProvider.DriverLinq;
         Assert.Equal(predicateKeepsNullRows, db.Set<Row>().Where(x => x.S!.Substring(0, 0) == "").Select(x => x.S!.ToUpper()).Contains(null));
     }
 

@@ -84,7 +84,7 @@ public class NativeOwnedCollectionNullCheckTests(TemporaryDatabaseFixture databa
     public void A_matched_null_row_materializes_an_empty_collection()
     {
         var collection = Seed();
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
 
         var matched = db.Entities.AsNoTracking().Where(p => p.Children == null).OrderBy(p => p.Id).ToList();
 
@@ -92,14 +92,14 @@ public class NativeOwnedCollectionNullCheckTests(TemporaryDatabaseFixture databa
         Assert.All(matched, p => Assert.Empty(p.Children));
     }
 
-    private static SingleEntityDbContext<Parent> Create(IMongoCollection<Parent> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Parent> Create(IMongoCollection<Parent> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             mb => mb.Entity<Parent>().OwnsMany(p => p.Children),
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // Stored states: missing, explicit null, empty, one, two.

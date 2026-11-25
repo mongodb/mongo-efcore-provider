@@ -41,7 +41,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <para>
 /// Still declined: the whole-outer form (<c>select o</c>) throws <see cref="NotSupportedException"/> at translation
 /// time, so the same in every mode. Where <see cref="NativeSelectManyBinder.TryBind"/> rejects a shape, EF's own
-/// translation failure is reached directly and throws in every <see cref="MongoQueryMode"/>. Unrepresentable
+/// translation failure is reached directly and throws in every <see cref="MongoQueryProvider"/>. Unrepresentable
 /// computed leaves over owned collections fall back gracefully via <c>MarkNotNativelyRepresentable()</c>. Most
 /// operators composed after a native SelectMany hard-fail in every mode, since the fallback can't rebuild a shaper
 /// over the by-index projection; cardinality-only <c>Count</c> needs no shaper and falls back gracefully.
@@ -117,7 +117,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         },
     ];
 
-    private SingleEntityDbContext<Owner> CreateContext(Owner[] seed, MongoQueryMode mode, string name)
+    private SingleEntityDbContext<Owner> CreateContext(Owner[] seed, MongoQueryProvider mode, string name)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Owner>(collectionName);
@@ -130,12 +130,12 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
     private SingleEntityDbContext<Owner> CreateContextWithLogging(
-        Owner[] seed, MongoQueryMode mode, string name, out SpyLoggerProvider spyLogger)
+        Owner[] seed, MongoQueryProvider mode, string name, out SpyLoggerProvider spyLogger)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Owner>(collectionName);
@@ -153,7 +153,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -161,7 +161,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Inner_select_form_goes_native_with_correct_results_and_mql()
     {
         var seed = SeedOwners();
-        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContextWithLogging(seed, MongoQueryProvider.NativeOnly,
             nameof(Inner_select_form_goes_native_with_correct_results_and_mql), out var spyLogger);
 
         var result = db.Entities
@@ -187,7 +187,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Inner_select_form_produces_correct_results_under_explicit_DriverLinq_mode()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var db = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Inner_select_form_produces_correct_results_under_explicit_DriverLinq_mode));
 
         var result = db.Entities
@@ -216,7 +216,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // The MemberInitExpression (named DTO) arm of NativeSelectManyBinder.TryReadProjection and
         // BuildSelectManyResultShaper; the tests above use anonymous types.
         var seed = SeedOwners();
-        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContextWithLogging(seed, MongoQueryProvider.NativeOnly,
             nameof(Inner_select_MemberInit_dto_form_goes_native_with_correct_results_and_mql), out var spyLogger);
 
         var result = db.Entities
@@ -247,7 +247,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Empty_or_absent_owned_collection_contributes_no_rows()
     {
         var seed = SeedOwners(); // Bob has an empty Items list
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Empty_or_absent_owned_collection_contributes_no_rows));
 
         var result = db.Entities.SelectMany(o => o.Items.Select(i => new { o.Name, i.Price })).ToList();
@@ -260,7 +260,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Shared_outer_inner_member_name_resolves_to_distinct_values()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Shared_outer_inner_member_name_resolves_to_distinct_values));
 
         var result = db.Entities
@@ -285,7 +285,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Explicit_result_selector_form_goes_native_with_correct_results_and_mql()
     {
         var seed = SeedOwners();
-        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContextWithLogging(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_form_goes_native_with_correct_results_and_mql), out var spyLogger);
 
         var result = db.Entities
@@ -311,7 +311,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Query_syntax_form_goes_native_with_correct_results_and_mql()
     {
         var seed = SeedOwners();
-        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContextWithLogging(seed, MongoQueryProvider.NativeOnly,
             nameof(Query_syntax_form_goes_native_with_correct_results_and_mql), out var spyLogger);
 
         var result = (from o in db.Entities
@@ -339,7 +339,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Explicit_result_selector_form_produces_correct_results_under_explicit_DriverLinq_mode()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var db = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Explicit_result_selector_form_produces_correct_results_under_explicit_DriverLinq_mode));
 
         var result = db.Entities
@@ -360,7 +360,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Explicit_result_selector_form_shared_outer_inner_member_name_resolves_to_distinct_values()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_form_shared_outer_inner_member_name_resolves_to_distinct_values));
 
         var result = db.Entities
@@ -384,7 +384,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Explicit_result_selector_form_empty_or_absent_owned_collection_contributes_no_rows()
     {
         var seed = SeedOwners(); // Bob has an empty Items list
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_form_empty_or_absent_owned_collection_contributes_no_rows));
 
         var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { o.Name, i.Price }).ToList();
@@ -397,7 +397,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Explicit_result_selector_MemberInit_dto_form_goes_native_with_correct_results_and_mql()
     {
         var seed = SeedOwners();
-        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContextWithLogging(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_MemberInit_dto_form_goes_native_with_correct_results_and_mql), out var spyLogger);
 
         var result = db.Entities
@@ -431,7 +431,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = i.Price * 2m })
             .OrderBy(r => r.X).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Explicit_result_selector_form_computed_arithmetic_leaf_goes_native) + mode);
@@ -448,7 +448,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { Doubled = o.Rank * 2m })
             .OrderBy(r => r.Doubled).ToList();
 
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Root_scope_computed_leaf_in_selectmany_goes_native));
         var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { Doubled = o.Rank * 2m })
             .AsEnumerable().OrderBy(r => r.Doubled).ToList();
@@ -460,7 +460,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Root_scope_computed_leaf_in_selectmany_emits_unprefixed_field_in_mql()
     {
         var seed = SeedOwners();
-        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContextWithLogging(seed, MongoQueryProvider.NativeOnly,
             nameof(Root_scope_computed_leaf_in_selectmany_emits_unprefixed_field_in_mql), out var spyLogger);
 
         _ = db.Entities.SelectMany(o => o.Items, (o, i) => new { Doubled = o.Rank * 2m }).ToList();
@@ -479,7 +479,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 (o, i) => new { Sum = i.Price + 1m, Diff = i.Price - 1m, Mod = i.Price % 2m, Half = i.Price / 2m })
             .OrderBy(r => r.Sum).ToList();
 
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Mixed_operator_computed_leaves_in_selectmany_go_native));
         var result = db.Entities.SelectMany(o => o.Items,
                 (o, i) => new { Sum = i.Price + 1m, Diff = i.Price - 1m, Mod = i.Price % 2m, Half = i.Price / 2m })
@@ -495,7 +495,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = i.Occurred.Year + 1 })
             .OrderBy(r => r.X).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Explicit_result_selector_form_computed_date_part_leaf_goes_native) + mode);
@@ -514,7 +514,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = (i.Flag ? 1m : 2m) + 0m })
             .OrderBy(r => r.X).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Explicit_result_selector_form_computed_conditional_leaf_goes_native) + mode);
@@ -528,7 +528,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Inner_select_form_filtered_goes_native()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Inner_select_form_filtered_goes_native));
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Inner_select_form_filtered_goes_native));
 
         var result = db.Entities
             .SelectMany(o => o.Items.Where(i => i.Price > 6m).Select(i => new { o.Name, i.Price }))
@@ -568,7 +568,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Explicit_result_selector_form_filtered_goes_native()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Explicit_result_selector_form_filtered_goes_native));
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Explicit_result_selector_form_filtered_goes_native));
 
         var result = db.Entities
             .SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { o.Name, i.Price })
@@ -585,7 +585,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Filtered_owned_selectmany_emits_match_after_unwind_before_project()
     {
         var seed = SeedOwners();
-        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContextWithLogging(seed, MongoQueryProvider.NativeOnly,
             nameof(Filtered_owned_selectmany_emits_match_after_unwind_before_project), out var spyLogger);
 
         _ = db.Entities
@@ -602,7 +602,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Bare_owned_whole_inner_element_filtered_goes_native()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Bare_owned_whole_inner_element_filtered_goes_native));
 
         var result = db.Entities.AsNoTracking()
@@ -620,7 +620,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Filtered_owned_stacked_where_ands_together_goes_native()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Filtered_owned_stacked_where_ands_together_goes_native));
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Filtered_owned_stacked_where_ands_together_goes_native));
 
         var result = db.Entities
             .SelectMany(o => o.Items.Where(i => i.Price > 6m).Where(i => i.Name != "Gadget"), (o, i) => new { o.Name, i.Price })
@@ -637,7 +637,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Filtered_owned_excluding_all_children_contributes_no_rows()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Filtered_owned_excluding_all_children_contributes_no_rows));
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Filtered_owned_excluding_all_children_contributes_no_rows));
 
         var result = db.Entities
             .SelectMany(o => o.Items.Where(i => i.Name == "nonexistent"), (o, i) => new { o.Name, i.Price })
@@ -650,7 +650,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Filtered_owned_composes_with_parametrized_outer_predicate()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Filtered_owned_composes_with_parametrized_outer_predicate));
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Filtered_owned_composes_with_parametrized_outer_predicate));
 
         var ownerName = "Alice";
         var result = db.Entities
@@ -672,7 +672,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // oracle exists for correlated owned SelectMany, so compare against an in-memory oracle. Only the "Match"
         // owner's "Match" item satisfies it.
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Owned_correlated_beyond_outer_inner_select_form_goes_native));
 
         var result = db.Entities
@@ -694,7 +694,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // $expr's total order ({$lt: [null, 5]} is true) instead of type-bracketing, and Alice's null-NullableRank
         // items would wrongly appear (4 rows instead of 2).
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Correlated_relational_operator_over_a_nullable_outer_property_still_excludes_null_rows));
 
         var result = db.Entities.AsNoTracking()
@@ -714,7 +714,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Owned_correlated_beyond_outer_explicit_form_goes_native()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Owned_correlated_beyond_outer_explicit_form_goes_native));
 
         var result = db.Entities
@@ -733,7 +733,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Bare whole-element results require AsNoTracking() (owned element without owner).
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Owned_correlated_beyond_outer_bare_whole_element_goes_native));
 
         var result = db.Entities.AsNoTracking()
@@ -751,7 +751,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Owned_correlated_beyond_outer_stacked_where_goes_native()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Owned_correlated_beyond_outer_stacked_where_goes_native));
 
         var result = db.Entities
@@ -769,7 +769,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Owned_correlated_beyond_outer_excluding_all_children_contributes_no_rows()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Owned_correlated_beyond_outer_excluding_all_children_contributes_no_rows));
 
         var result = db.Entities
@@ -783,7 +783,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Owned_correlated_beyond_outer_composes_with_parametrized_outer_predicate()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Owned_correlated_beyond_outer_composes_with_parametrized_outer_predicate));
 
         var cutoff = "Bob";
@@ -804,7 +804,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // The correlated conjunct renders as $expr comparing "$Items.Name" (unwind-path-prefixed; owned data has no
         // $lookup alias) to root-relative "$Name".
         var seed = SeedOwners();
-        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContextWithLogging(seed, MongoQueryProvider.NativeOnly,
             nameof(Owned_correlated_beyond_outer_emits_expr_match_after_unwind), out var spyLogger);
 
         _ = db.Entities
@@ -827,7 +827,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // {$expr: {$eq: ["$Name", ownerName]}}; correct because the $match runs after $unwind with the outer field at
         // the root.
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Owned_correlated_beyond_outer_against_a_plain_value_goes_native_with_correct_rows));
 
         var ownerName = "Match";
@@ -848,7 +848,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Owned_correlated_beyond_outer_against_a_plain_constant_goes_native_with_correct_rows()
     {
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Owned_correlated_beyond_outer_against_a_plain_constant_goes_native_with_correct_rows));
 
         var result = db.Entities
@@ -908,7 +908,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         var result = db.Entities
@@ -925,7 +925,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // An unsupported filter operator (ToUpper over a computed receiver) declines normally; no oracle, so
         // hard-fail in every mode.
         var seed = SeedOwners();
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Filtered_owned_computed_operator_hard_fails_in_every_mode) + mode);
@@ -941,7 +941,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = seed.SelectMany(o => o.Items.Where(i => i.Price > 6m), (o, i) => new { X = i.Price * 2m })
             .OrderBy(r => r.X).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Filtered_owned_computed_arithmetic_leaf_goes_native) + mode);
@@ -963,7 +963,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         Assert.Equal(5, expected.Count);
         Assert.All(expected, r => Assert.True(r.Total > 0m));
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode, nameof(Cross_scope_computed_leaf_in_selectmany_goes_native) + mode);
             var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { Total = o.Rank * i.Price })
@@ -976,7 +976,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Cross_scope_computed_leaf_emits_both_scopes_unprefixed_and_prefixed_in_mql()
     {
         var seed = SeedOwners();
-        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContextWithLogging(seed, MongoQueryProvider.NativeOnly,
             nameof(Cross_scope_computed_leaf_emits_both_scopes_unprefixed_and_prefixed_in_mql), out var spyLogger);
 
         _ = db.Entities.SelectMany(o => o.Items, (o, i) => new { Total = o.Rank * i.Price }).ToList();
@@ -995,7 +995,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { Total = o.Rank * i.Price + 1m })
             .OrderBy(r => r.Total).ToList();
 
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Cross_scope_computed_leaf_with_a_constant_operand_goes_native));
         var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { Total = o.Rank * i.Price + 1m })
             .AsEnumerable().OrderBy(r => r.Total).ToList();
@@ -1012,14 +1012,14 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { Combined = o.Name + i.Name })
             .OrderBy(r => r.Combined).ToList();
 
-        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using (var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
                    nameof(Cross_scope_string_concatenation_leaf_declines_and_answers_correctly) + "NativeOnly"))
         {
             Assert.ThrowsAny<Exception>(() =>
                 nativeOnly.Entities.SelectMany(o => o.Items, (o, i) => new { Combined = o.Name + i.Name }).ToList());
         }
 
-        using var db = CreateContext(seed, MongoQueryMode.Native,
+        using var db = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Cross_scope_string_concatenation_leaf_declines_and_answers_correctly));
         var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { Combined = o.Name + i.Name })
             .AsEnumerable().OrderBy(r => r.Combined).ToList();
@@ -1035,7 +1035,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = seed.SelectMany(o => o.Items).Select(i => i.Price * 2m).OrderBy(x => x).ToList();
         Assert.Equal(5, expected.Count);
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode, nameof(One_arg_selectmany_bare_computed_leaf_goes_native) + mode);
             var result = db.Entities.SelectMany(o => o.Items).Select(i => i.Price * 2m)
@@ -1051,7 +1051,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items, (o, i) => o.Rank * i.Price).OrderBy(x => x).ToList();
 
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(One_arg_selectmany_bare_cross_scope_computed_leaf_goes_native));
         var result = db.Entities.SelectMany(o => o.Items, (o, i) => o.Rank * i.Price)
             .AsEnumerable().OrderBy(x => x).ToList();
@@ -1063,7 +1063,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void One_arg_selectmany_bare_computed_leaf_emits_the_synthetic_alias_in_mql()
     {
         var seed = SeedOwners();
-        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContextWithLogging(seed, MongoQueryProvider.NativeOnly,
             nameof(One_arg_selectmany_bare_computed_leaf_emits_the_synthetic_alias_in_mql), out var spyLogger);
 
         _ = db.Entities.SelectMany(o => o.Items).Select(i => i.Price * 2m).ToList();
@@ -1083,14 +1083,14 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var seed = SeedOwners();
         var expected = seed.SelectMany(o => o.Items).Select(i => i.Name).OrderBy(x => x).ToList();
 
-        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using (var nativeOnly = CreateContext(seed, MongoQueryProvider.NativeOnly,
                    nameof(One_arg_selectmany_bare_MEMBER_leaf_still_declines_and_answers_correctly) + "NativeOnly"))
         {
             Assert.ThrowsAny<Exception>(() =>
                 nativeOnly.Entities.SelectMany(o => o.Items).Select(i => i.Name).ToList());
         }
 
-        using var db = CreateContext(seed, MongoQueryMode.Native,
+        using var db = CreateContext(seed, MongoQueryProvider.Native,
             nameof(One_arg_selectmany_bare_MEMBER_leaf_still_declines_and_answers_correctly));
         var result = db.Entities.SelectMany(o => o.Items).Select(i => i.Name)
             .AsEnumerable().OrderBy(x => x).ToList();
@@ -1115,7 +1115,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     private SingleEntityDbContext<NestedSubFilterOwner> CreateNestedSubFilterContext(
-        NestedSubFilterOwner[] seed, MongoQueryMode mode, string name)
+        NestedSubFilterOwner[] seed, MongoQueryProvider mode, string name)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<NestedSubFilterOwner>(collectionName);
@@ -1129,7 +1129,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -1161,7 +1161,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .Select(r => r.Price).OrderBy(p => p).ToList();
         Assert.Equal([5m, 9.99m], expected); // sanity: the fixture has the discriminating rows this test needs.
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateNestedSubFilterContext(seed, mode,
                 nameof(Filtered_owned_nested_subproperty_predicate_now_goes_native_via_EF424) + mode);
@@ -1209,7 +1209,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         public DbSet<RefOwner> Owners { get; set; } = null!;
         public DbSet<RefItem> Refs { get; set; } = null!;
 
-        public RefOwnerItemDbContext(TemporaryDatabaseFixture database, string ownersCollection, string refsCollection, MongoQueryMode mode)
+        public RefOwnerItemDbContext(TemporaryDatabaseFixture database, string ownersCollection, string refsCollection, MongoQueryProvider mode)
             : base(BuildOptions(database, mode, null))
         {
             _ownersCollection = ownersCollection;
@@ -1217,7 +1217,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         }
 
         public RefOwnerItemDbContext(
-            TemporaryDatabaseFixture database, string ownersCollection, string refsCollection, MongoQueryMode mode,
+            TemporaryDatabaseFixture database, string ownersCollection, string refsCollection, MongoQueryProvider mode,
             ILoggerFactory loggerFactory)
             : base(BuildOptions(database, mode, loggerFactory))
         {
@@ -1225,7 +1225,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             _refsCollection = refsCollection;
         }
 
-        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var optionsBuilder = new DbContextOptionsBuilder<RefOwnerItemDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
@@ -1233,7 +1233,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
             if (loggerFactory != null)
                 optionsBuilder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();
-            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(mode);
             return optionsBuilder.Options;
         }
 
@@ -1292,13 +1292,13 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
     private void SeedRefContext(string ownersCollection, string refsCollection, RefOwner[] owners, RefItem[] items)
     {
-        using var seedDb = new RefOwnerItemDbContext(database, ownersCollection, refsCollection, MongoQueryMode.Native);
+        using var seedDb = new RefOwnerItemDbContext(database, ownersCollection, refsCollection, MongoQueryProvider.Native);
         seedDb.Owners.AddRange(owners);
         seedDb.Refs.AddRange(items);
         seedDb.SaveChanges();
     }
 
-    private RefOwnerItemDbContext CreateRefContext(MongoQueryMode mode, string name, out RefOwner[] owners, out RefItem[] items)
+    private RefOwnerItemDbContext CreateRefContext(MongoQueryProvider mode, string name, out RefOwner[] owners, out RefItem[] items)
     {
         var (ownersCollection, refsCollection) = NewRefCollectionNames(name);
         (owners, items) = SeedRefData();
@@ -1307,7 +1307,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     private RefOwnerItemDbContext CreateRefContextWithLogging(
-        MongoQueryMode mode, string name, out RefOwner[] owners, out RefItem[] items, out SpyLoggerProvider spyLogger)
+        MongoQueryProvider mode, string name, out RefOwner[] owners, out RefItem[] items, out SpyLoggerProvider spyLogger)
     {
         var (ownersCollection, refsCollection) = NewRefCollectionNames(name);
         (owners, items) = SeedRefData();
@@ -1368,7 +1368,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         public NestDbContext(
             TemporaryDatabaseFixture database, string ownersCollection, string midsCollection, string leavesCollection,
-            string grandLeavesCollection, MongoQueryMode mode)
+            string grandLeavesCollection, MongoQueryProvider mode)
             : base(BuildOptions(database, mode, null))
         {
             _ownersCollection = ownersCollection;
@@ -1379,7 +1379,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         public NestDbContext(
             TemporaryDatabaseFixture database, string ownersCollection, string midsCollection, string leavesCollection,
-            string grandLeavesCollection, MongoQueryMode mode, ILoggerFactory loggerFactory)
+            string grandLeavesCollection, MongoQueryProvider mode, ILoggerFactory loggerFactory)
             : base(BuildOptions(database, mode, loggerFactory))
         {
             _ownersCollection = ownersCollection;
@@ -1388,7 +1388,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             _grandLeavesCollection = grandLeavesCollection;
         }
 
-        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var optionsBuilder = new DbContextOptionsBuilder<NestDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
@@ -1396,7 +1396,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
             if (loggerFactory != null)
                 optionsBuilder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();
-            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(mode);
             return optionsBuilder.Options;
         }
 
@@ -1466,7 +1466,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         NestOwner[] owners, NestMid[] mids, NestLeaf[] leaves)
     {
         using var seedDb = new NestDbContext(
-            database, ownersCollection, midsCollection, leavesCollection, grandLeavesCollection, MongoQueryMode.Native);
+            database, ownersCollection, midsCollection, leavesCollection, grandLeavesCollection, MongoQueryProvider.Native);
         seedDb.Owners.AddRange(owners);
         seedDb.Mids.AddRange(mids);
         seedDb.Leaves.AddRange(leaves);
@@ -1474,7 +1474,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     private NestDbContext CreateNestContext(
-        MongoQueryMode mode, string name, out NestOwner[] owners, out NestMid[] mids, out NestLeaf[] leaves,
+        MongoQueryProvider mode, string name, out NestOwner[] owners, out NestMid[] mids, out NestLeaf[] leaves,
         (NestOwner[] Owners, NestMid[] Mids, NestLeaf[] Leaves)? seed = null)
     {
         var (ownersCollection, midsCollection, leavesCollection, grandLeavesCollection) = NewNestCollectionNames(name);
@@ -1484,7 +1484,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     private NestDbContext CreateNestContextWithLogging(
-        MongoQueryMode mode, string name, out NestOwner[] owners, out NestMid[] mids, out NestLeaf[] leaves,
+        MongoQueryProvider mode, string name, out NestOwner[] owners, out NestMid[] mids, out NestLeaf[] leaves,
         out SpyLoggerProvider spyLogger)
     {
         var (ownersCollection, midsCollection, leavesCollection, grandLeavesCollection) = NewNestCollectionNames(name);
@@ -1500,7 +1500,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Nested_reference_selectmany_projected_goes_native()
     {
         // No driver-LINQ oracle for cross-collection SelectMany: Native + NativeOnly against an in-memory expectation.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateNestContext(mode,
                 nameof(Nested_reference_selectmany_projected_goes_native) + mode, out var owners, out var mids, out var leaves);
@@ -1528,7 +1528,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Nested_reference_selectmany_bare_entity_goes_native()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateNestContext(mode,
                 nameof(Nested_reference_selectmany_bare_entity_goes_native) + mode, out _, out _, out var leaves);
@@ -1547,7 +1547,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Nested_reference_selectmany_emits_two_lookups_and_unwinds()
     {
-        using var db = CreateNestContextWithLogging(MongoQueryMode.NativeOnly,
+        using var db = CreateNestContextWithLogging(MongoQueryProvider.NativeOnly,
             nameof(Nested_reference_selectmany_emits_two_lookups_and_unwinds), out _, out _, out _, out var spyLogger);
 
         _ = (from o in db.Owners from m in o.Mids from l in m.Leaves select new { o.Name, m.Tag, l.Label })
@@ -1573,7 +1573,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var leaf2 = new NestLeaf { Id = ObjectId.GenerateNewId(), Label = "Leaf2", MidId = mid2.Id };
         var seed = (Owners: new[] { owner1, owner2 }, Mids: new[] { mid1, mid2 }, Leaves: new[] { leaf1, leaf2 });
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateNestContext(mode,
                 nameof(Nested_reference_selectmany_composes_with_parametrized_outer_predicate) + mode,
@@ -1607,7 +1607,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Nested_reference_selectmany_whole_outer_owner_result_still_declines_cleanly_in_every_mode()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateNestContext(mode,
                 nameof(Nested_reference_selectmany_whole_outer_owner_result_still_declines_cleanly_in_every_mode) + mode,
@@ -1621,7 +1621,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Nested_reference_selectmany_whole_outer_mid_result_still_declines_cleanly_in_every_mode()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateNestContext(mode,
                 nameof(Nested_reference_selectmany_whole_outer_mid_result_still_declines_cleanly_in_every_mode) + mode,
@@ -1635,7 +1635,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Nested_reference_selectmany_third_level_still_hard_fails_in_every_mode()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateNestContext(mode,
                 nameof(Nested_reference_selectmany_third_level_still_hard_fails_in_every_mode) + mode,
@@ -1691,7 +1691,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         public EagerRefDbContext(
             TemporaryDatabaseFixture database, string parentsCollection, string childrenCollection,
-            string detailsCollection, MongoQueryMode mode)
+            string detailsCollection, MongoQueryProvider mode)
             : base(BuildOptions(database, mode))
         {
             _parentsCollection = parentsCollection;
@@ -1699,13 +1699,13 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             _detailsCollection = detailsCollection;
         }
 
-        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode)
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryProvider mode)
         {
             var optionsBuilder = new DbContextOptionsBuilder<EagerRefDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(mode);
             return optionsBuilder.Options;
         }
 
@@ -1732,7 +1732,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         }
     }
 
-    private EagerRefDbContext CreateEagerRefContext(MongoQueryMode mode, string name)
+    private EagerRefDbContext CreateEagerRefContext(MongoQueryProvider mode, string name)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var parentsCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Parents") + suffix;
@@ -1740,7 +1740,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var detailsCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Details") + suffix;
 
         using (var seedDb = new EagerRefDbContext(
-                   database, parentsCollection, childrenCollection, detailsCollection, MongoQueryMode.Native))
+                   database, parentsCollection, childrenCollection, detailsCollection, MongoQueryProvider.Native))
         {
             var detail = new EagerDetail { Id = ObjectId.GenerateNewId(), Note = "Detail" };
             var parent = new EagerParent { Id = ObjectId.GenerateNewId(), Name = "Parent" };
@@ -1794,20 +1794,20 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         public DbSet<OwnedSubNavChild> Children { get; set; } = null!;
 
         public OwnedSubNavDbContext(
-            TemporaryDatabaseFixture database, string parentsCollection, string childrenCollection, MongoQueryMode mode)
+            TemporaryDatabaseFixture database, string parentsCollection, string childrenCollection, MongoQueryProvider mode)
             : base(BuildOptions(database, mode))
         {
             _parentsCollection = parentsCollection;
             _childrenCollection = childrenCollection;
         }
 
-        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode)
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryProvider mode)
         {
             var optionsBuilder = new DbContextOptionsBuilder<OwnedSubNavDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(mode);
             return optionsBuilder.Options;
         }
 
@@ -1832,13 +1832,13 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         }
     }
 
-    private OwnedSubNavDbContext CreateOwnedSubNavContext(MongoQueryMode mode, string name)
+    private OwnedSubNavDbContext CreateOwnedSubNavContext(MongoQueryProvider mode, string name)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var parentsCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Parents") + suffix;
         var childrenCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(name + "Children") + suffix;
 
-        using (var seedDb = new OwnedSubNavDbContext(database, parentsCollection, childrenCollection, MongoQueryMode.Native))
+        using (var seedDb = new OwnedSubNavDbContext(database, parentsCollection, childrenCollection, MongoQueryProvider.Native))
         {
             var parent = new OwnedSubNavParent { Id = ObjectId.GenerateNewId(), Name = "Parent" };
             var child = new OwnedSubNavChild
@@ -1857,7 +1857,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_goes_native_with_correct_results()
     {
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_goes_native_with_correct_results), out var owners, out var items);
 
         var result = db.Owners
@@ -1883,7 +1883,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_explicit_result_selector_form_goes_native_with_correct_results_and_mql()
     {
-        using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContextWithLogging(MongoQueryProvider.NativeOnly,
             nameof(Reference_explicit_result_selector_form_goes_native_with_correct_results_and_mql),
             out var owners, out var items, out var spyLogger);
 
@@ -1914,7 +1914,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_query_syntax_form_goes_native_with_correct_results_and_mql()
     {
-        using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContextWithLogging(MongoQueryProvider.NativeOnly,
             nameof(Reference_query_syntax_form_goes_native_with_correct_results_and_mql),
             out var owners, out var items, out var spyLogger);
 
@@ -1946,7 +1946,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_MemberInit_dto_form_goes_native_with_correct_results()
     {
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_MemberInit_dto_form_goes_native_with_correct_results), out var owners, out var items);
 
         var result = db.Owners
@@ -1973,7 +1973,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Bob has no RefItems: the force-unwind $lookup+$unwind is an inner join (preserve: false), unlike Include's
         // left join, so he contributes no rows.
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_principal_with_zero_children_contributes_no_rows), out _, out _);
 
         var result = db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).ToList();
@@ -1985,7 +1985,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_shared_outer_inner_member_name_resolves_to_distinct_values()
     {
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_shared_outer_inner_member_name_resolves_to_distinct_values), out var owners, out var items);
 
         var result = db.Owners
@@ -2010,7 +2010,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Unlike owned forms, the reference form has no driver-LINQ baseline: the driver-LINQ bridge rejects any
         // cross-collection SelectMany ("Unsupported cross-DbSet query..."), so forcing DriverLinq still throws.
-        using var db = CreateRefContext(MongoQueryMode.DriverLinq,
+        using var db = CreateRefContext(MongoQueryProvider.DriverLinq,
             nameof(Reference_form_has_no_driver_linq_fallback_and_still_throws_under_explicit_DriverLinq_mode), out _, out _);
 
         Assert.Throws<InvalidOperationException>(() =>
@@ -2023,7 +2023,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // Whole-inner-entity result over a reference unwind goes native: IsWholeElementRepresentable rejects only
         // eager-loaded navigations, and RefItem.Owner is a plain inverse (materializes as null). All three
         // spellings normalize to the same tree.
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_bare_entity_result_goes_native_all_three_spellings), out _, out var items);
 
         var expectedTags = items.Select(i => i.Tag).OrderBy(t => t).ToList(); // Alice(2)+Carol(1)+Dave(2)=5; Bob(0) none
@@ -2042,7 +2042,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_bare_entity_owner_with_zero_children_contributes_no_rows()
     {
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_bare_entity_owner_with_zero_children_contributes_no_rows), out _, out var items);
 
         var result = db.Owners.SelectMany(o => o.Refs).AsEnumerable().Select(r => r.Id).OrderBy(x => x).ToList();
@@ -2056,7 +2056,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Reference_form_bare_entity_reads_root_relative_not_owner_scoped()
     {
         // RefItem.Name shares its member name with RefOwner.Name; r.Name must be the item's, not the owner's.
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_bare_entity_reads_root_relative_not_owner_scoped), out _, out var items);
 
         var names = db.Owners.SelectMany(o => o.Refs).AsEnumerable().Select(r => r.Name).OrderBy(n => n).ToList();
@@ -2069,7 +2069,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_bare_entity_emits_lookup_unwind_plain_replaceRoot()
     {
-        using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContextWithLogging(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_bare_entity_emits_lookup_unwind_plain_replaceRoot),
             out _, out _, out var spyLogger);
 
@@ -2086,7 +2086,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_filtered_inner_projected_goes_native()
     {
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_filtered_inner_projected_goes_native), out var owners, out var items);
 
         var result = db.Owners
@@ -2107,7 +2107,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_filtered_inner_bare_entity_goes_native()
     {
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_filtered_inner_bare_entity_goes_native), out _, out var items);
 
         var result = db.Owners
@@ -2125,7 +2125,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // EF-355: a `!= null` inner filter looks like the FK correlation's own null-guard and must not be absorbed
         // into it (which would return every child). Only 2 of 5 children have a Note.
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_filtered_inner_not_null_predicate_goes_native_and_excludes_null_rows),
             out var owners, out var items);
 
@@ -2147,7 +2147,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_filtered_inner_stacked_where_ands_together_goes_native()
     {
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_filtered_inner_stacked_where_ands_together_goes_native), out var owners, out var items);
 
         var result = db.Owners
@@ -2164,7 +2164,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_filtered_inner_excluding_all_children_contributes_no_rows()
     {
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_filtered_inner_excluding_all_children_contributes_no_rows), out _, out _);
 
         var result = db.Owners
@@ -2177,7 +2177,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_filtered_inner_emits_match_after_unwind_before_project()
     {
-        using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContextWithLogging(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_filtered_inner_emits_match_after_unwind_before_project),
             out _, out _, out var spyLogger);
 
@@ -2193,7 +2193,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_filtered_inner_composes_with_parametrized_outer_predicate()
     {
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_filtered_inner_composes_with_parametrized_outer_predicate), out var owners, out var items);
 
         var ownerName = "Alice";
@@ -2214,7 +2214,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // r.Tag == o.Name, correlated beyond the FK: $expr field comparison in the post-$unwind $match. No driver-LINQ
         // oracle for reference-form SelectMany, so Native + NativeOnly only. Only Dave.Refs[0] matches.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(mode,
                 nameof(Reference_form_correlated_beyond_fk_inner_goes_native) + mode, out var owners, out _);
@@ -2237,7 +2237,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // r.Name == o.Name with RefItem.Name shadowing RefOwner.Name: must compare item to owner, not item to itself.
         // Only Dave.Refs[1] matches.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(mode,
                 nameof(Reference_form_correlated_shadowed_member_name_resolves_by_scope) + mode, out var owners, out _);
@@ -2260,7 +2260,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Inner-only conjunct ANDed with a correlated one in one .Where. Dave.Refs[0] (Tag="Dave") satisfies
         // both conjuncts; every other row fails at least one.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(mode,
                 nameof(Reference_form_correlated_mixed_conjunct_goes_native) + mode, out var owners, out _);
@@ -2282,7 +2282,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // r.Score >= o.Threshold via $expr $gte. In: Alice/Gadget, Carol/Thing (8 >= 8), Dave/Refs[1]. Out:
         // Alice/Widget, Dave/Refs[0].
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(mode,
                 nameof(Reference_form_correlated_numeric_comparison_goes_native) + mode, out var owners, out _);
@@ -2307,7 +2307,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Reference_form_correlated_bare_entity_result_goes_native()
     {
         // Bare-entity trailing selector composes with the correlated $match (which runs before $replaceRoot).
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_correlated_bare_entity_result_goes_native), out var owners, out _);
 
         var result = (from o in db.Owners from r in o.Refs.Where(r => r.Tag == o.Name) select r)
@@ -2325,7 +2325,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Stacked Wheres must AND: r.Tag == o.Name alone matches Dave.Refs[0], whose Name ("DaveItem1") fails
         // r.Name == o.Name, so the result is empty. A dropped Where would return Dave.Refs[0].
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_correlated_stacked_where_goes_native), out var owners, out _);
 
         var result = db.Owners
@@ -2345,7 +2345,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // Correlated conjunct (matches Dave.Refs[0]) ANDed with an inner-only conjunct matching nothing (r.Score < 0):
         // no rows, proving the second conjunct narrows. (String-concat correlated predicates hard-fail translation,
         // so aren't used here.)
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_correlated_excluding_all_children_contributes_no_rows), out _, out _);
 
         var result = db.Owners
@@ -2360,7 +2360,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Outer Where parameter composing with the correlated inner $match: excluding Dave removes the only matching
         // owner, so the result is empty; the sanity check below shows it's non-empty without the cutoff.
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_correlated_composes_with_parametrized_outer_predicate), out var owners, out _);
 
         var cutoff = "Dave";
@@ -2383,7 +2383,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_correlated_emits_expr_match_after_unwind()
     {
-        using var db = CreateRefContextWithLogging(MongoQueryMode.Native,
+        using var db = CreateRefContextWithLogging(MongoQueryProvider.Native,
             nameof(Reference_form_correlated_emits_expr_match_after_unwind), out _, out _, out var spyLogger);
 
         _ = db.Owners
@@ -2404,7 +2404,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Unsupported filter operator (ToUpper over a computed receiver): the inner-scope translator rejects it, so hard-fail in every
         // mode.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(mode,
                 nameof(Reference_form_computed_filter_operator_hard_fails_in_every_mode) + mode, out _, out _);
@@ -2415,9 +2415,9 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Filtered_reference_collection_count_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Filtered_reference_collection_count_goes_native(MongoQueryProvider mode)
     {
         // Not a SelectMany: a projected filtered Count (c.Refs.Count(pred)) over a referenced collection, now a `$size` of a
         // `$filter` over the `$lookup` array (design: 2026-10-08-native-referenced-collection-aggregates-design.md, slice 1).
@@ -2445,7 +2445,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // calls MarkNotNativelyRepresentable(). Unlike the owned form, the fallback itself throws "Unsupported
         // cross-DbSet query" under Native and DriverLinq (no driver-LINQ baseline); NativeOnly throws its own
         // exception first.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_computed_leaf_hard_fails_in_every_mode) + mode, out _, out _);
 
@@ -2453,7 +2453,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 db.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag.ToUpper() }).ToList());
         }
 
-        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_computed_leaf_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
 
         Assert.ThrowsAny<Exception>(() =>
@@ -2463,7 +2463,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_string_concat_computed_leaf_goes_native()
     {
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_string_concat_computed_leaf_goes_native), out var owners, out var items);
 
         var actual = db.Owners
@@ -2481,7 +2481,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_computed_arithmetic_leaf_goes_native()
     {
-        using var db = CreateRefContextWithLogging(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContextWithLogging(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_computed_arithmetic_leaf_goes_native), out var owners, out var items, out var spyLogger);
 
         var result = db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, Doubled = r.Score * 2 })
@@ -2505,7 +2505,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { Sq = i.Price * i.Price })
             .OrderBy(r => r.Sq).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode, nameof(Two_field_single_scope_computed_leaf_goes_native) + mode);
             var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { Sq = i.Price * i.Price })
@@ -2521,7 +2521,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var expected = seed.SelectMany(o => o.Items, (o, i) => new { o.Name, Doubled = i.Price * 2m })
             .OrderBy(r => r.Name).ThenBy(r => r.Doubled).ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(seed, mode, nameof(Mixed_member_and_computed_leaf_projection_goes_native) + mode);
             var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { o.Name, Doubled = i.Price * 2m })
@@ -2533,7 +2533,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Nested_reference_single_scope_computed_leaf_goes_native()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateNestContext(mode,
                 nameof(Nested_reference_single_scope_computed_leaf_goes_native) + mode, out var owners, out var mids, out var leaves);
@@ -2560,7 +2560,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Five distinct non-zero products, so a mis-scoped operand ("$Score" at root, "$_lookup_Refs.Threshold")
         // surfaces as zeros/nulls. No DriverLinq: reference SelectMany has no driver-LINQ oracle.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(mode,
                 nameof(Cross_scope_computed_leaf_goes_native_for_the_reference_form_too_EF422) + mode,
@@ -2583,7 +2583,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Integer_division_computed_leaf_goes_native_and_truncates_EF434()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(mode,
                 nameof(Integer_division_computed_leaf_goes_native_and_truncates_EF434) + mode, out _, out _);
@@ -2602,7 +2602,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // calls MarkNotNativelyRepresentable(), but the fallback chain still begins with a cross-collection SelectMany,
         // which the driver-LINQ bridge rejects under Native and DriverLinq. NativeOnly throws its
         // own exception first. The same applies to the OrderBy/Skip/Take/Count tests below.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_Where_hard_fails_in_every_mode) + mode, out _, out _);
 
@@ -2610,7 +2610,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Where(x => x.Tag != "Widget").ToList());
         }
 
-        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_followed_by_Where_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
 
         Assert.ThrowsAny<Exception>(() =>
@@ -2621,7 +2621,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Reference_form_followed_by_OrderBy_hard_fails_in_every_mode()
     {
         // See Reference_form_followed_by_Where_hard_fails_in_every_mode.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_OrderBy_hard_fails_in_every_mode) + mode, out _, out _);
 
@@ -2629,7 +2629,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).OrderBy(x => x.Tag).ToList());
         }
 
-        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_followed_by_OrderBy_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
 
         Assert.ThrowsAny<Exception>(() =>
@@ -2640,7 +2640,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Reference_form_followed_by_Skip_hard_fails_in_every_mode()
     {
         // See Reference_form_followed_by_Where_hard_fails_in_every_mode.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_Skip_hard_fails_in_every_mode) + mode, out _, out _);
 
@@ -2648,7 +2648,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Skip(1).ToList());
         }
 
-        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_followed_by_Skip_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
 
         Assert.ThrowsAny<Exception>(() =>
@@ -2659,7 +2659,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Reference_form_followed_by_Take_hard_fails_in_every_mode()
     {
         // See Reference_form_followed_by_Where_hard_fails_in_every_mode.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_Take_hard_fails_in_every_mode) + mode, out _, out _);
 
@@ -2667,7 +2667,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Take(1).ToList());
         }
 
-        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_followed_by_Take_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
 
         Assert.ThrowsAny<Exception>(() =>
@@ -2679,7 +2679,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Unlike the owned form, even shaper-free Count hard-fails: the fallback still has to translate the
         // cross-collection SelectMany. See Reference_form_followed_by_Where_hard_fails_in_every_mode.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_Count_hard_fails_in_every_mode) + mode, out _, out _);
 
@@ -2687,7 +2687,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name, r.Tag }).Count());
         }
 
-        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_followed_by_Count_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
 
         Assert.ThrowsAny<Exception>(() =>
@@ -2700,7 +2700,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // GroupBy hard-fails for both owned and reference forms, here via "Calling
         // 'ShapedQueryExpression.VisitChildren' is not allowed" (TranslateGroupBy's fallback can't rebuild the
         // by-index SelectMany shaper) rather than the cross-DbSet message. ThrowsAny across all modes.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_GroupBy_hard_fails_in_every_mode) + mode, out _, out _);
 
@@ -2715,7 +2715,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // The second SelectMany's collection selector (`new[] { x.Tag }`) matches no NativeSelectManyBinder entry
         // point, so TranslateSelectMany returns null without MarkNotNativelyRepresentable(): EF's translation
         // failure fires at translation time, identically in all modes.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_another_SelectMany_hard_fails_in_every_mode) + mode, out _, out _);
 
@@ -2734,7 +2734,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // The client-method OrderBy sends the source to the driver-LINQ fallback, which cannot read the native by-index
         // SelectMany shaper. TranslateSelectMany declines up front, so every mode gets EF's standard translation failure
         // rather than a bare "Operation is not valid due to the current state of the object" from the shaper compile.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(
                 mode, nameof(Reference_SelectMany_after_client_OrderBy_fails_translation_in_every_mode) + mode, out _, out _);
@@ -2748,7 +2748,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_after_client_Where_fails_translation_in_every_mode()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(
                 mode, nameof(Reference_form_after_client_Where_fails_translation_in_every_mode) + mode, out _, out _);
@@ -2767,7 +2767,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // MongoSelectLowerer.Lower (which checks UnwindSource before Grouping) never emits the $group, and the flatten
         // $project reads a nonexistent "_id.Name", returning nulls even under NativeOnly. Declining puts this in the
         // "operator after reference SelectMany" family: hard-fail in every mode.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_followed_by_Distinct_hard_fails_in_every_mode) + mode, out _, out _);
 
@@ -2775,7 +2775,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 db.Owners.SelectMany(o => o.Refs, (o, r) => new { o.Name }).Distinct().ToList());
         }
 
-        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_followed_by_Distinct_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
 
         Assert.ThrowsAny<Exception>(() =>
@@ -2787,7 +2787,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // A parameterized Where before the reference SelectMany lowers into the pre-$lookup $match and substitutes
         // through PlaceholderTable.
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_parametrized_outer_predicate_composes_correctly_with_native_SelectMany), out var owners, out var items);
         var captured = "Alice";
 
@@ -2821,7 +2821,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .OrderBy(r => r.Name).ThenBy(r => r.Price)
             .ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Explicit_result_selector_form_followed_by_Where_falls_back_gracefully_except_under_NativeOnly) + mode);
@@ -2835,7 +2835,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             Assert.Equal(expected, result);
         }
 
-        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_form_followed_by_Where_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
 
         Assert.ThrowsAny<Exception>(() =>
@@ -2851,7 +2851,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // Tracking bare `SelectMany(o => o.Items)`: routes native, but EF Core's own "owned entity without its owner"
         // guard fires at materializer injection, before the native/driver-LINQ split, so all modes throw the same
         // InvalidOperationException. The tracking contract is EF Core's, not the provider's.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(SeedOwners(), mode,
                 nameof(Bare_SelectMany_tracking_query_throws_InvalidOperationException_in_every_mode) + mode);
@@ -2863,7 +2863,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Computed_leaf_hard_fails_in_every_mode()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(SeedOwners(), mode, nameof(Computed_leaf_hard_fails_in_every_mode) + mode);
 
@@ -2879,7 +2879,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // through PlaceholderTable.
         var seed = SeedOwners();
         var p = "Alice";
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Parametrized_outer_predicate_composes_correctly_with_native_SelectMany));
 
         var result = db.Entities
@@ -2929,7 +2929,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         var result = db.Entities.SelectMany(o => o.Items.Select(i => new { o.Name, i.Price })).ToList();
@@ -2944,7 +2944,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // The native SelectMany's Select is terminal (HasTerminalOperator includes UnwindSource != null), so the
         // post-terminal guard marks this OrderBy non-native; there is no graceful fallback, so every mode throws.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(SeedOwners(), mode,
                 nameof(OrderBy_after_SelectMany_hard_fails_in_every_mode) + mode);
@@ -2960,7 +2960,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Skip_after_SelectMany_hard_fails_in_every_mode()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(SeedOwners(), mode, nameof(Skip_after_SelectMany_hard_fails_in_every_mode) + mode);
 
@@ -2975,7 +2975,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Take_after_SelectMany_hard_fails_in_every_mode()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(SeedOwners(), mode, nameof(Take_after_SelectMany_hard_fails_in_every_mode) + mode);
 
@@ -2996,7 +2996,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var seed = SeedOwners();
         var expectedCount = seed.SelectMany(o => o.Items.Select(i => new { o.Name, i.Price })).Count();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(seed, mode, nameof(Count_after_SelectMany_falls_back_gracefully_except_under_NativeOnly) + mode);
 
@@ -3004,7 +3004,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             Assert.Equal(expectedCount, count);
         }
 
-        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Count_after_SelectMany_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
 
         Assert.ThrowsAny<Exception>(() =>
@@ -3018,7 +3018,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // non-native, but its fallback can't rebuild a shaper over the by-index SelectMany projection
         // ("Calling 'ShapedQueryExpression.VisitChildren' is not allowed"). Exception type differs under NativeOnly,
         // hence ThrowsAny.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(SeedOwners(), mode, nameof(GroupBy_after_SelectMany_hard_fails_in_every_mode) + mode);
 
@@ -3034,7 +3034,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Another_SelectMany_after_SelectMany_hard_fails_in_every_mode()
     {
         // `new[] { r.Name }` isn't a nested Queryable.Select, so NativeSelectManyBinder.TryBind rejects it: hard fail.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(SeedOwners(), mode,
                 nameof(Another_SelectMany_after_SelectMany_hard_fails_in_every_mode) + mode);
@@ -3056,9 +3056,9 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // only), so it throws in every mode rather than returning stale data.
         var seed = SeedOwners();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Operator_after_SelectMany_is_unsupported_and_never_returns_silent_wrong_data) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Operator_after_SelectMany_is_unsupported_and_never_returns_silent_wrong_data) + "D");
 
         Exception? Run(SingleEntityDbContext<Owner> db) => Record.Exception(() =>
@@ -3079,17 +3079,17 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // composition and throw under NativeOnly.
         var seed = SeedOwners();
 
-        using var oneArg = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var oneArg = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Bare_owned_whole_inner_element_goes_native_all_three_spellings) + "OneArg");
         var r1 = oneArg.Entities.AsNoTracking().SelectMany(o => o.Items)
             .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
 
-        using var query = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var query = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Bare_owned_whole_inner_element_goes_native_all_three_spellings) + "Query");
         var r2 = (from o in query.Entities.AsNoTracking() from i in o.Items select i)
             .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
 
-        using var explicitSel = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var explicitSel = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Bare_owned_whole_inner_element_goes_native_all_three_spellings) + "Explicit");
         var r3 = explicitSel.Entities.AsNoTracking().SelectMany(o => o.Items, (o, i) => i)
             .AsEnumerable().Select(i => i.Name).OrderBy(n => n).ToList();
@@ -3105,7 +3105,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Bob's empty Items contributes zero rows (inner-flatten).
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Bare_owned_whole_inner_element_owner_with_zero_items_contributes_no_rows));
 
         var result = db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList();
@@ -3119,7 +3119,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Item shares "Name" with Owner: the re-rooted shaper must return item names, not owner names.
         var seed = SeedOwners();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Bare_owned_whole_inner_element_reads_root_relative_not_owner_scoped));
 
         var names = db.Entities.AsNoTracking().SelectMany(o => o.Items)
@@ -3136,7 +3136,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // Whole-outer form (`select o`): IsWholeInnerEntitySelector requires Member.Name == "Inner", so this declines
         // with NotSupportedException at translation time in every mode, regardless of tracking. $replaceRoot re-rooting
         // only targets the inner element, so there's no native form for this.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             var seed = SeedOwners();
 
@@ -3154,7 +3154,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // trailing `ti => ti.Outer` Select (verified on EF8/EF9/EF10), so it reaches the same whole-outer guard and
         // declines cleanly (EF-354). Reference counterpart:
         // Reference_form_whole_outer_result_still_declines_cleanly_in_every_mode.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             var seed = SeedOwners();
 
@@ -3231,7 +3231,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         // Ordered client-side: operators after a native SelectMany hard-fail.
@@ -3270,7 +3270,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         var ex = Assert.Throws<NotSupportedException>(() =>
@@ -3329,7 +3329,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         // Ordered client-side: operators after a native SelectMany hard-fail.
@@ -3400,7 +3400,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         var ex = Assert.Throws<NotSupportedException>(() =>
@@ -3453,7 +3453,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         var ex = Assert.Throws<NotSupportedException>(() =>
@@ -3501,7 +3501,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         var names = db.Entities.AsNoTracking().SelectMany(o => o.Items)
@@ -3555,7 +3555,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         // Confirms the fixture really is shared-type.
@@ -3581,7 +3581,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .OrderBy(r => r.Price)
             .ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Explicit_result_selector_form_followed_by_OrderBy_falls_back_gracefully_except_under_NativeOnly) + mode);
@@ -3593,7 +3593,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             Assert.Equal(expected, result);
         }
 
-        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_form_followed_by_OrderBy_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
 
         Assert.ThrowsAny<Exception>(() =>
@@ -3614,7 +3614,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .Skip(1)
             .ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Explicit_result_selector_form_followed_by_Skip_falls_back_gracefully_except_under_NativeOnly) + mode);
@@ -3626,7 +3626,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             Assert.Equal(expected, result);
         }
 
-        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_form_followed_by_Skip_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
 
         Assert.ThrowsAny<Exception>(() =>
@@ -3646,7 +3646,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .Take(1)
             .ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Explicit_result_selector_form_followed_by_Take_falls_back_gracefully_except_under_NativeOnly) + mode);
@@ -3658,7 +3658,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             Assert.Equal(expected, result);
         }
 
-        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_form_followed_by_Take_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
 
         Assert.ThrowsAny<Exception>(() =>
@@ -3675,7 +3675,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var seed = SeedOwners();
         var expectedCount = seed.SelectMany(o => o.Items, (o, i) => new { o.Name, i.Price }).Count();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Explicit_result_selector_form_followed_by_Count_falls_back_gracefully_except_under_NativeOnly) + mode);
@@ -3684,7 +3684,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             Assert.Equal(expectedCount, count);
         }
 
-        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_form_followed_by_Count_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
 
         Assert.ThrowsAny<Exception>(() =>
@@ -3706,7 +3706,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .ToList();
         Assert.Equal(new[] { "Alice", "Carol", "Match" }, expected.Select(r => r.Name).ToArray()); // Bob (0 items) contributes no rows
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Explicit_result_selector_form_followed_by_Distinct_falls_back_gracefully_except_under_NativeOnly) + mode);
@@ -3720,7 +3720,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             Assert.Equal(expected, result);
         }
 
-        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_form_followed_by_Distinct_falls_back_gracefully_except_under_NativeOnly) + "NativeOnly");
 
         Assert.ThrowsAny<Exception>(() =>
@@ -3732,7 +3732,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Unlike Where/OrderBy/Skip/Take/Count, GroupBy hard-fails in every mode: TranslateGroupBy's fallback can't
         // rebuild a shaper over the by-index SelectMany projection, whichever form produced it.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(SeedOwners(), mode,
                 nameof(Explicit_result_selector_form_followed_by_GroupBy_hard_fails_in_every_mode) + mode);
@@ -3750,7 +3750,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // A second SelectMany over `new[] { r.Name }` hard-fails in every mode: NativeSelectManyBinder.TryBind
         // rejects it, and LINQ v3 can't translate the array-literal shape under DriverLinq either.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateContext(SeedOwners(), mode,
                 nameof(Explicit_result_selector_form_followed_by_another_SelectMany_hard_fails_in_every_mode) + mode);
@@ -3770,7 +3770,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // through PlaceholderTable.
         var seed = SeedOwners();
         var p = "Alice";
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Explicit_result_selector_form_parametrized_outer_predicate_composes_correctly_with_native_SelectMany));
 
         var result = db.Entities
@@ -3797,7 +3797,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // guard throws the same InvalidOperationException in every mode.
         var seed = SeedOwners();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var explicitDb = CreateContext(seed, mode,
                 nameof(Whole_inner_entity_form_tracking_query_throws_InvalidOperationException_in_every_mode) + mode + "Explicit");
@@ -3815,7 +3815,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     public void Reference_form_bare_entity_tracking_query_returns_tracked_entities()
     {
         // Unlike owned elements, reference entities have their own key and are tracked normally.
-        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var db = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_bare_entity_tracking_query_returns_tracked_entities), out _, out var items);
 
         var tracked = db.Owners.SelectMany(o => o.Refs).ToList(); // default tracking (no AsNoTracking)
@@ -3844,14 +3844,14 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // MarkNotNativelyRepresentable(), whose fallback fails with EF Core's plain TranslationFailed
         // InvalidOperationException under Native/DriverLinq; NativeOnly throws its own exception. The
         // owned-sub-navigation test below is the one that reaches the representability guard.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateEagerRefContext(mode,
                 nameof(Reference_form_bare_entity_with_cross_collection_autoinclude_declines_cleanly_in_every_mode) + mode);
             Assert.Throws<InvalidOperationException>(() => db.Parents.SelectMany(p => p.EagerChildren).ToList());
         }
 
-        using var nativeOnlyDb = CreateEagerRefContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateEagerRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_bare_entity_with_cross_collection_autoinclude_declines_cleanly_in_every_mode) + "NativeOnly");
         Assert.ThrowsAny<Exception>(() => nativeOnlyDb.Parents.SelectMany(p => p.EagerChildren).ToList());
     }
@@ -3862,7 +3862,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // An owned sub-navigation on the reference element is a single-hop IncludeExpression(ti.Inner, ownedNav),
         // which TryGetWholeEntityMemberAccess unwraps, so IsWholeElementRepresentable's eager-nav check declines it
         // with NotSupportedException at translation time, identically in every mode.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateOwnedSubNavContext(mode,
                 nameof(Reference_form_bare_entity_with_owned_embedded_navigation_declines_cleanly_via_representability_guard) + mode);
@@ -3873,7 +3873,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_whole_outer_result_still_declines_cleanly_in_every_mode()
     {
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly })
         {
             using var db = CreateRefContext(mode,
                 nameof(Reference_form_whole_outer_result_still_declines_cleanly_in_every_mode) + mode, out _, out _);
@@ -3886,14 +3886,14 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // A Where after the native reference SelectMany: the MarkNotNativelyRepresentable() fallback has no
         // driver-LINQ baseline, so Native/DriverLinq throw InvalidOperationException; NativeOnly throws its own.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateRefContext(mode,
                 nameof(Reference_form_bare_entity_followed_by_Where_hard_fails_in_every_mode) + mode, out _, out _);
             Assert.Throws<InvalidOperationException>(() => db.Owners.SelectMany(o => o.Refs).Where(r => r.Tag != "").ToList());
         }
 
-        using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateRefContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_form_bare_entity_followed_by_Where_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
         Assert.ThrowsAny<Exception>(() => nativeOnlyDb.Owners.SelectMany(o => o.Refs).Where(r => r.Tag != "").ToList());
     }
@@ -3946,7 +3946,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         // Ordered client-side: operators after a native SelectMany hard-fail.
@@ -4007,7 +4007,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         var optionsBuilder = new DbContextOptionsBuilder<XRefDbContext>()
             .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-        new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(MongoQueryMode.NativeOnly);
+        new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(MongoQueryProvider.NativeOnly);
 
         using var db = new XRefDbContext(optionsBuilder.Options, ownersCollection, targetsCollection);
 
@@ -4029,7 +4029,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // Price > 5m keeps Widget and Gadget; the unfiltered side is all five items. 2 + 5 = 7 either way round.
         Assert.Equal(7, seed.SelectMany(o => o.Items.Where(i => i.Price > 5m)).Concat(seed.SelectMany(o => o.Items)).Count());
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = CreateContext(
                 seed, mode, nameof(Whole_owned_element_SelectMany_as_set_op_operand_does_not_go_native) + mode);
@@ -4040,7 +4040,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             var rightFiltered = Record.Exception(() => owners.SelectMany(o => o.Items)
                 .Concat(owners.SelectMany(o => o.Items.Where(i => i.Price > 5m))).ToList());
 
-            if (mode == MongoQueryMode.NativeOnly)
+            if (mode == MongoQueryProvider.NativeOnly)
             {
                 Assert.IsType<NativeTranslationNotSupportedException>(leftFiltered);
                 Assert.IsType<NativeTranslationNotSupportedException>(rightFiltered);

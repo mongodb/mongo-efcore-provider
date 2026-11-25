@@ -927,7 +927,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
     private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
 
-    // Unsupported shapes must fail as a translation failure; the exception type depends on query mode and how
+    // Unsupported shapes must fail as a translation failure; the exception type depends on query provider and how
     // far the driver-LINQ fallback gets. Data-assertion failures are not accepted, so wrong data stays red.
     protected new static Task AssertTranslationFailed(Func<Task> query)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);

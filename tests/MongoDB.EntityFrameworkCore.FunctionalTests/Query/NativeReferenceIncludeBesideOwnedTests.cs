@@ -113,9 +113,9 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
         public DbSet<Reply> Replies { get; set; } = null!;
         public DbSet<Product> Products { get; set; } = null!;
 
-        public BesideDbContext(TemporaryDatabaseFixture database, string suffix, MongoQueryMode mode)
+        public BesideDbContext(TemporaryDatabaseFixture database, string suffix, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<BesideDbContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryProvider(mode))
                 .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)
@@ -241,24 +241,24 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
     {
         var suffix = Seed(test);
 
-        string[] Run(MongoQueryMode mode)
+        string[] Run(MongoQueryProvider mode)
         {
             using var db = new BesideDbContext(database, suffix, mode);
             var rows = query(db).Select(Describe);
             return (ordered ? rows : rows.Order()).ToArray();
         }
 
-        var oracle = Run(MongoQueryMode.DriverLinq);
-        Assert.Equal(oracle, Run(MongoQueryMode.Native));
+        var oracle = Run(MongoQueryProvider.DriverLinq);
+        Assert.Equal(oracle, Run(MongoQueryProvider.Native));
 
         if (expectNative)
         {
-            var native = Run(MongoQueryMode.NativeOnly);
+            var native = Run(MongoQueryProvider.NativeOnly);
             Assert.Equal(oracle, native);
             return native;
         }
 
-        Assert.ThrowsAny<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
+        Assert.ThrowsAny<NativeTranslationNotSupportedException>(() => Run(MongoQueryProvider.NativeOnly));
         return oracle;
     }
 
@@ -337,16 +337,16 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
     {
         var suffix = Seed(nameof(Include_beside_owned_navigations_tracked_and_no_tracking));
 
-        string[] Run(MongoQueryMode mode, Func<IQueryable<Item>, IQueryable<Item>> shape)
+        string[] Run(MongoQueryProvider mode, Func<IQueryable<Item>, IQueryable<Item>> shape)
         {
             using var db = new BesideDbContext(database, suffix, mode);
             return shape(db.Items.Include(i => i.Account).OrderBy(i => i.Title)).ToList().Select(Describe).ToArray();
         }
 
-        var oracle = Run(MongoQueryMode.DriverLinq, q => q);
-        Assert.Equal(oracle, Run(MongoQueryMode.NativeOnly, q => q));
-        Assert.Equal(oracle, Run(MongoQueryMode.NativeOnly, q => q.AsNoTracking()));
-        Assert.Equal(oracle, Run(MongoQueryMode.NativeOnly, q => q.AsNoTrackingWithIdentityResolution()));
+        var oracle = Run(MongoQueryProvider.DriverLinq, q => q);
+        Assert.Equal(oracle, Run(MongoQueryProvider.NativeOnly, q => q));
+        Assert.Equal(oracle, Run(MongoQueryProvider.NativeOnly, q => q.AsNoTracking()));
+        Assert.Equal(oracle, Run(MongoQueryProvider.NativeOnly, q => q.AsNoTrackingWithIdentityResolution()));
     }
 
     [Fact]
@@ -369,7 +369,7 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
         // (an admission that ignored the nested include would answer air/-).
         var suffix = Seed(nameof(A_reference_hosted_by_the_owned_sibling_beside_the_reference_Include_answers_like_the_oracle));
 
-        string[] Run(MongoQueryMode mode, bool thenInclude)
+        string[] Run(MongoQueryProvider mode, bool thenInclude)
         {
             using var db = new BesideDbContext(database, suffix, mode);
             var query = thenInclude
@@ -380,9 +380,9 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
 
         foreach (var thenInclude in new[] { false, true })
         {
-            var oracle = Run(MongoQueryMode.DriverLinq, thenInclude);
+            var oracle = Run(MongoQueryProvider.DriverLinq, thenInclude);
             Assert.StartsWith("t1|acme|air/fastco|", oracle[0]);
-            Assert.Equal(oracle, Run(MongoQueryMode.Native, thenInclude));
+            Assert.Equal(oracle, Run(MongoQueryProvider.Native, thenInclude));
         }
     }
 
@@ -394,7 +394,7 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
         // would leave Product null.
         var suffix = Seed(nameof(A_reference_hosted_by_an_owned_collection_element_beside_the_reference_Include_loads_the_product));
 
-        string[] Run(MongoQueryMode mode)
+        string[] Run(MongoQueryProvider mode)
         {
             using var db = new BesideDbContext(database, suffix, mode);
             return db.Items.Include(i => i.Account).Include(i => i.Lines).ThenInclude(l => l.Product).OrderBy(i => i.Title).ToList()
@@ -404,9 +404,9 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
         // Driver-LINQ cannot translate a ThenInclude through an owned collection; Native must refuse it too rather than return rows
         // whose Product is silently null (an admission treating the owned collection as transparent would).
         string[]? oracle = null;
-        var oracleFailure = Record.Exception(() => oracle = Run(MongoQueryMode.DriverLinq));
+        var oracleFailure = Record.Exception(() => oracle = Run(MongoQueryProvider.DriverLinq));
         string[]? native = null;
-        var nativeFailure = Record.Exception(() => native = Run(MongoQueryMode.Native));
+        var nativeFailure = Record.Exception(() => native = Run(MongoQueryProvider.Native));
 
         if (oracleFailure is null)
         {

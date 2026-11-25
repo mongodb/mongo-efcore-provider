@@ -93,7 +93,7 @@ public class NativePrimitiveCollectionTests(TemporaryDatabaseFixture database) :
         var collection = Seed();
 
         // Stored as one delimited string: there is no array to size or index.
-        List<string> Run(MongoQueryMode mode)
+        List<string> Run(MongoQueryProvider mode)
         {
             using var db = SingleEntityDbContext.Create(
                 collection,
@@ -102,23 +102,23 @@ public class NativePrimitiveCollectionTests(TemporaryDatabaseFixture database) :
                 optionsBuilderAction: b =>
                 {
                     b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                    new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                    new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
                 });
             return db.Entities.Where(x => x.Tags.Length > 1).Select(x => x.Name).ToList();
         }
 
         // NativeOnly declines; Native falls back to driver-LINQ, which refuses a value-converted property (EF-337).
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
-        Assert.Throws<NotSupportedException>(() => Run(MongoQueryMode.Native));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryProvider.NativeOnly));
+        Assert.Throws<NotSupportedException>(() => Run(MongoQueryProvider.Native));
     }
 
-    private static SingleEntityDbContext<TagRow> Create(IMongoCollection<TagRow> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<TagRow> Create(IMongoCollection<TagRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<TagRow> Seed()

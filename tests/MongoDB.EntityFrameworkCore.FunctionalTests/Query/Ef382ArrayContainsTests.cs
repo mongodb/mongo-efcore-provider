@@ -54,7 +54,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     {
         var collection = Seed(nameof(Array_field_contains_constant_goes_native_and_returns_correct_rows));
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeLabels = native.Entities
             .Where(e => e.Tags.Contains("keep"))
             .OrderBy(e => e.Label)
@@ -62,7 +62,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             .ToList();
         Assert.Equal(["A", "C"], nativeLabels);
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities
             .Where(e => e.Tags.Contains("keep"))
             .OrderBy(e => e.Label)
@@ -78,7 +78,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     {
         var collection = Seed(nameof(Negated_array_field_contains_constant_goes_native_and_returns_correct_rows));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var labels = nativeOnly.Entities
             .Where(e => !e.Tags.Contains("keep"))
             .OrderBy(e => e.Label)
@@ -96,7 +96,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     {
         var collection = Seed(nameof(Array_field_of_guids_contains_constant_goes_native_and_returns_correct_rows));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var labels = nativeOnly.Entities
             .Where(e => e.Codes.Contains(CodeA))
             .OrderBy(e => e.Label)
@@ -112,7 +112,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
         var collection = Seed(nameof(Values_contains_field_is_unaffected_and_still_goes_native_as_in));
         var labelsToMatch = new[] { "A", "B" };
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var labels = nativeOnly.Entities
             .Where(e => labelsToMatch.Contains(e.Label))
             .OrderBy(e => e.Label)
@@ -163,7 +163,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         var names = nativeOnly.Entities
@@ -208,7 +208,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         Assert.Throws<NativeTranslationNotSupportedException>(
@@ -284,7 +284,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
                    optionsBuilderAction: b =>
                    {
                        b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                       new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.Native);
+                       new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.Native);
                    }))
         {
             expected = db.Entities.AsNoTracking().ToList()
@@ -297,7 +297,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
                    optionsBuilderAction: b =>
                    {
                        b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                       new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                       new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
                    }))
         {
             actual = db.Entities.AsNoTracking().Where(predicate).ToList()
@@ -319,7 +319,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
         // NativeOnly.
         var collection = Seed(nameof(Array_contains_as_a_computed_sort_key_declines_cleanly));
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var labels = native.Entities
             .OrderBy(e => e.Tags.Contains("keep"))
             .ThenBy(e => e.Label)
@@ -328,7 +328,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
 
         Assert.Equal(["B", "A", "C"], labels);
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var ex = Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities
                 .OrderBy(e => e.Tags.Contains("keep"))
@@ -337,7 +337,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
                 .ToList());
         // The message is the gate's "forbids the driver-LINQ fallback" one (a translate-time decline), not the
         // renderer's "does not support node type" throw; that contrast with the count position below is the point.
-        Assert.Contains("MongoQueryMode.NativeOnly forbids the driver-LINQ fallback", ex.Message);
+        Assert.Contains("MongoQueryProvider.NativeOnly forbids the driver-LINQ fallback", ex.Message);
         Assert.DoesNotContain("MongoAggregationExpressionRenderer", ex.Message);
     }
 
@@ -365,7 +365,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             }
         ]);
 
-        using (var native = CreateQuantifierContext(mongoCollection, MongoQueryMode.Native))
+        using (var native = CreateQuantifierContext(mongoCollection, MongoQueryProvider.Native))
         {
             var counts = native.Entities
                 .OrderBy(o => o.Title)
@@ -375,7 +375,7 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
             Assert.Equal([("mixed", 1), ("noneKeep", 0)], counts.Select(c => (c.Title, c.N)));
         }
 
-        using (var nativeOnly = CreateQuantifierContext(mongoCollection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateQuantifierContext(mongoCollection, MongoQueryProvider.NativeOnly))
         {
             var ex = Assert.Throws<NativeTranslationNotSupportedException>(
                 () => nativeOnly.Entities
@@ -389,14 +389,14 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     }
 
     private static SingleEntityDbContext<QuantifierOwner> CreateQuantifierContext(
-        IMongoCollection<QuantifierOwner> collection, MongoQueryMode mode)
+        IMongoCollection<QuantifierOwner> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             QuantifierModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Row> Seed(string name)
@@ -413,12 +413,12 @@ public class Ef382ArrayContainsTests(TemporaryDatabaseFixture database) : IClass
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

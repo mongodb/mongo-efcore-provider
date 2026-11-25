@@ -46,13 +46,13 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // `new { o, b }` has whole-entity Outer and Inner leaves, which the join-scope binder stages whole; the inner
         // $unwind reproduces inner-join semantics (O3's dangling BuyerId drops it). A user join with no confirming
         // projection would still fall back (HasUnconfirmedCandidateJoin).
-        using var nativeOnlyDb = CreateContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(User_join_projecting_both_whole_entities_goes_native_with_inner_join_results) + "_NativeOnly");
         var nativeResults = nativeOnlyDb.Orders
             .Join(nativeOnlyDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => new { o, b })
             .ToList();
 
-        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(User_join_projecting_both_whole_entities_goes_native_with_inner_join_results) + "_DriverLinq");
         var driverResults = driverDb.Orders
             .Join(driverDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => new { o, b })
@@ -71,13 +71,13 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // EF normalizes `(o, b) => o` to a TransparentIdentifier join plus `Select(x => x.Outer)`, which the
         // bare-whole-entity arm confirms. The inner $unwind reproduces inner-join semantics: O3's dangling
         // BuyerId drops it, leaving 3 of 4 orders.
-        using var nativeOnlyDb = CreateContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(User_join_projecting_the_whole_outer_entity_goes_native_with_correct_results) + "_NativeOnly");
         var nativeResults = nativeOnlyDb.Orders
             .Join(nativeOnlyDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o)
             .ToList();
 
-        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(User_join_projecting_the_whole_outer_entity_goes_native_with_correct_results) + "_DriverLinq");
         var driverResults = driverDb.Orders
             .Join(driverDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o)
@@ -93,7 +93,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Required_reference_Include_goes_native_with_an_inner_unwind()
     {
-        using var db = CreateContext(MongoQueryMode.NativeOnly,
+        using var db = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Required_reference_Include_goes_native_with_an_inner_unwind), out var spyLogger);
 
         var results = db.Orders.Include(o => o.Buyer).ToList();
@@ -111,7 +111,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // EF auto-includes an owned navigation on the Include target (Buyer.Address) the same way it nests a
         // real ThenInclude; a guard that declined any nested IncludeExpression would exclude every target with
         // owned types. Also asserts the owned data materializes through the native path.
-        using var db = CreateContext(MongoQueryMode.NativeOnly,
+        using var db = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_Include_whose_target_owns_an_embedded_type_still_goes_native), out var spyLogger);
 
         var results = db.Orders.Include(o => o.Buyer).ToList();
@@ -130,7 +130,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // A real nav (Region) ThenIncluded under an owned one (Address) is a reference declared on an owned type, reached
         // through a single-reference owned hop: the Region $lookup reads its key at "_lookup_Buyer.Address.RegionId",
         // which the confirm step verifies (OwnedHopLocalFieldMatches). NativeOnly succeeding is the "went native" signal.
-        using var db = CreateContext(MongoQueryMode.NativeOnly,
+        using var db = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(A_real_ThenInclude_nested_underneath_an_embedded_hop_goes_native));
 
         var orders = db.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region).ToList();
@@ -144,7 +144,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     {
         // Sibling Includes with different target types. NativeOnly proves native; Native == DriverLinq proves
         // the two independently-scoped $lookups return the right rows.
-        using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Sibling_reference_Includes_go_native_with_correct_data) + "_NativeOnly");
         var nativeOnlyResults = nativeOnly.Lines.Include(l => l.Order).Include(l => l.Product).ToList();
 
@@ -153,11 +153,11 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.All(nativeOnlyResults, l => Assert.NotNull(l.Order));
         Assert.All(nativeOnlyResults, l => Assert.NotNull(l.Product));
 
-        using var nativeDb = CreateContext(MongoQueryMode.Native,
+        using var nativeDb = CreateContext(MongoQueryProvider.Native,
             nameof(Sibling_reference_Includes_go_native_with_correct_data) + "_Native");
         var nativeResults = nativeDb.Lines.Include(l => l.Order).Include(l => l.Product).ToList();
 
-        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(Sibling_reference_Includes_go_native_with_correct_data) + "_DriverLinq");
         var driverResults = driverDb.Lines.Include(l => l.Order).Include(l => l.Product).ToList();
 
@@ -172,7 +172,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // Same target type (Buyer) for Author and Editor: InnerCollections is keyed by entity type and would
         // collapse the two joins, so correctness must rest on Joins (one entry per join) and the
         // navigation-keyed $lookup alias.
-        using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Same_target_sibling_reference_Includes_go_native_with_correct_data) + "_NativeOnly");
         var nativeOnlyResults = nativeOnly.Docs.Include(d => d.Author).Include(d => d.Editor).ToList();
 
@@ -183,11 +183,11 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotNull(only.Editor);
         Assert.NotEqual(only.Author.Id, only.Editor.Id);
 
-        using var nativeDb = CreateContext(MongoQueryMode.Native,
+        using var nativeDb = CreateContext(MongoQueryProvider.Native,
             nameof(Same_target_sibling_reference_Includes_go_native_with_correct_data) + "_Native");
         var nativeResults = nativeDb.Docs.Include(d => d.Author).Include(d => d.Editor).ToList();
 
-        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(Same_target_sibling_reference_Includes_go_native_with_correct_data) + "_DriverLinq");
         var driverResults = driverDb.Docs.Include(d => d.Author).Include(d => d.Editor).ToList();
 
@@ -199,7 +199,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     public void Reference_and_collection_Include_combo_goes_native_with_correct_data()
     {
         // Buyer (reference, forced-unwind $lookup) and Lines (collection, flat $lookup) on the same query.
-        using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_and_collection_Include_combo_goes_native_with_correct_data) + "_NativeOnly");
         var nativeOnlyResults = nativeOnly.Orders.Include(o => o.Buyer).Include(o => o.Lines).ToList();
 
@@ -212,11 +212,11 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         var order4 = Assert.Single(nativeOnlyResults, o => o.Total == 35);
         Assert.Empty(order4.Lines);
 
-        using var nativeDb = CreateContext(MongoQueryMode.Native,
+        using var nativeDb = CreateContext(MongoQueryProvider.Native,
             nameof(Reference_and_collection_Include_combo_goes_native_with_correct_data) + "_Native");
         var nativeResults = nativeDb.Orders.Include(o => o.Buyer).Include(o => o.Lines).ToList();
 
-        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(Reference_and_collection_Include_combo_goes_native_with_correct_data) + "_DriverLinq");
         var driverResults = driverDb.Orders.Include(o => o.Buyer).Include(o => o.Lines).ToList();
 
@@ -230,18 +230,18 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Reference_ThenInclude_chain_goes_native_with_correct_data()
     {
-        using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Reference_ThenInclude_chain_goes_native_with_correct_data) + "_NativeOnly");
         var nativeOnlyResults = nativeOnly.Lines.Include(l => l.Order).ThenInclude(o => o.Buyer).ToList();
 
         Assert.All(nativeOnlyResults, l => Assert.NotNull(l.Order));
         Assert.All(nativeOnlyResults, l => Assert.NotNull(l.Order.Buyer));
 
-        using var nativeDb = CreateContext(MongoQueryMode.Native,
+        using var nativeDb = CreateContext(MongoQueryProvider.Native,
             nameof(Reference_ThenInclude_chain_goes_native_with_correct_data) + "_Native");
         var nativeResults = nativeDb.Lines.Include(l => l.Order).ThenInclude(o => o.Buyer).ToList();
 
-        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(Reference_ThenInclude_chain_goes_native_with_correct_data) + "_DriverLinq");
         var driverResults = driverDb.Lines.Include(l => l.Order).ThenInclude(o => o.Buyer).ToList();
 
@@ -257,12 +257,12 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // Region: the join-stripping bridge (MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs) must scope
         // the second $lookup's localField under the first alias ("_lookup_Buyer.Address.RegionId"). On EF8/EF9
         // this relies on the LeftJoin shim being admitted (see IsEf8Ef9LeftJoinShim).
-        using var nativeDb = CreateContext(MongoQueryMode.Native,
+        using var nativeDb = CreateContext(MongoQueryProvider.Native,
             nameof(Deep_ThenInclude_through_embedded_hop_returns_correct_data_via_fallback) + "_Native");
         var nativeResults = nativeDb.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region)
             .ToList();
 
-        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(Deep_ThenInclude_through_embedded_hop_returns_correct_data_via_fallback) + "_DriverLinq");
         var driverResults = driverDb.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region)
             .ToList();
@@ -275,8 +275,8 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
 
     /// <summary>
     /// Shapes <c>TryConfirmReferenceInclude</c> must decline rather than silently admit. Each row asserts that
-    /// <see cref="MongoQueryMode.NativeOnly"/> throws and that <see cref="MongoQueryMode.Native"/> returns the same
-    /// rows (by value) as <see cref="MongoQueryMode.DriverLinq"/>.
+    /// <see cref="MongoQueryProvider.NativeOnly"/> throws and that <see cref="MongoQueryProvider.Native"/> returns the same
+    /// rows (by value) as <see cref="MongoQueryProvider.DriverLinq"/>.
     /// </summary>
     // Rows are description strings because a Func over the private ReferenceIncludeDbContext can't appear in a
     // public [Theory] signature (CS0050/CS0051); GetDeclinedShapeBuilder maps them back.
@@ -309,7 +309,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // A whole-entity Distinct() before a reference Include is an ordinary PipelineOp (MongoDistinctOp),
         // lowered to a $group/$replaceRoot dedup ahead of the $lookup/$unwind; the Include confirmation only
         // inspects the inner side, so it is unaffected.
-        using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+        using var nativeOnly = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Include_goes_native_with_correct_data) + "_NativeOnly");
         var nativeOnlyResults = nativeOnly.Orders.Distinct().Include(o => o.Buyer).ToList();
 
@@ -318,11 +318,11 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(3, nativeOnlyResults.Count);
         Assert.All(nativeOnlyResults, o => Assert.NotNull(o.Buyer));
 
-        using var nativeDb = CreateContext(MongoQueryMode.Native,
+        using var nativeDb = CreateContext(MongoQueryProvider.Native,
             nameof(Distinct_then_Include_goes_native_with_correct_data) + "_Native");
         var nativeResults = nativeDb.Orders.Distinct().Include(o => o.Buyer).ToList();
 
-        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Include_goes_native_with_correct_data) + "_DriverLinq");
         var driverResults = driverDb.Orders.Distinct().Include(o => o.Buyer).ToList();
 
@@ -340,7 +340,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         var testName = nameof(Declined_shapes_throw_under_NativeOnly_and_match_DriverLinq_under_Native) + "_"
             + description.Replace(" ", "_").Replace("/", "_");
 
-        using (var nativeOnly = CreateContext(MongoQueryMode.NativeOnly, testName + "_NativeOnly"))
+        using (var nativeOnly = CreateContext(MongoQueryProvider.NativeOnly, testName + "_NativeOnly"))
         {
             var ex = Assert.Throws<NativeTranslationNotSupportedException>(
                 () => build(nativeOnly).Cast<object>().ToList());
@@ -358,8 +358,8 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             return;
         }
 
-        using var native = CreateContext(MongoQueryMode.Native, testName + "_Native");
-        using var driverLinq = CreateContext(MongoQueryMode.DriverLinq, testName + "_DriverLinq");
+        using var native = CreateContext(MongoQueryProvider.Native, testName + "_Native");
+        using var driverLinq = CreateContext(MongoQueryProvider.DriverLinq, testName + "_DriverLinq");
 
         var nativeRows = build(native).Cast<object>().ToList();
         var driverRows = build(driverLinq).Cast<object>().ToList();
@@ -395,18 +395,18 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Composite_FK_and_PK_still_declines_and_has_no_driver_linq_oracle()
     {
-        using (var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+        using (var nativeOnly = CreateContext(MongoQueryProvider.NativeOnly,
                    nameof(Composite_FK_and_PK_still_declines_and_has_no_driver_linq_oracle) + "_NativeOnly"))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => nativeOnly.CompositeLines.Include(l => l.Order).ToList());
         }
 
-        using var native = CreateContext(MongoQueryMode.Native,
+        using var native = CreateContext(MongoQueryProvider.Native,
             nameof(Composite_FK_and_PK_still_declines_and_has_no_driver_linq_oracle) + "_Native");
         Assert.ThrowsAny<Exception>(() => native.CompositeLines.Include(l => l.Order).ToList());
 
-        using var driverLinq = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(Composite_FK_and_PK_still_declines_and_has_no_driver_linq_oracle) + "_DriverLinq");
         Assert.ThrowsAny<Exception>(() => driverLinq.CompositeLines.Include(l => l.Order).ToList());
     }
@@ -419,7 +419,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Query_filter_on_the_included_target_still_declines()
     {
-        using (var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+        using (var nativeOnly = CreateContext(MongoQueryProvider.NativeOnly,
                    nameof(Query_filter_on_the_included_target_still_declines) + "_NativeOnly", buyerQueryFilter: true))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
@@ -428,7 +428,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         // Driver 3.11 rejects a join over a filtered inner sub-query, so the fallback modes throw rather than
         // return a countable row set. What's pinned: no route returns unfiltered rows.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(mode,
                 nameof(Query_filter_on_the_included_target_still_declines) + "_" + mode, buyerQueryFilter: true);
@@ -437,7 +437,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         }
 
         // Non-vacuity control: without the filter the same Include runs natively, so the failure is filter-specific.
-        using var unfiltered = CreateContext(MongoQueryMode.NativeOnly,
+        using var unfiltered = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Query_filter_on_the_included_target_still_declines) + "_Unfiltered", buyerQueryFilter: false);
         Assert.NotEmpty(unfiltered.Orders.Include(o => o.Buyer).ToList());
     }
@@ -459,13 +459,13 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         // Driver 3.11 throws on the fallback modes (see Query_filter_on_the_included_target_still_declines);
         // pins that a TPH-root-inherited filter is never silently dropped.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = new TphFilterDbContext(database, tickets, parties, mode);
             Assert.Throws<ExpressionNotSupportedException>(() => db.Tickets.Include(t => t.Owner).ToList());
         }
 
-        using var nativeOnly = new TphFilterDbContext(database, tickets, parties, MongoQueryMode.NativeOnly);
+        using var nativeOnly = new TphFilterDbContext(database, tickets, parties, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Tickets.Include(t => t.Owner).ToList());
     }
@@ -478,13 +478,13 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         SeedNamedFilterModel(cards, members);
 
         // As the TPH test above, for an EF10 named filter (GetDeclaredQueryFilters(), not GetQueryFilter()).
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = new NamedFilterDbContext(database, cards, members, mode);
             Assert.Throws<ExpressionNotSupportedException>(() => db.Cards.Include(c => c.Member).ToList());
         }
 
-        using var nativeOnly = new NamedFilterDbContext(database, cards, members, MongoQueryMode.NativeOnly);
+        using var nativeOnly = new NamedFilterDbContext(database, cards, members, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Cards.Include(c => c.Member).ToList());
     }
@@ -501,7 +501,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     // so the soft-deleted party is stored too.
     private void SeedTphFilterModel(string ticketsCollection, string partiesCollection)
     {
-        using var seed = new TphFilterDbContext(database, ticketsCollection, partiesCollection, MongoQueryMode.DriverLinq);
+        using var seed = new TphFilterDbContext(database, ticketsCollection, partiesCollection, MongoQueryProvider.DriverLinq);
         var live = new VipParty { Id = ObjectId.GenerateNewId(), Name = "Live", IsDeleted = false };
         var deleted = new VipParty { Id = ObjectId.GenerateNewId(), Name = "Gone", IsDeleted = true };
         seed.Parties.AddRange(live, deleted);
@@ -514,7 +514,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
 #if !EF8 && !EF9
     private void SeedNamedFilterModel(string cardsCollection, string membersCollection)
     {
-        using var seed = new NamedFilterDbContext(database, cardsCollection, membersCollection, MongoQueryMode.DriverLinq);
+        using var seed = new NamedFilterDbContext(database, cardsCollection, membersCollection, MongoQueryProvider.DriverLinq);
         var live = new Member { Id = ObjectId.GenerateNewId(), Name = "Live", IsDeleted = false };
         var deleted = new Member { Id = ObjectId.GenerateNewId(), Name = "Gone", IsDeleted = true };
         seed.Members.AddRange(live, deleted);
@@ -552,10 +552,10 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         public DbSet<Party> Parties { get; set; } = null!;
 
         public TphFilterDbContext(
-            TemporaryDatabaseFixture database, string ticketsCollection, string partiesCollection, MongoQueryMode mode)
+            TemporaryDatabaseFixture database, string ticketsCollection, string partiesCollection, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<TphFilterDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)
@@ -613,10 +613,10 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         public DbSet<Member> Members { get; set; } = null!;
 
         public NamedFilterDbContext(
-            TemporaryDatabaseFixture database, string cardsCollection, string membersCollection, MongoQueryMode mode)
+            TemporaryDatabaseFixture database, string cardsCollection, string membersCollection, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<NamedFilterDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)
@@ -653,7 +653,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Composed_Where_stays_ahead_of_the_lookup()
     {
-        using var db = CreateContext(MongoQueryMode.NativeOnly,
+        using var db = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Composed_Where_stays_ahead_of_the_lookup), out var spyLogger);
 
         var results = db.Orders.Where(o => o.Total > 10).Include(o => o.Buyer).ToList();
@@ -740,7 +740,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Optional_reference_Include_goes_native_with_a_left_outer_unwind()
     {
-        using var db = CreateContext(MongoQueryMode.NativeOnly,
+        using var db = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Optional_reference_Include_goes_native_with_a_left_outer_unwind), out var spyLogger);
 
         var results = db.Orders.Include(o => o.Carrier).ToList();
@@ -761,11 +761,11 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // true). A bare aggregation `{$ne: ["$_lookup_Carrier.Name", null]}` answers true for a missing operand
         // (unlike query-dialect `{field: null}`), so every row would look non-null and the sort would silently
         // degrade to the ThenBy key (see NativeSlotPopulator's innerSortScope arm).
-        using var nativeOnlyDb = CreateContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Plain_bool_null_check_sort_key_over_optional_join_inner_matches_oracle) + "_NativeOnly");
         var nativeResults = nativeOnlyDb.Orders.OrderBy(o => o.Carrier.Name != null).ThenBy(o => o.Total).ToList();
 
-        using var oracleDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var oracleDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(Plain_bool_null_check_sort_key_over_optional_join_inner_matches_oracle) + "_Oracle");
         var oracle = oracleDb.Orders.Include(o => o.Carrier).AsEnumerable()
             .OrderBy(o => o.Carrier?.Name != null).ThenBy(o => o.Total).Select(o => o.Total).ToList();
@@ -779,7 +779,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // Include(Buyer).Join(db.Buyers, ...) registers two candidate joins onto Buyer; InnerCollections (keyed
         // by entity type) collapses them to one entry, so only the candidate/confirmed counter catches this:
         // HasUnconfirmedCandidateJoin stays true and Route computes Fallback.
-        using var nativeOnlyDb = CreateContext(MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Two_joins_onto_the_same_target_stay_declined) + "_NativeOnly");
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
             nativeOnlyDb.Orders.Include(o => o.Buyer).Join(nativeOnlyDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o)
@@ -788,13 +788,13 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // Projects o.Id rather than the whole entity: driver LINQ mis-renders two chained Joins (second $lookup
         // localField "_outer._outer.BuyerId", "Document element is missing for required non-nullable property
         // 'Id'"), independent of Include.
-        using var nativeDb = CreateContext(MongoQueryMode.Native,
+        using var nativeDb = CreateContext(MongoQueryProvider.Native,
             nameof(Two_joins_onto_the_same_target_stay_declined) + "_Native");
         var nativeResults = nativeDb.Orders.Include(o => o.Buyer)
             .Join(nativeDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o.Id)
             .ToList();
 
-        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(Two_joins_onto_the_same_target_stay_declined) + "_DriverLinq");
         var driverResults = driverDb.Orders.Include(o => o.Buyer)
             .Join(driverDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o.Id)
@@ -814,7 +814,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // refuses the strip, the driver renders its own _outer/_inner LeftJoin, and the shaper (committed to
         // _lookup_Carrier) throws. GuardAgainstUnstrippableForceUnwindJoin turns any such future mismatch into
         // a clean InvalidOperationException.
-        using var db = CreateContext(MongoQueryMode.Native,
+        using var db = CreateContext(MongoQueryProvider.Native,
             nameof(Optional_reference_Include_with_a_reducer_and_a_navigation_null_predicate_falls_back_correctly),
             out var spyLogger);
 
@@ -832,12 +832,12 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     public void Native_and_DriverLinq_agree_on_reference_Include_with_a_reducer_and_a_navigation_null_predicate()
     {
         // Same shape as above; Native must agree with DriverLinq (compared by shape — separately seeded).
-        using var nativeDb = CreateContext(MongoQueryMode.Native,
+        using var nativeDb = CreateContext(MongoQueryProvider.Native,
             nameof(Native_and_DriverLinq_agree_on_reference_Include_with_a_reducer_and_a_navigation_null_predicate)
             + "_Native");
         var nativeResult = nativeDb.Orders.Include(o => o.Carrier).First(o => o.Carrier == null);
 
-        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(MongoQueryProvider.DriverLinq,
             nameof(Native_and_DriverLinq_agree_on_reference_Include_with_a_reducer_and_a_navigation_null_predicate)
             + "_DriverLinq");
         var driverResult = driverDb.Orders.Include(o => o.Carrier).First(o => o.Carrier == null);
@@ -847,7 +847,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
     private ReferenceIncludeDbContext CreateContext(
-        MongoQueryMode mode, string name, ILoggerFactory? loggerFactory = null, bool buyerQueryFilter = false)
+        MongoQueryProvider mode, string name, ILoggerFactory? loggerFactory = null, bool buyerQueryFilter = false)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "O" + suffix;
@@ -940,7 +940,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             compositeOrdersName, compositeLinesName, mode, loggerFactory, buyerQueryFilter);
     }
 
-    private ReferenceIncludeDbContext CreateContext(MongoQueryMode mode, string name, out SpyLoggerProvider spyLogger)
+    private ReferenceIncludeDbContext CreateContext(MongoQueryProvider mode, string name, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -1072,7 +1072,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         {
             var builder = new DbContextOptionsBuilder<UnidirectionalDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(MongoQueryMode.NativeOnly))
+                    b => b.UseQueryProvider(MongoQueryProvider.NativeOnly))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
@@ -1171,7 +1171,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             TemporaryDatabaseFixture database, string ordersCollection, string customersCollection)
             : base(new DbContextOptionsBuilder<UnidirectionalEagerTargetDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(MongoQueryMode.NativeOnly))
+                    b => b.UseQueryProvider(MongoQueryProvider.NativeOnly))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)
@@ -1246,7 +1246,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             TemporaryDatabaseFixture database, string ordersCollection, string buyersCollection,
             string carriersCollection, string regionsCollection, string productsCollection, string linesCollection,
             string docsCollection, string compositeOrdersCollection, string compositeLinesCollection,
-            MongoQueryMode mode, ILoggerFactory? loggerFactory, bool buyerQueryFilter = false)
+            MongoQueryProvider mode, ILoggerFactory? loggerFactory, bool buyerQueryFilter = false)
             : base(Configure(database, mode, loggerFactory))
         {
             _ordersCollection = ordersCollection;
@@ -1265,11 +1265,11 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         public string CarriersCollectionName => _carriersCollection;
 
         private static DbContextOptions<ReferenceIncludeDbContext> Configure(
-            TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var builder = new DbContextOptionsBuilder<ReferenceIncludeDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 

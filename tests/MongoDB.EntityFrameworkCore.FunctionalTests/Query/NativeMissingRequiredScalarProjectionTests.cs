@@ -87,13 +87,13 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
         var collection = Seed(nameof(Bare_scalar_projection_of_an_explicit_null_still_throws), nullRow: true);
 
         // Driver-LINQ throws FormatException; native throws InvalidOperationException. Only a MISSING element reads default.
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             Assert.Throws<FormatException>(
                 () => db.Entities.AsNoTracking().Where(x => x.Title == "d").Select(x => x.Rank).ToList());
         }
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(
@@ -107,7 +107,7 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
     {
         var collection = Seed(nameof(Whole_entity_read_of_a_missing_required_element_still_throws), nullRow: false);
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(
@@ -132,14 +132,14 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
     {
         var collection = Seed(nameof(Computed_projection_over_a_missing_required_element_throws) + shape, nullRow: false);
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() => RunComputed(db, shape, wellFormedOnly: false));
             NullableValueMessage.AssertIs(ex.Message);
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             var ex = Assert.Throws<FormatException>(() => RunComputed(db, shape, wellFormedOnly: false));
             Assert.Contains("Cannot deserialize a 'Int32' from BsonType 'Null'", ex.ToString());
@@ -241,14 +241,14 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
     {
         var collection = Seed(nameof(Distinct_over_a_computed_leaf_over_a_missing_required_element_throws) + shape, nullRow: false);
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() => RunDistinct(db, shape, wellFormedOnly: false));
             NullableValueMessage.AssertIs(ex.Message);
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             var ex = Assert.Throws<FormatException>(() => RunDistinct(db, shape, wellFormedOnly: false));
             Assert.Contains("Cannot deserialize a 'Int32' from BsonType 'Null'", ex.ToString());
@@ -331,7 +331,7 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
         var collection = Seed(nameof(Projection_over_a_missing_or_null_required_element_matches_main) + shape, nullRow: true);
         var (run, main) = MainParityShapes[shape];
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             var perRow = new List<string>();
             foreach (var row in new[] { "a", "b", "c", "d" })
@@ -367,7 +367,7 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
     {
         var collection = Seed(nameof(Missing_required_element_divergences_from_main_are_loud), nullRow: false);
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = CreateContext(collection, mode);
             var row = db.Entities.AsNoTracking().Where(x => x.Title == "c");
@@ -379,7 +379,7 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
                 Assert.Throws<InvalidOperationException>(() => row.Select(x => x.Title == "zz" ? x.Score!.Value : x.Rank).ToList()).Message);
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             var row = db.Entities.AsNoTracking().Where(x => x.Title == "c");
             Assert.Equal([0], row.Select(x => x.Rank + 0).ToList());
@@ -462,13 +462,13 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
         return database.MongoDatabase.GetCollection<Item>(raw.CollectionNamespace.CollectionName);
     }
 
-    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)

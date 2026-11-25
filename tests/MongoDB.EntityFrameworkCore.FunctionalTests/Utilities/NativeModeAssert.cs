@@ -21,7 +21,7 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 /// <summary>
-/// Shared multi-<see cref="MongoQueryMode"/> assertions: "goes native and agrees with the driver-LINQ oracle", and
+/// Shared multi-<see cref="MongoQueryProvider"/> assertions: "goes native and agrees with the driver-LINQ oracle", and
 /// "declines gracefully and the fallback is trustworthy".
 /// </summary>
 /// <remarks>
@@ -31,7 +31,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 internal static class NativeModeAssert
 {
     /// <summary>
-    /// Asserts the shape goes native (doesn't throw under <see cref="MongoQueryMode.NativeOnly"/>) and matches the
+    /// Asserts the shape goes native (doesn't throw under <see cref="MongoQueryProvider.NativeOnly"/>) and matches the
     /// driver-LINQ oracle exactly. Returns the results for further assertions.
     /// </summary>
     /// <param name="run">Creates a context for the mode and reduces the query to a comparable list.</param>
@@ -40,10 +40,10 @@ internal static class NativeModeAssert
     /// nothing (a filter that wrongly matches nothing in both modes would pass). Set only when the shape legitimately
     /// returns no rows.
     /// </param>
-    internal static List<T> NativeAndParity<T>(Func<MongoQueryMode, List<T>> run, bool allowEmpty = false)
+    internal static List<T> NativeAndParity<T>(Func<MongoQueryProvider, List<T>> run, bool allowEmpty = false)
     {
-        var nativeOnly = run(MongoQueryMode.NativeOnly);
-        var driver = run(MongoQueryMode.DriverLinq);
+        var nativeOnly = run(MongoQueryProvider.NativeOnly);
+        var driver = run(MongoQueryProvider.DriverLinq);
 
         Assert.Equal(driver, nativeOnly);
         if (!allowEmpty)
@@ -58,47 +58,47 @@ internal static class NativeModeAssert
 
     /// <summary>
     /// Asserts the shape declines gracefully: <see cref="NativeTranslationNotSupportedException"/> under
-    /// <see cref="MongoQueryMode.NativeOnly"/>, and <see cref="MongoQueryMode.Native"/> results equal
-    /// <see cref="MongoQueryMode.DriverLinq"/>'s.
+    /// <see cref="MongoQueryProvider.NativeOnly"/>, and <see cref="MongoQueryProvider.Native"/> results equal
+    /// <see cref="MongoQueryProvider.DriverLinq"/>'s.
     /// </summary>
     /// <remarks>
     /// Both halves matter: throwing alone doesn't distinguish a decline from a crash, and doesn't show the fallback
     /// works. Unusable for shapes with no driver-LINQ oracle (SelectMany over reference collections, Intersect/Except,
     /// correlated reducers); those classes keep their own variant.
     /// </remarks>
-    internal static List<T> DeclinesCleanly<T>(Func<MongoQueryMode, List<T>> run)
+    internal static List<T> DeclinesCleanly<T>(Func<MongoQueryProvider, List<T>> run)
     {
-        Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryMode.NativeOnly));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryProvider.NativeOnly));
 
-        var native = run(MongoQueryMode.Native);
-        var driver = run(MongoQueryMode.DriverLinq);
+        var native = run(MongoQueryProvider.Native);
+        var driver = run(MongoQueryProvider.DriverLinq);
 
         Assert.Equal(driver, native);
         return native;
     }
 
     /// <summary>
-    /// Asserts the shape goes native (<see cref="MongoQueryMode.NativeOnly"/>), that <see cref="MongoQueryMode.Native"/>
+    /// Asserts the shape goes native (<see cref="MongoQueryProvider.NativeOnly"/>), that <see cref="MongoQueryProvider.Native"/>
     /// agrees, and that both equal a hand-written <paramref name="expected"/>. Returns the NativeOnly results.
     /// </summary>
     /// <param name="run">Creates a context for the mode and reduces the query to a comparable list.</param>
     /// <param name="expected">The correct answer, written by hand (an independent oracle).</param>
     /// <param name="driverKnownWrong">
     /// Set when driver-LINQ returns a wrong answer for this shape (name the bug ID in a comment at the call site).
-    /// <see cref="MongoQueryMode.DriverLinq"/> is then asserted to differ from <paramref name="expected"/>, so the
+    /// <see cref="MongoQueryProvider.DriverLinq"/> is then asserted to differ from <paramref name="expected"/>, so the
     /// test fails loudly once the driver is fixed and the flag should be dropped. Otherwise DriverLinq must equal it.
     /// </param>
     /// <remarks>
     /// Use instead of <see cref="NativeAndParity{T}"/> when the driver-LINQ oracle can't be trusted.
     /// </remarks>
     internal static List<T> NativeAndExpected<T>(
-        Func<MongoQueryMode, List<T>> run,
+        Func<MongoQueryProvider, List<T>> run,
         List<T> expected,
         bool driverKnownWrong = false)
     {
-        var nativeOnly = run(MongoQueryMode.NativeOnly);
-        var native = run(MongoQueryMode.Native);
-        var driver = run(MongoQueryMode.DriverLinq);
+        var nativeOnly = run(MongoQueryProvider.NativeOnly);
+        var native = run(MongoQueryProvider.Native);
+        var driver = run(MongoQueryProvider.DriverLinq);
 
         AssertLabeled("NativeOnly", () => Assert.Equal(expected, nativeOnly));
         AssertLabeled("Native", () => Assert.Equal(expected, native));

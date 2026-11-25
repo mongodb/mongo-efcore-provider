@@ -113,10 +113,10 @@ public class NativeThenIncludeStreamingTests(TemporaryDatabaseFixture database)
         }
     }
 
-    private ChainContext Db(MongoQueryMode mode, string suffix)
+    private ChainContext Db(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<ChainContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,
@@ -213,7 +213,7 @@ public class NativeThenIncludeStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["1:10/ann", "2:10/ann", "3:11/bob", "4:12/-", "5:-", "6:-"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Lines.AsNoTracking().Include(l => l.Order).ThenInclude(o => o!.Customer));
     }
 
@@ -234,7 +234,7 @@ public class NativeThenIncludeStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["10:ann[n1,n2]", "11:bob[]", "12:-", "13:-"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Orders.AsNoTracking().Include(o => o.Customer).ThenInclude(c => c!.Notes));
     }
 
@@ -255,7 +255,7 @@ public class NativeThenIncludeStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["1:ann[n1,n2]", "2:ann[n1,n2]", "3:bob[]"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Tickets.AsNoTracking().Include(t => t.Customer).ThenInclude(c => c.Notes));
     }
 
@@ -276,7 +276,7 @@ public class NativeThenIncludeStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["1:1/ann[n1,n2]", "2:1/ann[n1,n2]", "3:3/bob[]"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Shipments.AsNoTracking().Include(s => s.Ticket).ThenInclude(t => t.Customer).ThenInclude(c => c.Notes));
     }
 

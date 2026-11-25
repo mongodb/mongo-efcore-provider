@@ -31,7 +31,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -39,7 +39,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -73,7 +73,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     public void Select_with_whole_entity_ctor_only_dto_goes_native()
     {
         var collection = SeedCustomers(nameof(Select_with_whole_entity_ctor_only_dto_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // Succeeding under NativeOnly proves it went native (NativeRoute.WholeEntity, no $project).
         var results = db.Entities.Select(x => new CustomerDtoWithEntityInCtor(x)).ToList();
@@ -88,7 +88,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     {
         var collection = SeedCustomers(
             nameof(Select_with_whole_entity_ctor_only_dto_still_works_under_explicit_driver_linq_mode));
-        using var db = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var db = CreateContext(collection, MongoQueryProvider.DriverLinq);
 
         // The driver-LINQ path must still work for this shape.
         var results = db.Entities.Select(x => new CustomerDtoWithEntityInCtor(x)).ToList();
@@ -102,7 +102,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     public void Select_with_whole_entity_ctor_only_dto_composed_with_take_goes_native()
     {
         var collection = SeedCustomers(nameof(Select_with_whole_entity_ctor_only_dto_composed_with_take_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // VisitProjectedQuery's WholeEntity branch must stay correct with a composed terminal ($limit) after the
         // ctor-wrap Select.
@@ -124,7 +124,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     public void Select_with_scalar_ctor_only_dto_goes_native()
     {
         var collection = SeedCustomers(nameof(Select_with_scalar_ctor_only_dto_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Select(x => new IdWrapper(x.CustomerID)).ToList();
 
@@ -174,7 +174,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     {
         var collection = SeedBlogWithAddress(
             nameof(Select_with_owned_nav_entity_ctor_only_dto_still_declines_under_native_only));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Select(b => new AddressDto(b.Address)).ToList());
@@ -185,7 +185,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     {
         var collection = SeedBlogWithAddress(
             nameof(Select_with_owned_nav_entity_ctor_only_dto_still_works_under_default_native_mode_via_fallback));
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel);
 
         // AsNoTracking: a tracking query rejects projecting an owned entity without its owner (EF constraint).
         var results = db.Entities.AsNoTracking().Select(b => new AddressDto(b.Address)).ToList();
@@ -207,7 +207,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     public void Select_with_two_argument_ctor_only_dto_goes_native()
     {
         var collection = SeedCustomers(nameof(Select_with_two_argument_ctor_only_dto_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // Succeeding under NativeOnly proves it went native.
         var results = db.Entities.Select(x => new TwoArgDto(x.CustomerID, x.CustomerID)).ToList();
@@ -223,7 +223,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     {
         var collection = SeedCustomers(
             nameof(Select_with_two_argument_ctor_only_dto_still_works_under_explicit_driver_linq_mode));
-        using var db = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var db = CreateContext(collection, MongoQueryProvider.DriverLinq);
 
         // The driver-LINQ path must still work for this shape.
         var results = db.Entities.Select(x => new TwoArgDto(x.CustomerID, x.CustomerID)).ToList();
@@ -321,7 +321,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     public void Whole_entity_in_client_construction_is_the_tracked_instance(int shape)
     {
         var collection = SeedPeople(nameof(Whole_entity_in_client_construction_is_the_tracked_instance) + shape);
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // Loaded first, so identity resolution must hand back this very instance from the construction query.
         var ann = db.Entities.Single(p => p.Name == "Ann");
@@ -349,7 +349,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     {
         var collection = SeedBlogWithAddress(
             nameof(Whole_entity_and_its_owned_reference_into_object_array_declines_under_native_only));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Select(b => new object[] { b, b.Address }).ToList());
@@ -380,7 +380,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
         _ = loggingDb.Entities.Select(p => new[] { p.Name }).ToList();
         Assert.Contains("\"_ctorArg0\" : \"$Name\"", spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!);
@@ -392,7 +392,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     public void Whole_entity_object_array_union_declines()
     {
         var collection = SeedPeople(nameof(Whole_entity_object_array_union_declines));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Where(p => p.Name == "Ann").Select(p => new object[] { p })

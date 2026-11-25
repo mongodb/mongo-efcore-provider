@@ -121,7 +121,7 @@ public class NativeScalarFunctionTests(TemporaryDatabaseFixture database) : ICla
     public void Invariant_culture_string_matching_is_still_refused_natively()
     {
         var collection = Seed();
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Where(r => r.Name.StartsWith("ab", StringComparison.InvariantCulture)).ToList());
@@ -152,13 +152,13 @@ public class NativeScalarFunctionTests(TemporaryDatabaseFixture database) : ICla
             driverKnownWrong: true);
     }
 
-    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Row> Seed()

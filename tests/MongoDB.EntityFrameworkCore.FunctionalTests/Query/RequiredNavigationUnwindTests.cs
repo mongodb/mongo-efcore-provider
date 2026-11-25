@@ -49,10 +49,10 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
 
     // Native and driver-LINQ must return the same rows over a dangling foreign key, not merely both succeed.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Required_single_reference_Include_excludes_dangling_foreign_key_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Required_single_reference_Include_excludes_dangling_foreign_key_in_every_mode(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
 
@@ -357,9 +357,9 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     //   Carriers  C1
     //   Lines     L1 O1/P1/C1, L2 O2/P2/no carrier, L3 O3/P1/C1,
     //             L4 dangling order/P1/C1, L5 O1/dangling product/C1, L6 O1/P1/dangling carrier
-    private RequiredNavDbContext CreateContext(MongoQueryMode mode) => Setup(mode);
+    private RequiredNavDbContext CreateContext(MongoQueryProvider mode) => Setup(mode);
 
-    private RequiredNavDbContext Setup(MongoQueryMode mode = MongoQueryMode.Native)
+    private RequiredNavDbContext Setup(MongoQueryProvider mode = MongoQueryProvider.Native)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var buyersName = TemporaryDatabaseFixtureBase.CreateCollectionName("ReqNavBuyers") + suffix;
@@ -504,10 +504,10 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             string productsCollection,
             string carriersCollection,
             string linesCollection,
-            MongoQueryMode mode = MongoQueryMode.Native)
+            MongoQueryProvider mode = MongoQueryProvider.Native)
             : base(new DbContextOptionsBuilder<RequiredNavDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)

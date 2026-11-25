@@ -55,11 +55,11 @@ public class NativeSelectorlessAggregateTests(TemporaryDatabaseFixture database)
         return collection;
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(collection, optionsBuilderAction: b =>
         {
             b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
         });
 
     private static readonly (int, int?)[] OneTwoThree = [(1, 10), (2, null), (3, 30)];
@@ -117,7 +117,7 @@ public class NativeSelectorlessAggregateTests(TemporaryDatabaseFixture database)
     public void Max_over_empty_nullable_select_returns_null()
     {
         var collection = Seed(nameof(Max_over_empty_nullable_select_returns_null));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Null(db.Entities.Select(e => e.NullableValue).Max());
     }
 
@@ -125,7 +125,7 @@ public class NativeSelectorlessAggregateTests(TemporaryDatabaseFixture database)
     public void Min_over_empty_non_nullable_select_throws_under_NativeOnly()
     {
         var collection = Seed(nameof(Min_over_empty_non_nullable_select_throws_under_NativeOnly));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<InvalidOperationException>(() => db.Entities.Select(e => e.Value).Min());
     }
 
@@ -136,7 +136,7 @@ public class NativeSelectorlessAggregateTests(TemporaryDatabaseFixture database)
     public void Aggregate_over_client_method_projection_declines()
     {
         var collection = Seed(nameof(Aggregate_over_client_method_projection_declines), OneTwoThree);
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.Select(e => TimesTen(e)).Sum());
     }
 
@@ -158,7 +158,7 @@ public class NativeSelectorlessAggregateTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         AssertDeclinesOrEquals(19, () => db.Entities.Select(e => e.Value).Sum());

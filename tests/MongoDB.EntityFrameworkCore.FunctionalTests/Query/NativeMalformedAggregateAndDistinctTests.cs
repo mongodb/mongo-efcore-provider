@@ -162,9 +162,9 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
         var collection = Seed(nameof(Aggregate_or_distinct_over_a_missing_or_null_required_element_matches_main) + shape);
         var (run, main) = MainParityShapes[shape];
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
-            var expected = mode == MongoQueryMode.DriverLinq && DriverLinqConvertedOverrides.TryGetValue(shape, out var overridden)
+            var expected = mode == MongoQueryProvider.DriverLinq && DriverLinqConvertedOverrides.TryGetValue(shape, out var overridden)
                 ? overridden
                 : main;
             Assert.True(expected.SequenceEqual(RunPerRowSet(collection, mode, run, expected)),
@@ -197,9 +197,9 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
         var collection = Seed(nameof(Nullable_aggregate_or_distinct_where_main_is_wrong_stays_correct) + shape);
         var (run, native, main) = MainWrongShapes[shape];
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
-            var expected = mode == MongoQueryMode.DriverLinq ? main : native;
+            var expected = mode == MongoQueryProvider.DriverLinq ? main : native;
             var actual = RunPerRowSet(collection, mode, run, expected);
             Assert.True(expected.SequenceEqual(actual), $"{mode}: expected [{string.Join("; ", expected)}], got [{string.Join("; ", actual)}]");
         }
@@ -233,18 +233,18 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
     {
         var collection = Seed(nameof(Distinct_over_a_converted_key_reads_a_missing_row_as_default));
 
-        List<int> Run(MongoQueryMode mode)
+        List<int> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, mode);
             return db.Entities.AsNoTracking().Where(x => x.Title != "d")
                 .Select(x => x.Conv).Distinct().AsEnumerable().Order().ToList();
         }
 
-        Assert.Equal([0, 1, 2], Run(MongoQueryMode.NativeOnly));
-        Assert.Equal([0, 1, 2], Run(MongoQueryMode.Native));
+        Assert.Equal([0, 1, 2], Run(MongoQueryProvider.NativeOnly));
+        Assert.Equal([0, 1, 2], Run(MongoQueryProvider.Native));
 
         // An explicit DriverLinq reads Conv through $convert (EF-337), which turns the missing element into null.
-        Assert.Throws<FormatException>(() => Run(MongoQueryMode.DriverLinq));
+        Assert.Throws<FormatException>(() => Run(MongoQueryProvider.DriverLinq));
     }
 
     /// <summary>
@@ -266,14 +266,14 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
 
         foreach (var run in shapes)
         {
-            using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
+            using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly))
             {
                 Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
                     () => run(db.Entities.AsNoTracking()));
             }
 
-            Assert.Equal(main, RunPerRowSet(collection, MongoQueryMode.Native, run, main));
-            Assert.Equal(main, RunPerRowSet(collection, MongoQueryMode.DriverLinq, run, main));
+            Assert.Equal(main, RunPerRowSet(collection, MongoQueryProvider.Native, run, main));
+            Assert.Equal(main, RunPerRowSet(collection, MongoQueryProvider.DriverLinq, run, main));
         }
     }
 
@@ -287,7 +287,7 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
 
         foreach (var distinct in new[] { false, true })
         {
-            using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+            using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
             var q = db.Entities.AsNoTracking().Where(x => x.Title == "a").Select(x => (int)x.EStr);
             Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
                 () => (distinct ? q.Distinct() : q).ToList());
@@ -295,7 +295,7 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
     }
 
     private static List<string> RunPerRowSet(
-        IMongoCollection<Item> collection, MongoQueryMode mode, Func<IQueryable<Item>, string> run, string[] expected)
+        IMongoCollection<Item> collection, MongoQueryProvider mode, Func<IQueryable<Item>, string> run, string[] expected)
     {
         var perRowSet = new List<string>();
         for (var i = 0; i < RowSets.Length; i++)
@@ -358,7 +358,7 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
         return database.MongoDatabase.GetCollection<Item>(raw.CollectionNamespace.CollectionName);
     }
 
-    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Item> CreateContext(IMongoCollection<Item> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: mb =>
@@ -370,6 +370,6 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

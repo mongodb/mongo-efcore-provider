@@ -87,7 +87,7 @@ public class NativeMemberlessConstructionCaseMappingTests(TemporaryDatabaseFixtu
     }
 
     public static TheoryData<string> AllModes
-        => [nameof(MongoQueryMode.DriverLinq), nameof(MongoQueryMode.Native), nameof(MongoQueryMode.NativeOnly)];
+        => [nameof(MongoQueryProvider.DriverLinq), nameof(MongoQueryProvider.Native), nameof(MongoQueryProvider.NativeOnly)];
 
     [Theory]
     [MemberData(nameof(AllModes))]
@@ -201,25 +201,25 @@ public class NativeMemberlessConstructionCaseMappingTests(TemporaryDatabaseFixtu
         var actual = new List<string>();
         foreach (var label in labels)
         {
-            using var db = CreateContext(collection, Enum.Parse<MongoQueryMode>(mode));
+            using var db = CreateContext(collection, Enum.Parse<MongoQueryProvider>(mode));
             try
             {
                 actual.Add(string.Join(",", query(db.Entities.AsNoTracking().Where(x => x.Label == label)).ToList()));
             }
-            catch (NativeTranslationNotSupportedException) when (mode == nameof(MongoQueryMode.NativeOnly))
+            catch (NativeTranslationNotSupportedException) when (mode == nameof(MongoQueryProvider.NativeOnly))
             {
                 actual.Add(Throws);
             }
             catch (ExpressionNotSupportedException exception)
-                when (mode == nameof(MongoQueryMode.DriverLinq)
+                when (mode == nameof(MongoQueryProvider.DriverLinq)
                       && exception.Message.Contains("couldn't find matching properties for constructor parameters"))
             {
                 actual.Add(Throws);
             }
         }
 
-        var throws = (nativeOnlyThrows && mode == nameof(MongoQueryMode.NativeOnly))
-                     || (driverLinqThrows && mode == nameof(MongoQueryMode.DriverLinq));
+        var throws = (nativeOnlyThrows && mode == nameof(MongoQueryProvider.NativeOnly))
+                     || (driverLinqThrows && mode == nameof(MongoQueryProvider.DriverLinq));
         Assert.Equal(throws ? labels.Select(_ => Throws) : expected, actual);
     }
 
@@ -239,12 +239,12 @@ public class NativeMemberlessConstructionCaseMappingTests(TemporaryDatabaseFixtu
         return database.MongoDatabase.GetCollection<Row>(collectionName);
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

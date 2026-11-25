@@ -37,10 +37,10 @@ area. Connection and encryption env vars: see root `AGENTS.md`.
   collection catalog changes` (code 246); don't run the projects concurrently against such a server. Heavy fixtures
   use `[CollectionDefinition]` + `[XUnitCollection]`; encryption and compatibility tests get their own collections.
 - The container server is cached per test process (random port). `ATLAS_URI="Disabled"` skips Atlas tests.
-- `MONGODB_EF_QUERY_MODE=Native|NativeOnly|DriverLinq` (case-insensitive) sets the query mode for every spec and
-  functional context (`TestQueryMode`, the single resolver); `NativeOnly` makes any fallback throw.
+- `MONGODB_EF_QUERY_PROVIDER=Native|NativeOnly|DriverLinq` (case-insensitive) sets the query provider for every spec and
+  functional context (`TestQueryProvider`, the single resolver); `NativeOnly` makes any fallback throw.
   `MONGODB_EF_NATIVE_ONLY=1` is an alias for `NativeOnly`. An unrecognised value, or the alias combined with a
-  different `MONGODB_EF_QUERY_MODE`, throws at startup. MQL shape alone does not prove a query went native.
+  different `MONGODB_EF_QUERY_PROVIDER`, throws at startup. MQL shape alone does not prove a query went native.
 - MQL assertions are field-order-sensitive; a new translator branch often needs baselines updated across many tests.
 - After a `Mongo:*` annotation change, regenerate design-time compiled-model output under
   `FunctionalTests/Design/Generated/EF{8,9,10}/`. `Encryption/` is gated on `CRYPT_SHARED_LIB_PATH` (tests skip silently, with
@@ -70,7 +70,7 @@ Test folders mirror `src/` (`UnitTests/`, `FunctionalTests/`, `SpecificationTest
 
 ## Native/driver differential runner
 
-`tests/tools/native-parity-diff.sh <EF8|EF9|EF10> <outdir> [--gate]` runs the SpecificationTests and FunctionalTests projects twice (4 parallel `dotnet test` processes, each with its own Atlas-local container): once with `MONGODB_EF_QUERY_MODE=DriverLinq`, once with `NativeOnly`; then `native-parity-diff.py` compares the TRX files. It needs a prior `Debug <ver>` build (`--no-build`) and unsets `MONGODB_URI`/`ATLAS_URI`/`MONGODB_EF_NATIVE_ONLY`.
+`tests/tools/native-parity-diff.sh <EF8|EF9|EF10> <outdir> [--gate]` runs the SpecificationTests and FunctionalTests projects twice (4 parallel `dotnet test` processes, each with its own Atlas-local container): once with `MONGODB_EF_QUERY_PROVIDER=DriverLinq`, once with `NativeOnly`; then `native-parity-diff.py` compares the TRX files. It needs a prior `Debug <ver>` build (`--no-build`) and unsets `MONGODB_URI`/`ATLAS_URI`/`MONGODB_EF_NATIVE_ONLY`.
 
 - On Windows run it from **Git Bash**, not PowerShell: there `bash` resolves to WSL, which can't see the Windows `dotnet`/Docker. Python is the first of `python3`, `python`, `py` (override with `PYTHON=<cmd>`).
 - Exits nonzero on a missing TRX, a test missing from one mode, or an unexpected outcome; `--gate` (or `NATIVE_PARITY_FAIL_ON_REGRESS=1`) also fails on any regress entry.

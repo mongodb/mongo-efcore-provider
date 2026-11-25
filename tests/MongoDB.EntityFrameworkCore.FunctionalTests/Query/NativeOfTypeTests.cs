@@ -30,7 +30,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// Native <c>OfType&lt;TDerived&gt;()</c> as a discriminator predicate: <c>$eq</c> for a leaf type, <c>$in</c>
 /// over the subtree for an intermediate type, across real and shadow discriminator mappings.
-/// <see cref="MongoQueryMode.NativeOnly"/> is the "went native" signal, since the MQL matches driver-LINQ's.
+/// <see cref="MongoQueryProvider.NativeOnly"/> is the "went native" signal, since the MQL matches driver-LINQ's.
 /// </summary>
 public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -49,9 +49,9 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var mapping = GetMapping(mode);
         var collection = database.CreateCollection<BaseEntity>(values: [mode]);
-        SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
+        SetupTestData(Make(collection, MongoQueryProvider.Native, mapping));
 
-        using var db = Make(collection, MongoQueryMode.NativeOnly, mapping);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly, mapping);
 
         var result = db.Entities.OfType<Customer>().ToList();
 
@@ -68,9 +68,9 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var mapping = GetMapping(mode);
         var collection = database.CreateCollection<BaseEntity>(values: [mode]);
-        SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
+        SetupTestData(Make(collection, MongoQueryProvider.Native, mapping));
 
-        using var db = Make(collection, MongoQueryMode.NativeOnly, mapping);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly, mapping);
 
         var result = db.Entities.OfType<SubCustomer>().ToList();
 
@@ -86,10 +86,10 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var mapping = GetMapping(mode);
         var collection = database.CreateCollection<BaseEntity>(values: [mode]);
-        SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
+        SetupTestData(Make(collection, MongoQueryProvider.Native, mapping));
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native, mapping);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq, mapping);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native, mapping);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq, mapping);
 
         var nativeIds = nativeDb.Entities.OfType<Customer>().OrderBy(e => e._id).Select(e => e._id).ToList();
         var driverIds = driverDb.Entities.OfType<Customer>().OrderBy(e => e._id).Select(e => e._id).ToList();
@@ -106,10 +106,10 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var mapping = GetMapping(mode);
         var collection = database.CreateCollection<BaseEntity>(values: [mode]);
-        SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
+        SetupTestData(Make(collection, MongoQueryProvider.Native, mapping));
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native, mapping);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq, mapping);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native, mapping);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq, mapping);
 
         var nativeIds = nativeDb.Entities.OfType<SubCustomer>().OrderBy(e => e._id).Select(e => e._id).ToList();
         var driverIds = driverDb.Entities.OfType<SubCustomer>().OrderBy(e => e._id).Select(e => e._id).ToList();
@@ -123,9 +123,9 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var mapping = GetMapping(MappingMode.RealProperty);
         var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
+        SetupTestData(Make(collection, MongoQueryProvider.Native, mapping));
 
-        using var db = Make(collection, MongoQueryMode.NativeOnly, mapping);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly, mapping);
 
         // The discriminator conjunct must AND with the Where predicate, not replace it: Sequence <= 3 excludes
         // SubCustomer (Sequence 5), which the bare $in would include. Filters on a BaseEntity-declared member
@@ -148,10 +148,10 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             ? IntDiscriminatorStringRepresentationModel
             : ConvertedDiscriminatorModel;
         var collection = database.CreateCollection<BaseEntity>(values: [useBsonRepresentation]);
-        SetupTestData(Make(collection, MongoQueryMode.Native, model));
+        SetupTestData(Make(collection, MongoQueryProvider.Native, model));
 
-        using (var nativeDb = Make(collection, MongoQueryMode.Native, model))
-        using (var driverDb = Make(collection, MongoQueryMode.DriverLinq, model))
+        using (var nativeDb = Make(collection, MongoQueryProvider.Native, model))
+        using (var driverDb = Make(collection, MongoQueryProvider.DriverLinq, model))
         {
             var nativeIds = nativeDb.Entities.OfType<Customer>().OrderBy(e => e._id).Select(e => e._id).ToList();
             var driverIds = driverDb.Entities.OfType<Customer>().OrderBy(e => e._id).Select(e => e._id).ToList();
@@ -160,7 +160,7 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             Assert.Equal(4, nativeIds.Count);
         }
 
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly, model);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly, model);
         var result = nativeOnlyDb.Entities.OfType<Customer>().ToList();
         Assert.Equal(4, result.Count);
         Assert.All(result, e => Assert.IsAssignableFrom<Customer>(e));
@@ -171,11 +171,11 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var mapping = GetMapping(MappingMode.RealProperty);
         var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
+        SetupTestData(Make(collection, MongoQueryProvider.Native, mapping));
 
         // Sequence 1 and 2 share ("Customer 1", "123 Main St"), so Distinct is observable (3 pairs overall). Name and
         // ShippingAddress are Customer-only: they resolve against the OfType-narrowed parameter type, not the root.
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Make(collection, mode, mapping);
             var result = db.Entities.OfType<Customer>()
@@ -197,9 +197,9 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
         // Companion to the test above: a BaseEntity-declared member through the same composition.
         var mapping = GetMapping(MappingMode.RealProperty);
         var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
+        SetupTestData(Make(collection, MongoQueryProvider.Native, mapping));
 
-        using var db = Make(collection, MongoQueryMode.NativeOnly, mapping);
+        using var db = Make(collection, MongoQueryProvider.NativeOnly, mapping);
 
         var result = db.Entities.OfType<Customer>()
             .Select(x => new { x.Status })
@@ -216,10 +216,10 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var mapping = GetMapping(MappingMode.RealProperty);
         var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
+        SetupTestData(Make(collection, MongoQueryProvider.Native, mapping));
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native, mapping);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq, mapping);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native, mapping);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq, mapping);
 
         (string Name, string ShippingAddress)[] Run(SingleEntityDbContext<BaseEntity> db) =>
             db.Entities.OfType<Customer>()
@@ -239,10 +239,10 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     public void Non_TPH_OfType_falls_back_gracefully_and_works_across_modes()
     {
         // No discriminator property, so TryBuildDiscriminatorPredicate declines; pins that OfType still returns
-        // correct results in every query mode.
+        // correct results in every query provider.
         var collection = database.CreateCollection<Animal>(nameof(Non_TPH_OfType_falls_back_gracefully_and_works_across_modes));
 
-        using (var db = MakeAnimalContext(collection, MongoQueryMode.Native, NoDiscriminatorModel))
+        using (var db = MakeAnimalContext(collection, MongoQueryProvider.Native, NoDiscriminatorModel))
         {
             db.Add(new Animal {Name = "Animal 1"});
             db.Add(new Animal {Name = "Animal 2"});
@@ -253,7 +253,7 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
         List<Cat> RunOfTypeQuery(AnimalDbContext db) =>
             db.Animals.AsNoTracking().OfType<Cat>().ToList();
 
-        using (var nativeDb = MakeAnimalContext(collection, MongoQueryMode.Native, NoDiscriminatorModel))
+        using (var nativeDb = MakeAnimalContext(collection, MongoQueryProvider.Native, NoDiscriminatorModel))
         {
             var cats = RunOfTypeQuery(nativeDb);
             Assert.Single(cats);
@@ -261,14 +261,14 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             Assert.Equal("Cat 1", cats[0].Name);
         }
 
-        using (var driverDb = MakeAnimalContext(collection, MongoQueryMode.DriverLinq, NoDiscriminatorModel))
+        using (var driverDb = MakeAnimalContext(collection, MongoQueryProvider.DriverLinq, NoDiscriminatorModel))
         {
             var cats = RunOfTypeQuery(driverDb);
             Assert.Single(cats);
             Assert.Equal("Cat 1", cats[0].Name);
         }
 
-        using (var nativeOnlyDb = MakeAnimalContext(collection, MongoQueryMode.NativeOnly, NoDiscriminatorModel))
+        using (var nativeOnlyDb = MakeAnimalContext(collection, MongoQueryProvider.NativeOnly, NoDiscriminatorModel))
         {
             var cats = RunOfTypeQuery(nativeOnlyDb);
             Assert.Single(cats);
@@ -281,10 +281,10 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     {
         var mapping = GetMapping(MappingMode.RealProperty);
         var collection = database.CreateCollection<BaseEntity>();
-        SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
+        SetupTestData(Make(collection, MongoQueryProvider.Native, mapping));
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native, mapping);
-        using var driverDb = Make(collection, MongoQueryMode.DriverLinq, mapping);
+        using var nativeDb = Make(collection, MongoQueryProvider.Native, mapping);
+        using var driverDb = Make(collection, MongoQueryProvider.DriverLinq, mapping);
 
         // Subtree by Sequence is {1, 2, 3, 5}; Skip(1).Take(2) must return {2, 3}. Result-correctness
         // complement to NativeGateRoutingTests.C_tph_oftype_derived_routing.
@@ -296,7 +296,7 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal(new[] { 2, 3 }, native);
         Assert.Equal(Run(driverDb), native);
 
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly, mapping);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly, mapping);
         var nativeOnlyResult = nativeOnlyDb.Entities.OfType<Customer>().OrderBy(e => e.Sequence).Skip(1).Take(2).ToList();
         Assert.Equal(new[] { 2, 3 }, nativeOnlyResult.Select(e => e.Sequence).ToArray());
     }
@@ -311,25 +311,25 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
         };
 
     private static SingleEntityDbContext<BaseEntity> Make(
-        IMongoCollection<BaseEntity> collection, MongoQueryMode mode, Action<ModelBuilder> mapping)
+        IMongoCollection<BaseEntity> collection, MongoQueryProvider mode, Action<ModelBuilder> mapping)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: mapping,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static AnimalDbContext MakeAnimalContext(
-        IMongoCollection<Animal> collection, MongoQueryMode mode, Action<ModelBuilder> mapping)
+        IMongoCollection<Animal> collection, MongoQueryProvider mode, Action<ModelBuilder> mapping)
         => AnimalDbContext.Create(
             collection,
             modelBuilderAction: mapping,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static void RealPropertyConfiguredModel(ModelBuilder mb)

@@ -101,7 +101,7 @@ public class NativeScalarCompareAndDateAddTests(TemporaryDatabaseFixture databas
     public void AddTicks_sub_millisecond_or_parameter_declines()
     {
         var collection = Seed(nameof(AddTicks_sub_millisecond_or_parameter_declines));
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
         long ticks = 10000;
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Where(x => x.When.AddTicks(5L) > Base).Select(x => x.Id).ToList());
@@ -125,20 +125,20 @@ public class NativeScalarCompareAndDateAddTests(TemporaryDatabaseFixture databas
             [1, 2]);
     }
 
-    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Row> Seed(string testName)
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(testName) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Row>(name);
-        using var db = Create(collection, MongoQueryMode.DriverLinq);
+        using var db = Create(collection, MongoQueryProvider.DriverLinq);
         db.Entities.AddRange(
             new Row { Id = 1, Big = 10, Dbl = 1.0, Dec = 10m, When = Base },
             new Row { Id = 2, Big = 20, Dbl = 2.0, Dec = 20m, When = Base.AddDays(1) },

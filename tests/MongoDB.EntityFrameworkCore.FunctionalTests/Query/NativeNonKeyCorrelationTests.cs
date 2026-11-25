@@ -131,7 +131,7 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     [Theory, MemberData(nameof(DecliningShapes))]
     public void Non_key_correlation_declines_in_NativeOnly(string shape)
     {
-        using var db = CreateContext(MongoQueryMode.NativeOnly);
+        using var db = CreateContext(MongoQueryProvider.NativeOnly);
         if (IsCountPredicateShape(shape))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() => Run(db, shape, key: false));
@@ -147,7 +147,7 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     public void Non_key_correlation_in_Native_matches_main(string shape)
     {
         // Native falls back and fails as main does.
-        using var db = CreateContext(MongoQueryMode.Native);
+        using var db = CreateContext(MongoQueryProvider.Native);
         var ex = Assert.Throws<InvalidOperationException>(() => Run(db, shape, key: false));
         Assert.Contains(MainFailureMessage(shape), ex.Message);
     }
@@ -157,15 +157,15 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     {
         // The count-predicate shapes were answered (wrongly) here too: the shared slot populator registers the count
         // $lookup through the same matcher before routing.
-        using var db = CreateContext(MongoQueryMode.DriverLinq);
+        using var db = CreateContext(MongoQueryProvider.DriverLinq);
         var ex = Assert.Throws<InvalidOperationException>(() => Run(db, shape, key: false));
         Assert.Contains(MainFailureMessage(shape), ex.Message);
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Key_correlation_stays_native_and_correct(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Key_correlation_stays_native_and_correct(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
         Assert.Equal(["1-10", "1-11", "1-12", "2-20"], Run(db, "SelectMany", key: true));
@@ -184,16 +184,16 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     public void Key_correlated_count_predicate_still_reads_key_rows_under_DriverLinq()
     {
         // Branch-only: main throws "Unsupported cross-DbSet query" here; the shared slot populator answers it.
-        using var db = CreateContext(MongoQueryMode.DriverLinq);
+        using var db = CreateContext(MongoQueryProvider.DriverLinq);
         Assert.Equal(["1", "2"], Run(db, "WhereCount", key: true));
         Assert.Equal(["1", "2"], Run(db, "NullableWhereCount", key: true));
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Bare_projected_non_key_count_counts_by_the_written_correlation(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Bare_projected_non_key_count_counts_by_the_written_correlation(MongoQueryProvider mode)
     {
         // M35, finished. Main bound the single collection navigation whatever the correlation compared, so this returned the
         // key-correlated counts [3, 1, 0] where the correct answer is [1, 0, 3]. An earlier slice made it refuse; a correlation that
@@ -204,10 +204,10 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Non_key_correlated_count_predicate_answers_from_the_written_correlation(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Non_key_correlated_count_predicate_answers_from_the_written_correlation(MongoQueryProvider mode)
     {
         // Code is not Id: customer 1 (Code 2) matches order 20, customer 2 (Code 3) matches nothing, customer 3 (Code 1) matches
         // orders 10..12. Binding the navigation instead would answer [1, 2].
@@ -217,10 +217,10 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Bare_projected_key_count_is_correct(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Bare_projected_key_count_is_correct(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
         Assert.Equal(["3", "1", "0"], Run(db, "BareCount", key: true));
@@ -232,9 +232,9 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     /// read <c>1-12, 2-10, 2-11, 3-20</c>). Main throws for every spelling (see the class remarks), so no DriverLinq leg.
     /// </summary>
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Alternate_principal_key_correlation_binds_natively_and_correctly(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Alternate_principal_key_correlation_binds_natively_and_correctly(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode);
         Assert.Equal(["1-10", "1-11", "2-20", "3-12"], Format(
@@ -257,7 +257,7 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     public void Alternate_principal_key_entity_correlated_on_Id_declines()
     {
         // Id is not the navigation's principal key here: binding would read the Code-correlated rows.
-        using var db = CreateContext(MongoQueryMode.NativeOnly);
+        using var db = CreateContext(MongoQueryProvider.NativeOnly);
         Assert.Contains("could not be translated", Assert.Throws<InvalidOperationException>(() => Format(
             from c in db.ACustomers
             from o in db.AOrders.Where(o => o.CustomerCode == c.Id)
@@ -270,7 +270,7 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     {
         // NativeCorrelationMatcher proves a single principal-key property only; a composite key declines (and, with no
         // driver-LINQ oracle for the reference SelectMany, fails translation, as on main).
-        using var db = CreateContext(MongoQueryMode.NativeOnly);
+        using var db = CreateContext(MongoQueryProvider.NativeOnly);
         Assert.Contains("could not be translated", Assert.Throws<InvalidOperationException>(() => Format(
             from c in db.KCustomers
             from o in db.KOrders.Where(o => o.CustomerCode == c.Code && o.CustomerRegion == c.Region)
@@ -390,13 +390,13 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     private static List<string> Format<T>(IQueryable<T> query, Func<T, string> format)
         => query.ToList().Select(format).OrderBy(s => s, StringComparer.Ordinal).ToList();
 
-    private Ctx CreateContext(MongoQueryMode mode)
+    private Ctx CreateContext(MongoQueryProvider mode)
     {
         var prefix = TemporaryDatabaseFixtureBase.CreateCollectionName("F11") + Guid.NewGuid().ToString("N")[..8];
         Seed(prefix);
         return new Ctx(
             new DbContextOptionsBuilder<Ctx>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,

@@ -94,7 +94,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     public void Constant_pattern_still_uses_query_dialect()
     {
         var collection = Seed(ValidRows);
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, out var spy);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out var spy);
         var ids = db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, "^S")).Select(r => r.Id).ToList();
         Assert.Equal(2, ids.Count);
 
@@ -107,7 +107,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     public void Field_pattern_renders_via_expr_regexMatch_not_regularExpression()
     {
         var collection = Seed(ValidRows);
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, out var spy);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out var spy);
         db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, r.Bar!)).Select(r => r.Id).ToList();
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
@@ -121,7 +121,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     {
         var collection = Seed(ValidRows);
         var pattern = "^S";
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, out var spy);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out var spy);
         db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, pattern)).Select(r => r.Id).ToList();
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
@@ -136,7 +136,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     public void Null_or_missing_field_or_pattern_does_not_match()
     {
         var collection = SeedWithMissing();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, out _);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out _);
 
         var matched = db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, r.Bar!)).Select(r => r.Id).ToList();
         Assert.Single(matched);
@@ -152,7 +152,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     {
         var collection = Seed(ValidRows);
         string? pattern = null;
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, out _);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out _);
 
         Assert.Empty(db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, pattern!)).ToList());
     }
@@ -163,7 +163,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     public void Invalid_pattern_in_data_throws_server_error()
     {
         var collection = Seed([new Row { Foo = "abc", Bar = "(" }]);
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, out _);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out _);
 
         Assert.Throws<MongoCommandException>(
             () => db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, r.Bar!)).ToList());
@@ -175,7 +175,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     {
         var collection = Seed(ValidRows);
         var options = RegexOptions.IgnoreCase;
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, out _);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out _);
 
         Assert.ThrowsAny<Exception>(
             () => db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, r.Bar!, options)).ToList());
@@ -187,7 +187,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     public void DriverLinq_field_pattern_throws()
     {
         var collection = Seed(ValidRows);
-        using var db = CreateContext(collection, MongoQueryMode.DriverLinq, out _);
+        using var db = CreateContext(collection, MongoQueryProvider.DriverLinq, out _);
 
         var ex = Assert.ThrowsAny<Exception>(
             () => db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, r.Bar!)).ToList());
@@ -203,7 +203,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
         var pattern = "^S";
         Expression<Func<Row, bool>> predicate = r => Regex.IsMatch(r.Foo!, pattern);
         var expected = ValidRows.AsQueryable().Where(predicate).Count();
-        using var db = CreateContext(collection, MongoQueryMode.DriverLinq, out _);
+        using var db = CreateContext(collection, MongoQueryProvider.DriverLinq, out _);
 
         Assert.Equal(expected, db.Entities.AsNoTracking().Where(predicate).Count());
     }
@@ -231,17 +231,17 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     {
         var collection = Seed(rows);
 
-        using var oracleDb = CreateContext(collection, MongoQueryMode.Native, out _);
+        using var oracleDb = CreateContext(collection, MongoQueryProvider.Native, out _);
         var oracle = oracleDb.Entities.AsNoTracking().ToList().AsQueryable().Where(predicate).Select(r => r.Id).ToList();
         Assert.NotEmpty(oracle);
         Assert.NotEqual(rows.Length, oracle.Count); // the predicate must discriminate
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, out var spy);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, out var spy);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(r => r.Id).ToList();
         Assert.Equal(oracle.OrderBy(x => x), nativeOnlyResult.OrderBy(x => x));
         Assert.Contains("$regexMatch", spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
 
-        using var native = CreateContext(collection, MongoQueryMode.Native, out _);
+        using var native = CreateContext(collection, MongoQueryProvider.Native, out _);
         var nativeResult = native.Entities.AsNoTracking().Where(predicate).Select(r => r.Id).ToList();
         Assert.Equal(oracle.OrderBy(x => x), nativeResult.OrderBy(x => x));
     }
@@ -255,7 +255,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     }
 
     private static SingleEntityDbContext<Row> CreateContext(
-        IMongoCollection<Row> collection, MongoQueryMode mode, out SpyLoggerProvider spy)
+        IMongoCollection<Row> collection, MongoQueryProvider mode, out SpyLoggerProvider spy)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spy = provider;
@@ -266,7 +266,7 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 }

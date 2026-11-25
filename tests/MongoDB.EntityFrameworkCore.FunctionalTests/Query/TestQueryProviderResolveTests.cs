@@ -19,14 +19,14 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 // Unit-level: exercises the pure Resolve overload only; no environment variables or statics are touched.
-public class TestQueryModeResolveTests
+public class TestQueryProviderResolveTests
 {
     [Fact]
     public void Unset_resolves_to_Native()
     {
-        Assert.Equal(MongoQueryMode.Native, TestQueryMode.Resolve(null, null));
-        Assert.Equal(MongoQueryMode.Native, TestQueryMode.Resolve("", "  "));
-        Assert.Equal(MongoQueryMode.Native, TestQueryMode.Resolve("0", null));
+        Assert.Equal(MongoQueryProvider.Native, TestQueryProvider.Resolve(null, null));
+        Assert.Equal(MongoQueryProvider.Native, TestQueryProvider.Resolve("", "  "));
+        Assert.Equal(MongoQueryProvider.Native, TestQueryProvider.Resolve("0", null));
     }
 
     [Theory]
@@ -35,29 +35,29 @@ public class TestQueryModeResolveTests
     [InlineData("NATIVEONLY")]
     [InlineData(" nativeOnly ")]
     public void NativeOnly_is_case_insensitive(string value)
-        => Assert.Equal(MongoQueryMode.NativeOnly, TestQueryMode.Resolve(null, value));
+        => Assert.Equal(MongoQueryProvider.NativeOnly, TestQueryProvider.Resolve(null, value));
 
     [Theory]
-    [InlineData("DriverLinq", MongoQueryMode.DriverLinq)]
-    [InlineData("driverlinq", MongoQueryMode.DriverLinq)]
-    [InlineData("Native", MongoQueryMode.Native)]
-    public void Named_modes_resolve(string value, MongoQueryMode expected)
-        => Assert.Equal(expected, TestQueryMode.Resolve(null, value));
+    [InlineData("DriverLinq", MongoQueryProvider.DriverLinq)]
+    [InlineData("driverlinq", MongoQueryProvider.DriverLinq)]
+    [InlineData("Native", MongoQueryProvider.Native)]
+    public void Named_modes_resolve(string value, MongoQueryProvider expected)
+        => Assert.Equal(expected, TestQueryProvider.Resolve(null, value));
 
     [Fact]
     public void Alias_alone_resolves_to_NativeOnly()
-        => Assert.Equal(MongoQueryMode.NativeOnly, TestQueryMode.Resolve("1", null));
+        => Assert.Equal(MongoQueryProvider.NativeOnly, TestQueryProvider.Resolve("1", null));
 
     [Fact]
-    public void Alias_with_NativeOnly_query_mode_resolves_to_NativeOnly()
-        => Assert.Equal(MongoQueryMode.NativeOnly, TestQueryMode.Resolve("1", "nativeonly"));
+    public void Alias_with_NativeOnly_query_provider_resolves_to_NativeOnly()
+        => Assert.Equal(MongoQueryProvider.NativeOnly, TestQueryProvider.Resolve("1", "nativeonly"));
 
     [Theory]
     [InlineData("DriverLinq")]
     [InlineData("Native")]
-    public void Alias_with_conflicting_query_mode_throws(string value)
+    public void Alias_with_conflicting_query_provider_throws(string value)
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => TestQueryMode.Resolve("1", value));
+        var ex = Assert.Throws<InvalidOperationException>(() => TestQueryProvider.Resolve("1", value));
         Assert.Contains("MONGODB_EF_NATIVE_ONLY", ex.Message);
         Assert.Contains("conflicts", ex.Message);
     }
@@ -69,22 +69,22 @@ public class TestQueryModeResolveTests
     [InlineData("1")]
     [InlineData("-1")]
     [InlineData("Native, DriverLinq")]
-    public void Unrecognised_query_mode_throws(string value)
+    public void Unrecognised_query_provider_throws(string value)
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => TestQueryMode.Resolve(null, value));
-        Assert.Contains("MONGODB_EF_QUERY_MODE", ex.Message);
+        var ex = Assert.Throws<InvalidOperationException>(() => TestQueryProvider.Resolve(null, value));
+        Assert.Contains("MONGODB_EF_QUERY_PROVIDER", ex.Message);
     }
 
     [Fact]
-    public void Garbage_query_mode_throws_even_with_alias()
-        => Assert.Throws<InvalidOperationException>(() => TestQueryMode.Resolve("1", "garbage"));
+    public void Garbage_query_provider_throws_even_with_alias()
+        => Assert.Throws<InvalidOperationException>(() => TestQueryProvider.Resolve("1", "garbage"));
 
     [Theory]
     [InlineData("true")]
     [InlineData("yes")]
     public void Unrecognised_alias_value_throws(string value)
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => TestQueryMode.Resolve(value, null));
+        var ex = Assert.Throws<InvalidOperationException>(() => TestQueryProvider.Resolve(value, null));
         Assert.Contains("MONGODB_EF_NATIVE_ONLY", ex.Message);
     }
 }

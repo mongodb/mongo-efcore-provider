@@ -107,7 +107,7 @@ public class NativeDictionaryTests(TemporaryDatabaseFixture database) : IClassFi
     public void A_key_a_dotted_path_cannot_address_declines()
     {
         var collection = Seed();
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
 
         // "a.b" would be read as the nested path a -> b.
         Assert.Throws<NativeTranslationNotSupportedException>(
@@ -120,7 +120,7 @@ public class NativeDictionaryTests(TemporaryDatabaseFixture database) : IClassFi
     public void A_parameterized_key_declines()
     {
         var collection = Seed();
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
         var key = "a";
 
         Assert.Throws<NativeTranslationNotSupportedException>(
@@ -176,7 +176,7 @@ public class NativeDictionaryTests(TemporaryDatabaseFixture database) : IClassFi
     {
         var collection = Seed();
         var list = new List<Dictionary<string, string?>> { NeZzz };
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(collection, mode);
             try
@@ -220,7 +220,7 @@ public class NativeDictionaryTests(TemporaryDatabaseFixture database) : IClassFi
                     optionsBuilderAction: b =>
                     {
                         b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                        new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                        new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
                     });
                 return
                 [
@@ -233,10 +233,10 @@ public class NativeDictionaryTests(TemporaryDatabaseFixture database) : IClassFi
 
 #if !EF8
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Bulk_writes_filtered_by_operator_shaped_dictionary_parameter_touch_nothing(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Bulk_writes_filtered_by_operator_shaped_dictionary_parameter_touch_nothing(MongoQueryProvider mode)
     {
         var ne = NeZzz;
 
@@ -255,13 +255,13 @@ public class NativeDictionaryTests(TemporaryDatabaseFixture database) : IClassFi
     }
 #endif
 
-    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Row> Seed()

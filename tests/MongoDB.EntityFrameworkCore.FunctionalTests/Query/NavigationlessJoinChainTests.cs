@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// localField unscoped, or dropped the hop's own <c>$lookup</c>, once a later join forced flat mode, silently
 /// dropping every row. Covers the bare hop in first, second and both positions, plus the shared <c>GroupJoin</c>
 /// translator path. The <c>_go_native_under_NativeOnly</c> facts pin native translation under
-/// <see cref="MongoQueryMode.NativeOnly"/>.
+/// <see cref="MongoQueryProvider.NativeOnly"/>.
 /// </summary>
 public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
@@ -62,7 +62,7 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
         var (rootsName, midsName, leavesName) = Seed();
 
         using var db = new NavigationlessJoinDbContext(
-            database, rootsName, midsName, leavesName, queryMode: MongoQueryMode.NativeOnly);
+            database, rootsName, midsName, leavesName, queryProvider: MongoQueryProvider.NativeOnly);
 
         var results =
             db.NRoots
@@ -107,7 +107,7 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
 
         using var db = new NavigationlessJoinDbContext(
             database, rootsName, midsName, leavesName, firstHopHasNavigation: true, secondHopHasNavigation: false,
-            queryMode: MongoQueryMode.NativeOnly);
+            queryProvider: MongoQueryProvider.NativeOnly);
 
         var results =
             db.NRoots
@@ -149,7 +149,7 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
         var (rootsName, midsName, leavesName) = Seed();
 
         using var db = new NavigationlessJoinDbContext(
-            database, rootsName, midsName, leavesName, secondHopHasNavigation: false, queryMode: MongoQueryMode.NativeOnly);
+            database, rootsName, midsName, leavesName, secondHopHasNavigation: false, queryProvider: MongoQueryProvider.NativeOnly);
 
         var results =
             db.NRoots
@@ -241,8 +241,8 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
         public NavigationlessJoinDbContext(
             TemporaryDatabaseFixture database, string rootsCollection, string midsCollection, string leavesCollection,
             Action<string>? logAction = null, bool firstHopHasNavigation = false, bool secondHopHasNavigation = true,
-            MongoQueryMode queryMode = MongoQueryMode.Native)
-            : base(BuildOptions(database, logAction, queryMode))
+            MongoQueryProvider queryProvider = MongoQueryProvider.Native)
+            : base(BuildOptions(database, logAction, queryProvider))
         {
             _rootsCollection = rootsCollection;
             _midsCollection = midsCollection;
@@ -252,7 +252,7 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
         }
 
         private static DbContextOptions BuildOptions(
-            TemporaryDatabaseFixture database, Action<string>? logAction, MongoQueryMode queryMode)
+            TemporaryDatabaseFixture database, Action<string>? logAction, MongoQueryProvider queryProvider)
         {
             var optionsBuilder = new DbContextOptionsBuilder<NavigationlessJoinDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
@@ -260,7 +260,7 @@ public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .LogTo(l => logAction?.Invoke(l))
                 .EnableSensitiveDataLogging();
-            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(queryMode);
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(queryProvider);
             return optionsBuilder.Options;
         }
 

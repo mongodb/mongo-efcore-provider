@@ -34,9 +34,9 @@ internal class GuidesDbContext(DbContextOptions options)
         Action<string>? logAction = null,
         ILoggerFactory? loggerFactory = null,
         bool sensitiveDataLogging = true,
-        MongoQueryMode? queryMode = null) =>
+        MongoQueryProvider? queryProvider = null) =>
         new(new DbContextOptionsBuilder<GuidesDbContext>()
-            .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName, o => { if (queryMode is { } mode) o.UseQueryMode(mode); })
+            .UseMongoDB(database.Client, database.DatabaseNamespace.DatabaseName, o => { if (queryProvider is { } mode) o.UseQueryProvider(mode); })
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .LogTo(l => logAction?.Invoke(l))
             .UseLoggerFactory(loggerFactory)

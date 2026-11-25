@@ -143,7 +143,7 @@ public class NativeTphTypeTestTests(TemporaryDatabaseFixture database) : IClassF
         database.MongoDatabase.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName)
             .InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "nodisc" } });
 
-        using var db = Create(collection, MongoQueryMode.NativeOnly, "real");
+        using var db = Create(collection, MongoQueryProvider.NativeOnly, "real");
         var labels = db.Entities.AsNoTracking().OfType<Party>().OrderBy(e => e.Label).Select(e => e.Label).ToList();
 
         // $in: [null, ...] would also have matched the document that has no discriminator element.
@@ -154,7 +154,7 @@ public class NativeTphTypeTestTests(TemporaryDatabaseFixture database) : IClassF
     public void GetType_against_a_type_outside_the_hierarchy_matches_nothing_natively()
     {
         var collection = Seed("real");
-        using var db = Create(collection, MongoQueryMode.NativeOnly, "real");
+        using var db = Create(collection, MongoQueryProvider.NativeOnly, "real");
 
         // EF-202: driver-LINQ narrows on discriminator presence rather than the comparison type, so it would answer
         // every row.
@@ -166,28 +166,28 @@ public class NativeTphTypeTestTests(TemporaryDatabaseFixture database) : IClassF
     public void A_derived_member_through_a_cast_declines_cleanly()
     {
         var collection = Seed("real");
-        using var db = Create(collection, MongoQueryMode.NativeOnly, "real");
+        using var db = Create(collection, MongoQueryProvider.NativeOnly, "real");
 
         // The rows are not narrowed by a cast, so a sibling's same-named element must not be read natively.
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Where(e => ((Customer)e).CustomerName == "x").ToList());
     }
 
-    private static SingleEntityDbContext<Base> Create(IMongoCollection<Base> collection, MongoQueryMode mode, string mapping)
+    private static SingleEntityDbContext<Base> Create(IMongoCollection<Base> collection, MongoQueryProvider mode, string mapping)
         => SingleEntityDbContext.Create(
             collection,
             Map(mapping),
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Base> Seed(string mapping)
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName("tph" + mapping) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Base>(name);
-        using var db = Create(collection, MongoQueryMode.DriverLinq, mapping);
+        using var db = Create(collection, MongoQueryProvider.DriverLinq, mapping);
         db.AddRange(
             new Base { Label = "b" },
             new Customer { Label = "c1", CustomerName = "x" },

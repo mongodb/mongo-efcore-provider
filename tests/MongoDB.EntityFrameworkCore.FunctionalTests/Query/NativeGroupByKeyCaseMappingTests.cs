@@ -50,7 +50,7 @@ public class NativeGroupByKeyCaseMappingTests(TemporaryDatabaseFixture database)
     }
 
     public static TheoryData<string> AllModes
-        => [nameof(MongoQueryMode.DriverLinq), nameof(MongoQueryMode.Native), nameof(MongoQueryMode.NativeOnly)];
+        => [nameof(MongoQueryProvider.DriverLinq), nameof(MongoQueryProvider.Native), nameof(MongoQueryProvider.NativeOnly)];
 
     private static readonly string[] UpperKeyCounts = ["<null>:2", "ABC:1", "ÉCOLE:1"];
 
@@ -245,7 +245,7 @@ public class NativeGroupByKeyCaseMappingTests(TemporaryDatabaseFixture database)
 
         // An ungrouped set op over a case-mapped Select isn't declined by the grouped-query gate (a known gap: on
         // driver-LINQ it still runs $toUpper).
-        using var db = CreateContext(Seed(nameof(Ungrouped_case_mapping_is_unaffected) + mode + "SetOp"), Enum.Parse<MongoQueryMode>(mode));
+        using var db = CreateContext(Seed(nameof(Ungrouped_case_mapping_is_unaffected) + mode + "SetOp"), Enum.Parse<MongoQueryProvider>(mode));
         var exception = Record.Exception(() => db.Entities.AsNoTracking().Select(x => new { K = x.S })
             .Concat(db.Entities.AsNoTracking().Select(x => new { K = (string?)x.S!.ToUpper() })).ToList());
         Assert.False(exception?.Message.Contains("$toUpper/$toLower") == true, exception?.Message);
@@ -275,16 +275,16 @@ public class NativeGroupByKeyCaseMappingTests(TemporaryDatabaseFixture database)
         [System.Runtime.CompilerServices.CallerMemberName] string name = "")
     {
         var collection = Seed(name + mode);
-        using var db = CreateContext(collection, Enum.Parse<MongoQueryMode>(mode));
+        using var db = CreateContext(collection, Enum.Parse<MongoQueryProvider>(mode));
         var source = db.Entities.AsNoTracking();
 
-        if (reach == Loud && mode == nameof(MongoQueryMode.NativeOnly))
+        if (reach == Loud && mode == nameof(MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() => query(source).ToList());
             return;
         }
 
-        if ((reach == Native && mode == nameof(MongoQueryMode.DriverLinq)) || reach == Loud)
+        if ((reach == Native && mode == nameof(MongoQueryProvider.DriverLinq)) || reach == Loud)
         {
             var exception = Assert.Throws<InvalidOperationException>(() => query(source).ToList());
             Assert.Contains("$toUpper/$toLower", exception.Message);
@@ -307,12 +307,12 @@ public class NativeGroupByKeyCaseMappingTests(TemporaryDatabaseFixture database)
         return database.MongoDatabase.GetCollection<Row>(collectionName);
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

@@ -64,7 +64,7 @@ public class NativeProjectionShapeTests(TemporaryDatabaseFixture database) : ICl
     public void Two_members_sharing_a_last_name_at_different_levels_decline_the_projection()
     {
         var collection = Seed();
-        List<string> Run(MongoQueryMode mode)
+        List<string> Run(MongoQueryProvider mode)
         {
             using var db = Create(collection, mode);
             return db.Entities.AsNoTracking().OrderBy(r => r.Id)
@@ -75,9 +75,9 @@ public class NativeProjectionShapeTests(TemporaryDatabaseFixture database) : ICl
         }
 
         // Both leaves would be aliased "A"; the read side would rename one, so native declines and the fallback answers.
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
-        Assert.Equal(["1:3", "3:5"], Run(MongoQueryMode.Native));
-        Assert.Equal(["1:3", "3:5"], Run(MongoQueryMode.DriverLinq));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryProvider.NativeOnly));
+        Assert.Equal(["1:3", "3:5"], Run(MongoQueryProvider.Native));
+        Assert.Equal(["1:3", "3:5"], Run(MongoQueryProvider.DriverLinq));
     }
 
     [Fact]
@@ -119,7 +119,7 @@ public class NativeProjectionShapeTests(TemporaryDatabaseFixture database) : ICl
     public void Mql_Field_naming_no_mapped_element_declines()
     {
         var collection = Seed();
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.Select(r => new { r.Name, V = Mql.Field(r, "NoSuchElement", Int32Serializer.Instance) }).ToList());
@@ -135,7 +135,7 @@ public class NativeProjectionShapeTests(TemporaryDatabaseFixture database) : ICl
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         // The serializer argument is ignored, so a property whose stored form differs must not resolve through it.
@@ -143,13 +143,13 @@ public class NativeProjectionShapeTests(TemporaryDatabaseFixture database) : ICl
             () => db.Entities.Select(r => new { r.Name, V = Mql.Field(r, "Coded", StringSerializer.Instance) }).ToList());
     }
 
-    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> Create(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Row> Seed()

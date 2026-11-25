@@ -67,7 +67,7 @@ public class NativeSelectCtorProjectionTests(TemporaryDatabaseFixture database) 
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         // EF's Member_binding_after_ctor_arguments_fails_with_client_eval shape. OrderBy/Take are client-side to isolate
@@ -105,7 +105,7 @@ public class NativeSelectCtorProjectionTests(TemporaryDatabaseFixture database) 
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         // Nav-expansion rewrites the sort key to `x => new CustomerListItem(x.CustomerID, x.City).City`, a

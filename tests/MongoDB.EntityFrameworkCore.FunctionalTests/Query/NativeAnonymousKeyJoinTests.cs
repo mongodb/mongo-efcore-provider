@@ -255,11 +255,11 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     ];
 
     public static IEnumerable<object[]> AllModes()
-        => [[MongoQueryMode.NativeOnly], [MongoQueryMode.Native], [MongoQueryMode.DriverLinq]];
+        => [[MongoQueryProvider.NativeOnly], [MongoQueryProvider.Native], [MongoQueryProvider.DriverLinq]];
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Inner_join_on_three_member_anonymous_key_matches_oracle_including_null_and_missing_parts(MongoQueryMode mode)
+    public void Inner_join_on_three_member_anonymous_key_matches_oracle_including_null_and_missing_parts(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, out var spy);
         var (shipments, rates, _) = Materialize();
@@ -284,7 +284,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Left_join_on_anonymous_key_matches_oracle(MongoQueryMode mode)
+    public void Left_join_on_anonymous_key_matches_oracle(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, out _);
         var (shipments, rates, _) = Materialize();
@@ -307,7 +307,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Single_member_anonymous_key_matches_null_to_null_and_missing(MongoQueryMode mode)
+    public void Single_member_anonymous_key_matches_null_to_null_and_missing(MongoQueryProvider mode)
     {
         // Unlike a bare `s.Region equals r.Region` (where C# never matches null keys), a one-member anonymous key
         // matches null to null; the localField/foreignField form treats null and missing alike, which is exactly that.
@@ -327,7 +327,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void EF_Property_members_are_simple_properties(MongoQueryMode mode)
+    public void EF_Property_members_are_simple_properties(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, out _);
         var (shipments, rates, _) = Materialize();
@@ -348,7 +348,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Anonymous_key_onto_composite_primary_key_components_matches_oracle(MongoQueryMode mode)
+    public void Anonymous_key_onto_composite_primary_key_components_matches_oracle(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, out var spy);
         var (_, rates, slots) = Materialize();
@@ -369,7 +369,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Chained_join_with_anonymous_key_off_the_prior_hop_matches_oracle(MongoQueryMode mode)
+    public void Chained_join_with_anonymous_key_off_the_prior_hop_matches_oracle(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, out _);
         var (shipments, rates, slots) = Materialize();
@@ -413,7 +413,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         var (tagPs, tagQs, kindPs, kindQs, _) = MaterializeStorageShapes();
         List<ConvP> convPs;
         List<ConvQ> convQs;
-        using (var seed = CreateContext(MongoQueryMode.DriverLinq, out _))
+        using (var seed = CreateContext(MongoQueryProvider.DriverLinq, out _))
         {
             convPs = seed.ConvPs.ToList();
             convQs = seed.ConvQs.ToList();
@@ -509,12 +509,12 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 break;
         }
 
-        using (var nativeOnly = CreateContext(MongoQueryMode.NativeOnly, out _))
+        using (var nativeOnly = CreateContext(MongoQueryProvider.NativeOnly, out _))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
         }
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(mode, out _);
             var ex = Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => Run(db));
@@ -524,7 +524,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Both_sides_with_the_same_converter_stay_native_and_match_oracle(MongoQueryMode mode)
+    public void Both_sides_with_the_same_converter_stay_native_and_match_oracle(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, out var spy);
         var (_, _, kindPs, _, kindRs) = MaterializeStorageShapes();
@@ -546,7 +546,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     // type with structurally equal expressions, so both store "B" and the pair stays native.
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Provider_type_conversion_and_explicit_equivalent_converter_stay_native_and_match_oracle(MongoQueryMode mode)
+    public void Provider_type_conversion_and_explicit_equivalent_converter_stay_native_and_match_oracle(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, out var spy);
         var (_, _, kindPs, _, kindRs) = MaterializeStorageShapes();
@@ -567,11 +567,11 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     // converter instances whose to/from-provider expressions are structurally equal, so the pair stays native.
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Identical_lambda_converters_on_both_sides_stay_native_and_match_oracle(MongoQueryMode mode)
+    public void Identical_lambda_converters_on_both_sides_stay_native_and_match_oracle(MongoQueryProvider mode)
     {
         List<ConvP> convPs;
         List<ConvQ> convQs;
-        using (var seed = CreateContext(MongoQueryMode.DriverLinq, out _))
+        using (var seed = CreateContext(MongoQueryProvider.DriverLinq, out _))
         {
             convPs = seed.ConvPs.ToList();
             convQs = seed.ConvQs.ToList();
@@ -593,10 +593,10 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     // g.Sum(...) over a GroupJoin grouping is an aggregate over the keyed array lookup (native and bridge); a missing/null outer key
     // matches nothing, as the rewrite's `outerKey != null` guard says.
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void GroupJoin_with_Sum_over_the_grouping_matches_the_in_memory_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void GroupJoin_with_Sum_over_the_grouping_matches_the_in_memory_oracle(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -634,7 +634,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void GroupJoin_Count_on_a_three_member_anonymous_key_matches_the_oracle(MongoQueryMode mode)
+    public void GroupJoin_Count_on_a_three_member_anonymous_key_matches_the_oracle(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out var spy);
@@ -674,7 +674,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void GroupJoin_Sum_and_Any_on_a_two_member_anonymous_key_match_the_oracle(MongoQueryMode mode)
+    public void GroupJoin_Sum_and_Any_on_a_two_member_anonymous_key_match_the_oracle(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -703,7 +703,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Explicit_subquery_on_two_equalities_counts_by_both(MongoQueryMode mode)
+    public void Explicit_subquery_on_two_equalities_counts_by_both(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -722,7 +722,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Where_and_OrderBy_over_a_composite_correlated_aggregate(MongoQueryMode mode)
+    public void Where_and_OrderBy_over_a_composite_correlated_aggregate(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -742,7 +742,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void A_filtered_group_on_a_composite_key_reads_its_parameter_per_execution(MongoQueryMode mode)
+    public void A_filtered_group_on_a_composite_key_reads_its_parameter_per_execution(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -771,7 +771,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void A_guard_on_one_part_of_an_explicit_composite_correlation_excludes_only_that_part(MongoQueryMode mode)
+    public void A_guard_on_one_part_of_an_explicit_composite_correlation_excludes_only_that_part(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -798,9 +798,9 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Element_leaves_over_a_composite_correlation_match_the_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Element_leaves_over_a_composite_correlation_match_the_oracle(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -833,7 +833,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Explicit_subquery_with_an_element_constant_beside_the_key_equality(MongoQueryMode mode)
+    public void Explicit_subquery_with_an_element_constant_beside_the_key_equality(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -851,7 +851,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Explicit_subquery_with_a_computed_element_condition_beside_the_key_equality(MongoQueryMode mode)
+    public void Explicit_subquery_with_a_computed_element_condition_beside_the_key_equality(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -869,7 +869,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void Explicit_subquery_with_an_element_parameter_reads_it_per_execution(MongoQueryMode mode)
+    public void Explicit_subquery_with_an_element_parameter_reads_it_per_execution(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -893,9 +893,9 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Explicit_subquery_with_a_condition_on_the_outer_row_gates_the_group(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Explicit_subquery_with_a_condition_on_the_outer_row_gates_the_group(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -914,9 +914,9 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Explicit_subquery_with_an_outer_parameter_condition_reads_it_per_execution(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Explicit_subquery_with_an_outer_parameter_condition_reads_it_per_execution(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -941,7 +941,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     [Fact]
     public void A_condition_on_the_outer_row_is_refused_by_the_driver_translation_not_answered_empty()
     {
-        using var db = CreateContext(MongoQueryMode.DriverLinq, out _);
+        using var db = CreateContext(MongoQueryProvider.DriverLinq, out _);
 
         Assert.ThrowsAny<Exception>(() => db.Shipments
             .Select(s => new { s.Id, N = db.Rates.Where(r => r.Region == s.Region && s.Zone == 1).Count() })
@@ -950,7 +950,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void GroupJoin_with_a_constant_in_the_key_that_is_an_element_condition(MongoQueryMode mode)
+    public void GroupJoin_with_a_constant_in_the_key_that_is_an_element_condition(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -975,7 +975,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void GroupJoin_with_a_computed_inner_key_part_against_a_constant(MongoQueryMode mode)
+    public void GroupJoin_with_a_computed_inner_key_part_against_a_constant(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -998,9 +998,9 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void GroupJoin_with_a_constant_in_the_key_that_is_a_condition_on_the_outer_row(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void GroupJoin_with_a_constant_in_the_key_that_is_a_condition_on_the_outer_row(MongoQueryProvider mode)
     {
         var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
@@ -1032,7 +1032,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     [InlineData("AnOrInsteadOfAnAnd")]
     public void Malformed_composite_correlations_decline_loudly(string shape)
     {
-        using var db = CreateContext(MongoQueryMode.NativeOnly, out _);
+        using var db = CreateContext(MongoQueryProvider.NativeOnly, out _);
 
         Assert.ThrowsAny<Exception>(() => (shape switch
         {
@@ -1053,7 +1053,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     [Theory]
     [MemberData(nameof(AllModes))]
-    public void A_further_conjunct_in_the_correlation_is_never_dropped(MongoQueryMode mode)
+    public void A_further_conjunct_in_the_correlation_is_never_dropped(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, out _);
 
@@ -1065,23 +1065,23 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     private (List<Shipment> Shipments, List<Rate> Rates, List<Slot> Slots) Materialize()
     {
-        using var db = CreateContext(MongoQueryMode.DriverLinq, out _);
+        using var db = CreateContext(MongoQueryProvider.DriverLinq, out _);
         return (db.Shipments.ToList(), db.Rates.ToList(), db.Slots.ToList());
     }
 
     public static IEnumerable<object[]> AllModesByObjectIdConfiguration()
-        => from mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq }
+        => from mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq }
            from explicitInstances in new[] { false, true }
            select new object[] { mode, explicitInstances };
 
     [Theory]
     [MemberData(nameof(AllModesByObjectIdConfiguration))]
     public void String_key_stored_as_ObjectId_on_both_sides_stays_native_and_matches_oracle(
-        MongoQueryMode mode, bool explicitInstances)
+        MongoQueryProvider mode, bool explicitInstances)
     {
         List<OidP> oidPs;
         List<OidQ> oidQs;
-        using (var seed = CreateContext(MongoQueryMode.DriverLinq, out _))
+        using (var seed = CreateContext(MongoQueryProvider.DriverLinq, out _))
         {
             oidPs = seed.OidPs.ToList();
             oidQs = seed.OidQs.ToList();
@@ -1105,13 +1105,13 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     private (List<TagP>, List<TagQ>, List<KindP>, List<KindQ>, List<KindR>) MaterializeStorageShapes()
     {
-        using var db = CreateContext(MongoQueryMode.DriverLinq, out _);
+        using var db = CreateContext(MongoQueryProvider.DriverLinq, out _);
         return (db.TagPs.ToList(), db.TagQs.ToList(), db.KindPs.ToList(), db.KindQs.ToList(), db.KindRs.ToList());
     }
 
     private string? _collectionSuffix;
 
-    private NativeAnonymousKeyJoinTestsContext CreateContext(MongoQueryMode mode, out SpyLoggerProvider spy)
+    private NativeAnonymousKeyJoinTestsContext CreateContext(MongoQueryProvider mode, out SpyLoggerProvider spy)
     {
         if (_collectionSuffix == null)
         {
@@ -1136,9 +1136,9 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     }
 
     private sealed class NativeAnonymousKeyJoinTestsContext(
-        TemporaryDatabaseFixture database, string suffix, MongoQueryMode mode, ILoggerFactory loggerFactory)
+        TemporaryDatabaseFixture database, string suffix, MongoQueryProvider mode, ILoggerFactory loggerFactory)
         : DbContext(new DbContextOptionsBuilder<NativeAnonymousKeyJoinTestsContext>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryProvider(mode))
             .UseLoggerFactory(loggerFactory)
             .EnableSensitiveDataLogging()
             .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()

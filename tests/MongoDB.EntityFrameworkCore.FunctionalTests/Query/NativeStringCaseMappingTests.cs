@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
 /// <c>ToLower</c>/<c>ToUpper</c>: server <c>$toLower</c>/<c>$toUpper</c> are ASCII-only, so a projection re-applies
-/// the .NET call client-side over the (correctly computed) receiver in every query mode, and <c>Where</c> uses an
+/// the .NET call client-side over the (correctly computed) receiver in every query provider, and <c>Where</c> uses an
 /// exact case-insensitive regex. Neither ever emits <c>$toLower</c>/<c>$toUpper</c>.
 /// </summary>
 public class NativeStringCaseMappingTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -40,7 +40,7 @@ public class NativeStringCaseMappingTests(TemporaryDatabaseFixture database) : I
     }
 
     public static TheoryData<string> AllModes
-        => [nameof(MongoQueryMode.DriverLinq), nameof(MongoQueryMode.Native), nameof(MongoQueryMode.NativeOnly)];
+        => [nameof(MongoQueryProvider.DriverLinq), nameof(MongoQueryProvider.Native), nameof(MongoQueryProvider.NativeOnly)];
 
     [Theory]
     [MemberData(nameof(AllModes))]
@@ -182,7 +182,7 @@ public class NativeStringCaseMappingTests(TemporaryDatabaseFixture database) : I
             for (var i = 0; i < queries.Length; i++)
             {
                 var (expected, actual) = queries[i];
-                if (mode == nameof(MongoQueryMode.NativeOnly))
+                if (mode == nameof(MongoQueryProvider.NativeOnly))
                 {
                     var thrown = Record.Exception(actual);
                     Assert.True(thrown is NativeTranslationNotSupportedException, $"Query {i}: {thrown?.GetType().Name ?? "no exception"}");
@@ -253,7 +253,7 @@ public class NativeStringCaseMappingTests(TemporaryDatabaseFixture database) : I
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(Enum.Parse<MongoQueryMode>(mode));
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(Enum.Parse<MongoQueryProvider>(mode));
             });
         return (context, rows);
     }
@@ -271,7 +271,7 @@ public class NativeStringCaseMappingTests(TemporaryDatabaseFixture database) : I
 
     // Order 0: "Seattle", 1: " École ", 2: null, 3: "École".
     private (SingleEntityDbContext<Row>, Row[], List<string>) Seed(
-        string testName, string mode = nameof(MongoQueryMode.NativeOnly))
+        string testName, string mode = nameof(MongoQueryProvider.NativeOnly))
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(testName) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Row>(name);
@@ -290,7 +290,7 @@ public class NativeStringCaseMappingTests(TemporaryDatabaseFixture database) : I
                 b.LogTo(logs.Add)
                     .EnableSensitiveDataLogging()
                     .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(Enum.Parse<MongoQueryMode>(mode));
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(Enum.Parse<MongoQueryProvider>(mode));
             });
         return (context, rows, logs);
     }

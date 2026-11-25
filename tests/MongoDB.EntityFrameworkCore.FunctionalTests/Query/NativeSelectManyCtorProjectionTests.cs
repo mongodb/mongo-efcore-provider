@@ -73,7 +73,7 @@ public class NativeSelectManyCtorProjectionTests(TemporaryDatabaseFixture databa
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         // Success under NativeOnly proves native. OrderBy is client-side because a server-side sort over

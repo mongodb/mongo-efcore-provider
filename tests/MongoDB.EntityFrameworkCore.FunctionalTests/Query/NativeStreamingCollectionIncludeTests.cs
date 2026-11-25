@@ -85,20 +85,20 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
         }
     }
 
-    private BlogContext Context(MongoQueryMode mode, string suffix)
+    private BlogContext Context(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<BlogContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,
             suffix);
 
     // Category 1: articles 1,2,3. Category 2: article 4. Category 3: none (an empty array). Authors 1 and 2 are shared across articles.
-    private (string Suffix, BlogContext Seed) SeedBlog(MongoQueryMode mode)
+    private (string Suffix, BlogContext Seed) SeedBlog(MongoQueryProvider mode)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        using (var seed = Context(MongoQueryMode.Native, suffix))
+        using (var seed = Context(MongoQueryProvider.Native, suffix))
         {
             seed.Authors.AddRange(new Author { Id = 1, Name = "ann" }, new Author { Id = 2, Name = "bob" });
             seed.Categories.AddRange(
@@ -115,7 +115,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
         return (suffix, Context(mode, suffix));
     }
 
-    private BlogContext Seed(MongoQueryMode mode) => SeedBlog(mode).Seed;
+    private BlogContext Seed(MongoQueryProvider mode) => SeedBlog(mode).Seed;
 
     // The cursor's row type: BsonDocument on the DOM shaper; the entity (untracked) or MongoMaterializedRow<entity> (tracked) when streaming.
     private static Type CursorRowType<T>(IQueryable<T> query)
@@ -161,7 +161,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     [Fact]
     public void Untracked_collection_include_streams_and_builds_the_same_graph_as_driver_linq()
     {
-        using (var db = Seed(MongoQueryMode.NativeOnly))
+        using (var db = Seed(MongoQueryProvider.NativeOnly))
         {
             AssertStreams(db.Categories.AsNoTracking().Include(c => c.Articles));
         }
@@ -181,7 +181,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     [Fact]
     public void Empty_collection_is_an_empty_list_not_null()
     {
-        using var db = Seed(MongoQueryMode.NativeOnly);
+        using var db = Seed(MongoQueryProvider.NativeOnly);
 
         var empty = db.Categories.AsNoTracking().Include(c => c.Articles).OrderBy(c => c.Id).ToList().Single(c => c.Id == 3);
 
@@ -192,7 +192,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     [Fact]
     public void Collection_include_beside_root_filter_sort_and_paging_streams_and_matches_driver_linq()
     {
-        using (var db = Seed(MongoQueryMode.NativeOnly))
+        using (var db = Seed(MongoQueryProvider.NativeOnly))
         {
             AssertStreams(db.Categories.AsNoTracking().Where(c => c.Id > 0).OrderBy(c => c.Name).Skip(1).Take(2).Include(c => c.Articles));
         }
@@ -229,7 +229,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     [Fact]
     public async Task Async_collection_include_matches()
     {
-        using var db = Seed(MongoQueryMode.NativeOnly);
+        using var db = Seed(MongoQueryProvider.NativeOnly);
 
         var categories = await db.Categories.AsNoTracking().Include(c => c.Articles).ToListAsync();
 
@@ -241,7 +241,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     [Fact]
     public void Tracked_collection_include_streams_wires_the_graph_and_marks_it_loaded()
     {
-        using var db = Seed(MongoQueryMode.NativeOnly);
+        using var db = Seed(MongoQueryProvider.NativeOnly);
         AssertStreams(db.Categories.Include(c => c.Articles));
 
         var categories = db.Categories.Include(c => c.Articles).ToList();
@@ -282,7 +282,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     [Fact]
     public void Unread_rows_of_the_cursor_batch_are_not_tracked_with_their_articles()
     {
-        using var db = Seed(MongoQueryMode.NativeOnly);
+        using var db = Seed(MongoQueryProvider.NativeOnly);
 
         var first = db.Categories.Include(c => c.Articles).OrderBy(c => c.Id).AsEnumerable().Take(1).ToList();
 
@@ -295,7 +295,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     [Fact]
     public void Saving_changes_to_a_streamed_tracked_graph_updates_only_what_changed()
     {
-        var (suffix, db) = SeedBlog(MongoQueryMode.NativeOnly);
+        var (suffix, db) = SeedBlog(MongoQueryProvider.NativeOnly);
         using (db)
         {
             var category = db.Categories.Include(c => c.Articles).Single(c => c.Id == 1);
@@ -311,7 +311,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     [Fact]
     public void Malformed_article_in_a_later_category_throws_when_the_batch_is_read()
     {
-        var (suffix, db) = SeedBlog(MongoQueryMode.NativeOnly);
+        var (suffix, db) = SeedBlog(MongoQueryProvider.NativeOnly);
         using (db)
         {
             db.Raw("Articles").UpdateOne(new BsonDocument("_id", 4), new BsonDocument("$set", new BsonDocument("Views", "not an int")));
@@ -327,7 +327,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     [Fact]
     public void Then_include_of_a_reference_off_a_collection_streams_and_builds_the_same_graph()
     {
-        using (var db = Seed(MongoQueryMode.NativeOnly))
+        using (var db = Seed(MongoQueryProvider.NativeOnly))
         {
             AssertStreams(db.Categories.AsNoTracking().Include(c => c.Articles).ThenInclude(a => a.Author));
         }
@@ -349,7 +349,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     [Fact]
     public void Sorted_and_paged_include_streams_and_matches_driver_linq()
     {
-        using (var db = Seed(MongoQueryMode.NativeOnly))
+        using (var db = Seed(MongoQueryProvider.NativeOnly))
         {
             AssertStreams(db.Categories.AsNoTracking().Include(c => c.Articles.OrderByDescending(a => a.Views).Take(2)));
         }
@@ -398,7 +398,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     public void Reference_includes_stream_although_the_principal_has_an_inverse_collection_navigation()
     {
         // Article -> Category -> Category.Articles: the inverse collection of the included principal is never read, so it must not disqualify the query.
-        using var db = Seed(MongoQueryMode.NativeOnly);
+        using var db = Seed(MongoQueryProvider.NativeOnly);
 
         AssertStreams(db.Articles.AsNoTracking().Include(a => a.Author));
         AssertStreams(db.Articles.AsNoTracking().Include(a => a.Category));
@@ -445,7 +445,7 @@ public class NativeStreamingCollectionIncludeTests(TemporaryDatabaseFixture data
     {
         // The Any(..) registers a $lookup so its array is in every returned document, but the shaper does not include the collection:
         // the streaming reader must skip the array, and Articles stays unloaded (an empty list), exactly as on the DOM path.
-        using (var db = Seed(MongoQueryMode.NativeOnly))
+        using (var db = Seed(MongoQueryProvider.NativeOnly))
         {
             AssertStreams(db.Categories.AsNoTracking().Where(c => c.Articles.Any(a => a.Views > 15)));
         }

@@ -30,7 +30,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// Field-to-field and arithmetic-operand comparisons, rendered natively via <c>{ $expr: … }</c>
 /// (<see cref="MongoExpressionTranslator"/> / <see cref="MongoAggregationExpressionRenderer"/>). Each shape is
-/// proven native under <see cref="MongoQueryMode.NativeOnly"/> and checked for MQL shape and result parity with
+/// proven native under <see cref="MongoQueryProvider.NativeOnly"/> and checked for MQL shape and result parity with
 /// driver-LINQ.
 /// </summary>
 public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
@@ -62,7 +62,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     }
 
     private SingleEntityDbContext<Customer> CreateContext(
-        IMongoCollection<Customer> collection, List<string> logs, MongoQueryMode mode)
+        IMongoCollection<Customer> collection, List<string> logs, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
@@ -70,7 +70,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
                 b.LogTo(logs.Add)
                     .EnableSensitiveDataLogging()
                     .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static string Mql(List<string> logs)
@@ -80,7 +80,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void NativeOnly_field_to_field_equality_succeeds_with_expected_mql()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_field_to_field_equality_succeeds_with_expected_mql));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.Age == c.Score).ToList();
 
@@ -95,8 +95,8 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void Field_to_field_equality_matches_driver_linq_results()
     {
         var (collection, logs) = SeedCustomers(nameof(Field_to_field_equality_matches_driver_linq_results));
-        using var native = CreateContext(collection, logs, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, logs, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
 
         var nativeNames = native.Entities.Where(c => c.Age == c.Score).Select(c => c.Name).OrderBy(n => n).ToList();
         var driverNames = driver.Entities.Where(c => c.Age == c.Score).Select(c => c.Name).OrderBy(n => n).ToList();
@@ -108,7 +108,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void NativeOnly_add_operand_succeeds_with_expected_mql()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_add_operand_succeeds_with_expected_mql));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.Age + c.Score > 5).OrderBy(c => c.Name).ToList();
 
@@ -123,7 +123,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void NativeOnly_subtract_operand_succeeds_with_expected_mql()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_subtract_operand_succeeds_with_expected_mql));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.Age - c.Score > 5).ToList();
 
@@ -137,7 +137,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void NativeOnly_multiply_operand_succeeds_with_expected_mql()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_multiply_operand_succeeds_with_expected_mql));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.Age * c.Score > 5).OrderBy(c => c.Name).ToList();
 
@@ -151,8 +151,8 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void Arithmetic_operands_match_driver_linq_results()
     {
         var (collection, logs) = SeedCustomers(nameof(Arithmetic_operands_match_driver_linq_results));
-        using var native = CreateContext(collection, logs, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, logs, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
 
         var nativeAdd = native.Entities.Where(c => c.Age + c.Score > 5).Select(c => c.Name).OrderBy(n => n).ToList();
         var driverAdd = driver.Entities.Where(c => c.Age + c.Score > 5).Select(c => c.Name).OrderBy(n => n).ToList();
@@ -179,7 +179,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void NativeOnly_divide_operand_succeeds_with_expected_mql()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_divide_operand_succeeds_with_expected_mql));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         // Alice: 7/2 → 3 (3.5 raw); both > 1, so rows don't discriminate here — the MQL does. The row-level check
         // is Integer_division_operand_truncates_toward_zero_like_csharp_EF434.
@@ -199,7 +199,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void Integer_division_operand_truncates_toward_zero_like_csharp_EF434()
     {
         var (collection, logs) = SeedCustomers(nameof(Integer_division_operand_truncates_toward_zero_like_csharp_EF434));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var three = db.Entities.Where(c => c.Age / c.Score == 3).ToList();
         Assert.Equal(["Alice"], three.Select(c => c.Name).ToArray());
@@ -214,7 +214,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void Double_division_is_not_truncated_EF434()
     {
         var (collection, logs) = SeedCustomers(nameof(Double_division_is_not_truncated_EF434));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var rows = db.Entities.Select(c => new { c.Name, Div = (double)c.Age / c.Score })
             .ToList().OrderBy(r => r.Name).ToList();
@@ -234,7 +234,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void Integer_division_projection_into_an_int_member_truncates_EF434()
     {
         var (collection, logs) = SeedCustomers(nameof(Integer_division_projection_into_an_int_member_truncates_EF434));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var rows = db.Entities.Select(c => new { c.Name, Div = c.Age / c.Score })
             .ToList().OrderBy(r => r.Name).ToList();
@@ -249,7 +249,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void NativeOnly_modulo_operand_succeeds_with_expected_mql()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_modulo_operand_succeeds_with_expected_mql));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.Age % c.Score == 1).ToList();
 
@@ -266,8 +266,8 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void Divide_and_modulo_match_driver_linq_results_including_negative_dividend()
     {
         var (collection, logs) = SeedCustomers(nameof(Divide_and_modulo_match_driver_linq_results_including_negative_dividend));
-        using var native = CreateContext(collection, logs, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, logs, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
 
         var nativeDiv = native.Entities.Select(c => new { c.Name, Div = (double)c.Age / c.Score }).OrderBy(r => r.Name).ToList();
         var driverDiv = driver.Entities.Select(c => new { c.Name, Div = (double)c.Age / c.Score }).OrderBy(r => r.Name).ToList();
@@ -289,7 +289,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void NativeOnly_cast_in_field_to_field_comparison_now_goes_native()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_cast_in_field_to_field_comparison_now_goes_native));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => (double)c.Age > c.Score).OrderBy(c => c.Name).ToList();
 
@@ -304,8 +304,8 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void Cast_in_field_to_field_comparison_matches_driver_linq_results()
     {
         var (collection, logs) = SeedCustomers(nameof(Cast_in_field_to_field_comparison_matches_driver_linq_results));
-        using var native = CreateContext(collection, logs, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, logs, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
 
         var nativeNames = native.Entities.Where(c => (double)c.Age > c.Score).Select(c => c.Name).OrderBy(n => n).ToList();
         var driverNames = driver.Entities.Where(c => (double)c.Age > c.Score).Select(c => c.Name).OrderBy(n => n).ToList();
@@ -320,7 +320,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void NativeOnly_cast_in_arithmetic_operand_now_goes_native()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_cast_in_arithmetic_operand_now_goes_native));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => (double)c.Age + c.Score > 5).OrderBy(c => c.Name).ToList();
 
@@ -336,8 +336,8 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void Cast_in_arithmetic_operand_matches_driver_linq_results()
     {
         var (collection, logs) = SeedCustomers(nameof(Cast_in_arithmetic_operand_matches_driver_linq_results));
-        using var native = CreateContext(collection, logs, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, logs, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
 
         var nativeNames = native.Entities.Where(c => (double)c.Age + c.Score > 5).Select(c => c.Name).OrderBy(n => n).ToList();
         var driverNames = driver.Entities.Where(c => (double)c.Age + c.Score > 5).Select(c => c.Name).OrderBy(n => n).ToList();
@@ -376,12 +376,12 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         // MongoQueryLanguageRenderer.RenderUnary renders Not over a query-native comparison as
         // { field: { $not: { <op>: value } } }.
         var (collection, logs) = SeedCustomers(nameof(Negated_comparison_predicate_goes_native) + name);
-        using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
         // Whole-entity Where + ToList(): a bare-scalar Select falls back for unrelated reasons and would mask
         // this.
         var nativeNames = nativeOnly.Entities.Where(predicate).ToList().Select(c => c.Name).OrderBy(n => n).ToList();
 
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
         var driverNames = driver.Entities.Where(predicate).ToList().Select(c => c.Name).OrderBy(n => n).ToList();
 
         Assert.Equal(driverNames, nativeNames);
@@ -396,11 +396,11 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         var (collection, logs) = SeedCustomers(nameof(Negated_equality_against_a_captured_local_goes_native));
         var threshold = 7;
 
-        using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
         var nativeNames = nativeOnly.Entities.Where(c => !(c.Age == threshold)).ToList()
             .Select(c => c.Name).OrderBy(n => n).ToList();
 
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
         var driverNames = driver.Entities.Where(c => !(c.Age == threshold)).ToList()
             .Select(c => c.Name).OrderBy(n => n).ToList();
 
@@ -418,7 +418,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     public void Negated_conjunction_predicate_goes_native_via_query_dialect_de_morgan()
     {
         var (collection, logs) = SeedCustomers(nameof(Negated_conjunction_predicate_goes_native_via_query_dialect_de_morgan));
-        using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var nativeNames = nativeOnly.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice"))
             .ToList().Select(c => c.Name).OrderBy(n => n).ToList();
@@ -429,7 +429,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"$ne\"", mql);
         Assert.DoesNotContain("$expr", mql);
 
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
+        using var driver = CreateContext(collection, [], MongoQueryProvider.DriverLinq);
         var driverNames = driver.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice")).Select(c => c.Name).OrderBy(n => n).ToList();
         Assert.Equal(driverNames, nativeNames);
         Assert.Equal(["Bob", "Carol"], nativeNames); // Alice is the only row excluded
@@ -465,7 +465,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     }
 
     private SingleEntityDbContext<RankedCustomer> CreateRankedContext(
-        IMongoCollection<RankedCustomer> collection, List<string> logs, MongoQueryMode mode)
+        IMongoCollection<RankedCustomer> collection, List<string> logs, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
@@ -473,11 +473,11 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
                 b.LogTo(logs.Add)
                     .EnableSensitiveDataLogging()
                     .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private List<string> RankedNames(
-        string name, MongoQueryMode mode, Expression<Func<RankedCustomer, bool>> predicate, out string mql)
+        string name, MongoQueryProvider mode, Expression<Func<RankedCustomer, bool>> predicate, out string mql)
     {
         var (collection, logs) = SeedRanked(name + mode);
         using var db = CreateRankedContext(collection, logs, mode);
@@ -491,9 +491,9 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     private string AssertNullGuardedWhere(
         string name, Expression<Func<RankedCustomer, bool>> predicate, string[] expected, string[] driverLinq)
     {
-        var native = RankedNames(name, MongoQueryMode.NativeOnly, predicate, out var mql);
+        var native = RankedNames(name, MongoQueryProvider.NativeOnly, predicate, out var mql);
         Assert.Equal(expected, native);
-        Assert.Equal(driverLinq, RankedNames(name, MongoQueryMode.DriverLinq, predicate, out _));
+        Assert.Equal(driverLinq, RankedNames(name, MongoQueryProvider.DriverLinq, predicate, out _));
         Assert.Contains("$expr", mql);
         return mql;
     }
@@ -548,7 +548,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Nullable_projection_ternary_treats_null_and_missing_as_not_less()
     {
-        List<string> Run(MongoQueryMode mode, out string mql)
+        List<string> Run(MongoQueryProvider mode, out string mql)
         {
             var (collection, logs) = SeedRanked(nameof(Nullable_projection_ternary_treats_null_and_missing_as_not_less) + mode);
             using var db = CreateRankedContext(collection, logs, mode);
@@ -558,10 +558,10 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
             return result;
         }
 
-        Assert.Equal(["High:0", "Low:1", "Missing:0", "Null:0"], Run(MongoQueryMode.NativeOnly, out var nativeMql));
+        Assert.Equal(["High:0", "Low:1", "Missing:0", "Null:0"], Run(MongoQueryProvider.NativeOnly, out var nativeMql));
         Assert.Contains("""{ "$and" : [{ "$gt" : ["$Rank", null] }, { "$lt" : ["$Rank", 5] }] }""", nativeMql);
 
-        Assert.Equal(["High:0", "Low:1", "Missing:1", "Null:1"], Run(MongoQueryMode.DriverLinq, out _));
+        Assert.Equal(["High:0", "Low:1", "Missing:1", "Null:1"], Run(MongoQueryProvider.DriverLinq, out _));
     }
 
     //
@@ -570,7 +570,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     // (Name, Rank): Low 3, High 10, Null null, Missing (no Rank element).
 
     private List<string> GroupedByNameAndRank<T>(
-        string name, MongoQueryMode mode, Func<IQueryable<RankedCustomer>, IEnumerable<T>> query, Func<T, string> format)
+        string name, MongoQueryProvider mode, Func<IQueryable<RankedCustomer>, IEnumerable<T>> query, Func<T, string> format)
     {
         var (collection, logs) = SeedRanked(name + mode);
         using var db = CreateRankedContext(collection, logs, mode);
@@ -607,7 +607,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     {
         // Hand oracle only: driver-LINQ's bare $lt also admits Null and Missing.
         var result = GroupedByNameAndRank(nameof(Composite_key_part_less_than_is_false_for_a_missing_part),
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             q => q.GroupBy(c => new { c.Name, c.Rank }).Where(g => g.Key.Rank < 5)
                 .Select(g => new { g.Key.Name, C = g.Count() }).ToList(),
             x => x.Name + ":" + x.C);
@@ -621,7 +621,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         // Projected key part, ternary and a key-only accumulator condition, all over the missing part. Hand oracle
         // only: driver-LINQ can't translate the key-only condition.
         var result = GroupedByNameAndRank(nameof(Composite_key_part_projection_reads_a_missing_part_as_null),
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             q => q.GroupBy(c => new { c.Name, c.Rank })
                 .Select(g => new
                 {
@@ -641,7 +641,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     {
         // C# groups a null and a missing Rank under the same key. Hand oracle only: driver-LINQ keeps them apart.
         var result = GroupedByNameAndRank(nameof(Composite_key_merges_a_missing_and_a_null_part_into_one_group),
-            MongoQueryMode.NativeOnly,
+            MongoQueryProvider.NativeOnly,
             q => q.GroupBy(c => new { c.Limit, c.Rank })
                 .Select(g => new { g.Key.Rank, C = g.Count() }).ToList(),
             x => $"{x.Rank?.ToString() ?? "null"}:{x.C}");

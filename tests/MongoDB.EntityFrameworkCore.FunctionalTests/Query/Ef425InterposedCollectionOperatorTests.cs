@@ -33,7 +33,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="InvalidOperationException"/> naming the operator and navigation, in every mode.
 /// </summary>
 /// <remarks>
-/// The failure fires during projection binding, before the gate reads <see cref="MongoQueryMode"/>, so
+/// The failure fires during projection binding, before the gate reads <see cref="MongoQueryProvider"/>, so
 /// <c>NativeOnly</c> gets the same <see cref="InvalidOperationException"/>, not
 /// <see cref="NativeTranslationNotSupportedException"/>. <c>Concat</c> already failed cleanly and is the control.
 /// </remarks>
@@ -55,17 +55,17 @@ public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture dat
 
     private static readonly Action<ModelBuilder> BlogModel = mb => mb.Entity<Blog>().OwnsMany(b => b.Posts);
 
-    private static readonly MongoQueryMode[] AllModes =
-        [MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly];
+    private static readonly MongoQueryProvider[] AllModes =
+        [MongoQueryProvider.Native, MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly];
 
-    private static SingleEntityDbContext<Blog> CreateContext(IMongoCollection<Blog> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Blog> CreateContext(IMongoCollection<Blog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: BlogModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -182,7 +182,7 @@ public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture dat
         // fix would pass this while the shapes above silently returned wrong data.
         var collection = Seed(nameof(Owned_collection_Select_with_no_interposed_operator_still_works));
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
 
@@ -203,7 +203,7 @@ public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture dat
         // A bare projected collection body never populates Select.Projection, so NativeOnly throws the gate exception here.
         var collection = Seed(nameof(Owned_collection_Select_with_no_interposed_operator_is_a_driver_linq_fallback));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.AsNoTracking().Select(b => b.Posts.Select(p => p.Heading).ToList()).ToList());

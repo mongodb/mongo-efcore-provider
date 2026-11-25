@@ -219,11 +219,11 @@ public class NativeStringPredicateProjectionTests(TemporaryDatabaseFixture datab
         }
     }
 
-    // The binder stages native leaves in every query mode (including DriverLinq), and a late decline can hand the
+    // The binder stages native leaves in every query provider (including DriverLinq), and a late decline can hand the
     // native projection to the mixed shaper, so each leaf's client-side form must stay correct off the native
     // alias reader: whole-entity mixed projections, driver-LINQ push-down, and Enumerable-over-string analysis.
     public static TheoryData<string> AllModes
-        => [nameof(MongoQueryMode.DriverLinq), nameof(MongoQueryMode.Native), nameof(MongoQueryMode.NativeOnly)];
+        => [nameof(MongoQueryProvider.DriverLinq), nameof(MongoQueryProvider.Native), nameof(MongoQueryProvider.NativeOnly)];
 
     [Theory]
     [MemberData(nameof(AllModes))]
@@ -287,8 +287,8 @@ public class NativeStringPredicateProjectionTests(TemporaryDatabaseFixture datab
     // (A nested anonymous type isn't native today, so NativeOnly isn't exercised; the structural match itself is
     // pinned by SlotPopulationTests.Only_the_exact_staged_subtree_is_wrapped.)
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Nested_members_sharing_a_name_each_keep_their_own_computation(string mode)
     {
         var (context, rows) = Seed(nameof(Nested_members_sharing_a_name_each_keep_their_own_computation) + mode, mode);
@@ -302,7 +302,7 @@ public class NativeStringPredicateProjectionTests(TemporaryDatabaseFixture datab
     }
 
     // Order 0: "Seattle", 1: "école", 2: "" , 3: field missing (inserted as a raw BsonDocument).
-    private (SingleEntityDbContext<Row>, Row[]) Seed(string testName, string mode = nameof(MongoQueryMode.NativeOnly))
+    private (SingleEntityDbContext<Row>, Row[]) Seed(string testName, string mode = nameof(MongoQueryProvider.NativeOnly))
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(testName) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Row>(name);
@@ -316,7 +316,7 @@ public class NativeStringPredicateProjectionTests(TemporaryDatabaseFixture datab
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(Enum.Parse<MongoQueryMode>(mode));
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(Enum.Parse<MongoQueryProvider>(mode));
             });
         return (context, [.. rows, new Row { Order = 3, Text = null }]);
     }

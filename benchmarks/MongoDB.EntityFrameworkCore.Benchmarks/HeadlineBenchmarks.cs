@@ -10,8 +10,8 @@ namespace MongoDB.EntityFrameworkCore.Benchmarks;
 
 // Three-config headline benchmarks:
 //   DriverOnly      - raw MongoDB C# driver LINQ / aggregation, no EF Core (perf floor).
-//   EF_DriverLinq   - EF provider with UseQueryMode(MongoQueryMode.DriverLinq).
-//   EF_Native       - EF provider with UseQueryMode(MongoQueryMode.Native).
+//   EF_DriverLinq   - EF provider with UseQueryProvider(MongoQueryProvider.DriverLinq).
+//   EF_Native       - EF provider with UseQueryProvider(MongoQueryProvider.Native).
 // All configs read the same documents seeded once in [GlobalSetup], via one shared MongoClient
 // (a per-context client would charge connection-pool + topology startup to the EF numbers).
 [Config(typeof(BenchmarkConfig))]
@@ -38,13 +38,13 @@ public class HeadlineBenchmarks
         _client = new MongoClient(conn);
 
         _efOptionsDriverLinq = new DbContextOptionsBuilder<BenchmarkDbContext>()
-            .UseMongoDB(_client, _dbName, o => o.UseQueryMode(MongoQueryMode.DriverLinq))
+            .UseMongoDB(_client, _dbName, o => o.UseQueryProvider(MongoQueryProvider.DriverLinq))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .EnableThreadSafetyChecks(false)
             .Options;
 
         _efOptionsNative = new DbContextOptionsBuilder<BenchmarkDbContext>()
-            .UseMongoDB(_client, _dbName, o => o.UseQueryMode(MongoQueryMode.Native))
+            .UseMongoDB(_client, _dbName, o => o.UseQueryProvider(MongoQueryProvider.Native))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .EnableThreadSafetyChecks(false)
             .Options;
@@ -52,7 +52,7 @@ public class HeadlineBenchmarks
         _driverLinqFactory = BenchmarkContexts.Pool(_efOptionsDriverLinq);
         _nativeFactory = BenchmarkContexts.Pool(_efOptionsNative);
 
-        // Seed using DriverLinq options (seeding is writes, unaffected by query mode).
+        // Seed using DriverLinq options (seeding is writes, unaffected by query provider).
         using (var ctx = new BenchmarkDbContext(_efOptionsDriverLinq))
         {
             BenchmarkSeeder.Seed(ctx, flatCount: N, productCount: 100, reviewCount: N);

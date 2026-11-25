@@ -29,13 +29,13 @@ namespace MongoDB.EntityFrameworkCore.Query;
 /// </remarks>
 internal sealed class WithQueryProviderExtractor : ExpressionVisitor
 {
-    private MongoQueryMode? _mode;
+    private MongoQueryProvider? _mode;
 
     private WithQueryProviderExtractor()
     {
     }
 
-    public static Expression Extract(Expression query, out MongoQueryMode? mode)
+    public static Expression Extract(Expression query, out MongoQueryProvider? mode)
     {
         var visitor = new WithQueryProviderExtractor();
         var processed = visitor.Visit(query);
@@ -54,7 +54,7 @@ internal sealed class WithQueryProviderExtractor : ExpressionVisitor
         {
             throw new InvalidOperationException(
                 $"{nameof(MongoQueryableExtensions.WithQueryProvider)} was applied to more than one query root with conflicting modes ('{_mode}' and '{mode}'). "
-                + "A query can only run in one query mode.");
+                + "A query can only run in one query provider.");
         }
 
         _mode = mode;

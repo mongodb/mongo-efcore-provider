@@ -80,11 +80,11 @@ public class NativeFieldToFieldRegexTests(TemporaryDatabaseFixture database) : I
         var collection = Seed([new Row { A = "Hello world", B = null! }]);
         Expression<Func<Row, bool>> predicate = r => r.A.StartsWith(r.B);
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeEx = Record.Exception(
             () => nativeOnly.Entities.AsNoTracking().Where(predicate).Select(r => r.Id).ToList());
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqEx = Record.Exception(
             () => driverLinq.Entities.AsNoTracking().Where(predicate).Select(r => r.Id).ToList());
 
@@ -110,11 +110,11 @@ public class NativeFieldToFieldRegexTests(TemporaryDatabaseFixture database) : I
 
         var oracle = rows.AsQueryable().All(predicate);
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().All(predicate);
         Assert.Equal(oracle, nativeOnlyResult);
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqResult = driverLinq.Entities.AsNoTracking().All(predicate);
         Assert.Equal(oracle, driverLinqResult);
     }
@@ -124,14 +124,14 @@ public class NativeFieldToFieldRegexTests(TemporaryDatabaseFixture database) : I
     {
         var collection = Seed(rows);
 
-        using var oracleDb = CreateContext(collection, MongoQueryMode.Native);
+        using var oracleDb = CreateContext(collection, MongoQueryProvider.Native);
         var oracle = oracleDb.Entities.AsNoTracking().ToList().AsQueryable().Where(predicate).Select(r => r.Id).ToList();
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(r => r.Id).ToList();
         Assert.Equal(oracle.OrderBy(x => x), nativeOnlyResult.OrderBy(x => x));
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqResult = driverLinq.Entities.AsNoTracking().Where(predicate).Select(r => r.Id).ToList();
         Assert.Equal(oracle.OrderBy(x => x), driverLinqResult.OrderBy(x => x));
     }
@@ -144,13 +144,13 @@ public class NativeFieldToFieldRegexTests(TemporaryDatabaseFixture database) : I
         return collection;
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }
 
@@ -249,7 +249,7 @@ public class NativeComputedReceiverRegexTests(TemporaryDatabaseFixture database)
         var rows = Rows();
         var collection = Seed(rows);
 
-        var computed = Query(collection, MongoQueryMode.NativeOnly, x => (x.S + x.S2).StartsWith("a"));
+        var computed = Query(collection, MongoQueryProvider.NativeOnly, x => (x.S + x.S2).StartsWith("a"));
         Assert.Equal(Oracle(rows, x => (x.S + x.S2).StartsWith("a")), computed);
         Assert.Equal([rows[0].Id, rows[1].Id], computed); // "abc" and null + "ab"; both-null rows are excluded
 
@@ -287,7 +287,7 @@ public class NativeComputedReceiverRegexTests(TemporaryDatabaseFixture database)
     {
         var collection = database.MongoDatabase.GetCollection<Row>(
             TemporaryDatabaseFixtureBase.CreateCollectionName(Guid.NewGuid().ToString("N")[..8]));
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
         db.Entities.Add(new Row { UL = (ulong)long.MaxValue + 7 });
         var ex = Record.Exception(() => db.SaveChanges());
         Assert.IsType<OverflowException>(ex);
@@ -301,7 +301,7 @@ public class NativeComputedReceiverRegexTests(TemporaryDatabaseFixture database)
     {
         var collection = database.MongoDatabase.GetCollection<Row>(
             TemporaryDatabaseFixtureBase.CreateCollectionName(Guid.NewGuid().ToString("N")[..8]));
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
         db.Entities.Add(new Row { U = (uint)int.MaxValue + 7 });
         var ex = Record.Exception(() => db.SaveChanges());
         Assert.IsType<OverflowException>(ex);
@@ -336,13 +336,13 @@ public class NativeComputedReceiverRegexTests(TemporaryDatabaseFixture database)
     {
         var rows = Rows();
         var collection = Seed(rows);
-        Assert.Equal(Oracle(rows, predicate), Query(collection, MongoQueryMode.NativeOnly, predicate));
+        Assert.Equal(Oracle(rows, predicate), Query(collection, MongoQueryProvider.NativeOnly, predicate));
     }
 
     private static List<ObjectId> Oracle(Row[] rows, Expression<Func<Row, bool>> predicate)
         => rows.AsQueryable().Where(predicate).Select(r => r.Id).OrderBy(x => x).ToList();
 
-    private static List<ObjectId> Query(IMongoCollection<Row> collection, MongoQueryMode mode, Expression<Func<Row, bool>> predicate)
+    private static List<ObjectId> Query(IMongoCollection<Row> collection, MongoQueryProvider mode, Expression<Func<Row, bool>> predicate)
     {
         using var db = CreateContext(collection, mode);
         return db.Entities.AsNoTracking().Where(predicate).Select(r => r.Id).ToList().OrderBy(x => x).ToList();
@@ -353,18 +353,18 @@ public class NativeComputedReceiverRegexTests(TemporaryDatabaseFixture database)
     {
         var collection = database.MongoDatabase.GetCollection<Row>(
             TemporaryDatabaseFixtureBase.CreateCollectionName(Guid.NewGuid().ToString("N")[..8]));
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
         db.Entities.AddRange(rows);
         db.SaveChanges();
         return collection;
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

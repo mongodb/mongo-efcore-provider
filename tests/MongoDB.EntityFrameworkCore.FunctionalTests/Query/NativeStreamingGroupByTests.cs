@@ -69,20 +69,20 @@ public class NativeStreamingGroupByTests(TemporaryDatabaseFixture database)
         }
     }
 
-    private BlogContext Context(MongoQueryMode mode, string suffix)
+    private BlogContext Context(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<BlogContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,
             suffix);
 
     // Categories 1-3; twelve articles with ragged ratings (several null) so a nullable key has a null group.
-    private BlogContext Seed(MongoQueryMode mode)
+    private BlogContext Seed(MongoQueryProvider mode)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        using (var seed = Context(MongoQueryMode.Native, suffix))
+        using (var seed = Context(MongoQueryProvider.Native, suffix))
         {
             seed.Categories.AddRange(
                 new Category { Id = 1, Name = "news" }, new Category { Id = 2, Name = "tech" }, new Category { Id = 3, Name = "misc" });
@@ -131,7 +131,7 @@ public class NativeStreamingGroupByTests(TemporaryDatabaseFixture database)
         => Assert.Equal(typeof(BsonDocument), CursorRowType(query));
 
     // The grouping's values, in a form both modes can be compared in (rows are ordered by the caller).
-    private List<string> Run<T>(MongoQueryMode mode, Func<BlogContext, IQueryable<T>> query, Func<T, string> format, out Type rowType)
+    private List<string> Run<T>(MongoQueryProvider mode, Func<BlogContext, IQueryable<T>> query, Func<T, string> format, out Type rowType)
     {
         using var db = Seed(mode);
         var q = query(db);
@@ -142,8 +142,8 @@ public class NativeStreamingGroupByTests(TemporaryDatabaseFixture database)
     private List<string> NativeAndParity<T>(
         Func<BlogContext, IQueryable<T>> query, Func<T, string> format, bool streams = true, bool unordered = false)
     {
-        var native = Run(MongoQueryMode.NativeOnly, query, format, out var rowType);
-        var driver = Run(MongoQueryMode.DriverLinq, query, format, out _);
+        var native = Run(MongoQueryProvider.NativeOnly, query, format, out var rowType);
+        var driver = Run(MongoQueryProvider.DriverLinq, query, format, out _);
 
         Assert.Equal(unordered ? driver.Order().ToList() : driver, unordered ? native.Order().ToList() : native);
         Assert.NotEmpty(native);
@@ -244,7 +244,7 @@ public class NativeStreamingGroupByTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Empty_grouping_yields_no_rows_and_a_scalar_count_of_groups_still_works()
     {
-        using var db = Seed(MongoQueryMode.NativeOnly);
+        using var db = Seed(MongoQueryProvider.NativeOnly);
 
         Assert.Empty(db.Articles.AsNoTracking().Where(a => a.Views > 1000).GroupBy(a => a.CategoryId).Select(g => new { g.Key, N = g.Count() }).ToList());
         Assert.Equal(3, db.Articles.AsNoTracking().GroupBy(a => a.CategoryId).Count());
@@ -253,14 +253,14 @@ public class NativeStreamingGroupByTests(TemporaryDatabaseFixture database)
     [Fact]
     public async Task Async_read_of_a_streaming_grouping_matches_and_first_works_in_native_mode()
     {
-        using (var db = Seed(MongoQueryMode.NativeOnly))
+        using (var db = Seed(MongoQueryProvider.NativeOnly))
         {
             var grouped = db.Articles.AsNoTracking().GroupBy(a => a.CategoryId).Select(g => new { g.Key, N = g.Count() }).OrderBy(r => r.Key);
             Assert.Equal(["1:4", "2:4", "3:4"], (await grouped.ToListAsync()).Select(r => $"{r.Key}:{r.N}"));
         }
 
         // First() over a grouping is not translated natively (NativeOnly refuses it), so Native runs it through the driver.
-        using (var db = Seed(MongoQueryMode.Native))
+        using (var db = Seed(MongoQueryProvider.Native))
         {
             Assert.Equal(1, db.Articles.AsNoTracking().GroupBy(a => a.CategoryId).Select(g => new { g.Key, N = g.Count() }).OrderBy(r => r.Key).First().Key);
         }
@@ -270,14 +270,14 @@ public class NativeStreamingGroupByTests(TemporaryDatabaseFixture database)
     public void Malformed_accumulator_input_fails_only_its_own_group_row_when_it_is_reached()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        using (var seed = Context(MongoQueryMode.Native, suffix))
+        using (var seed = Context(MongoQueryProvider.Native, suffix))
         {
             seed.Articles.AddRange(
                 new Article { Id = 1, Views = 1, CategoryId = 1 }, new Article { Id = 2, Views = 2, CategoryId = 2 }, new Article { Id = 3, Views = 3, CategoryId = 3 });
             seed.SaveChanges();
         }
 
-        using var db = Context(MongoQueryMode.NativeOnly, suffix);
+        using var db = Context(MongoQueryProvider.NativeOnly, suffix);
         var articles = db.Database.GetService<MongoDB.EntityFrameworkCore.Storage.IMongoClientWrapper>().GetCollection<BsonDocument>("Articles" + suffix);
         articles.UpdateOne(new BsonDocument("_id", 3), new BsonDocument("$set", new BsonDocument("CategoryId", "not an int")));
 

@@ -34,8 +34,8 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Native <c>Select(...).Distinct()</c>: a degenerate <c>$group</c> (group by the projected value(s), no
 /// accumulators) plus a flattening <c>$project</c>, including bare-scalar projections, whole-entity Distinct,
 /// and operators composed after it. Unsupported shapes (e.g. a BsonRepresentation key) fall back under
-/// <see cref="MongoQueryMode.Native"/> and throw <see cref="NativeTranslationNotSupportedException"/> under
-/// <see cref="MongoQueryMode.NativeOnly"/>, the only reliable "went native" signal.
+/// <see cref="MongoQueryProvider.Native"/> and throw <see cref="NativeTranslationNotSupportedException"/> under
+/// <see cref="MongoQueryProvider.NativeOnly"/>, the only reliable "went native" signal.
 /// </summary>
 public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
@@ -63,7 +63,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         new() { Id = ObjectId.GenerateNewId(), Country = "FR", City = "Paris", Year = 2021, Amount = 300, Status = OrderStatus.New },
     ];
 
-    private SingleEntityDbContext<Order> CreateContext(Order[] seed, MongoQueryMode mode, string name)
+    private SingleEntityDbContext<Order> CreateContext(Order[] seed, MongoQueryProvider mode, string name)
     {
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Order>(collectionName);
@@ -74,20 +74,20 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     private static SingleEntityDbContext<Order> Make(
-        IMongoCollection<Order> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction)
+        IMongoCollection<Order> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: modelBuilderAction,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
     public void Distinct_anonymous_projection_goes_native_and_dedups()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_anonymous_projection_goes_native_and_dedups));
 
         var result = db.Entities.Select(o => new { o.Country }).Distinct()
@@ -99,9 +99,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_composite_projection_matches_driver_linq()
     {
-        using var nativeDb = CreateContext(SeedOrders(), MongoQueryMode.Native,
+        using var nativeDb = CreateContext(SeedOrders(), MongoQueryProvider.Native,
             nameof(Distinct_composite_projection_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(SeedOrders(), MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(SeedOrders(), MongoQueryProvider.DriverLinq,
             nameof(Distinct_composite_projection_matches_driver_linq) + "D");
 
         Func<SingleEntityDbContext<Order>, object[]> run = db => db.Entities.Select(o => new { o.Country, o.Year }).Distinct()
@@ -113,7 +113,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_projection_Distinct_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Bare_scalar_projection_Distinct_goes_native));
 
         var result = db.Entities.Select(o => o.Country).Distinct().ToList().OrderBy(c => c).ToList();
@@ -123,7 +123,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_projection_Distinct_then_OrderBy_with_identity_selector_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Bare_scalar_projection_Distinct_then_OrderBy_with_identity_selector_goes_native));
 
         var result = db.Entities.Select(o => o.Country).Distinct().OrderBy(c => c).ToList();
@@ -135,9 +135,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Bare_scalar_projection_Distinct_then_OrderBy_with_identity_selector_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Bare_scalar_projection_Distinct_then_OrderBy_with_identity_selector_matches_driver_linq) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -263,7 +263,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         // Any/Count(predicate), Contains) must equal driver-LINQ, native or fallback.
         var seed = SeedOrders();
 
-        object Run(MongoQueryMode mode, int which)
+        object Run(MongoQueryProvider mode, int which)
         {
             using var db = CreateContext(seed, mode, nameof(One_member_anonymous_Distinct_then_bare_parameter_consumers_match_driver_linq) + mode + which);
             var q = db.Entities.Select(o => new { o.Country }).Distinct();
@@ -282,8 +282,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         {
             // No catch: a throw on either path fails the probe outright (a same-type throw on both sides must not
             // compare equal and mask a divergence).
-            var driver = Run(MongoQueryMode.DriverLinq, which);
-            var native = Run(MongoQueryMode.Native, which);
+            var driver = Run(MongoQueryProvider.DriverLinq, which);
+            var native = Run(MongoQueryProvider.Native, which);
 
             Assert.True(
                 driver is Array da && native is Array na ? da.Cast<object>().SequenceEqual(na.Cast<object>()) : Equals(driver, native),
@@ -296,7 +296,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_nullable_Distinct_then_Where_on_bare_parameter_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Bare_scalar_nullable_Distinct_then_Where_on_bare_parameter_goes_native));
 
         var result = db.Entities.Select(o => o.Rank).Distinct().Where(v => v == 7).ToList();
@@ -306,7 +306,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_enum_Distinct_then_Where_on_bare_parameter_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Bare_scalar_enum_Distinct_then_Where_on_bare_parameter_goes_native));
 
         var result = db.Entities.Select(o => o.Status).Distinct().Where(v => v == OrderStatus.Shipped).ToList();
@@ -366,14 +366,14 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         entity.Property(o => o.Paid).HasConversion(v => v ? "Y" : "N", v => v == "Y");
     }
 
-    private Func<MongoQueryMode, List<T>> ConvertedRunner<T>(
+    private Func<MongoQueryProvider, List<T>> ConvertedRunner<T>(
         string name, Func<IQueryable<ConvertedOrder>, List<T>> query, Action<ModelBuilder>? configure = null)
     {
         configure ??= ConfigureConverters;
         var collection = database.MongoDatabase.GetCollection<ConvertedOrder>(
             TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8]);
 
-        using (var seedDb = MakeConverted(collection, MongoQueryMode.Native, configure))
+        using (var seedDb = MakeConverted(collection, MongoQueryProvider.Native, configure))
         {
             seedDb.Entities.AddRange(SeedConvertedOrders());
             seedDb.SaveChanges();
@@ -387,14 +387,14 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     private static SingleEntityDbContext<ConvertedOrder> MakeConverted(
-        IMongoCollection<ConvertedOrder> collection, MongoQueryMode mode, Action<ModelBuilder> configure)
+        IMongoCollection<ConvertedOrder> collection, MongoQueryProvider mode, Action<ModelBuilder> configure)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: configure,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
 
@@ -408,9 +408,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     private sealed class CrossCollectionContext(
-        TemporaryDatabaseFixture database, string prefix, MongoQueryMode mode, Action<ModelBuilder> configureOther)
+        TemporaryDatabaseFixture database, string prefix, MongoQueryProvider mode, Action<ModelBuilder> configureOther)
         : DbContext(new DbContextOptionsBuilder<CrossCollectionContext>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, NoModelCacheKeyFactory>()
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options)
@@ -436,10 +436,10 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
 
     // Converted: Status New, New, Shipped, Shipped, Cancelled (stored "New", ...). Others: Status New, New, Shipped,
     // stored however configureOther says. Both EF-seeded.
-    private Func<MongoQueryMode, CrossCollectionContext> CrossCollection(string name, Action<ModelBuilder> configureOther)
+    private Func<MongoQueryProvider, CrossCollectionContext> CrossCollection(string name, Action<ModelBuilder> configureOther)
     {
         var prefix = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
-        using (var seed = new CrossCollectionContext(database, prefix, MongoQueryMode.Native, configureOther))
+        using (var seed = new CrossCollectionContext(database, prefix, MongoQueryProvider.Native, configureOther))
         {
             seed.Converted.AddRange(SeedConvertedOrders());
             seed.Others.AddRange(
@@ -461,9 +461,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var run = ConvertedRunner(name, query);
         Assert.Equal(typeof(NotSupportedException), DeclinesToSameFailure(run));
-        Assert.Contains($"'{property}'", Assert.Throws<NotSupportedException>(() => run(MongoQueryMode.Native)).Message);
+        Assert.Contains($"'{property}'", Assert.Throws<NotSupportedException>(() => run(MongoQueryProvider.Native)).Message);
 
-        Assert.Equal(expected, ConvertedRunner(name + "_oracle", q => query(q.ToList().AsQueryable()))(MongoQueryMode.Native));
+        Assert.Equal(expected, ConvertedRunner(name + "_oracle", q => query(q.ToList().AsQueryable()))(MongoQueryProvider.Native));
     }
 
     // An int stored as a string is read by the driver-LINQ bridge through $convert (EF-337), so an order-sensitive operator over it
@@ -471,16 +471,16 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     private void AssertConvertedNumericFallback<T>(string name, Func<IQueryable<ConvertedOrder>, List<T>> query, List<T> expected)
     {
         var run = ConvertedRunner(name, query);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryMode.NativeOnly));
-        Assert.Equal(expected, run(MongoQueryMode.Native).OrderBy(v => v).ToList());
-        Assert.Equal(expected, run(MongoQueryMode.DriverLinq).OrderBy(v => v).ToList());
+        Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryProvider.NativeOnly));
+        Assert.Equal(expected, run(MongoQueryProvider.Native).OrderBy(v => v).ToList());
+        Assert.Equal(expected, run(MongoQueryProvider.DriverLinq).OrderBy(v => v).ToList());
     }
 
-    private static Type DeclinesToSameFailure<T>(Func<MongoQueryMode, List<T>> run)
+    private static Type DeclinesToSameFailure<T>(Func<MongoQueryProvider, List<T>> run)
     {
-        Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryMode.NativeOnly));
-        var driver = Record.Exception(() => run(MongoQueryMode.DriverLinq));
-        var native = Record.Exception(() => run(MongoQueryMode.Native));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryProvider.NativeOnly));
+        var driver = Record.Exception(() => run(MongoQueryProvider.DriverLinq));
+        var native = Record.Exception(() => run(MongoQueryProvider.Native));
         Assert.NotNull(driver);
         Assert.NotNull(native);
         Assert.Equal(driver.GetType(), native.GetType());
@@ -661,7 +661,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 ];
             });
 
-        var result = run(MongoQueryMode.NativeOnly);
+        var result = run(MongoQueryProvider.NativeOnly);
 
         Assert.Equal([true], result[0]);
         Assert.Equal([false], result[1]);
@@ -689,7 +689,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 ];
             });
 
-        var result = run(MongoQueryMode.NativeOnly);
+        var result = run(MongoQueryProvider.NativeOnly);
 
         Assert.Equal([null, 3, 7], result[0]);
         Assert.Equal([null], result[1]);
@@ -814,7 +814,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 return [distinct.Count(), distinct.LongCount(), distinct.Count(v => v == null), distinct.Count(v => v != null)];
             });
 
-        Assert.Equal([3L, 3L, 1L, 2L], run(MongoQueryMode.NativeOnly));
+        Assert.Equal([3L, 3L, 1L, 2L], run(MongoQueryProvider.NativeOnly));
     }
 
     //
@@ -855,7 +855,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 Sorted(q.Select(o => o.Status).Distinct().Except(q.Where(o => o.Year == 2020).Select(o => o.Status).Distinct())).ToArray(),
             ]);
 
-        var result = run(MongoQueryMode.NativeOnly);
+        var result = run(MongoQueryProvider.NativeOnly);
 
         Assert.Equal([OrderStatus.New], result[0]);
         Assert.Equal([OrderStatus.Shipped, OrderStatus.Cancelled], result[1]);
@@ -985,7 +985,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
             ],
             StatusAndPrevStatusAsStrings);
 
-        var result = run(MongoQueryMode.NativeOnly);
+        var result = run(MongoQueryProvider.NativeOnly);
 
         Assert.Equal([OrderStatus.New, OrderStatus.Shipped], result[0]);
         Assert.Equal([OrderStatus.Cancelled], result[1]);
@@ -1022,7 +1022,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
             ],
             configure);
 
-        var result = run(MongoQueryMode.NativeOnly);
+        var result = run(MongoQueryProvider.NativeOnly);
 
         Assert.Equal([OrderStatus.New, OrderStatus.Shipped], result[0]);
         Assert.Equal([OrderStatus.Cancelled], result[1]);
@@ -1112,7 +1112,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
             nameof(Set_ops_over_two_properties_with_identical_non_capturing_lambda_converters_go_native) + "I",
             q => q.Select(o => new { C = o.CodeA }).Intersect(q.Select(o => new { C = o.CodeB }))
                 .ToList().Select(r => r.C).OrderBy(v => v).ToList(),
-            configure)(MongoQueryMode.NativeOnly);
+            configure)(MongoQueryProvider.NativeOnly);
 
         Assert.Equal([1], intersect);
     }
@@ -1132,13 +1132,13 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
 
         if (fallbackMatchesOracle)
         {
-            var expected = ConvertedRunner(name + "_oracle", q => concat(q.ToList().AsQueryable()), configure)(MongoQueryMode.Native);
+            var expected = ConvertedRunner(name + "_oracle", q => concat(q.ToList().AsQueryable()), configure)(MongoQueryProvider.Native);
             Assert.Equal(expected, fallback);
         }
 
         var intersectRun = ConvertedRunner(name + "I", q => new List<object> { intersect(q) }, configure);
-        Assert.Throws<InvalidOperationException>(() => intersectRun(MongoQueryMode.NativeOnly));
-        Assert.Throws<InvalidOperationException>(() => intersectRun(MongoQueryMode.Native));
+        Assert.Throws<InvalidOperationException>(() => intersectRun(MongoQueryProvider.NativeOnly));
+        Assert.Throws<InvalidOperationException>(() => intersectRun(MongoQueryProvider.Native));
     }
 
     [Fact]
@@ -1148,7 +1148,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
             nameof(Cross_collection_converted_set_ops_with_the_same_converter_go_native_with_hand_oracle),
             mb => mb.Entity<OtherOrder>().Property(o => o.Status).HasConversion<string>());
 
-        using var db = context(MongoQueryMode.NativeOnly);
+        using var db = context(MongoQueryProvider.NativeOnly);
         var converted = db.Converted.Select(o => o.Status);
         var others = db.Others.Select(o => o.Status);
 
@@ -1182,7 +1182,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         var context = CrossCollection(
             nameof(Cross_collection_set_ops_with_mismatched_stored_forms_decline) + otherConfiguration, configure);
 
-        using var db = context(MongoQueryMode.NativeOnly);
+        using var db = context(MongoQueryProvider.NativeOnly);
         var converted = db.Converted.Select(o => o.Status);
         var others = db.Others.Select(o => o.Status);
 
@@ -1206,7 +1206,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         // A computed projection member (A = o.Country + o.City) has no IProperty; the ordering key resolves against
         // the Distinct's flattened alias via a MongoElementRefExpression (as TryResolveFlattenedAlias does for
         // Where).
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Anonymous_computed_projection_Distinct_then_OrderBy_on_member_goes_native));
 
         var result = db.Entities.Select(o => new { A = o.Country + o.City }).Distinct()
@@ -1220,9 +1220,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Anonymous_computed_projection_Distinct_then_OrderBy_on_member_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Anonymous_computed_projection_Distinct_then_OrderBy_on_member_matches_driver_linq) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -1237,7 +1237,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Whole_entity_Distinct_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Whole_entity_Distinct_goes_native));
 
         var result = db.Entities.Distinct().ToList();
@@ -1250,9 +1250,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Whole_entity_Distinct_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Whole_entity_Distinct_matches_driver_linq) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -1266,7 +1266,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Whole_entity_Distinct_composes_with_where_orderby_skip_take_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Whole_entity_Distinct_composes_with_where_orderby_skip_take_goes_native));
 
         var result = db.Entities.Where(o => o.Country != "FR").Distinct()
@@ -1281,9 +1281,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Whole_entity_Distinct_composes_with_where_orderby_skip_take_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Whole_entity_Distinct_composes_with_where_orderby_skip_take_matches_driver_linq) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -1298,7 +1298,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Whole_entity_Distinct_then_Select_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Whole_entity_Distinct_then_Select_goes_native));
 
         var result = db.Entities.Distinct().Select(o => o.Country).OrderBy(c => c).ToList();
@@ -1309,7 +1309,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Where_goes_native));
 
         var result = db.Entities.Select(o => new { o.Country }).Distinct().Where(r => r.Country == "US").ToList();
@@ -1322,9 +1322,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Where_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Where_matches_driver_linq) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -1343,9 +1343,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         // entity would silently filter on the real Country field.
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Where_on_renamed_member_filters_by_the_projected_source_not_the_colliding_entity_property) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Where_on_renamed_member_filters_by_the_projected_source_not_the_colliding_entity_property) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -1362,7 +1362,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         // A computed predicate over the alias with no native translation (ToUpper over Trim) must decline, not resolve
         // against the entity. (.Length is translatable, so it wouldn't exercise this.)
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Where_on_unrelated_computed_key_falls_back_under_native_only));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -1375,9 +1375,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         // ToUpper() == constant is a native regex; it must address the projected City under its "Country" alias, not
         // the entity's real Country field (never "NYC").
         var seed = SeedOrders();
-        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Where_with_ToUpper_on_renamed_member_resolves_against_the_distinct_alias) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Where_with_ToUpper_on_renamed_member_resolves_against_the_distinct_alias) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -1392,7 +1392,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Skip_goes_native_and_dedups()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Skip_goes_native_and_dedups));
 
         var result = db.Entities.Select(o => new { o.Country }).Distinct().OrderBy(r => r.Country).Skip(1).ToList();
@@ -1405,9 +1405,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Skip_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Skip_matches_driver_linq) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -1431,13 +1431,13 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         Action<ModelBuilder> configure = mb =>
             mb.Entity<Order>().Property(o => o.Status).HasBsonRepresentation(BsonType.String);
 
-        using (var seedDb = Make(collection, MongoQueryMode.Native, configure))
+        using (var seedDb = Make(collection, MongoQueryProvider.Native, configure))
         {
             seedDb.Entities.AddRange(SeedOrders());
             seedDb.SaveChanges();
         }
 
-        using (var nativeDb = Make(collection, MongoQueryMode.Native, configure))
+        using (var nativeDb = Make(collection, MongoQueryProvider.Native, configure))
         {
             var result = nativeDb.Entities.Select(o => new { o.Status }).Distinct()
                 .AsEnumerable().OrderBy(r => r.Status).ToList();
@@ -1447,7 +1447,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 result.Select(r => r.Status).ToArray());
         }
 
-        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly, configure);
+        using var nativeOnlyDb = Make(collection, MongoQueryProvider.NativeOnly, configure);
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
             nativeOnlyDb.Entities.Select(o => new { o.Status }).Distinct().ToList());
     }
@@ -1455,7 +1455,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Count_goes_native));
 
         Assert.Equal(3, db.Entities.Select(o => new { o.Country }).Distinct().Count());
@@ -1466,9 +1466,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Count_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Count_matches_driver_linq) + "D");
 
         int Run(SingleEntityDbContext<Order> db) =>
@@ -1482,7 +1482,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_predicate_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Count_with_predicate_goes_native));
 
         Assert.Equal(2, db.Entities.Select(o => new { o.Country }).Distinct().Count(r => r.Country != "FR"));
@@ -1493,9 +1493,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Count_with_predicate_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Count_with_predicate_matches_driver_linq) + "D");
 
         int Run(SingleEntityDbContext<Order> db) =>
@@ -1513,9 +1513,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         // real Country field instead of City.
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Count_with_predicate_on_renamed_member_counts_the_projected_source_not_the_colliding_entity_property) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Count_with_predicate_on_renamed_member_counts_the_projected_source_not_the_colliding_entity_property) + "D");
 
         int Run(SingleEntityDbContext<Order> db) =>
@@ -1529,7 +1529,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Any_with_predicate_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Any_with_predicate_goes_native));
 
         Assert.True(db.Entities.Select(o => new { o.Country }).Distinct().Any(r => r.Country == "FR"));
@@ -1539,7 +1539,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_All_with_predicate_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_All_with_predicate_goes_native));
 
         Assert.False(db.Entities.Select(o => new { o.Country }).Distinct().All(r => r.Country == "FR"));
@@ -1551,9 +1551,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Any_All_match_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Any_All_match_driver_linq) + "D");
 
         (bool Any, bool All) Run(SingleEntityDbContext<Order> db) =>
@@ -1568,7 +1568,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -1578,7 +1578,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_predicate_over_computed_projection_key_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Count_with_predicate_over_computed_projection_key_goes_native));
 
         var count = db.Entities.Select(o => new { Combined = o.Country + o.City }).Distinct()
@@ -1592,7 +1592,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         // The Where's $match lands in PostGroupOps and the $count after it; PostGroupOps must still be emitted when a
         // trailing aggregate sets Cardinality, or the $match is silently dropped.
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Where_then_Count_goes_native));
 
         Assert.Equal(1, db.Entities.Select(o => new { o.Country }).Distinct().Where(r => r.Country == "FR").Count());
@@ -1603,9 +1603,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Where_then_Count_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Where_then_Count_matches_driver_linq) + "D");
 
         int Run(SingleEntityDbContext<Order> db) =>
@@ -1617,9 +1617,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_scalar_Distinct_then_Max_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_scalar_Distinct_then_Max_goes_native(MongoQueryProvider mode)
     {
         // Sum/Min/Max/Average on a bare-scalar Distinct. Distinct years: {2020, 2021}.
         using var db = CreateContext(SeedOrders(), mode, nameof(Bare_scalar_Distinct_then_Max_goes_native) + mode);
@@ -1628,9 +1628,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_scalar_Distinct_then_Min_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_scalar_Distinct_then_Min_goes_native(MongoQueryProvider mode)
     {
         using var db = CreateContext(SeedOrders(), mode, nameof(Bare_scalar_Distinct_then_Min_goes_native) + mode);
 
@@ -1638,9 +1638,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_scalar_Distinct_then_Sum_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_scalar_Distinct_then_Sum_goes_native(MongoQueryProvider mode)
     {
         using var db = CreateContext(SeedOrders(), mode, nameof(Bare_scalar_Distinct_then_Sum_goes_native) + mode);
 
@@ -1648,9 +1648,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_scalar_Distinct_then_Average_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_scalar_Distinct_then_Average_goes_native(MongoQueryProvider mode)
     {
         using var db = CreateContext(SeedOrders(), mode, nameof(Bare_scalar_Distinct_then_Average_goes_native) + mode);
 
@@ -1663,7 +1663,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         // Sum(selector) over a wrapped Distinct resolves against the flattened alias, reusing
         // NativeCardinalityBinder.TryBindAggregate. Distinct {Country, Year}: (US,2020),(US,2021),(UK,2020),(FR,2021);
         // sum of Year = 8082.
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Wrapped_projection_Distinct_then_Sum_goes_native));
 
         Assert.Equal(8082, db.Entities.Select(o => new { o.Country, o.Year }).Distinct().Sum(r => r.Year));
@@ -1672,7 +1672,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Wrapped_projection_Distinct_then_Min_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Wrapped_projection_Distinct_then_Min_goes_native));
 
         Assert.Equal(2020, db.Entities.Select(o => new { o.Country, o.Year }).Distinct().Min(r => r.Year));
@@ -1681,7 +1681,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Wrapped_projection_Distinct_then_Max_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Wrapped_projection_Distinct_then_Max_goes_native));
 
         Assert.Equal(2021, db.Entities.Select(o => new { o.Country, o.Year }).Distinct().Max(r => r.Year));
@@ -1690,7 +1690,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Wrapped_projection_Distinct_then_Average_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Wrapped_projection_Distinct_then_Average_goes_native));
 
         Assert.Equal(2020.5, db.Entities.Select(o => new { o.Country, o.Year }).Distinct().Average(r => r.Year));
@@ -1701,9 +1701,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Wrapped_projection_Distinct_then_Sum_Min_Max_Average_match_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Wrapped_projection_Distinct_then_Sum_Min_Max_Average_match_driver_linq) + "D");
 
         (int Sum, int Min, int Max, double Average) Run(SingleEntityDbContext<Order> db) =>
@@ -1722,7 +1722,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         // The Where's $match lands in PostGroupOps and the Sum's accumulator stage follows it. Pairs excluding FR:
         // (US,2020),(US,2021),(UK,2020); sum of Year = 6061.
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Where_then_Sum_with_selector_goes_native));
 
         Assert.Equal(
@@ -1735,9 +1735,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Where_then_Sum_with_selector_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Where_then_Sum_with_selector_matches_driver_linq) + "D");
 
         int Run(SingleEntityDbContext<Order> db) =>
@@ -1751,7 +1751,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Wrapped_projection_Distinct_then_Sum_with_computed_selector_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Wrapped_projection_Distinct_then_Sum_with_computed_selector_goes_native));
 
         Assert.Equal(
@@ -1765,7 +1765,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         // GroupBy after a Distinct emits a second $group (+ $project) rather than overwriting the Distinct's, so dedup
         // applies first. The seed has duplicate (Country, Year) rows: expected US=2, UK=1, FR=1; dropping the Distinct
         // would give US=3, UK=2, FR=1.
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_GroupBy_goes_native_and_dedups));
 
         var result = db.Entities
@@ -1786,9 +1786,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_GroupBy_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_GroupBy_matches_driver_linq) + "D");
 
         (string Country, int Count)[] Run(SingleEntityDbContext<Order> db) =>
@@ -1810,7 +1810,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_then_GroupBy_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Where_then_GroupBy_goes_native));
 
         var result = db.Entities
@@ -1832,9 +1832,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Where_then_GroupBy_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Where_then_GroupBy_matches_driver_linq) + "D");
 
         (string Country, int Count)[] Run(SingleEntityDbContext<Order> db) =>
@@ -1861,9 +1861,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         // Country field instead of City.
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_GroupBy_on_renamed_member_groups_by_the_projected_source_not_the_colliding_entity_property) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_GroupBy_on_renamed_member_groups_by_the_projected_source_not_the_colliding_entity_property) + "D");
 
         (string City, int Count)[] Run(SingleEntityDbContext<Order> db) =>
@@ -1887,7 +1887,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         // A computed group key (concat over the Distinct's alias) routes through TryTranslateValue, resolving within
         // the DistinctAliasScope set from Select.PriorGrouping.
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_GroupBy_with_computed_key_goes_native_under_native_only));
 
         var result = db.Entities
@@ -1912,9 +1912,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         // the point is Native doesn't diverge.
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Select_after_Distinct_is_unsupported_and_never_returns_silent_null_data) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Select_after_Distinct_is_unsupported_and_never_returns_silent_null_data) + "D");
 
         Exception? Run(SingleEntityDbContext<Order> db) => Record.Exception(() =>
@@ -1929,7 +1929,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         // First()/Single() after a projected Distinct: the reducer's $limit lands in PostGroupOps and Cardinality uses
         // the SetGroupedTerminalAggregate exception. OrderBy makes "first" deterministic.
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_First_goes_native));
 
         var result = db.Entities.Select(o => new { o.Country }).Distinct().OrderBy(r => r.Country).First();
@@ -1942,9 +1942,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_First_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_First_matches_driver_linq) + "D");
 
         string Run(SingleEntityDbContext<Order> db) =>
@@ -1958,7 +1958,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Single_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Single_goes_native));
 
         var result = db.Entities.Select(o => new { o.Country }).Distinct().Single(r => r.Country == "FR");
@@ -1969,7 +1969,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_then_First_goes_native()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Where_then_First_goes_native));
 
         var result = db.Entities.Select(o => new { o.Country }).Distinct()
@@ -1983,9 +1983,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Where_then_First_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Where_then_First_matches_driver_linq) + "D");
 
         string Run(SingleEntityDbContext<Order> db) =>
@@ -2000,7 +2000,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Take_goes_native_and_dedups()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Take_goes_native_and_dedups));
 
         var result = db.Entities.Select(o => new { o.Country }).Distinct().OrderBy(r => r.Country).Take(2).ToList();
@@ -2013,9 +2013,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_Take_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Take_matches_driver_linq) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -2030,7 +2030,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_OrderBy_goes_native_and_dedups()
     {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_OrderBy_goes_native_and_dedups));
 
         var result = db.Entities.Select(o => new { o.Country }).Distinct().OrderBy(r => r.Country).ToList();
@@ -2043,9 +2043,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_OrderBy_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_OrderBy_matches_driver_linq) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -2062,7 +2062,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         // A computed OrderBy key (x.IndexOf(term)) over a bare-scalar Distinct, mirroring EF's
         // Distinct_followed_by_ordering_on_condition. IndexOf("U"): FR=-1, UK=0, US=0; ThenBy(x => x) gives FR, UK, US.
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+        using var db = CreateContext(SeedOrders(), MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_OrderBy_with_computed_key_over_bare_scalar_goes_native));
 
         var result = db.Entities.Select(o => o.Country).Distinct()
@@ -2076,9 +2076,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_OrderBy_with_computed_key_over_bare_scalar_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_OrderBy_with_computed_key_over_bare_scalar_matches_driver_linq) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -2097,9 +2097,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         // real Country field instead of City.
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Distinct_then_OrderBy_on_renamed_member_sorts_by_the_projected_source_not_the_colliding_entity_property) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_OrderBy_on_renamed_member_sorts_by_the_projected_source_not_the_colliding_entity_property) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -2115,7 +2115,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     public void OrderBy_before_Distinct_goes_native_and_dedups()
     {
         var seed = SeedOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(OrderBy_before_Distinct_goes_native_and_dedups));
 
         var result = db.Entities.OrderBy(o => o.Year).Select(o => new { o.Country }).Distinct()
@@ -2129,9 +2129,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         var seed = SeedOrders();
 
-        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+        using var nativeDb = CreateContext(seed, MongoQueryProvider.Native,
             nameof(OrderBy_before_Distinct_matches_driver_linq) + "N");
-        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+        using var driverDb = CreateContext(seed, MongoQueryProvider.DriverLinq,
             nameof(OrderBy_before_Distinct_matches_driver_linq) + "D");
 
         string[] Run(SingleEntityDbContext<Order> db) =>
@@ -2148,9 +2148,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         // A Join over a projected Distinct falls back gracefully (unlike GroupBy+Join, which hard-declines): under
         // Native it must not throw and must equal DriverLinq.
-        using var nativeDb = CreateDistinctJoinContext(MongoQueryMode.Native,
+        using var nativeDb = CreateDistinctJoinContext(MongoQueryProvider.Native,
             nameof(Distinct_then_Join_falls_back_gracefully_and_matches_driver_linq) + "N");
-        using var driverDb = CreateDistinctJoinContext(MongoQueryMode.DriverLinq,
+        using var driverDb = CreateDistinctJoinContext(MongoQueryProvider.DriverLinq,
             nameof(Distinct_then_Join_falls_back_gracefully_and_matches_driver_linq) + "D");
 
         // The result selector projects the inner entity r; referencing the outer `a` fails translation in all modes
@@ -2173,7 +2173,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Join_throws_under_native_only()
     {
-        using var db = CreateDistinctJoinContext(MongoQueryMode.NativeOnly,
+        using var db = CreateDistinctJoinContext(MongoQueryProvider.NativeOnly,
             nameof(Distinct_then_Join_throws_under_native_only));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -2184,7 +2184,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 .ToList());
     }
 
-    private DistinctJoinDbContext CreateDistinctJoinContext(MongoQueryMode mode, string name)
+    private DistinctJoinDbContext CreateDistinctJoinContext(MongoQueryProvider mode, string name)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "O" + suffix;
@@ -2214,10 +2214,10 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         private readonly string _regionsCollection;
 
         public DistinctJoinDbContext(
-            TemporaryDatabaseFixture database, string ordersCollection, string regionsCollection, MongoQueryMode mode)
+            TemporaryDatabaseFixture database, string ordersCollection, string regionsCollection, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<DistinctJoinDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)

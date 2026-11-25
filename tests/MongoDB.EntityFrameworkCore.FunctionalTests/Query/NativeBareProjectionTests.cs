@@ -29,11 +29,11 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
 /// Bare-leaf selectors (<c>Select(b =&gt; b.Title)</c>, <c>b.Posts</c>, <c>b.Id</c>) emit a native <c>$project</c>.
-/// Routing is proven by <see cref="MongoQueryMode.NativeOnly"/>, never by MQL shape.
+/// Routing is proven by <see cref="MongoQueryProvider.NativeOnly"/>, never by MQL shape.
 /// </summary>
 /// <remarks>
 /// Each leaf kind has a parameterized-<c>Where</c> leg: a captured local in <c>StartsWith</c> makes the native
-/// factory decline late under <see cref="MongoQueryMode.Native"/>, handing the native shaper a driver-rendered
+/// factory decline late under <see cref="MongoQueryProvider.Native"/>, handing the native shaper a driver-rendered
 /// pipeline (whose bare alias is <c>_v</c>). Legs assert values, because that failure is silent (null scalars,
 /// empty arrays) for everything except non-nullable value types.
 /// </remarks>
@@ -94,7 +94,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Bare_scalar_projection_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Equal(
             ["p1_two", "p2_empty", "p3_missing", "p4_null", "p5_one"],
@@ -123,7 +123,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         // removes the pushed-down Select, leaving whole documents.
         var prefix = "p";
 
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
 
         // Nullable leaves run first: without the strip they silently return all nulls, while Title throws;
         // running Title first would hide the silent half.
@@ -153,7 +153,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             .Find(FilterDefinition<BsonDocument>.Empty).ToList()
             .Select(d => d["_id"].AsObjectId).OrderBy(id => id).ToList();
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(expected, db.Entities.AsNoTracking().Select(b => b.Id).ToList().OrderBy(id => id));
     }
 
@@ -164,7 +164,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
 
         // Not a routing proof. Pins the alias: the PK element is `_id`, so RenderProject must not also add
         // `_id : 0` (an invalid inclusion/exclusion mix).
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.Native, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.Native, out var spy);
         _ = db.Entities.AsNoTracking().Select(b => b.Id).ToList();
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
@@ -184,7 +184,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             .Find(FilterDefinition<BsonDocument>.Empty).ToList()
             .Select(d => d["_id"].AsObjectId).OrderBy(id => id).ToList();
 
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
         var actual = db.Entities.AsNoTracking()
             .Where(b => b.Title.StartsWith(prefix)).Select(b => b.Id).ToList().OrderBy(id => id).ToList();
 
@@ -196,7 +196,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Bare_primitive_collection_projection_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(
             ExpectedTags,
             db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Tags).ToList().Select(Print));
@@ -210,8 +210,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         static List<string> Run(SingleEntityDbContext<Blog> db)
             => db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Tags).ToList().Select(Print).ToList();
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, MongoQueryProvider.DriverLinq);
 
         Assert.Equal(ExpectedTags, Run(driver));
         Assert.Equal(Run(driver), Run(native));
@@ -224,7 +224,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             SeedRagged(nameof(Bare_primitive_collection_projection_behind_a_parameterized_predicate_returns_correct_values));
         var prefix = "p";
 
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Equal(
             ExpectedTags,
             db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
@@ -236,7 +236,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Bare_owned_collection_projection_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(
             ExpectedPosts,
             db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts).ToList().Select(PrintPosts));
@@ -254,8 +254,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             => db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts).ToList()
                 .Select(PrintPosts).ToList();
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
-        using var driver = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
+        using var driver = CreateContext(collection, MongoQueryProvider.DriverLinq);
 
         Assert.Equal(ExpectedPosts, Run(driver));
         Assert.Equal(Run(driver), Run(native));
@@ -268,7 +268,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
 
         // Not a routing proof; pins the emitted alias plus the owner key an array leaf must carry so
         // shadow-keyed elements can materialize.
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.Native, out var spy);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.Native, out var spy);
         _ = db.Entities.AsNoTracking().Select(b => b.Posts).ToList();
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
@@ -284,7 +284,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             SeedRagged(nameof(Bare_owned_collection_projection_behind_a_parameterized_predicate_returns_correct_values));
         var prefix = "p";
 
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Equal(
             ExpectedPosts,
             db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
@@ -296,7 +296,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Bare_projection_composed_with_filter_sort_and_paging_goes_native));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Equal(
             ["p2_empty", "p3_missing"],
             db.Entities.AsNoTracking().Where(b => b.Rank >= 2).OrderBy(b => b.Title).Skip(0).Take(2)
@@ -310,7 +310,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             SeedRagged(nameof(Bare_projection_composed_with_a_parameterized_filter_and_paging_returns_correct_values));
         var prefix = "p";
 
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
         Assert.Equal(
             ["p2_empty", "p3_missing"],
             db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title).Skip(1).Take(2)
@@ -318,10 +318,10 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_projection_after_a_union_or_concat_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_projection_after_a_union_or_concat_goes_native(MongoQueryProvider mode)
     {
         var collection = SeedSetOps(nameof(Bare_projection_after_a_union_or_concat_goes_native) + mode);
         using var db = CreateContext(collection, mode);
@@ -342,9 +342,9 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_projection_after_an_intersect_or_except_goes_native(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_projection_after_an_intersect_or_except_goes_native(MongoQueryProvider mode)
     {
         var collection = SeedSetOps(nameof(Bare_projection_after_an_intersect_or_except_goes_native) + mode);
         using var db = CreateContext(collection, mode);
@@ -369,7 +369,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
 
         // Deliberate decline: a dotted alias ("Home.City") is read by the shaper as a literal key but rendered by
         // $project as a nested document.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateHopContext(collection, mode);
             Assert.Equal(
@@ -377,7 +377,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Home.City).ToList());
         }
 
-        using var nativeOnly = CreateHopContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateHopContext(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Home.City).ToList());
     }
@@ -388,7 +388,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         var collection = SeedFlat(nameof(Bare_entity_projection_is_unchanged_and_still_native));
 
         // `Select(x => x)` is returned unchanged at the top of TranslateSelect and never reaches the binder.
-        using var db = CreateFlatContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateFlatContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Equal(
             ["a", "b", "c"],
@@ -401,10 +401,10 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_projected_union_and_concat_operands_go_native_and_return_correct_values(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_projected_union_and_concat_operands_go_native_and_return_correct_values(MongoQueryProvider mode)
     {
         var collection = SeedSetOps(
             nameof(Bare_projected_union_and_concat_operands_go_native_and_return_correct_values) + mode);
@@ -425,9 +425,9 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_projected_intersect_and_except_operands_go_native_and_return_correct_values(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_projected_intersect_and_except_operands_go_native_and_return_correct_values(MongoQueryProvider mode)
     {
         var collection = SeedSetOps(
             nameof(Bare_projected_intersect_and_except_operands_go_native_and_return_correct_values) + mode);
@@ -451,7 +451,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     public void Bare_owned_array_projection_operand_still_declines_under_native_only()
     {
         var collection = SeedSetOps(nameof(Bare_owned_array_projection_operand_still_declines_under_native_only));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         // Union has a driver-LINQ baseline, so a declined shape falls back gracefully under Native and only
         // throws NativeTranslationNotSupportedException under NativeOnly.
@@ -471,10 +471,10 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_projection_then_Distinct_goes_native_and_returns_correct_values(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_projection_then_Distinct_goes_native_and_returns_correct_values(MongoQueryProvider mode)
     {
         var collection = SeedSetOps(nameof(Bare_projection_then_Distinct_goes_native_and_returns_correct_values) + mode);
         using var db = CreateContext(collection, mode);
@@ -491,7 +491,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     public void Bare_projection_as_set_operation_operand_goes_native()
     {
         var collection = SeedSetOps(nameof(Bare_projection_as_set_operation_operand_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var titles = db.Entities.AsNoTracking().Select(b => b.Title)
             .Union(db.Entities.AsNoTracking().Select(b => b.Title))
@@ -503,7 +503,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     public void Bare_projection_then_Distinct_goes_native()
     {
         var collection = SeedSetOps(nameof(Bare_projection_then_Distinct_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var titles = db.Entities.AsNoTracking().Select(b => b.Title).Distinct().ToList();
         Assert.NotEmpty(titles);
@@ -515,7 +515,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         var collection = SeedRagged(nameof(Bare_projection_then_cardinality_operator_goes_native));
 
         // Neither bare-arm narrowing is on the cardinality path, so this needs its own pin.
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Equal(5, db.Entities.AsNoTracking().Select(b => b.Title).Count());
         Assert.Equal("p1_two", db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Title).First());
@@ -528,7 +528,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             SeedRagged(nameof(Bare_projection_then_cardinality_operator_behind_a_parameterized_predicate_is_correct));
         var prefix = "p";
 
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
 
         Assert.Equal(5, db.Entities.AsNoTracking().Where(b => b.Title.StartsWith(prefix)).Select(b => b.Title).Count());
         Assert.Equal(
@@ -538,9 +538,9 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void A_second_projection_after_a_bare_one_returns_correct_values(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void A_second_projection_after_a_bare_one_returns_correct_values(MongoQueryProvider mode)
     {
         var collection = SeedRagged(nameof(A_second_projection_after_a_bare_one_returns_correct_values) + mode);
         using var db = CreateContext(collection, mode);
@@ -692,40 +692,40 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 ? "<empty>"
                 : string.Join("|", posts.Select(p => p.Heading ?? "<nullheading>"));
 
-    private static SingleEntityDbContext<Blog> CreateContext(IMongoCollection<Blog> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Blog> CreateContext(IMongoCollection<Blog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: BlogModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static SingleEntityDbContext<HopBlog> CreateHopContext(
-        IMongoCollection<HopBlog> collection, MongoQueryMode mode)
+        IMongoCollection<HopBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: HopModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static SingleEntityDbContext<FlatBlog> CreateFlatContext(
-        IMongoCollection<FlatBlog> collection, MongoQueryMode mode)
+        IMongoCollection<FlatBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: FlatModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static SingleEntityDbContext<Blog> CreateContextWithLogging(
-        IMongoCollection<Blog> collection, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+        IMongoCollection<Blog> collection, MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -738,7 +738,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 

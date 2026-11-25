@@ -50,10 +50,10 @@ internal enum NativeDisposition
     /// <summary>Build a native pipeline.</summary>
     Native,
 
-    /// <summary>Fall back to driver-LINQ; throw only under <see cref="MongoQueryMode.NativeOnly"/>.</summary>
+    /// <summary>Fall back to driver-LINQ; throw only under <see cref="MongoQueryProvider.NativeOnly"/>.</summary>
     Fallback,
 
-    /// <summary>Throw under both <see cref="MongoQueryMode.Native"/> and <see cref="MongoQueryMode.NativeOnly"/>: the driver-LINQ fallback returns wrong rows.</summary>
+    /// <summary>Throw under both <see cref="MongoQueryProvider.Native"/> and <see cref="MongoQueryProvider.NativeOnly"/>: the driver-LINQ fallback returns wrong rows.</summary>
     HardDecline
 }
 
@@ -126,8 +126,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // The client finishes the rows of the native query. When the query does not run natively (DriverLinq, or a pipeline that cannot be lowered), the
         // driver runs the whole captured chain, operator included, so there is nothing for the client to finish.
         var select = clientFinished.Select;
-        var queryMode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
-        if (queryMode == MongoQueryMode.DriverLinq || TryBuildNativeFactory(queryMode, clientFinished) == null)
+        var queryProvider = ((MongoQueryCompilationContext)QueryCompilationContext).QueryProvider;
+        if (queryProvider == MongoQueryProvider.DriverLinq || TryBuildNativeFactory(queryProvider, clientFinished) == null)
         {
             select.ClientDistinct = false;
             select.ClientContains = null;
@@ -208,7 +208,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         NonDeterministicCalls.ThrowIfAnyNonDeterministic(mongoQueryExpression.CapturedExpression);
 
         // HardDecline: the driver-LINQ fallback returns silently wrong data, so throw under Native/NativeOnly (explicit DriverLinq opts in).
-        var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
+        var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryProvider;
         if (ClassifyNativeDisposition(mongoQueryExpression, mode) == NativeDisposition.HardDecline)
         {
             // Wrong-data provenances are independent and can co-occur; list every cause that applies.
@@ -221,7 +221,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             }
             Debug.Assert(causes.Count > 0, "HardDecline implies at least one wrong-data cause is set.");
             throw new NativeTranslationNotSupportedException(
-                string.Join(". ", causes) + "; use MongoQueryMode.DriverLinq to opt in to the driver-LINQ execution of this query.");
+                string.Join(". ", causes) + "; use MongoQueryProvider.DriverLinq to opt in to the driver-LINQ execution of this query.");
         }
 
         var rootEntityType = mongoQueryExpression.CollectionExpression.EntityType;
@@ -263,21 +263,21 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         IEntityType rootEntityType,
         MongoQueryExpression mongoQueryExpression)
     {
-        var queryMode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
+        var queryProvider = ((MongoQueryCompilationContext)QueryCompilationContext).QueryProvider;
 
         // A grouping with no bound aggregate projection still carries the placeholder GroupByShaperExpression, which VerifyNoClientConstant
         // would reject: surface the coverage decision first (NativeOnly throws the native exception; other modes get the driver's error).
         if (mongoQueryExpression.Select.Route == NativeRoute.Fallback
             && shapedQueryExpression.ShaperExpression is GroupByShaperExpression)
         {
-            ThrowIfNativeOnlyForbidsFallback(queryMode, "Query groups without a supported aggregate projection");
+            ThrowIfNativeOnlyForbidsFallback(queryProvider, "Query groups without a supported aggregate projection");
             ThrowIfDriverLinqCaseMapsGroupedResult(mongoQueryExpression.CapturedExpression);
         }
 
         VerifyNoClientConstant(shapedQueryExpression.ShaperExpression);
 
         // The native GroupBy, projection and scalar-aggregate branches below sit before the NativeOnly guard so representable shapes succeed natively.
-        if (queryMode != MongoQueryMode.DriverLinq
+        if (queryProvider != MongoQueryProvider.DriverLinq
             && mongoQueryExpression.Select.Route == NativeRoute.GroupBy)
         {
             // A grouping's result documents are flat (`_id` parts and accumulators under their aliases), so a shaper that reads them only
@@ -288,7 +288,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 allowProjectionStreaming: true);
         }
 
-        if (queryMode != MongoQueryMode.DriverLinq
+        if (queryProvider != MongoQueryProvider.DriverLinq
             && mongoQueryExpression.Select.Route == NativeRoute.Projection)
         {
             // Read the strip tier here, on the only branch that builds the alias-addressed projection shaper, so
@@ -310,10 +310,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
 
         // Native scalar aggregate. The predicate may still hold a shape the lowerer can't emit (e.g. parameterized string.Contains), so lowering can fall back.
-        if (queryMode != MongoQueryMode.DriverLinq
+        if (queryProvider != MongoQueryProvider.DriverLinq
             && mongoQueryExpression.Select.Route == NativeRoute.ScalarAggregate)
         {
-            var aggregateFactory = TryBuildPipeline(mongoQueryExpression, queryMode);
+            var aggregateFactory = TryBuildPipeline(mongoQueryExpression, queryProvider);
             if (aggregateFactory != null)
             {
                 var cardinality = mongoQueryExpression.Select.Cardinality!;
@@ -355,7 +355,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         // Native whole-entity ctor-wrap (`x => new SomeDto(x)`): stays on NativeRoute.WholeEntity with no $project; DOM only.
         // WholeEntity is Route's fallthrough answer, not an affirmative binding, so the shape is also checked (IsCtorWrappedEntityShaper).
-        if (queryMode != MongoQueryMode.DriverLinq
+        if (queryProvider != MongoQueryProvider.DriverLinq
             && mongoQueryExpression.Select.Route == NativeRoute.WholeEntity
             && IsCtorWrappedEntityShaper(
                 shapedQueryExpression.ShaperExpression, mongoQueryExpression.Select.HasClientWrappedWholeEntityShaper))
@@ -369,7 +369,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         // Any other projected query runs through driver-LINQ push-down or the mixed client-side shaper, so it is
         // a coverage failure under NativeOnly.
-        ThrowIfNativeOnlyForbidsFallback(queryMode, "Query projects a non-entity result");
+        ThrowIfNativeOnlyForbidsFallback(queryProvider, "Query projects a non-entity result");
         ThrowIfDriverLinqCaseMapsGroupedResult(mongoQueryExpression.CapturedExpression);
 
         // HasStringSequenceProjectionLeaf restores what ProjectionAnalyzer.CanPushDown can no longer see: the native string-sequence leaf
@@ -650,7 +650,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
         var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
-        var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
+        var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryProvider;
 
         // The gate is decided once at compile time; per execution the factory is only re-bound (factory.Build), so exactly one shaper is compiled.
         var nativeFactory = TryBuildNativeFactory(mode, mongoQueryExpression);
@@ -1060,10 +1060,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// Under NativeOnly a lowering failure throws.
     /// </summary>
     private static MongoPipelineFactory? TryBuildNativeFactory(
-        MongoQueryMode mode,
+        MongoQueryProvider mode,
         MongoQueryExpression mongoQueryExpression)
     {
-        if (mode == MongoQueryMode.DriverLinq)
+        if (mode == MongoQueryProvider.DriverLinq)
         {
             return null;
         }
@@ -1080,14 +1080,14 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         return TryBuildPipeline(mongoQueryExpression, mode);
     }
 
-    private static MongoPipelineFactory? TryBuildPipeline(MongoQueryExpression mongoQueryExpression, MongoQueryMode mode)
+    private static MongoPipelineFactory? TryBuildPipeline(MongoQueryExpression mongoQueryExpression, MongoQueryProvider mode)
     {
         try
         {
             var stages = new MongoSelectLowerer().Lower(mongoQueryExpression);
             return MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
         }
-        catch (NativeTranslationNotSupportedException) when (mode != MongoQueryMode.NativeOnly)
+        catch (NativeTranslationNotSupportedException) when (mode != MongoQueryProvider.NativeOnly)
         {
             return null;
         }
@@ -1324,12 +1324,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         _ => Convert.ChangeType(mapped, targetType)
     };
 
-    private static void ThrowIfNativeOnlyForbidsFallback(MongoQueryMode mode, string reason)
+    private static void ThrowIfNativeOnlyForbidsFallback(MongoQueryProvider mode, string reason)
     {
-        if (mode == MongoQueryMode.NativeOnly)
+        if (mode == MongoQueryProvider.NativeOnly)
         {
             throw new NativeTranslationNotSupportedException(
-                $"{reason} and MongoQueryMode.NativeOnly forbids the driver-LINQ fallback.");
+                $"{reason} and MongoQueryProvider.NativeOnly forbids the driver-LINQ fallback.");
         }
     }
 
@@ -1340,10 +1340,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         NativeRoute route,
         bool isFallbackWrongData,
         bool hasUnboundVectorSearch,
-        MongoQueryMode mode)
+        MongoQueryProvider mode)
     {
         // Checked first: wrong-data fallback hard-declines except under explicit DriverLinq.
-        if (mode != MongoQueryMode.DriverLinq && isFallbackWrongData)
+        if (mode != MongoQueryProvider.DriverLinq && isFallbackWrongData)
         {
             return NativeDisposition.HardDecline;
         }
@@ -1360,7 +1360,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// Gathers the is-native signals from <paramref name="q"/> and classifies. Vector search presence is read
     /// from the captured chain (the call is lifted out before the Select is built) and paired with the bound slot.
     /// </summary>
-    private static NativeDisposition ClassifyNativeDisposition(MongoQueryExpression q, MongoQueryMode mode)
+    private static NativeDisposition ClassifyNativeDisposition(MongoQueryExpression q, MongoQueryProvider mode)
         => ClassifyNativeDisposition(
             q.Select.Route,
             q.Select.IsFallbackWrongData,

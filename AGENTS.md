@@ -65,7 +65,7 @@ registers BSON serializers at load.
 | Driver-version override | `DRIVER_VERSION` |
 
 See `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` for baseline regeneration,
-`MONGODB_EF_QUERY_MODE` (query mode for all test suites; `MONGODB_EF_NATIVE_ONLY=1` is an alias for `NativeOnly`)
+`MONGODB_EF_QUERY_PROVIDER` (query provider for all test suites; `MONGODB_EF_NATIVE_ONLY=1` is an alias for `NativeOnly`)
 and fixture patterns.
 
 ## Versioning & breaking changes
@@ -101,7 +101,7 @@ surface, even though users are warned not to implement these); default-value cha
   operation is contract.
 - **Which internal path a supported LINQ query takes** (native MQL translator vs. driver-LINQ) and **the exact
   MQL emitted**. In particular, the native translator being the **default** is not a break: results are
-  unchanged, unsupported shapes fall back automatically, and `UseQueryMode(MongoQueryMode.DriverLinq)` restores
+  unchanged, unsupported shapes fall back automatically, and `UseQueryProvider(MongoQueryProvider.DriverLinq)` restores
   the previous path.
 
 ## Async conventions

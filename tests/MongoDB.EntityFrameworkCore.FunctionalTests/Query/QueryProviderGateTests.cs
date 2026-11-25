@@ -28,10 +28,10 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// End-to-end tests of the compile-time native-vs-driver gate across <c>MongoQueryMode</c>s. Asserts results
+/// End-to-end tests of the compile-time native-vs-driver gate across <c>MongoQueryProvider</c>s. Asserts results
 /// and/or the logged MQL (sensitive-data logging on, so bound parameter values appear).
 /// </summary>
-public class QueryModeGateTests(TemporaryDatabaseFixture database)
+public class QueryProviderGateTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private class Customer
@@ -58,7 +58,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     }
 
     private SingleEntityDbContext<Customer> CreateContext(
-        IMongoCollection<Customer> collection, List<string> logs, MongoQueryMode mode)
+        IMongoCollection<Customer> collection, List<string> logs, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
@@ -66,7 +66,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
                 b.LogTo(logs.Add)
                     .EnableSensitiveDataLogging()
                     .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static string Mql(List<string> logs)
@@ -76,7 +76,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void Native_mode_filter_uses_native_match_pipeline()
     {
         var (collection, logs) = SeedCustomers(nameof(Native_mode_filter_uses_native_match_pipeline));
-        using var db = CreateContext(collection, logs, MongoQueryMode.Native);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.Native);
 
         var value = 15;
         var results = db.Entities.Where(c => c.Score > value).OrderBy(c => c.Score).ToList();
@@ -94,7 +94,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     {
         var (collection, logs) = SeedCustomers(nameof(Native_parameterized_query_returns_correct_rows_for_each_value));
 
-        using (var db = CreateContext(collection, logs, MongoQueryMode.Native))
+        using (var db = CreateContext(collection, logs, MongoQueryProvider.Native))
         {
             var threshold = 15;
             var names = db.Entities.Where(c => c.Score > threshold).OrderBy(c => c.Score)
@@ -102,7 +102,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
             Assert.Equal(["Bob", "Carol", "Dave"], names.ToArray());
         }
 
-        using (var db = CreateContext(collection, logs, MongoQueryMode.Native))
+        using (var db = CreateContext(collection, logs, MongoQueryProvider.Native))
         {
             var threshold = 25;
             var names = db.Entities.Where(c => c.Score > threshold).OrderBy(c => c.Score)
@@ -115,7 +115,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void Native_sort_skip_take_uses_native_pipeline()
     {
         var (collection, logs) = SeedCustomers(nameof(Native_sort_skip_take_uses_native_pipeline));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var page = db.Entities.OrderBy(c => c.Score).Skip(1).Take(2).ToList();
 
@@ -126,7 +126,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void DriverLinq_mode_never_uses_native_pipeline()
     {
         var (collection, logs) = SeedCustomers(nameof(DriverLinq_mode_never_uses_native_pipeline));
-        using var db = CreateContext(collection, logs, MongoQueryMode.DriverLinq);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.DriverLinq);
 
         var results = db.Entities.Where(c => c.Score > 15).OrderBy(c => c.Score).ToList();
 
@@ -144,13 +144,13 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         // A Split(...)[0] computed projection has no native translation (driver-LINQ has one). There is no fallback log event, so prove the
         // fallback is real by asserting NativeOnly rejects the same query; otherwise, once the native translator
         // learns the shape, this test would silently stop exercising the fallback.
-        using (var nativeOnly = CreateContext(collection, [], MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, [], MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnly.Entities
                 .Where(c => c.Score > 15).OrderBy(c => c.Score).Select(c => c.Name.Split(' ')[0]).ToList());
         }
 
-        using var db = CreateContext(collection, logs, MongoQueryMode.Native);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.Native);
         var names = db.Entities.Where(c => c.Score > 15).OrderBy(c => c.Score)
             .Select(c => c.Name.Split(' ')[0]).ToList();
 
@@ -161,7 +161,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_mode_allows_arithmetic_computed_projection()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_mode_allows_arithmetic_computed_projection));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         // An arithmetic computed projection leaf renders as a computed $project, so NativeOnly succeeds.
         var results = db.Entities.Where(c => c.Score > 15).OrderBy(c => c.Score)
@@ -177,7 +177,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_mode_throws_on_unrepresentable_query()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_mode_throws_on_unrepresentable_query));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         // A PadLeft computed projection has no native translation, so NativeOnly must throw at compile time.
         var query = db.Entities.Where(c => c.Score > 15).Select(c => new { Greeting = c.Name.PadLeft(10) });
@@ -189,7 +189,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_mode_allows_representable_query()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_mode_allows_representable_query));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.Score > 15).OrderBy(c => c.Score).ToList();
 
@@ -204,7 +204,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void Native_where_after_skip_returns_correct_rows()
     {
         var (collection, logs) = SeedCustomers(nameof(Native_where_after_skip_returns_correct_rows));
-        using var db = CreateContext(collection, logs, MongoQueryMode.Native);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.Native);
 
         var results = db.Entities.OrderBy(c => c.Score).Skip(1).Where(c => c.Score > 25).ToList();
 
@@ -215,7 +215,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_where_after_skip_succeeds()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_where_after_skip_succeeds));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.OrderBy(c => c.Score).Skip(1).Where(c => c.Score > 25).ToList();
 
@@ -226,7 +226,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void Native_order_after_skip_returns_correct_rows()
     {
         var (collection, logs) = SeedCustomers(nameof(Native_order_after_skip_returns_correct_rows));
-        using var db = CreateContext(collection, logs, MongoQueryMode.Native);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.Native);
 
         var results = db.Entities.Skip(1).OrderByDescending(c => c.Score).ToList();
 
@@ -237,7 +237,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_order_after_skip_succeeds()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_order_after_skip_succeeds));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Skip(1).OrderByDescending(c => c.Score).ToList();
 
@@ -248,7 +248,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void Native_order_after_take_returns_correct_rows()
     {
         var (collection, logs) = SeedCustomers(nameof(Native_order_after_take_returns_correct_rows));
-        using var db = CreateContext(collection, logs, MongoQueryMode.Native);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.Native);
 
         var results = db.Entities.Take(2).OrderByDescending(c => c.Score).ToList();
 
@@ -259,7 +259,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_order_after_take_succeeds()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_order_after_take_succeeds));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Take(2).OrderByDescending(c => c.Score).ToList();
 
@@ -270,7 +270,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_take_before_skip_succeeds()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_take_before_skip_succeeds));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.OrderBy(c => c.Score).Take(3).Skip(1).ToList();
 
@@ -281,7 +281,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_repeated_paging_succeeds()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_repeated_paging_succeeds));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.OrderBy(c => c.Score).Skip(1).Take(2).Skip(1).ToList();
 
@@ -307,7 +307,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         ]);
         var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
         var logs = new List<string>();
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.OrderBy(c => c.Score).Take(2).All(c => c.IsPremium);
 
@@ -318,7 +318,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_take_then_count_with_predicate_succeeds()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_take_then_count_with_predicate_succeeds));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.OrderBy(c => c.Score).Take(2).Count(c => c.Score > 15);
 
@@ -329,7 +329,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_nullable_equality_does_not_throw()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_nullable_equality_does_not_throw));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.NullableScore == 5).ToList();
 
@@ -340,7 +340,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_is_null_predicate_does_not_throw()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_is_null_predicate_does_not_throw));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.NullableScore == null).ToList();
 
@@ -364,7 +364,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         ]);
         var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
         var logs = new List<string>();
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var seeded = new List<Customer>
         {
@@ -393,7 +393,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         ]);
         var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
         var logs = new List<string>();
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var seeded = new List<Customer>
         {
@@ -414,7 +414,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_inline_collection_contains_uses_in()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_inline_collection_contains_uses_in));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => new[] { 10, 30 }.Contains(c.Score)).ToList();
 
@@ -426,7 +426,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_parameterized_collection_contains_uses_in()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_parameterized_collection_contains_uses_in));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var scores = new List<int> { 20, 40 };
         var results = db.Entities.Where(c => scores.Contains(c.Score)).ToList();
@@ -439,7 +439,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_negated_collection_contains_uses_nin()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_negated_collection_contains_uses_nin));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var scores = new[] { 10, 30 };
         var results = db.Entities.Where(c => !scores.Contains(c.Score)).ToList();
@@ -454,7 +454,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_starts_with_uses_anchored_regex()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_starts_with_uses_anchored_regex));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.Name.StartsWith("A")).ToList();
 
@@ -469,7 +469,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_ends_with_uses_anchored_regex()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_ends_with_uses_anchored_regex));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.Name.EndsWith("e")).ToList();
 
@@ -483,7 +483,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_contains_uses_unanchored_regex()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_contains_uses_unanchored_regex));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => c.Name.Contains("o")).ToList();
 
@@ -497,7 +497,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_negated_starts_with_uses_not_wrapped_regex()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_negated_starts_with_uses_not_wrapped_regex));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.Where(c => !c.Name.StartsWith("A")).ToList();
 
@@ -511,7 +511,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_regex_metacharacters_are_escaped()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_regex_metacharacters_are_escaped));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         // "A.e" as a literal must not match "Alice" (which it would if '.' were an unescaped wildcard).
         var results = db.Entities.Where(c => c.Name.StartsWith("A.")).ToList();
@@ -526,7 +526,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
         // A parameterized term goes native: escaping/anchoring is deferred to a regex placeholder resolved
         // per execution.
         var (collection, logs) = SeedCustomers(nameof(Native_parameterized_starts_with_goes_native));
-        using var db = CreateContext(collection, logs, MongoQueryMode.Native);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.Native);
 
         var term = "A";
         var results = db.Entities.Where(c => c.Name.StartsWith(term)).ToList();
@@ -538,7 +538,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void NativeOnly_parameterized_starts_with_goes_native()
     {
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_parameterized_starts_with_goes_native));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var term = "A";
         var results = db.Entities.Where(c => c.Name.StartsWith(term)).ToList();
@@ -551,7 +551,7 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     {
         // Parameterized terms must be escaped like constants: "A." must not match "Alice".
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_parameterized_starts_with_escapes_regex_metacharacters));
-        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, logs, MongoQueryProvider.NativeOnly);
 
         var term = "A.";
         var results = db.Entities.Where(c => c.Name.StartsWith(term)).ToList();

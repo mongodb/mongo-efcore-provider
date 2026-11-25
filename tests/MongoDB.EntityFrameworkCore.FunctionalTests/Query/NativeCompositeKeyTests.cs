@@ -40,7 +40,7 @@ public class NativeCompositeKeyTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: b => b.Entity<Order>().HasKey(o => new { o.CustomerId, o.OrderNumber }),
-            optionsBuilderAction: b => new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly));
+            optionsBuilderAction: b => new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly));
 
         db.Entities.Add(new Order { CustomerId = 1, OrderNumber = 100, Status = "Open" });
         db.Entities.Add(new Order { CustomerId = 2, OrderNumber = 200, Status = "Closed" });
@@ -57,7 +57,7 @@ public class NativeCompositeKeyTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: b => b.Entity<Order>().HasKey(o => new { o.CustomerId, o.OrderNumber }),
-            optionsBuilderAction: b => new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly));
+            optionsBuilderAction: b => new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly));
 
         db.Entities.Add(new Order { CustomerId = 2, OrderNumber = 200, Status = "Closed" });
         db.Entities.Add(new Order { CustomerId = 1, OrderNumber = 100, Status = "Open" });

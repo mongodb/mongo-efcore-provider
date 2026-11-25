@@ -81,48 +81,48 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
     }
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void IndexOf_of_another_field_beside_a_case_mapping(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), V = x.S!.IndexOf(x.T!) })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + x.V),
             [Throws, Throws, Throws, Throws, "ABC:1"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Nullable_IndexOf_of_another_field_beside_a_case_mapping(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), V = (int?)x.S!.IndexOf(x.T!) })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + Show(x.V)),
             ["<null>:<null>", "<null>:<null>", "<null>:<null>", "ABC:<null>", "ABC:1"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Concatenation_with_a_case_mapped_field_beside_a_case_mapping(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), V = x.S + x.T!.ToLower() })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + Show(x.V)),
             ["<null>:", "<null>:", "<null>:b", "ABC:Abc", "ABC:Abcb"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Concat_method_beside_a_case_mapping(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), V = string.Concat(x.S, x.T) })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + Show(x.V)),
             ["<null>:", "<null>:", "<null>:b", "ABC:Abc", "ABC:Abcb"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Compare_beside_a_case_mapping(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), V = string.Compare(x.S, x.T) })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + x.V),
             ["<null>:0", "<null>:0", "<null>:-1", "ABC:1", "ABC:-1"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Replace_with_another_field_beside_a_case_mapping(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), V = x.S!.Replace("b", x.T) })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + Show(x.V)),
@@ -131,40 +131,40 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
     // Natively these are computed on the server, but string.Compare declines, so beside a case mapping they read from
     // whole documents in every mode.
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void StartsWith_another_field_read_from_whole_documents(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), F = string.Compare(x.S, x.T), V = x.S!.StartsWith(x.T!) })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + x.F + ":" + x.V),
             [Throws, Throws, Throws, Throws, "ABC:-1:False"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Substring_at_another_fields_length_read_from_whole_documents(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), F = string.Compare(x.S, x.T), V = x.S!.Substring(x.T!.Length) })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + x.F + ":" + Show(x.V)),
             ["<null>:0:<null>", "<null>:0:<null>", "<null>:-1:<null>", "ABC:1:<null>", "ABC:-1:bc"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Math_Max_of_two_lengths_beside_a_case_mapping(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), V = Math.Max(x.S!.Length, x.T!.Length) })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + x.V),
             [Throws, Throws, Throws, Throws, "ABC:3"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Equality_of_two_fields_beside_a_case_mapping(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), V = x.S == x.T })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + x.V),
             ["<null>:True", "<null>:True", "<null>:False", "ABC:False", "ABC:False"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Coalesce_and_conditional_over_two_fields_beside_a_case_mapping(string mode)
     {
         AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), V = x.S ?? x.T })
@@ -177,8 +177,8 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
 
     // A string instance call on a null receiver answers null, as in EF, rather than throwing.
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Null_propagating_string_calls_beside_an_entity(string mode)
     {
         AssertRows(mode, q => q.Select(x => new { R = x, V = x.S!.Trim() + x.T })
@@ -190,40 +190,40 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
     }
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void KeyValuePair_of_a_case_mapping_and_a_computed_length(string mode)
         => AssertRows(mode, q => q.Select(x => new KeyValuePair<string, int>(x.S!.ToUpper(), x.S!.Length * 10 + x.T!.Length))
                 .AsEnumerable().Select(x => Show(x.Key) + ":" + x.Value),
             [Throws, Throws, Throws, Throws, "ABC:31"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void KeyValuePair_of_two_fields_beside_an_entity(string mode)
         => AssertRows(mode, q => q.Select(x => new { R = x, K = new KeyValuePair<string?, string?>(x.S, x.T) })
                 .AsEnumerable().Select(x => x.R.Label + ":" + Show(x.K.Key) + "/" + Show(x.K.Value)),
             ["missing:<null>/<null>", "null:<null>/<null>", "sNull:<null>/b", "tNull:Abc/<null>", "value:Abc/b"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Nested_anonymous_member_beside_a_case_mapping(string mode)
         => AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), N = new { V = string.Concat(x.S, x.T), I = x.S!.IndexOf(x.T!) } })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + x.N.V + ":" + x.N.I),
             [Throws, Throws, Throws, Throws, "ABC:Abcb:1"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Dto_member_init_beside_a_case_mapping(string mode)
         => AssertRows(mode, q => q.Select(x => new Dto { U = x.S!.ToUpper(), I = x.S!.IndexOf(x.T!) })
                 .AsEnumerable().Select(x => Show(x.U) + ":" + x.I),
             [Throws, Throws, Throws, Throws, "ABC:1"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Entity_beside_a_multi_read_leaf(string mode)
     {
         AssertRows(mode, q => q.Select(x => new { R = x, V = x.S!.IndexOf(x.T!) })
@@ -237,8 +237,8 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
     // Each operand is read through its own property: an owned navigation's document, a configured element name, and
     // a value converter (C is stored as "pre:" + value).
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Owned_renamed_and_converted_operands_beside_a_case_mapping(string mode)
     {
         AssertRows(mode, q => q.Select(x => new { U = x.S!.ToUpper(), V = string.Concat(x.S, x.O!.W) })
@@ -259,8 +259,8 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
     // bound per member; bound under the one enclosing member, each would read as the last one bound (Len as the
     // length of T, or the Compare result read as a string). The mixed reader declines instead, for every row.
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Constructor_argument_and_initializer_naming_the_same_member(string mode)
     {
         AssertEveryRowDeclinesConstruction(mode, q => q.Select(x => new CtorDto(x.S!.ToUpper(), string.Compare(x.S, x.T)) { Name = x.T })
@@ -274,8 +274,8 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
     // Same-typed arguments: bound under the one enclosing member, First would silently read T.ToUpper() ("B" where C#
     // answers "ABC").
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Same_typed_constructor_arguments_and_initializer_naming_the_same_member(string mode)
     {
         AssertEveryRowDeclinesConstruction(mode, q => q.Select(x => new NameDto(x.S!.ToUpper(), x.T!.ToUpper()) { Name = x.T })
@@ -291,8 +291,8 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
     // ["<null>:<null>", "<null>:<null>", "b:<null>", "<null>:bc", "b:bc"]; until that is reachable (EF-460) every row
     // must fail translation rather than answer anything: the mixed reader looks V up as an entity property.
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Computed_leaf_under_a_retained_pushed_down_Select(string mode)
     {
         AssertEveryRowThrows(mode, q => q.Select(x => new { R = x.O, V = x.S!.Substring(1) }).Distinct()
@@ -307,8 +307,8 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
     // "b:b", "<null>:Abc", "b:Abcb"). It now fails translation like the Substring leaf above. Reading the projected V by
     // name instead is not an option: the driver's $concat answers null where C# treats a null operand as empty.
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Concat_and_arithmetic_leaf_under_a_retained_pushed_down_Select(string mode)
     {
         AssertEveryRowThrows(mode, q => q.Select(x => new { R = x.O, V = x.S + x.T }).Distinct()
@@ -327,24 +327,24 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
     // reference beside it, a plain scalar beside the owned reference and a null-propagating string call all read their own
     // projected value (or fail loudly); none may answer null / "" for a row that holds a value.
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Owned_reference_under_a_retained_pushed_down_Select(string mode)
         => AssertRows(mode, q => q.Select(x => new { R = x.O }).Distinct()
                 .AsEnumerable().Select(x => Show(x.R?.W)),
             ["<null>", "<null>", "b", "<null>", "b"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Scalar_beside_an_owned_reference_under_a_retained_pushed_down_Select(string mode)
         => AssertRows(mode, q => q.Select(x => new { R = x.O, V = x.S }).Distinct()
                 .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)),
             ["<null>:<null>", "<null>:<null>", "b:<null>", "<null>:Abc", "b:Abc"]);
 
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Owned_reference_and_scalar_under_a_retained_Union(string mode)
         => AssertRows(mode, q => q.Select(x => new { R = x.O, V = x.S })
                 .Union(q.Select(x => new { R = x.O, V = x.S }))
@@ -354,14 +354,14 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
     // The server's $toUpper answers "" for a null S where C# answers null, and the projected document no longer holds the raw
     // value to re-apply the mapping to: fail loudly rather than answer "" (EF-469).
     [Theory]
-    [InlineData(nameof(MongoQueryMode.DriverLinq))]
-    [InlineData(nameof(MongoQueryMode.Native))]
+    [InlineData(nameof(MongoQueryProvider.DriverLinq))]
+    [InlineData(nameof(MongoQueryProvider.Native))]
     public void Case_mapping_under_a_retained_pushed_down_Select_fails_loudly(string mode)
     {
         var collection = Seed(nameof(Case_mapping_under_a_retained_pushed_down_Select_fails_loudly) + mode);
         foreach (var label in new[] { "missing", "null", "sNull", "tNull", "value" })
         {
-            using var db = CreateContext(collection, Enum.Parse<MongoQueryMode>(mode));
+            using var db = CreateContext(collection, Enum.Parse<MongoQueryProvider>(mode));
             var exception = Assert.Throws<InvalidOperationException>(
                 () => db.Entities.AsNoTracking().Where(x => x.Label == label)
                     .Select(x => new { R = x.O, V = x.S!.ToUpper() }).Distinct().ToList());
@@ -377,7 +377,7 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
         var collection = Seed(name + mode + Guid.NewGuid().ToString("N")[..4]);
         foreach (var label in new[] { "missing", "null", "sNull", "tNull", "value" })
         {
-            using var db = CreateContext(collection, Enum.Parse<MongoQueryMode>(mode));
+            using var db = CreateContext(collection, Enum.Parse<MongoQueryProvider>(mode));
             var exception = Assert.Throws<InvalidOperationException>(
                 () => query(db.Entities.AsNoTracking().Where(x => x.Label == label)).ToList());
             Assert.Equal(
@@ -401,7 +401,7 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
         var actual = new List<string>();
         foreach (var label in labels)
         {
-            using var db = CreateContext(collection, Enum.Parse<MongoQueryMode>(mode));
+            using var db = CreateContext(collection, Enum.Parse<MongoQueryProvider>(mode));
             try
             {
                 actual.Add(string.Join(",", query(db.Entities.AsNoTracking().Where(x => x.Label == label)).ToList()));
@@ -425,7 +425,7 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
         var collection = Seed(name + mode + Guid.NewGuid().ToString("N")[..4]);
         foreach (var label in new[] { "missing", "null", "sNull", "tNull", "value" })
         {
-            using var db = CreateContext(collection, Enum.Parse<MongoQueryMode>(mode));
+            using var db = CreateContext(collection, Enum.Parse<MongoQueryProvider>(mode));
             var exception = Assert.Throws<InvalidOperationException>(
                 () => query(db.Entities.AsNoTracking().Where(x => x.Label == label)).ToList());
             Assert.StartsWith(
@@ -464,7 +464,7 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
         return database.MongoDatabase.GetCollection<Row>(collectionName);
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: mb =>
@@ -477,6 +477,6 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

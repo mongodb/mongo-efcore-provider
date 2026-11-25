@@ -114,7 +114,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         var seed = CreateSeed();
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
         {
-            using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
                 nameof(Navigation_dereferenced_inside_an_accumulator_declines_cleanly));
             return db.Orders
                 .GroupBy(o => o.Owner!.Region)
@@ -175,7 +175,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         var dora = new Owner { Id = ObjectId.GenerateNewId(), Name = "Dora", Region = "West", Rank = 1 };
         seed = seed with { Owners = [..seed.Owners, dora] };
 
-        List<(string, decimal)> Run(MongoQueryMode mode)
+        List<(string, decimal)> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(seed, mode, nameof(Non_nullable_accumulator_over_an_unmatched_left_join_side_does_not_answer_default) + mode);
             return (from w in db.Owners
@@ -186,8 +186,8 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
                 .AsEnumerable().Select(x => (x.Key, x.Max)).ToList();
         }
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
-        Assert.ThrowsAny<Exception>(() => Run(MongoQueryMode.Native));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryProvider.NativeOnly));
+        Assert.ThrowsAny<Exception>(() => Run(MongoQueryProvider.Native));
     }
 
     [Fact]
@@ -222,7 +222,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         // driver-LINQ fails to deserialize the null key (FormatException). Native must decline, never answer 0.
         var seed = CreateSeedWithOrderlessOwner();
 
-        List<(decimal, int)> Run(MongoQueryMode mode)
+        List<(decimal, int)> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(seed, mode, nameof(Non_nullable_key_over_an_unmatched_left_join_side_declines) + mode);
             return (from w in db.Owners
@@ -233,8 +233,8 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
                 .AsEnumerable().Select(x => (x.Key, x.Count)).ToList();
         }
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
-        Assert.ThrowsAny<Exception>(() => Run(MongoQueryMode.Native));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryProvider.NativeOnly));
+        Assert.ThrowsAny<Exception>(() => Run(MongoQueryProvider.Native));
     }
 
     [Fact]
@@ -245,7 +245,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         var seed = CreateSeedWithOrderlessOwner();
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
         {
-            using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
                 nameof(Composite_key_with_a_non_nullable_unmatched_left_join_part_declines));
             return (from w in db.Owners
                     join o in db.Orders on w.Id equals o.OwnerId into gj
@@ -313,7 +313,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         var seed = CreateSeedWithOrderlessOwner();
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
         {
-            using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
                 nameof(Accumulator_condition_over_an_unmatched_left_join_side_declines) + shape.Length);
             var query = shape switch
             {
@@ -344,7 +344,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         var seed = CreateSeedWithOrderlessOwner();
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
         {
-            using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Key_only_accumulator_condition_over_a_left_join_declines));
+            using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Key_only_accumulator_condition_over_a_left_join_declines));
             return (from w in db.Owners
                     join o in db.Orders on w.Id equals o.OwnerId into gj
                     from o in gj.DefaultIfEmpty()
@@ -618,7 +618,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         var seed = CreateSeed();
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
         {
-            using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
                 nameof(Paging_before_a_required_navigation_group_declines_cleanly));
             return db.Orders
                 .OrderBy(o => o.Total).Take(3)
@@ -634,7 +634,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         var seed = CreateSeed();
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
         {
-            using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
                 nameof(Paging_before_a_two_level_chain_group_declines_cleanly));
             return db.OrderLines
                 .OrderBy(l => l.Quantity).Take(2)
@@ -698,7 +698,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         // The P04 shape. Dora's Max is null (no orders): null < 100 is false. Hand oracle only: driver-LINQ can't
         // translate this left join on any version.
         var seed = CreateSeedWithOrderlessOwner();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Having_less_than_over_a_nullable_accumulator_of_an_unmatched_side_excludes_the_group));
 
         var count = (from w in db.Owners
@@ -720,7 +720,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         var seed = CreateSeedWithOrderlessOwner();
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
         {
-            using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
                 nameof(Group_key_with_a_condition_over_an_unmatched_side_declines));
             return (from w in db.Owners
                     join o in db.Orders on w.Id equals o.OwnerId into gj
@@ -757,7 +757,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         // North: Alice x2 (7), Cara (3) -> 1. South: Bob (null) -> 0 (null < 5 is false). West: Dora (1) -> 1.
         // Hand oracle only: EF10's driver-LINQ counts Bob (South 1), and EF8/EF9's can't translate the join.
         var seed = CreateSeedWithOrderlessOwner();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Accumulator_condition_over_a_nullable_outer_property_of_a_left_join_does_not_count_null));
         var result = (from w in db.Owners
                       join o in db.Orders on w.Id equals o.OwnerId into gj
@@ -775,7 +775,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
     {
         // Hand oracle only: EF10's driver-LINQ answers 1 for the null key, and EF8/EF9's can't translate the join.
         var seed = CreateSeedWithOrderlessOwner();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Projection_ternary_over_a_nullable_key_of_an_unmatched_side_treats_null_as_not_less));
         var result = (from w in db.Owners
                       join o in db.Orders on w.Id equals o.OwnerId into gj
@@ -797,7 +797,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         var seed = CreateSeedWithOrderlessOwner();
         var name = nameof(Composite_key_with_a_nullable_part_of_an_unmatched_side_treats_the_missing_part_as_null);
 
-        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, name + "W"))
+        using (var db = CreateContext(seed, MongoQueryProvider.NativeOnly, name + "W"))
         {
             var nullPart = (from w in db.Owners
                             join o in db.Orders on w.Id equals o.OwnerId into gj
@@ -809,7 +809,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal([("Dora", 1)], nullPart);
         }
 
-        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, name + "N"))
+        using (var db = CreateContext(seed, MongoQueryProvider.NativeOnly, name + "N"))
         {
             var notNull = (from w in db.Owners
                            join o in db.Orders on w.Id equals o.OwnerId into gj
@@ -821,7 +821,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal(["Alice", "Alice", "Bob", "Cara"], notNull);
         }
 
-        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, name + "P"))
+        using (var db = CreateContext(seed, MongoQueryProvider.NativeOnly, name + "P"))
         {
             var projected = (from w in db.Owners
                              join o in db.Orders on w.Id equals o.OwnerId into gj
@@ -835,7 +835,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
                 projected);
         }
 
-        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, name + "L"))
+        using (var db = CreateContext(seed, MongoQueryProvider.NativeOnly, name + "L"))
         {
             var less = (from w in db.Owners
                         join o in db.Orders on w.Id equals o.OwnerId into gj
@@ -856,7 +856,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         // skip ([] instead of [null]); the element is read null-safe from the LINQ type. Driver-LINQ answers [] for Dora
         // on EF10 (and can't translate the left join on EF8/EF9), so the hand oracle is the only check.
         var seed = CreateSeedWithOrderlessOwner();
-        List<(string, string)> Run(MongoQueryMode mode)
+        List<(string, string)> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(seed, mode, nameof(Push_list_over_a_nullable_unmatched_left_join_side_holds_null) + mode);
             return (from w in db.Owners
@@ -868,7 +868,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
                 .Select(x => (x.Key, string.Join(",", x.Totals.OrderBy(t => t).Select(t => t is null ? "null" : ((decimal)t / 1.0000000000000000000000000000m).ToString(System.Globalization.CultureInfo.InvariantCulture))))).ToList();
         }
 
-        var result = Run(MongoQueryMode.NativeOnly);
+        var result = Run(MongoQueryProvider.NativeOnly);
 
         Assert.Equal([("Alice", "10,20"), ("Bob", "30"), ("Cara", "5"), ("Dora", "null")], result);
     }
@@ -879,7 +879,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         // The non-nullable spelling has no correct list for Dora: C# throws reading x.Total off the DefaultIfEmpty null,
         // and a native $push would silently answer [] (missing skipped) or a 0. Native must decline.
         var seed = CreateSeedWithOrderlessOwner();
-        List<(string, int)> Run(MongoQueryMode mode)
+        List<(string, int)> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(seed, mode, nameof(Push_list_over_a_non_nullable_unmatched_left_join_side_declines) + mode);
             return (from w in db.Owners
@@ -890,7 +890,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
                 .AsEnumerable().Select(x => (x.Key, x.Totals.Count)).ToList();
         }
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryProvider.NativeOnly));
     }
 
     [Fact]
@@ -928,7 +928,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         var seed = CreateSeedWithOrderlessOwner();
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
         {
-            using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
                 nameof(Non_null_propagating_computed_key_over_an_unmatched_left_join_side_declines) + shape.Length);
             var rows = from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w, o };
             return shape switch
@@ -959,7 +959,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
     public void Null_guarded_string_key_over_an_unmatched_left_join_side_stays_native(string shape, string expected)
     {
         var seed = CreateSeedWithOrderlessOwner();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Null_guarded_string_key_over_an_unmatched_left_join_side_stays_native) + shape.Length);
         var rows = from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w, o };
         IEnumerable<string> r = shape switch
@@ -984,7 +984,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         // Nav-expansion's left join: o2/o5 have no reviewer and o4's dangles, so EF's key for all three is null; o1's
         // reviewer is Bob, o3's Alice. Hand oracle: driver-LINQ answers "" for the three.
         var seed = CreateSeed();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Null_guarded_string_key_over_an_optional_navigation_stays_native));
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Null_guarded_string_key_over_an_optional_navigation_stays_native));
         var result = db.Orders
             .GroupBy(o => o.Reviewer!.Name.Substring(0, 1))
             .Select(g => new { g.Key, Count = g.Count() })
@@ -1000,14 +1000,14 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
     public void Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row()
     {
         var seed = CreateSeedWithOrderlessOwner();
-        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row)))
+        using (var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row)))
         {
             var exception = Assert.Throws<InvalidOperationException>(() =>
                 (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, L = o.Region.Length }).ToList());
             NullableValueMessage.AssertIs(exception.Message);
         }
 
-        using (var db = CreateContext(CreateSeed(), MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row) + "M"))
+        using (var db = CreateContext(CreateSeed(), MongoQueryProvider.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row) + "M"))
         {
             Assert.Equal(
                 "Alice:5|Alice:5|Bob:5|Cara:5",
@@ -1015,7 +1015,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
                     .AsEnumerable().Select(x => x.Name + ":" + x.L).OrderBy(x => x, StringComparer.Ordinal)));
         }
 
-        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row) + "N"))
+        using (var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row) + "N"))
         {
             Assert.Equal(
                 "Alice:5|Alice:5|Bob:5|Cara:5|Dora:<null>",
@@ -1036,7 +1036,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
     public void Null_guarded_string_projection_over_an_unmatched_left_join_side(string shape, string expected)
     {
         var seed = CreateSeedWithOrderlessOwner();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Null_guarded_string_projection_over_an_unmatched_left_join_side) + shape.Length);
         IEnumerable<string> r = shape switch
         {
@@ -1192,7 +1192,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
     private List<decimal> RunJoinScopeSetDifferenceNativeOnly(
         string name, Func<GroupByOverJoinDbContext, IEnumerable<decimal>> query)
     {
-        using var db = CreateContext(CreateSeed(), MongoQueryMode.NativeOnly, name);
+        using var db = CreateContext(CreateSeed(), MongoQueryProvider.NativeOnly, name);
         return query(db).ToList().OrderBy(v => v).ToList();
     }
 
@@ -1253,7 +1253,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         // driver-LINQ oracle (the fallback rejects the cross-DbSet operand, pre-existing), so pin the decline and that
         // Native reaches the same fallback error rather than returning rows. The pinned cross-DbSet error is a known
         // existing limitation of the driver-LINQ fallback, not intended behaviour; update this test if it is lifted.
-        List<decimal> Run(MongoQueryMode mode)
+        List<decimal> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(CreateSeed(), mode, nameof(Union_with_a_join_scope_second_operand_declines) + mode);
             return db.Orders.GroupBy(o => o.Region).Select(g => new { Total = g.Max(o => o.Total) })
@@ -1261,9 +1261,9 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
                 .AsEnumerable().Select(x => x.Total).ToList();
         }
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
-        Assert.Contains("cross-DbSet", Assert.Throws<InvalidOperationException>(() => Run(MongoQueryMode.Native)).Message);
-        Assert.Contains("cross-DbSet", Assert.Throws<InvalidOperationException>(() => Run(MongoQueryMode.DriverLinq)).Message);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryProvider.NativeOnly));
+        Assert.Contains("cross-DbSet", Assert.Throws<InvalidOperationException>(() => Run(MongoQueryProvider.Native)).Message);
+        Assert.Contains("cross-DbSet", Assert.Throws<InvalidOperationException>(() => Run(MongoQueryProvider.DriverLinq)).Message);
     }
 
     [Fact]
@@ -1282,12 +1282,12 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
 
     // EF8/EF9 nav-expand these left joins to a shape that explicit DriverLinq can't translate under a GroupBy (the
     // driver's Join translator throws ExpressionNotSupportedException). With no driver-LINQ oracle there, NativeOnly is checked against the hand-computed expectation alone.
-    private static List<T> LeftJoinNativeAndParity<T>(Func<MongoQueryMode, List<T>> run)
+    private static List<T> LeftJoinNativeAndParity<T>(Func<MongoQueryProvider, List<T>> run)
 #if EF8 || EF9
     {
         // Pinned, so a driver/EF change that makes DriverLinq work here is noticed and this can use full parity.
-        Assert.ThrowsAny<Exception>(() => run(MongoQueryMode.DriverLinq));
-        return run(MongoQueryMode.NativeOnly);
+        Assert.ThrowsAny<Exception>(() => run(MongoQueryProvider.DriverLinq));
+        return run(MongoQueryProvider.NativeOnly);
     }
 #else
         => NativeModeAssert.NativeAndParity(run);
@@ -1332,7 +1332,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         public int Quantity { get; set; }
     }
 
-    private GroupByOverJoinDbContext CreateContext(Seed seed, MongoQueryMode mode, string name)
+    private GroupByOverJoinDbContext CreateContext(Seed seed, MongoQueryProvider mode, string name)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var prefix = TemporaryDatabaseFixtureBase.CreateCollectionName(name);
@@ -1349,9 +1349,9 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
 
     private sealed class GroupByOverJoinDbContext(
         TemporaryDatabaseFixture database, string ownersCollection, string ordersCollection, string linesCollection,
-        MongoQueryMode mode)
+        MongoQueryProvider mode)
         : DbContext(new DbContextOptionsBuilder<GroupByOverJoinDbContext>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options)

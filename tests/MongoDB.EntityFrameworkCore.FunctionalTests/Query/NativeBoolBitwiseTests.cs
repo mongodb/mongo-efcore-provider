@@ -86,18 +86,18 @@ public class NativeBoolBitwiseTests(TemporaryDatabaseFixture database) : IClassF
         return database.MongoDatabase.GetCollection<ConvertedItem>(collectionName);
     }
 
-    private static void Configure(DbContextOptionsBuilder b, MongoQueryMode mode)
+    private static void Configure(DbContextOptionsBuilder b, MongoQueryProvider mode)
     {
         b.EnableSensitiveDataLogging()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-        new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+        new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
     }
 
-    private static SingleEntityDbContext<Item> Create(IMongoCollection<Item> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Item> Create(IMongoCollection<Item> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(collection, optionsBuilderAction: b => Configure(b, mode));
 
     private static SingleEntityDbContext<ConvertedItem> CreateConverted(
-        IMongoCollection<ConvertedItem> collection, MongoQueryMode mode)
+        IMongoCollection<ConvertedItem> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: mb => mb.Entity<ConvertedItem>().Property(x => x.Flag)
@@ -173,7 +173,7 @@ public class NativeBoolBitwiseTests(TemporaryDatabaseFixture database) : IClassF
     public void Select_or_with_a_nullable_bool_operand_declines()
     {
         var collection = Seed(nameof(Select_or_with_a_nullable_bool_operand_declines));
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
             db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => x.NullableFlag | x.Flag).ToList());
     }
@@ -182,7 +182,7 @@ public class NativeBoolBitwiseTests(TemporaryDatabaseFixture database) : IClassF
     public void Select_and_with_a_nullable_bool_operand_declines()
     {
         var collection = Seed(nameof(Select_and_with_a_nullable_bool_operand_declines));
-        using var db = Create(collection, MongoQueryMode.NativeOnly);
+        using var db = Create(collection, MongoQueryProvider.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
             db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => x.NullableFlag & x.Other).ToList());
     }

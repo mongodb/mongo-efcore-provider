@@ -16,7 +16,7 @@
 namespace MongoDB.EntityFrameworkCore.Infrastructure;
 
 /// <summary>Selects how the provider translates LINQ queries to MongoDB.</summary>
-public enum MongoQueryMode
+public enum MongoQueryProvider
 {
     /// <summary>Native translation when representable; driver-LINQ fallback otherwise. (Default.)</summary>
     Native,

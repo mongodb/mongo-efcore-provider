@@ -32,11 +32,11 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <c>MongoProjectionBindingExpressionVisitor.Visit</c> and <c>MongoProjectionBindingRemovingExpressionVisitor</c>.
 /// </summary>
 /// <remarks>
-/// Every shape runs in all three <see cref="MongoQueryMode"/>s. The native leaf erases the
+/// Every shape runs in all three <see cref="MongoQueryProvider"/>s. The native leaf erases the
 /// <see cref="System.Linq.Enumerable"/> call from the shaper, which is what
 /// <c>ProjectionAnalyzer.UntranslatableProjectionFinder</c> looks for to keep this shape away from the driver's
 /// LINQ push-down. If the leaf forgets to announce itself
-/// (<c>MongoSelectDefinition.HasStringSequenceProjectionLeaf</c>), only the <see cref="MongoQueryMode.DriverLinq"/>
+/// (<c>MongoSelectDefinition.HasStringSequenceProjectionLeaf</c>), only the <see cref="MongoQueryProvider.DriverLinq"/>
 /// and mixed-shaper legs regress.
 /// </remarks>
 public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -54,8 +54,8 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
         ("b", "Berlin")
     ];
 
-    private static readonly MongoQueryMode[] AllModes =
-        [MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq];
+    private static readonly MongoQueryProvider[] AllModes =
+        [MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq];
 
     [Fact]
     public void Wrapped_AsEnumerable_over_string_projection_goes_native()
@@ -245,7 +245,7 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
                 optionsBuilderAction: b =>
                 {
                     b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                    new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                    new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
                 });
 
             var rows = db.Entities.AsNoTracking().OrderBy(x => x.Label)
@@ -286,23 +286,23 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
         return collection;
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
-    private static SingleEntityDbContext<Blog> CreateBlogContext(IMongoCollection<Blog> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Blog> CreateBlogContext(IMongoCollection<Blog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: BlogModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -338,7 +338,7 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
             var ex = Record.Exception(() => result = db.Entities.Select(x => x.City.FirstOrDefault()).Distinct().ToArray());
             if (ex is null)
                 Assert.Equal(['B', 'L'], result!.Order());
-            else if (mode == MongoQueryMode.NativeOnly)
+            else if (mode == MongoQueryProvider.NativeOnly)
                 Assert.IsType<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(ex);
             else
                 // The driver-LINQ fallback cannot translate this shape at all ("StringSerializer must implement

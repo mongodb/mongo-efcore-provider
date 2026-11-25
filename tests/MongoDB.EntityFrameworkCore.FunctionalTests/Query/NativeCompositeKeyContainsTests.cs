@@ -92,7 +92,7 @@ public class NativeCompositeKeyContainsTests(TemporaryDatabaseFixture database) 
     public void One_compiled_plan_serves_lists_of_different_lengths()
     {
         var collection = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             // ONE context: both runs must hit the same compiled query for the clause array to be built per execution.
             using var db = Create(collection, mode);
@@ -121,7 +121,7 @@ public class NativeCompositeKeyContainsTests(TemporaryDatabaseFixture database) 
         var typed = database.MongoDatabase.GetCollection<WideDoc>(name);
         var g1 = Guid.NewGuid();
         var g2 = Guid.NewGuid();
-        using (var seed = CreateWide(typed, MongoQueryMode.DriverLinq))
+        using (var seed = CreateWide(typed, MongoQueryProvider.DriverLinq))
         {
             seed.Entities.AddRange(
                 new WideDoc { Key1 = g1, Key2 = Tier.Low, Label = "g1-low" },
@@ -144,31 +144,31 @@ public class NativeCompositeKeyContainsTests(TemporaryDatabaseFixture database) 
             ["g1-high", "g2-low"]);
     }
 
-    private static SingleEntityDbContext<Doc> Create(IMongoCollection<Doc> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Doc> Create(IMongoCollection<Doc> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             mb => mb.Entity<Doc>().HasKey(e => new { e.Key1, e.Key2 }),
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
-    private static SingleEntityDbContext<WideDoc> CreateWide(IMongoCollection<WideDoc> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<WideDoc> CreateWide(IMongoCollection<WideDoc> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             mb => mb.Entity<WideDoc>().HasKey(e => new { e.Key1, e.Key2 }),
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Doc> Seed()
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName("compkeys") + Guid.NewGuid().ToString("N")[..8];
         var typed = database.MongoDatabase.GetCollection<Doc>(name);
-        using var db = Create(typed, MongoQueryMode.DriverLinq);
+        using var db = Create(typed, MongoQueryProvider.DriverLinq);
         db.Entities.AddRange(
             new Doc { Key1 = "one", Key2 = 1, Label = "one" },
             new Doc { Key1 = "two", Key2 = 2, Label = "two2" },

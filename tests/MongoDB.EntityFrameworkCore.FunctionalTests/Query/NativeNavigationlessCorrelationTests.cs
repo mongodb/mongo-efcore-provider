@@ -114,7 +114,7 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
             TemporaryDatabaseFixtureBase.CreateCollectionName("nncAnimals") + suffix
         };
 
-        using var seeding = CreateAnimals(names, MongoQueryMode.DriverLinq);
+        using var seeding = CreateAnimals(names, MongoQueryProvider.DriverLinq);
         seeding.AddRange(
             new Owner { Id = "A1" }, new Owner { Id = "B1" },
             new Dog { Id = 1, Name = "Rex", OwnerId = "A1" },
@@ -125,10 +125,10 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
         return names;
     }
 
-    private AnimalCtx CreateAnimals(string[] names, MongoQueryMode mode)
+    private AnimalCtx CreateAnimals(string[] names, MongoQueryProvider mode)
     {
         var options = new DbContextOptionsBuilder<AnimalCtx>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;
@@ -138,7 +138,7 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
     private void Assert3(bool withNavigation, Func<Ctx, List<string>> query, List<string> expected)
     {
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(names, mode, withNavigation);
             var rows = query(db);
@@ -226,7 +226,7 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
         // Owner A1 has dogs Rex and Zed and the cat Tom (all with OwnerId A1). The lookup must be narrowed by discriminator: a keyed
         // fallback that skipped the narrowing would count the cat too (3).
         var names = SeedAnimals();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native })
         {
             using var db = CreateAnimals(names, mode);
             List<string>? rows = null;
@@ -250,10 +250,10 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
             z => z.Id + ":" + z.N);
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void GroupJoin_over_a_filtered_inner_is_read_per_execution(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void GroupJoin_over_a_filtered_inner_is_read_per_execution(MongoQueryProvider mode)
     {
         var names = Seed();
         using var db = Create(names, mode, false);
@@ -261,10 +261,10 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
             v => CountAbove(db, (int)v!), 15, ["A1:2", "A2:1", "B1:1", "C0:0"], 650, ["A1:0", "A2:1", "B1:0", "C0:0"]);
     }
 
-    private Ctx Create(string[] names, MongoQueryMode mode, bool withNavigation)
+    private Ctx Create(string[] names, MongoQueryProvider mode, bool withNavigation)
     {
         var options = new DbContextOptionsBuilder<Ctx>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;

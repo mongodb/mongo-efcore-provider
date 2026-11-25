@@ -76,7 +76,7 @@ public class NativeJoinScopeMissingScalarTests(TemporaryDatabaseFixture database
         var (run, main) = MainParityShapes[shape];
         var prefix = Seed();
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             var actual = new List<string>();
             foreach (var ids in RowSets)
@@ -121,10 +121,10 @@ public class NativeJoinScopeMissingScalarTests(TemporaryDatabaseFixture database
         return prefix;
     }
 
-    private Ctx CreateContext(string prefix, MongoQueryMode mode)
+    private Ctx CreateContext(string prefix, MongoQueryProvider mode)
         => new(
             new DbContextOptionsBuilder<Ctx>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,

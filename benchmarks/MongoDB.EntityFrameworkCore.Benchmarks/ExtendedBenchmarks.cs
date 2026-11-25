@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace MongoDB.EntityFrameworkCore.Benchmarks;
 
-// Heavier cases, three configs: DriverOnly floor, EF_DriverLinq (UseQueryMode(DriverLinq)), EF_Native (UseQueryMode(Native)). One shared MongoClient (fairness).
+// Heavier cases, three configs: DriverOnly floor, EF_DriverLinq (UseQueryProvider(DriverLinq)), EF_Native (UseQueryProvider(Native)). One shared MongoClient (fairness).
 //   Case A  ComplexQuery     - Where(nested-owned + own) + Include(Account) + OrderByDesc/ThenBy + Skip/Take
 //   Case B  WideWholeEntity  - 400-property entity, whole-entity ToList
 //   Case C  NestedWholeEntity- deep owned graph (owned-in-owned, collection-in-collection), whole-entity ToList
@@ -53,12 +53,12 @@ public class ExtendedBenchmarks
         _dbName = "ef_bench_ext_" + Guid.NewGuid().ToString("N");
         _client = new MongoClient(conn);
         _efOptions = new DbContextOptionsBuilder<BenchmarkDbContext>()
-            .UseMongoDB(_client, _dbName, o => o.UseQueryMode(MongoQueryMode.DriverLinq))
+            .UseMongoDB(_client, _dbName, o => o.UseQueryProvider(MongoQueryProvider.DriverLinq))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .EnableThreadSafetyChecks(false)
             .Options;
         _efOptionsNative = new DbContextOptionsBuilder<BenchmarkDbContext>()
-            .UseMongoDB(_client, _dbName, o => o.UseQueryMode(MongoQueryMode.Native))
+            .UseMongoDB(_client, _dbName, o => o.UseQueryProvider(MongoQueryProvider.Native))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .EnableThreadSafetyChecks(false)
             .Options;

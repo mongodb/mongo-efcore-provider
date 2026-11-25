@@ -23,14 +23,14 @@ fi
 export PYTHONUTF8=1
 cd "$(dirname "$0")/../.."
 unset MONGODB_URI ATLAS_URI
-# The NativeOnly alias would override MONGODB_EF_QUERY_MODE for the DriverLinq leg (the resolver now throws on that
-# conflict, but never inherit it): each leg's mode comes only from MONGODB_EF_QUERY_MODE below.
+# The NativeOnly alias would override MONGODB_EF_QUERY_PROVIDER for the DriverLinq leg (the resolver now throws on that
+# conflict, but never inherit it): each leg's mode comes only from MONGODB_EF_QUERY_PROVIDER below.
 unset MONGODB_EF_NATIVE_ONLY
 export MONGODB_EF_SKIP_MQL_ASSERTIONS=1
 export MONGODB_EF_DIFFERENTIAL=1
 for m in DriverLinq NativeOnly; do
   for p in SpecificationTests FunctionalTests; do
-    MONGODB_EF_QUERY_MODE=$m dotnet test "tests/MongoDB.EntityFrameworkCore.$p/MongoDB.EntityFrameworkCore.$p.csproj" \
+    MONGODB_EF_QUERY_PROVIDER=$m dotnet test "tests/MongoDB.EntityFrameworkCore.$p/MongoDB.EntityFrameworkCore.$p.csproj" \
       -c "Debug $v" --no-build --logger "trx;LogFileName=$v-$m-$p.trx" --results-directory "$out/trx" > "$out/$v-$m-$p.log" 2>&1 &
   done
 done

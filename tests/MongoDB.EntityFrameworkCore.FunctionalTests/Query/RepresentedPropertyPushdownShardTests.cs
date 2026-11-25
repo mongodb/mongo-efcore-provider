@@ -29,31 +29,31 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
 {
     [Theory]
     [MemberData(nameof(EqualityCases))]
-    public void Equality_over_any_storage_keeps_working(string query, Storage storage, MongoQueryMode mode)
+    public void Equality_over_any_storage_keeps_working(string query, Storage storage, MongoQueryProvider mode)
         => Equality_over_any_storage_keeps_workingCore(query, storage, mode);
 
     [Theory]
     [MemberData(nameof(TaggedCases))]
-    public void Order_sensitive_query_over_ObjectId_or_enum_representation(string query, EnumStorage storage, MongoQueryMode mode)
+    public void Order_sensitive_query_over_ObjectId_or_enum_representation(string query, EnumStorage storage, MongoQueryProvider mode)
         => Order_sensitive_query_over_ObjectId_or_enum_representationCore(query, storage, mode);
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Owned_element_comparison_over_string_represented_property_is_converted_or_declined(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Owned_element_comparison_over_string_represented_property_is_converted_or_declined(MongoQueryProvider mode)
         => Owned_element_comparison_over_string_represented_property_is_converted_or_declinedCore(mode);
 
     [Theory]
     [MemberData(nameof(NarrowCases))]
-    public void Narrowing_casting_converter(string query, MongoQueryMode mode)
+    public void Narrowing_casting_converter(string query, MongoQueryProvider mode)
         => Narrowing_casting_converterCore(query, mode);
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Identity_representation_is_not_refused(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Identity_representation_is_not_refused(MongoQueryProvider mode)
         => Identity_representation_is_not_refusedCore(mode);
 }
 
@@ -62,7 +62,7 @@ public class RepresentedPropertyPushdownRefusedTests(TemporaryDatabaseFixture da
 {
     [Theory]
     [MemberData(nameof(RefusedCases))]
-    public void Order_sensitive_query_over_non_order_preserving_storage_is_refused(string query, Storage storage, MongoQueryMode mode)
+    public void Order_sensitive_query_over_non_order_preserving_storage_is_refused(string query, Storage storage, MongoQueryProvider mode)
         => Order_sensitive_query_over_non_order_preserving_storage_is_refusedCore(query, storage, mode);
 }
 
@@ -74,7 +74,7 @@ public class RepresentedPropertyPushdownInt64RepresentationTests(TemporaryDataba
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryMode mode)
+    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryProvider mode)
         => Order_sensitive_query_over_exact_or_converted_storage_is_correctCore(query, storage, mode);
 }
 
@@ -86,7 +86,7 @@ public class RepresentedPropertyPushdownDoubleRepresentationTests(TemporaryDatab
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryMode mode)
+    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryProvider mode)
         => Order_sensitive_query_over_exact_or_converted_storage_is_correctCore(query, storage, mode);
 }
 
@@ -98,7 +98,7 @@ public class RepresentedPropertyPushdownDecimal128RepresentationTests(TemporaryD
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryMode mode)
+    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryProvider mode)
         => Order_sensitive_query_over_exact_or_converted_storage_is_correctCore(query, storage, mode);
 }
 
@@ -110,7 +110,7 @@ public class RepresentedPropertyPushdownCastingConverterToLongTests(TemporaryDat
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryMode mode)
+    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryProvider mode)
         => Order_sensitive_query_over_exact_or_converted_storage_is_correctCore(query, storage, mode);
 }
 
@@ -122,7 +122,7 @@ public class RepresentedPropertyPushdownCastingConverterToDoubleTests(TemporaryD
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryMode mode)
+    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryProvider mode)
         => Order_sensitive_query_over_exact_or_converted_storage_is_correctCore(query, storage, mode);
 }
 
@@ -134,7 +134,7 @@ public class RepresentedPropertyPushdownStringRepresentationTests(TemporaryDatab
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryMode mode)
+    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryProvider mode)
         => Order_sensitive_query_over_exact_or_converted_storage_is_correctCore(query, storage, mode);
 }
 
@@ -146,7 +146,7 @@ public class RepresentedPropertyPushdownStringConverterTests(TemporaryDatabaseFi
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryMode mode)
+    public void Order_sensitive_query_over_exact_or_converted_storage_is_correct(string query, Storage storage, MongoQueryProvider mode)
         => Order_sensitive_query_over_exact_or_converted_storage_is_correctCore(query, storage, mode);
 }
 
@@ -159,7 +159,7 @@ public class RepresentedPropertyPushdownFlagAsStringTests(TemporaryDatabaseFixtu
     [Theory]
     [MemberData(nameof(Cases))]
     public void Stored_value_members_truthiness_and_primitive_collections(
-        string query, bool refused, FlagStorage flag, MongoQueryMode mode)
+        string query, bool refused, FlagStorage flag, MongoQueryProvider mode)
         => Stored_value_members_truthiness_and_primitive_collectionsCore(query, refused, flag, mode);
 }
 
@@ -172,6 +172,6 @@ public class RepresentedPropertyPushdownFlagInvertedTests(TemporaryDatabaseFixtu
     [Theory]
     [MemberData(nameof(Cases))]
     public void Stored_value_members_truthiness_and_primitive_collections(
-        string query, bool refused, FlagStorage flag, MongoQueryMode mode)
+        string query, bool refused, FlagStorage flag, MongoQueryProvider mode)
         => Stored_value_members_truthiness_and_primitive_collectionsCore(query, refused, flag, mode);
 }

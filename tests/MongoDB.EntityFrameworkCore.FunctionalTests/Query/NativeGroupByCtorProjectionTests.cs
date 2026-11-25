@@ -99,7 +99,7 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         // Success under NativeOnly proves native. OrderBy is client-side because a server-side OrderBy over
@@ -135,7 +135,7 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         var results = db.Entities
@@ -176,14 +176,14 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
                 .Select(r => (r.Key.CustomerId, r.Sum))
                 .ToList();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = SingleEntityDbContext.Create(
                 collection,
                 optionsBuilderAction: b =>
                 {
                     b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                    new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                    new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
                 });
 
             var results = Run(db);
@@ -199,7 +199,7 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnlyDb));
     }
@@ -221,7 +221,7 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
             });
 
         var results = db.Entities

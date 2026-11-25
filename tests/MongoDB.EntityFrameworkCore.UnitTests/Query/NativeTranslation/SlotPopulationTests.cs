@@ -209,7 +209,7 @@ public class SlotPopulationTests
         Assert.NotNull(mongoQ.CapturedExpression);
     }
 
-    // PipelineOps are emitted in arrival order. These assert op ordering / Route only; QueryModeGateTests has
+    // PipelineOps are emitted in arrival order. These assert op ordering / Route only; QueryProviderGateTests has
     // the end-to-end NativeOnly proof.
 
     [Fact]

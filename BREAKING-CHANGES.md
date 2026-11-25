@@ -36,7 +36,7 @@ These calls now return `null` for a null or missing operand, as other EF Core pr
 
 Calls inside predicate lambdas (`Where`, `Any`, `All`, `Count`, `First`/`Single`/`Last` with a predicate, ...) are not rewritten: the empty string cannot surface as data there, and rewriting would defeat the index-friendly forms the driver renders for comparisons such as `ToUpper() == "X"`.
 
-One consequence is visible through a predicate: the native query translator treats a null or missing string as not equal to `""` (as SQL does), so `Where(x => x.S.Substring(0, 0) == "")` no longer keeps rows whose `S` is null or missing, where `MongoQueryMode.DriverLinq` still does.
+One consequence is visible through a predicate: the native query translator treats a null or missing string as not equal to `""` (as SQL does), so `Where(x => x.S.Substring(0, 0) == "")` no longer keeps rows whose `S` is null or missing, where `MongoQueryProvider.DriverLinq` still does.
 
 #### Why
 
@@ -54,7 +54,7 @@ A subquery such as `db.Orders.Where(o => o.CustomerId == c.Code).Count()` (or th
 
 #### New behavior
 
-Only a subquery whose predicate is exactly the navigation's foreign-key correlation (either operand order, with EF's null guard on the key) binds to the navigation. Any other shape throws `InvalidOperationException` ("The LINQ expression 'DbSet<...>()' could not be translated") in every query mode.
+Only a subquery whose predicate is exactly the navigation's foreign-key correlation (either operand order, with EF's null guard on the key) binds to the navigation. Any other shape throws `InvalidOperationException` ("The LINQ expression 'DbSet<...>()' could not be translated") in every query provider.
 
 #### Why
 
@@ -72,7 +72,7 @@ In a table-per-hierarchy mapping, `db.Set<Dog>()` (or a join onto it) did not fi
 
 #### New behavior
 
-`Set<Dog>()` is treated as `Set<Animal>().OfType<Dog>()`: only documents of `Dog` and its subtypes are returned, in every query mode, as a root, a join side or a subquery.
+`Set<Dog>()` is treated as `Set<Animal>().OfType<Dog>()`: only documents of `Dog` and its subtypes are returned, in every query provider, as a root, a join side or a subquery.
 
 #### Why
 
@@ -82,7 +82,7 @@ Querying a derived type returning only that type is what EF Core means by it, an
 
 A query that relied on reading sibling documents through the derived set must query the base type (`Set<Animal>()`) instead.
 
-### A filtered join inner side is now honored, and `MongoQueryMode.DriverLinq` refuses it
+### A filtered join inner side is now honored, and `MongoQueryProvider.DriverLinq` refuses it
 
 #### Old behavior
 
@@ -100,7 +100,7 @@ returned every order of each matching customer, including those with `OrderID >=
 
 The filter on the inner source is applied inside the join's `$lookup`, so only the filtered rows are joined, with or without an `Include`. Left joins keep the outer row with a `null` inner when no inner row passes the filter. A parameter in the filter is read on each execution.
 
-`MongoQueryMode.DriverLinq` cannot honor such a filter, so it now throws an exception whose message names the unsupported query shape for these queries instead of returning unfiltered rows. The same applies to a `Native`-mode query that falls back to driver-LINQ after the native translator declines for a different reason.
+`MongoQueryProvider.DriverLinq` cannot honor such a filter, so it now throws an exception whose message names the unsupported query shape for these queries instead of returning unfiltered rows. The same applies to a `Native`-mode query that falls back to driver-LINQ after the native translator declines for a different reason.
 
 #### Why
 
@@ -144,7 +144,7 @@ The distinction between "the stored array was absent or `null`" and "the stored 
 
 Nullable primitive collection *properties* (for example `List<string>? Tags`) are unaffected and still read back as `null`, because they map through a property serializer with its own nullability semantics rather than as a collection navigation.
 
-**This can change stored documents, through a read-modify-write cycle.** The write path itself is unchanged: assigning `null` to a collection navigation and saving still persists `null`. But if you load an entity, change anything about it, and call `SaveChanges`, what gets written back for the collection navigation is now the empty collection that materialization produced, where it used to be the `null` that materialization produced. Measured, for a tracked load of one document, an edit to an unrelated scalar property, and `SaveChanges` — identical in both query modes:
+**This can change stored documents, through a read-modify-write cycle.** The write path itself is unchanged: assigning `null` to a collection navigation and saving still persists `null`. But if you load an entity, change anything about it, and call `SaveChanges`, what gets written back for the collection navigation is now the empty collection that materialization produced, where it used to be the `null` that materialization produced. Measured, for a tracked load of one document, an edit to an unrelated scalar property, and `SaveChanges` — identical in both query providers:
 
 | Stored `Posts` before the cycle | Written back, previous versions | Written back, this version |
 |---|---|---|
@@ -263,7 +263,7 @@ In preference order:
 
     ```c#
     optionsBuilder.UseMongoDB(connectionString, databaseName)
-        .UseQueryMode(MongoQueryMode.DriverLinq);
+        .UseQueryProvider(MongoQueryProvider.DriverLinq);
     ```
 
     This routes every query through the driver's LINQ provider, as in earlier versions, and restores the old result for both consequences above.
@@ -282,7 +282,7 @@ A missing element is treated as `null`: those expressions answer `true` and sort
 
 #### Mitigations
 
-`UseQueryMode(MongoQueryMode.DriverLinq)` restores the old behavior.
+`UseQueryProvider(MongoQueryProvider.DriverLinq)` restores the old behavior.
 
 ### `ToUpper`/`ToLower` in a projection are applied client-side
 
@@ -292,11 +292,11 @@ A missing element is treated as `null`: those expressions answer `true` and sort
 
 #### New behavior
 
-The raw string is projected and the case mapping is applied client-side, in **every** query mode, including `DriverLinq`: `null` yields `null`, and non-ASCII characters map as in .NET (`"é"` → `"É"`). A value-reading operator after such a projection (for example `.Distinct()`) routes through the driver's LINQ provider and keeps the old server-side mapping (`null` → `""`, ASCII-only).
+The raw string is projected and the case mapping is applied client-side, in **every** query provider, including `DriverLinq`: `null` yields `null`, and non-ASCII characters map as in .NET (`"é"` → `"É"`). A value-reading operator after such a projection (for example `.Distinct()`) routes through the driver's LINQ provider and keeps the old server-side mapping (`null` → `""`, ASCII-only).
 
 #### Mitigations
 
-`UseQueryMode(MongoQueryMode.DriverLinq)` does **not** restore the old behavior. To keep the old `null` → `""` result, coalesce explicitly: `x.Text == null ? "" : x.Text.ToUpper()`.
+`UseQueryProvider(MongoQueryProvider.DriverLinq)` does **not** restore the old behavior. To keep the old `null` → `""` result, coalesce explicitly: `x.Text == null ? "" : x.Text.ToUpper()`.
 
 ### `Equals(…, StringComparison.OrdinalIgnoreCase)` in a `Where` is Unicode-aware
 
@@ -312,7 +312,7 @@ A case-insensitive comparison against a constant is an anchored case-insensitive
 
 #### Mitigations
 
-`UseQueryMode(MongoQueryMode.DriverLinq)` restores the old behavior.
+`UseQueryProvider(MongoQueryProvider.DriverLinq)` restores the old behavior.
 
 ### Server-side date parts and calendar adds over a `HasDateTimeKind(DateTimeKind.Local)` property now throw
 
@@ -329,7 +329,7 @@ The entity materializes as local time, so the server-computed value matched the 
 
 #### New behavior
 
-These queries throw `InvalidOperationException` (default and `DriverLinq` query modes; `NativeOnly` also throws, with a message naming the property) naming the property. `AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds`, comparisons, and all of the above on `Utc`-kind or unconfigured `DateTime` properties are unchanged.
+These queries throw `InvalidOperationException` (default and `DriverLinq` query providers; `NativeOnly` also throws, with a message naming the property) naming the property. `AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds`, comparisons, and all of the above on `Utc`-kind or unconfigured `DateTime` properties are unchanged.
 
 #### Mitigations
 
@@ -353,7 +353,7 @@ The same applied wherever such a comparison, key or aggregate appeared: inside a
 
 #### New behavior
 
-These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` also throws, with a message naming the property). This includes computed shapes over the property (a member or method computed from its stored value, such as `p.Name.Length`, `p.When.Year` or `p.Price.ToString()`; a converted `bool` used for its truth in a key, such as `OrderBy(p => !p.Flag)`), and a key or operand the provider cannot trace back to its properties when such a property flows into it. Filters, equality comparisons and projections elsewhere in the query don't count, and a default-stored primitive collection (`p.Scores.Any(s => s > 5)`) is unaffected. It applies to **every custom value converter** not declared order-preserving (see Mitigations), whether or not it happens to preserve order, so the following now throw for comparisons, sorting and aggregates:
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query providers; `NativeOnly` also throws, with a message naming the property). This includes computed shapes over the property (a member or method computed from its stored value, such as `p.Name.Length`, `p.When.Year` or `p.Price.ToString()`; a converted `bool` used for its truth in a key, such as `OrderBy(p => !p.Flag)`), and a key or operand the provider cannot trace back to its properties when such a property flows into it. Filters, equality comparisons and projections elsewhere in the query don't count, and a default-stored primitive collection (`p.Scores.Any(s => s > 5)`) is unaffected. It applies to **every custom value converter** not declared order-preserving (see Mitigations), whether or not it happens to preserve order, so the following now throw for comparisons, sorting and aggregates:
 
 * strongly-typed ID value objects stored through a converter (`OrderBy(x => x.Id)` over `HasConversion(id => id.Value, v => new OrderId(v))`);
 * enums stored as their names (`HasConversion<string>()` or `HasBsonRepresentation(BsonType.String)`);
@@ -364,7 +364,7 @@ These queries throw `NotSupportedException` naming the property (default and `Dr
 
 Unchanged:
 
-* An `int`, `long`, `double` or `decimal` property stored as a string (`HasBsonRepresentation(BsonType.String)`, `HasConversion<string>()`, or a numeric cast with a string representation). The server converts the stored string to the number, so comparisons, sorting and aggregates return numerically correct results (see the entry on numeric properties stored as strings). `MongoQueryMode.NativeOnly` still refuses these shapes, because the native translator does not convert.
+* An `int`, `long`, `double` or `decimal` property stored as a string (`HasBsonRepresentation(BsonType.String)`, `HasConversion<string>()`, or a numeric cast with a string representation). The server converts the stored string to the number, so comparisons, sorting and aggregates return numerically correct results (see the entry on numeric properties stored as strings). `MongoQueryProvider.NativeOnly` still refuses these shapes, because the native translator does not convert.
 * Equality (`==`, `!=`, `Contains`) over any such property.
 * A property the model declares order-preserving (see Mitigations), and EF Core's stateless `DateTimeToTicksConverter`, `TimeSpanToTicksConverter` and `BoolToZeroOneConverter`, whose stored order is the .NET order.
 * Properties whose stored value is exactly the .NET value in a BSON type the server orders the same way:
@@ -408,7 +408,7 @@ context.Items.Where(x => x.Num % 2 == 1);             // matched no row
 
 #### New behavior
 
-These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` also throws, with a message naming the property). It covers a string method (`Contains`, `StartsWith`, `EndsWith`, `ToUpper`, `Substring`, `IndexOf`, ...), a member of a value (`Length`, a date part, `TotalMinutes`), arithmetic (`+`, `%`, unary `-`, ...) and `Math` functions computed from the property, including through a projected member or `g.Key`.
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query providers; `NativeOnly` also throws, with a message naming the property). It covers a string method (`Contains`, `StartsWith`, `EndsWith`, `ToUpper`, `Substring`, `IndexOf`, ...), a member of a value (`Length`, a date part, `TotalMinutes`), arithmetic (`+`, `%`, unary `-`, ...) and `Math` functions computed from the property, including through a projected member or `g.Key`.
 
 Unchanged:
 
@@ -438,7 +438,7 @@ context.Items.Count(x => (x.Flag ? 1 : 0) == 1);            // counted every row
 
 #### New behavior
 
-These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` also throws, with a message naming the property). Unchanged: `Where(x => x.Flag)`, `Where(x => !x.Flag)`, `Where(x => x.Flag == false)`, and conditionals over a default-stored `bool`.
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query providers; `NativeOnly` also throws, with a message naming the property). Unchanged: `Where(x => x.Flag)`, `Where(x => !x.Flag)`, `Where(x => x.Flag == false)`, and conditionals over a default-stored `bool`.
 
 #### Mitigations
 
@@ -500,7 +500,7 @@ Some such queries happened to return the right answer because a per-row evaluati
 
 #### New behavior
 
-These queries throw `InvalidOperationException` in the default and `DriverLinq` query modes (`NativeOnly` may instead throw a different exception type) with the message:
+These queries throw `InvalidOperationException` in the default and `DriverLinq` query providers (`NativeOnly` may instead throw a different exception type) with the message:
 
 > The LINQ expression contains a call to 'Random.Next', which cannot be evaluated once per row on the server. Evaluate it before the query and pass the result in as a variable, or apply it client-side after AsEnumerable().
 

@@ -49,13 +49,13 @@ public class NativeCompositeKeyJoinTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native, false)]
-    [InlineData(MongoQueryMode.DriverLinq, false)]
-    [InlineData(MongoQueryMode.NativeOnly, false)]
-    [InlineData(MongoQueryMode.Native, true)]
-    [InlineData(MongoQueryMode.DriverLinq, true)]
-    [InlineData(MongoQueryMode.NativeOnly, true)]
-    public void Navigation_less_join_onto_a_composite_key_component_matches_oracle(MongoQueryMode mode, bool leftOuter)
+    [InlineData(MongoQueryProvider.Native, false)]
+    [InlineData(MongoQueryProvider.DriverLinq, false)]
+    [InlineData(MongoQueryProvider.NativeOnly, false)]
+    [InlineData(MongoQueryProvider.Native, true)]
+    [InlineData(MongoQueryProvider.DriverLinq, true)]
+    [InlineData(MongoQueryProvider.NativeOnly, true)]
+    public void Navigation_less_join_onto_a_composite_key_component_matches_oracle(MongoQueryProvider mode, bool leftOuter)
     {
         var products = new[] { new Product { Id = 7, Name = "Widget" }, new Product { Id = 8, Name = "Gadget" } };
         var lineItems = new[]
@@ -68,7 +68,7 @@ public class NativeCompositeKeyJoinTests(TemporaryDatabaseFixture database)
         var productsName = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Product)) + suffix + mode + leftOuter;
         var lineItemsName = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(LineItem)) + suffix + mode + leftOuter;
 
-        using (var seed = new CompositeKeyJoinDbContext(database, productsName, lineItemsName, MongoQueryMode.DriverLinq))
+        using (var seed = new CompositeKeyJoinDbContext(database, productsName, lineItemsName, MongoQueryProvider.DriverLinq))
         {
             seed.Set<Product>().AddRange(products);
             seed.Set<LineItem>().AddRange(lineItems);
@@ -108,10 +108,10 @@ public class NativeCompositeKeyJoinTests(TemporaryDatabaseFixture database)
     // lookups — both the first hop's foreignField and the second hop's through-hop-prefixed localField are
     // composite-PK components that live under `_id`.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Chained_navigation_less_join_onto_a_composite_key_component_matches_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Chained_navigation_less_join_onto_a_composite_key_component_matches_oracle(MongoQueryProvider mode)
     {
         var products = new[] { new Product { Id = 7, Name = "Widget" }, new Product { Id = 8, Name = "Gadget" } };
         var lineItems = new[]
@@ -124,7 +124,7 @@ public class NativeCompositeKeyJoinTests(TemporaryDatabaseFixture database)
         var productsName = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Product)) + suffix + "chain" + mode;
         var lineItemsName = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(LineItem)) + suffix + "chain" + mode;
 
-        using (var seed = new CompositeKeyJoinDbContext(database, productsName, lineItemsName, MongoQueryMode.DriverLinq))
+        using (var seed = new CompositeKeyJoinDbContext(database, productsName, lineItemsName, MongoQueryProvider.DriverLinq))
         {
             seed.Set<Product>().AddRange(products);
             seed.Set<LineItem>().AddRange(lineItems);
@@ -152,10 +152,10 @@ public class NativeCompositeKeyJoinTests(TemporaryDatabaseFixture database)
         private readonly string _lineItemsCollection;
 
         public CompositeKeyJoinDbContext(
-            TemporaryDatabaseFixture database, string productsCollection, string lineItemsCollection, MongoQueryMode mode)
+            TemporaryDatabaseFixture database, string productsCollection, string lineItemsCollection, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<CompositeKeyJoinDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)

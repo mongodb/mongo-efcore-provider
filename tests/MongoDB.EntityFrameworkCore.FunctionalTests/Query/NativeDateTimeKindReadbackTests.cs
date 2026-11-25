@@ -77,9 +77,9 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         public DateTime LocalDate { get; set; }
     }
 
-    private sealed class KindContext(TemporaryDatabaseFixture database, string owners, string orders, MongoQueryMode mode)
+    private sealed class KindContext(TemporaryDatabaseFixture database, string owners, string orders, MongoQueryProvider mode)
         : DbContext(new DbContextOptionsBuilder<KindContext>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
             .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options)
@@ -127,7 +127,7 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
     {
         var owners = "own" + Guid.NewGuid().ToString("N")[..8];
         var orders = "ord" + Guid.NewGuid().ToString("N")[..8];
-        using var db = new KindContext(database, owners, orders, MongoQueryMode.Native);
+        using var db = new KindContext(database, owners, orders, MongoQueryProvider.Native);
         var a = new Owner { Id = ObjectId.GenerateNewId(), Name = "A", LocalDate = D1 };
         var b = new Owner { Id = ObjectId.GenerateNewId(), Name = "B", LocalDate = D2 };
         db.Owners.AddRange(a, b);
@@ -153,14 +153,14 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
 
     private List<string> Reference((string Owners, string Orders) seed, Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query)
     {
-        using var db = new KindContext(database, seed.Owners, seed.Orders, MongoQueryMode.Native);
+        using var db = new KindContext(database, seed.Owners, seed.Orders, MongoQueryProvider.Native);
         var owners = db.Owners.ToList();
         var orders = db.Orders.ToList();
         return Sorted(query(orders.AsQueryable(), owners.AsQueryable()));
     }
 
     private List<string> Execute(
-        (string Owners, string Orders) seed, MongoQueryMode mode, Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query)
+        (string Owners, string Orders) seed, MongoQueryProvider mode, Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query)
     {
         using var db = new KindContext(database, seed.Owners, seed.Orders, mode);
         return Sorted(query(db.Orders, db.Owners));
@@ -184,9 +184,9 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
     private void AssertDeclinesLoudly(Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query)
     {
         var seed = Seed();
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryMode.NativeOnly, query));
-        Assert.Contains("Local", Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryMode.Native, query)).Message);
-        Assert.Contains("Local", Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryMode.DriverLinq, query)).Message);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryProvider.NativeOnly, query));
+        Assert.Contains("Local", Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryProvider.Native, query)).Message);
+        Assert.Contains("Local", Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryProvider.DriverLinq, query)).Message);
     }
 
     private void AssertDeclines(Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query)
@@ -465,7 +465,7 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
             return query(q, w);
         });
         Assert.Contains(reference, s => s.Contains("Local@"));
-        Assert.Equal(reference, Execute(seed, MongoQueryMode.NativeOnly, query));
+        Assert.Equal(reference, Execute(seed, MongoQueryProvider.NativeOnly, query));
     }
 
     [Fact]
@@ -555,7 +555,7 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         // The driver-LINQ fallback rejects this shape itself ("IfTrue and IfFalse expressions have different
         // serializers"), so there is no parity leg: the point is only that native must not return wrong Kinds.
         var seed = Seed();
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryMode.NativeOnly, (q, _) =>
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryProvider.NativeOnly, (q, _) =>
             q.Select(o => new { D = o.Country == "UK" ? o.LocalDate : o.PlainDate }).AsEnumerable().Select(x => F(x.D)).ToList()));
     }
 
@@ -674,7 +674,7 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         var query = LocalShape(shape);
         var reference = Sorted(Reference(seed, (o, _) => query(o)));
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             try
             {
@@ -694,11 +694,11 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         var seed = Seed();
         var query = LocalShape(shape);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryMode.Native, (o, _) => query(o)));
+        var ex = Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryProvider.Native, (o, _) => query(o)));
         Assert.Contains("Local", ex.Message);
-        ex = Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryMode.DriverLinq, (o, _) => query(o)));
+        ex = Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryProvider.DriverLinq, (o, _) => query(o)));
         Assert.Contains("Local", ex.Message);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryMode.NativeOnly, (o, _) => query(o)));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryProvider.NativeOnly, (o, _) => query(o)));
     }
 
     [Theory]
@@ -719,8 +719,8 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         var seed = Seed();
         var query = DatePartShapes.Single(s => s.Name == "GroupKey_Hour").Utc;
         var reference = Reference(seed, (o, _) => query(o));
-        Assert.Equal(reference, Execute(seed, MongoQueryMode.Native, (o, _) => query(o)));
-        Assert.Equal(reference, Execute(seed, MongoQueryMode.DriverLinq, (o, _) => query(o)));
+        Assert.Equal(reference, Execute(seed, MongoQueryProvider.Native, (o, _) => query(o)));
+        Assert.Equal(reference, Execute(seed, MongoQueryProvider.DriverLinq, (o, _) => query(o)));
     }
 
     [Fact]

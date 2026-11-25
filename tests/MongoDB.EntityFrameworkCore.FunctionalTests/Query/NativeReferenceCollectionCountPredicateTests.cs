@@ -38,7 +38,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Bare_Count_comparison_goes_native_under_NativeOnly()
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Bare_Count_comparison_goes_native_under_NativeOnly));
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Bare_Count_comparison_goes_native_under_NativeOnly));
 
         var result = db.Owners.Where(o => o.Orders.Count > 1).ToList();
 
@@ -50,7 +50,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void LongCount_comparison_goes_native_under_NativeOnly()
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(LongCount_comparison_goes_native_under_NativeOnly));
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(LongCount_comparison_goes_native_under_NativeOnly));
 
         var result = db.Owners.Where(o => o.Orders.LongCount() > 1).ToList();
 
@@ -62,7 +62,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Count_on_the_right_hand_side_of_the_comparison_goes_native_under_NativeOnly()
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Count_on_the_right_hand_side_of_the_comparison_goes_native_under_NativeOnly));
 
         var result = db.Owners.Where(o => 1 < o.Orders.Count).ToList();
@@ -76,7 +76,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     {
         var ownerWithNoOrders = new Owner { Id = ObjectId.GenerateNewId(), Name = "Carol" };
         var seed = new Seed([ownerWithNoOrders], []);
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Zero_related_rows_reads_as_zero_under_NativeOnly));
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Zero_related_rows_reads_as_zero_under_NativeOnly));
 
         var result = db.Owners.Where(o => o.Orders.Count == 0).ToList();
 
@@ -87,9 +87,9 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     // A genuinely user-filtered `Where(pred).Count()` is not a bare count: the filter must apply, so the count is over the
     // filtered array (`o.Orders.Count(pred)`), never the unfiltered one. Checked against the in-memory oracle.
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Genuinely_filtered_Where_Count_is_native_and_applies_the_filter(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Genuinely_filtered_Where_Count_is_native_and_applies_the_filter(MongoQueryProvider mode)
     {
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, mode, nameof(Genuinely_filtered_Where_Count_is_native_and_applies_the_filter) + mode);
@@ -112,9 +112,9 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         var allOwners = seed.Owners.Append(ownerWithNoOrders).ToArray();
         var combinedSeed = new Seed(allOwners, seed.Orders);
 
-        using var native = CreateContext(combinedSeed, MongoQueryMode.NativeOnly,
+        using var native = CreateContext(combinedSeed, MongoQueryProvider.NativeOnly,
             nameof(Differential_native_result_matches_in_memory_oracle_across_related_row_counts) + "Native");
-        using var driverLinq = CreateContext(combinedSeed, MongoQueryMode.DriverLinq,
+        using var driverLinq = CreateContext(combinedSeed, MongoQueryProvider.DriverLinq,
             nameof(Differential_native_result_matches_in_memory_oracle_across_related_row_counts) + "DriverLinq");
 
         var nativeNames = native.Owners.Where(o => o.Orders.Count >= 1).Select(o => o.Name).OrderBy(n => n).ToList();
@@ -132,7 +132,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Union_after_count_predicate_falls_back_to_correct_data_under_Native()
     {
         var seed = SeedThreeOwnersAndOrders();
-        using var native = CreateContext(seed, MongoQueryMode.Native, nameof(Union_after_count_predicate_falls_back_to_correct_data_under_Native));
+        using var native = CreateContext(seed, MongoQueryProvider.Native, nameof(Union_after_count_predicate_falls_back_to_correct_data_under_Native));
 
         var result = native.Owners.Union(native.Owners).Where(o => o.Orders.Count > 1).ToList();
         var oracle = InMemoryOracle(seed, o => o.Orders.Count > 1);
@@ -144,7 +144,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Union_after_count_predicate_declines_cleanly_under_NativeOnly()
     {
         var seed = SeedThreeOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Union_after_count_predicate_declines_cleanly_under_NativeOnly));
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly, nameof(Union_after_count_predicate_declines_cleanly_under_NativeOnly));
 
         Assert.ThrowsAny<Exception>(() => db.Owners.Union(db.Owners).Where(o => o.Orders.Count > 1).ToList());
     }
@@ -153,7 +153,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Concat_after_count_predicate_falls_back_to_correct_data_under_Native()
     {
         var seed = SeedThreeOwnersAndOrders();
-        using var native = CreateContext(seed, MongoQueryMode.Native, nameof(Concat_after_count_predicate_falls_back_to_correct_data_under_Native));
+        using var native = CreateContext(seed, MongoQueryProvider.Native, nameof(Concat_after_count_predicate_falls_back_to_correct_data_under_Native));
 
         var result = native.Owners.Where(o => o.Orders.Count > 1).Concat(native.Owners.Where(o => o.Name == "Bob")).ToList();
         var oracle = InMemoryOracle(seed, o => o.Orders.Count > 1)
@@ -167,7 +167,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Count_predicate_before_projected_Union_falls_back_to_correct_data_under_Native()
     {
         var seed = SeedThreeOwnersAndOrders();
-        using var native = CreateContext(seed, MongoQueryMode.Native,
+        using var native = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Count_predicate_before_projected_Union_falls_back_to_correct_data_under_Native));
 
         var result = native.Owners.Where(o => o.Orders.Count > 1).Select(o => new { o.Name })
@@ -186,7 +186,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Count_predicate_before_projected_Union_declines_cleanly_under_NativeOnly()
     {
         var seed = SeedThreeOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Count_predicate_before_projected_Union_declines_cleanly_under_NativeOnly));
 
         Assert.ThrowsAny<Exception>(() =>
@@ -199,7 +199,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Count_predicate_before_projected_Distinct_OrderBy_Take_falls_back_to_correct_data_under_Native()
     {
         var seed = SeedThreeOwnersAndOrders();
-        using var native = CreateContext(seed, MongoQueryMode.Native,
+        using var native = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Count_predicate_before_projected_Distinct_OrderBy_Take_falls_back_to_correct_data_under_Native));
 
         var result = native.Owners.Where(o => o.Orders.Count > 1).Select(o => new { N = o.Name })
@@ -215,7 +215,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Count_predicate_before_projected_Distinct_Where_falls_back_to_correct_data_under_Native()
     {
         var seed = SeedThreeOwnersAndOrders();
-        using var native = CreateContext(seed, MongoQueryMode.Native,
+        using var native = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Count_predicate_before_projected_Distinct_Where_falls_back_to_correct_data_under_Native));
 
         var result = native.Owners.Where(o => o.Orders.Count > 1).Select(o => new { N = o.Name })
@@ -231,7 +231,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Count_predicate_before_projected_Distinct_declines_cleanly_under_NativeOnly()
     {
         var seed = SeedThreeOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Count_predicate_before_projected_Distinct_declines_cleanly_under_NativeOnly));
 
         Assert.ThrowsAny<Exception>(() =>
@@ -243,7 +243,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Count_predicate_before_a_later_Join_falls_back_to_correct_data_under_Native()
     {
         var seed = SeedThreeOwnersAndOrders();
-        using var native = CreateContext(seed, MongoQueryMode.Native,
+        using var native = CreateContext(seed, MongoQueryProvider.Native,
             nameof(Count_predicate_before_a_later_Join_falls_back_to_correct_data_under_Native));
 
         var result = native.Owners.Where(o => o.Orders.Count > 1).OrderBy(o => o.Name).Take(1)
@@ -263,7 +263,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     public void Count_predicate_before_a_later_Join_declines_cleanly_under_NativeOnly()
     {
         var seed = SeedThreeOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(seed, MongoQueryProvider.NativeOnly,
             nameof(Count_predicate_before_a_later_Join_declines_cleanly_under_NativeOnly));
 
         // The exception type isn't contract; AssertDeclinesCleanly checks it isn't a deserializer crash.
@@ -278,10 +278,10 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     // PostJoinOps; otherwise the inner reads as bare and the filter is silently dropped in every mode (including
     // DriverLinq, since IsBareCollectionScan also gates MarkSawNonBareJoinInner).
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Count_predicate_on_join_inner_side_declines_cleanly_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Count_predicate_on_join_inner_side_declines_cleanly_in_every_mode(MongoQueryProvider mode)
     {
         var seed = SeedThreeOwnersAndOrders();
         using var db = CreateContext(seed, mode,
@@ -299,10 +299,10 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     // the SelectMany's $lookup/$unwind, corrupting reads with a BSON type mismatch. This shape is unsupported in
     // every mode, so Route declines when `_unwindSources.Count > 0`.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Count_predicate_before_correlated_SelectMany_declines_cleanly_in_every_mode(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Count_predicate_before_correlated_SelectMany_declines_cleanly_in_every_mode(MongoQueryProvider mode)
     {
         var seed = SeedThreeOwnersAndOrders();
         using var db = CreateContext(seed, mode,
@@ -321,14 +321,14 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     // The predicate registers a bare `_lookup_<Nav>` (NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup);
     // the Include later registers a paged lookup for the same alias. MongoQueryExpression.AddLookup's bare-then-
     // pipelined merge would fold the paging into the predicate's lookup, so $size reads the paged array — silently
-    // wrong in every mode, since the merge happens before MongoQueryMode is consulted. The predicate's lookup is
+    // wrong in every mode, since the merge happens before MongoQueryProvider is consulted. The predicate's lookup is
     // flagged LookupExpression.IsBareCountSizeSource and MongoProjectionBindingExpressionVisitor reroutes a paged
     // Include away from it.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Include_ordered_Take_on_same_nav_as_count_predicate_returns_correct_data(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Include_ordered_Take_on_same_nav_as_count_predicate_returns_correct_data(MongoQueryProvider mode)
     {
         var seed = SeedFourOwnersAndOrders();
         using var db = CreateContext(seed, mode,
@@ -348,10 +348,10 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Include_ordered_Skip_on_same_nav_as_count_predicate_returns_correct_data(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Include_ordered_Skip_on_same_nav_as_count_predicate_returns_correct_data(MongoQueryProvider mode)
     {
         var seed = SeedFourOwnersAndOrders();
         using var db = CreateContext(seed, mode,
@@ -369,10 +369,10 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Include_ordered_Skip_Take_on_same_nav_as_count_predicate_returns_correct_data(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Include_ordered_Skip_Take_on_same_nav_as_count_predicate_returns_correct_data(MongoQueryProvider mode)
     {
         var seed = SeedFourOwnersAndOrders();
         using var db = CreateContext(seed, mode,
@@ -402,10 +402,10 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
 
     // Self-referencing variant (Node.Children : List<Node>): the fix mustn't rely on distinct entity types.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Include_ordered_Take_on_same_self_referencing_nav_as_count_predicate_returns_correct_data(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Include_ordered_Take_on_same_self_referencing_nav_as_count_predicate_returns_correct_data(MongoQueryProvider mode)
     {
         var rootA = new Node { Id = ObjectId.GenerateNewId(), Order = 0 };
         var rootB = new Node { Id = ObjectId.GenerateNewId(), Order = 0 };
@@ -448,19 +448,19 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
 
         public DbSet<Node> Nodes { get; set; } = null!;
 
-        public NodeTestDbContext(TemporaryDatabaseFixture database, string nodesCollection, MongoQueryMode mode)
+        public NodeTestDbContext(TemporaryDatabaseFixture database, string nodesCollection, MongoQueryProvider mode)
             : base(BuildOptions(database, mode))
         {
             _nodesCollection = nodesCollection;
         }
 
-        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode)
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryProvider mode)
         {
             var optionsBuilder = new DbContextOptionsBuilder<NodeTestDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(mode);
             return optionsBuilder.Options;
         }
 
@@ -570,7 +570,7 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         return new Seed([ownerA, ownerB, ownerC, ownerD], orders);
     }
 
-    private CountPredicateTestDbContext CreateContext(Seed seed, MongoQueryMode mode, string name)
+    private CountPredicateTestDbContext CreateContext(Seed seed, MongoQueryProvider mode, string name)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var ownersName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "Owners" + suffix;
@@ -608,20 +608,20 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         public DbSet<Order> Orders { get; set; } = null!;
 
         public CountPredicateTestDbContext(
-            TemporaryDatabaseFixture database, string ownersCollection, string ordersCollection, MongoQueryMode mode)
+            TemporaryDatabaseFixture database, string ownersCollection, string ordersCollection, MongoQueryProvider mode)
             : base(BuildOptions(database, mode))
         {
             _ownersCollection = ownersCollection;
             _ordersCollection = ordersCollection;
         }
 
-        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryMode mode)
+        private static DbContextOptions BuildOptions(TemporaryDatabaseFixture database, MongoQueryProvider mode)
         {
             var optionsBuilder = new DbContextOptionsBuilder<CountPredicateTestDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryProvider(mode);
             return optionsBuilder.Options;
         }
 

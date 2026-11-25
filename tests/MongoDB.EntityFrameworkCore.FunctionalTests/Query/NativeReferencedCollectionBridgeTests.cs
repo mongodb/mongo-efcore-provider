@@ -30,7 +30,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// The driver-LINQ bridge parity of the aggregate, quantifier, predicate and ordering leaves over a cross-document collection. Same
 /// data and expectations as <see cref="NativeReferencedCollectionAggregateTests"/> and
-/// <see cref="NativeReferencedCollectionPredicateTests"/>, but every mode, explicit <see cref="MongoQueryMode.DriverLinq"/> included,
+/// <see cref="NativeReferencedCollectionPredicateTests"/>, but every mode, explicit <see cref="MongoQueryProvider.DriverLinq"/> included,
 /// must answer exactly, not refuse.
 /// </summary>
 public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -83,7 +83,7 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
     private void Strict3<T>(Func<Ctx, IQueryable<T>> query, Func<T, string> format, List<string> expected, bool sorted = true)
     {
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(names, mode);
             var formatted = query(db).AsEnumerable().Select(format);
@@ -157,7 +157,7 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
     public void Min_over_a_non_nullable_selector_throws_for_the_empty_group()
     {
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(names, mode);
 
@@ -222,7 +222,7 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
     public void Parameterized_predicate_is_read_per_execution_in_every_mode()
     {
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(names, mode);
             NativeModeAssert.TwiceWithDifferentValues(
@@ -236,7 +236,7 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
     private void StrictScalar<T>(Func<Ctx, T> query, T expected)
     {
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(names, mode);
             Assert.True(Equals(expected, query(db)), $"{mode} returned {query(db)}, expected {expected}");
@@ -268,9 +268,9 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
         => StrictScalar(db => db.Set<Cust>().Where(c => c.Id != "A2").Sum(c => c.Orders.Sum(o => o.Total)), 660);
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    public void Min_of_a_nullable_Min_over_the_group_skips_the_empty_group(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    public void Min_of_a_nullable_Min_over_the_group_skips_the_empty_group(MongoQueryProvider mode)
     {
         // Not asserted under explicit DriverLinq: the driver's own translation of this shape answers null (it did before the native path
         // handled it), where the nullable Min skips the empty group's null and answers 10.
@@ -286,7 +286,7 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
     public void Max_of_a_Sum_over_no_customers_throws_as_LINQ_does()
     {
         var names = Seed();
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = Create(names, mode);
             Assert.ThrowsAny<InvalidOperationException>(
@@ -294,10 +294,10 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
         }
     }
 
-    private Ctx Create(string[] names, MongoQueryMode mode)
+    private Ctx Create(string[] names, MongoQueryProvider mode)
     {
         var options = new DbContextOptionsBuilder<Ctx>()
-            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
             .ReplaceService<IModelCacheKeyFactory, UniqueModelCacheKeyFactory>()
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
             .Options;

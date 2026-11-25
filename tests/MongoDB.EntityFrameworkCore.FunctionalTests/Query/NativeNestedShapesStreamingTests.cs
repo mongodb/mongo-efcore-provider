@@ -109,10 +109,10 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
         }
     }
 
-    private ShopContext Db(MongoQueryMode mode, string suffix)
+    private ShopContext Db(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<ShopContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)).Options,
             suffix);
@@ -206,7 +206,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
         Assert.Equal("1:t1/xy+t2/,2:t3/z,3:", results[0]);
         Assert.Equal(tracked ? "entries=6" : "entries=0", results[1]);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(
             streaming.Categories.AsNoTracking().Select(
                 c => new { c.Id, Articles = streaming.Articles.Include(a => a.Comments).Where(a => a.CategoryId == c.Id).ToList() }));
@@ -226,7 +226,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["c1", "c2"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Categories.Where(c => streaming.Articles.Where(a => a.CategoryId == c.Id).Any(a => a.Views > 15)));
     }
 
@@ -249,7 +249,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["c1/t1/xy", "c1/t2/", "c2/t3/z"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Categories.Join(streaming.Articles.Include(a => a.Comments), c => c.Id, a => a.CategoryId, (c, a) => new { c, a }));
     }
 
@@ -268,7 +268,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["p1:Oslo:n1+n2", "p2:Rome:", "p3:Bern:n3"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Places.AsNoTracking().Select(p => new { p.Title, p.Home.City, p.Home.Notes }));
     }
 
@@ -287,7 +287,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["2+5:a+b", ":", "1:c"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Places.AsNoTracking().Select(p => new { Days = p.Visits.Select(v => v.Days).ToList(), p.Visits }));
     }
 
@@ -296,14 +296,14 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
     {
         var suffix = Seed();
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.NativeOnly })
         {
             using var db = Db(mode, suffix);
             var results = db.Places.AsNoTracking().SelectMany(p => p.Visits).ToList().OrderBy(v => v.Who).Select(v => v.Who + v.Days).ToList();
             Assert.Equal(["a2", "b5", "c1"], results);
         }
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Places.AsNoTracking().SelectMany(p => p.Visits));
     }
 
@@ -331,7 +331,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
         Assert.Equal("c1/t1/c1,c1/t2/c1,c2/t3/c2", results[0]);
         Assert.Equal(tracked ? "entries=5" : "entries=0", results[1]);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(
             streaming.Categories.Join(streaming.Articles.Include(a => a.Category), c => c.Id, a => a.CategoryId, (c, a) => new { c, a }));
     }
@@ -359,7 +359,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
         Assert.Equal("c1/t1/2,c1/t2/2,c2/t3/1", results[0]);
         Assert.Equal(tracked ? "entries=5" : "entries=0", results[1]);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Categories.Include(c => c.Articles).Join(streaming.Articles, c => c.Id, a => a.CategoryId, (c, a) => new { c, a.Title }));
     }
 
@@ -377,7 +377,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["c1:2", "c2:1"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(
             streaming.Categories.Include(c => c.Articles).Where(c => streaming.Articles.Where(a => a.CategoryId == c.Id).Any(a => a.Views > 15)));
     }
@@ -397,7 +397,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["t1t1False", "t2t2False", "t3t3False"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(
             streaming.Categories.AsNoTracking().Join(streaming.Articles.AsNoTracking(), c => c.Id, a => a.CategoryId, (c, a) => new { c, a })
                 .Select(x => new { First = x.a, Second = x.a }));
@@ -418,7 +418,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["c1#1", "c2#2", "c3#3"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(streaming.Categories.Select(c => Describe(c)));
     }
 
@@ -437,7 +437,7 @@ public class NativeNestedShapesStreamingTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(["1:25:2", "2:30:1"], results);
 
-        using var streaming = Db(MongoQueryMode.NativeOnly, suffix);
+        using var streaming = Db(MongoQueryProvider.NativeOnly, suffix);
         AssertStreams(
             streaming.Articles.GroupBy(a => a.CategoryId)
                 .Select(g => new Wrapper { Container = new Inner { Key = g.Key, Total = g.Sum(a => a.Views), Count = g.Count() } }));

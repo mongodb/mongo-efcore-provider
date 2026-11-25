@@ -55,11 +55,11 @@ public class NativeContainsTerminalTests(TemporaryDatabaseFixture database) : IC
         return collection;
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(collection, optionsBuilderAction: b =>
         {
             b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
         });
 
     private List<bool> Run(string name, Func<SingleEntityDbContext<Row>, bool> query)
@@ -162,7 +162,7 @@ public class NativeContainsTerminalTests(TemporaryDatabaseFixture database) : IC
         using var db = SingleEntityDbContext.Create(collection, optionsBuilderAction: b =>
         {
             b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-            new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            new MongoDbContextOptionsBuilder(b).UseQueryProvider(MongoQueryProvider.NativeOnly);
         });
         var leafEntity = db.Entities.Single(n => n.Id == leaf.Id);
 
@@ -182,7 +182,7 @@ public class NativeContainsTerminalTests(TemporaryDatabaseFixture database) : IC
     {
         var collection = Seed(nameof(Contains_null_over_array_field_projection_does_not_match_arrays_containing_null));
         collection.InsertOne(new Row { Id = ObjectId.GenerateNewId(), Name = "d", Value = 4, Tags = ["x", null] });
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         bool? answer = null;
         var ex = Record.Exception(() => answer = db.Entities.Select(r => r.Tags).Contains(null));

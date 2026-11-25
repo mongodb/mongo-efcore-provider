@@ -58,13 +58,13 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
         return collection;
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -72,17 +72,17 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     {
         var collection = Seed(nameof(Conditional_null_check_over_DateTimeOffset_matches_across_all_three_modes));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, DT = x.OccurredOffset == null ? (DateTime?)null : x.OccurredOffset.Value.DateTime.Date })
             .ToList();
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeResult = native.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, DT = x.OccurredOffset == null ? (DateTime?)null : x.OccurredOffset.Value.DateTime.Date })
             .ToList();
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqResult = driverLinq.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, DT = x.OccurredOffset == null ? (DateTime?)null : x.OccurredOffset.Value.DateTime.Date })
             .ToList();
@@ -112,7 +112,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
         // tree (`(object)x.Foo.Year`) has no `$toX` target (MongoConvertExpression.ToOperatorFor) and declines
         // under NativeOnly for any leaf, an unrelated gap.
         var collection = Seed(nameof(DateTimeOffset_date_part_matches_in_memory_LINQ_under_NativeOnly) + part);
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var nonNullRows = Rows.Where(r => r.OccurredOffset is not null).ToArray();
 
@@ -183,13 +183,13 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
         return collection;
     }
 
-    private static SingleEntityDbContext<TimeRow> CreateTimeContext(IMongoCollection<TimeRow> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<TimeRow> CreateTimeContext(IMongoCollection<TimeRow> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // A literal built in the query (`new DateTime(...)`) can reach the translator un-evaluated; it is a value like any constant.
@@ -271,7 +271,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void TimeOfDay_over_a_null_date_throws_like_CSharp()
     {
         var collection = SeedTimeRows(nameof(TimeOfDay_over_a_null_date_throws_like_CSharp));
-        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateTimeContext(collection, MongoQueryProvider.NativeOnly);
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => x.MaybeWhen!.Value.TimeOfDay).ToList());
@@ -283,7 +283,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void Year_over_a_null_date_throws_like_CSharp()
     {
         var collection = SeedTimeRows(nameof(Year_over_a_null_date_throws_like_CSharp));
-        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateTimeContext(collection, MongoQueryProvider.NativeOnly);
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => new { x.Label, Y = x.MaybeWhen!.Value.Year }).ToList());
@@ -311,7 +311,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void GroupBy_key_over_a_date_part_of_a_nullable_date_goes_native_for_non_null_rows()
     {
         var collection = SeedTimeRows(nameof(GroupBy_key_over_a_date_part_of_a_nullable_date_goes_native_for_non_null_rows));
-        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateTimeContext(collection, MongoQueryProvider.NativeOnly);
 
         var native = db.Entities.AsNoTracking().Where(x => x.MaybeWhen != null)
             .GroupBy(x => x.MaybeWhen!.Value.Year).Select(g => new { g.Key, C = g.Count() }).OrderBy(r => r.Key).ToList();
@@ -325,7 +325,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void GroupBy_key_over_a_date_part_of_a_null_date_throws_like_CSharp()
     {
         var collection = SeedTimeRows(nameof(GroupBy_key_over_a_date_part_of_a_null_date_throws_like_CSharp));
-        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateTimeContext(collection, MongoQueryProvider.NativeOnly);
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.AsNoTracking()
             .GroupBy(x => x.MaybeWhen!.Value.Year).Select(g => new { g.Key, C = g.Count() }).ToList());
@@ -336,7 +336,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void GroupBy_Max_over_a_date_part_of_a_nullable_date_declines()
     {
         var collection = SeedTimeRows(nameof(GroupBy_Max_over_a_date_part_of_a_nullable_date_declines));
-        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateTimeContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.AsNoTracking()
             .GroupBy(x => x.Label).Select(g => g.Max(x => x.MaybeWhen!.Value.Year)).ToList());
@@ -382,7 +382,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void TimeOfDay_projection_then_GroupBy_over_it_declines()
     {
         var collection = SeedTimeRows(nameof(TimeOfDay_projection_then_GroupBy_over_it_declines));
-        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateTimeContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.AsNoTracking()
             .Select(x => new { T = x.When.TimeOfDay }).GroupBy(a => a.T).Select(g => g.Key).ToList());
@@ -537,7 +537,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void DateTimeOffset_Year_over_a_null_offset_throws_like_CSharp()
     {
         var collection = Seed(nameof(DateTimeOffset_Year_over_a_null_offset_throws_like_CSharp));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => new { x.Label, Y = x.OccurredOffset!.Value.Year }).ToList());
@@ -584,10 +584,10 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     // Intersect has no driver-LINQ oracle: a declined Intersect is a translation failure in every mode (NativeOnly,
     // Native, whose fallback has nothing to fall back to, and explicit DriverLinq).
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void TimeOfDay_member_Intersect_with_a_TimeSpan_property_declines(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void TimeOfDay_member_Intersect_with_a_TimeSpan_property_declines(MongoQueryProvider mode)
     {
         var collection = SeedTimeRows(nameof(TimeOfDay_member_Intersect_with_a_TimeSpan_property_declines) + mode);
         using var db = CreateTimeContext(collection, mode);
@@ -598,10 +598,10 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void TimeSpan_property_member_Intersect_with_TimeOfDay_declines(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void TimeSpan_property_member_Intersect_with_TimeOfDay_declines(MongoQueryProvider mode)
     {
         var collection = SeedTimeRows(nameof(TimeSpan_property_member_Intersect_with_TimeOfDay_declines) + mode);
         using var db = CreateTimeContext(collection, mode);
@@ -631,7 +631,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void TimeOfDay_member_Intersect_with_TimeOfDay_matches_the_oracle()
     {
         var collection = SeedTimeRows(nameof(TimeOfDay_member_Intersect_with_TimeOfDay_matches_the_oracle));
-        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateTimeContext(collection, MongoQueryProvider.NativeOnly);
 
         var result = db.Entities.AsNoTracking().Where(x => x.Label != "a").Select(x => new { T = x.When.TimeOfDay })
             .Intersect(db.Entities.AsNoTracking().Where(x => x.Label != "d").Select(x => new { T = x.When.TimeOfDay }))
@@ -661,7 +661,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void AddDays_over_a_null_date_throws_like_CSharp()
     {
         var collection = SeedTimeRows(nameof(AddDays_over_a_null_date_throws_like_CSharp));
-        using var db = CreateTimeContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateTimeContext(collection, MongoQueryProvider.NativeOnly);
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, D = x.MaybeWhen!.Value.AddDays(1) }).ToList());
@@ -715,7 +715,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void DateTimeOffset_DateTime_over_a_null_offset_throws_like_CSharp()
     {
         var collection = Seed(nameof(DateTimeOffset_DateTime_over_a_null_offset_throws_like_CSharp));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => x.OccurredOffset!.Value.DateTime).ToList());
@@ -740,7 +740,7 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     public void Plain_DateTime_Date_matches_in_memory_LINQ_under_NativeOnly()
     {
         var collection = Seed(nameof(Plain_DateTime_Date_matches_in_memory_LINQ_under_NativeOnly));
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var actual = nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => x.Occurred.Date).ToList();
         var expected = Rows.OrderBy(r => r.Label).Select(r => r.Occurred.Date).ToList();

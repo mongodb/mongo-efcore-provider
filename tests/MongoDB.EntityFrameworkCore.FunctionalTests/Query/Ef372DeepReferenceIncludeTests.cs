@@ -42,12 +42,12 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // Three-hop ThenInclude, both query modes.
+    // Three-hop ThenInclude, both query providers.
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Three_hop_reference_ThenInclude_returns_every_row(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Three_hop_reference_ThenInclude_returns_every_row(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, nameof(Three_hop_reference_ThenInclude_returns_every_row));
 
@@ -68,7 +68,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     public void Two_hop_reference_ThenInclude_goes_native()
     {
         // The lowerer must emit the transitive $lookup, not just recognize it.
-        using var db = CreateContext(MongoQueryMode.NativeOnly,
+        using var db = CreateContext(MongoQueryProvider.NativeOnly,
             nameof(Two_hop_reference_ThenInclude_goes_native), out var spyLogger);
 
         var results = db.Roots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList();
@@ -88,7 +88,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Three_hop_reference_ThenInclude_prefixes_the_third_localField()
     {
-        using var db = CreateContext(MongoQueryMode.Native,
+        using var db = CreateContext(MongoQueryProvider.Native,
             nameof(Three_hop_reference_ThenInclude_prefixes_the_third_localField), out var spyLogger);
 
         var results = db.Roots
@@ -105,9 +105,9 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     // User-authored chained Join of 3 levels.
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Three_level_user_authored_chained_Join_returns_every_row(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Three_level_user_authored_chained_Join_returns_every_row(MongoQueryProvider mode)
     {
         using var db = CreateContext(mode, nameof(Three_level_user_authored_chained_Join_returns_every_row),
             out var spyLogger);
@@ -129,7 +129,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void One_hop_reference_Include_localField_is_unprefixed()
     {
-        using var db = CreateContext(MongoQueryMode.Native,
+        using var db = CreateContext(MongoQueryProvider.Native,
             nameof(One_hop_reference_Include_localField_is_unprefixed), out var spyLogger);
 
         var results = db.Roots.Include(r => r.Mid).ToList();
@@ -143,7 +143,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Two_hop_reference_ThenInclude_prefixes_only_the_second_localField()
     {
-        using var db = CreateContext(MongoQueryMode.Native,
+        using var db = CreateContext(MongoQueryProvider.Native,
             nameof(Two_hop_reference_ThenInclude_prefixes_only_the_second_localField), out var spyLogger);
 
         var results = db.Roots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList();
@@ -161,7 +161,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Four_hop_reference_ThenInclude_prefixes_the_fourth_localField()
     {
-        using var db = CreateContext(MongoQueryMode.Native,
+        using var db = CreateContext(MongoQueryProvider.Native,
             nameof(Four_hop_reference_ThenInclude_prefixes_the_fourth_localField), out var spyLogger);
 
         var results = db.Roots
@@ -214,9 +214,9 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     // join recorded. The mids point at different leaves ("A" and "B") so a wrong prefix shows as wrong data.
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Two_same_typed_navigations_single_branch_ThenInclude_returns_correct_rows(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Two_same_typed_navigations_single_branch_ThenInclude_returns_correct_rows(MongoQueryProvider mode)
     {
         using var db = CreateAmbiguousContext(
             nameof(Two_same_typed_navigations_single_branch_ThenInclude_returns_correct_rows), mode,
@@ -237,9 +237,9 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Two_same_typed_navigations_sibling_ThenIncludes_return_both_branches(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Two_same_typed_navigations_sibling_ThenIncludes_return_both_branches(MongoQueryProvider mode)
     {
         using var db = CreateAmbiguousContext(
             nameof(Two_same_typed_navigations_sibling_ThenIncludes_return_both_branches), mode, out var spyLogger);
@@ -270,9 +270,9 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Two_same_typed_navigations_second_branch_only_returns_the_second_branch(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Two_same_typed_navigations_second_branch_only_returns_the_second_branch(MongoQueryProvider mode)
     {
         using var db = CreateAmbiguousContext(
             nameof(Two_same_typed_navigations_second_branch_only_returns_the_second_branch), mode, out var spyLogger);
@@ -326,9 +326,9 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     // under the first hop's alias (unscoped, it silently returned 0 rows).
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Join_chain_with_no_model_navigation_returns_every_row(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Join_chain_with_no_model_navigation_returns_every_row(MongoQueryProvider mode)
     {
         using var db = CreateNavlessContext(
             nameof(Join_chain_with_no_model_navigation_returns_every_row), mode, out var spyLogger);
@@ -355,9 +355,9 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     // reaches TranslateJoinCore on EF8/EF9.
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Optional_two_same_typed_navigations_sibling_ThenIncludes_return_both_branches(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Optional_two_same_typed_navigations_sibling_ThenIncludes_return_both_branches(MongoQueryProvider mode)
     {
         using var db = CreateOptionalAmbiguousContext(
             nameof(Optional_two_same_typed_navigations_sibling_ThenIncludes_return_both_branches), mode,
@@ -383,7 +383,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"localField\" : \"_lookup_SecondaryMid.LeafId\"", mql);
         Assert.Contains("\"as\" : \"_lookup_Leaf\"", mql);
         Assert.Contains("\"as\" : \"_lookup_Leaf_1\"", mql);
-        if (mode == MongoQueryMode.DriverLinq)
+        if (mode == MongoQueryProvider.DriverLinq)
         {
             Assert.Contains("\"preserveNullAndEmptyArrays\" : true", mql);
             Assert.DoesNotContain("\"preserveNullAndEmptyArrays\" : false", mql);
@@ -398,9 +398,9 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
 
     // Same optional model, one branch (the first same-typed navigation), on the left-outer route.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Optional_two_same_typed_navigations_single_branch_ThenInclude_returns_correct_rows(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Optional_two_same_typed_navigations_single_branch_ThenInclude_returns_correct_rows(MongoQueryProvider mode)
     {
         using var db = CreateOptionalAmbiguousContext(
             nameof(Optional_two_same_typed_navigations_single_branch_ThenInclude_returns_correct_rows), mode);
@@ -418,7 +418,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 #endif
 
-    private DeepChainDbContext CreateContext(MongoQueryMode mode, string name, ILoggerFactory? loggerFactory = null)
+    private DeepChainDbContext CreateContext(MongoQueryProvider mode, string name, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var roots = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "R" + suffix;
@@ -466,7 +466,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         return new DeepChainDbContext(database, roots, mids, leaves, tips, nubs, mode, loggerFactory);
     }
 
-    private DeepChainDbContext CreateContext(MongoQueryMode mode, string name, out SpyLoggerProvider spyLogger)
+    private DeepChainDbContext CreateContext(MongoQueryProvider mode, string name, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -474,7 +474,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
     private AmbiguousChainDbContext CreateAmbiguousContext(
-        string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+        string name, MongoQueryProvider mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var roots = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "AR" + suffix;
@@ -506,7 +506,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
     private AmbiguousChainDbContext CreateAmbiguousContext(
-        string name, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+        string name, MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -552,7 +552,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         return new AltChainDbContext(database, roots, mids, leaves, tips, loggerFactory);
     }
 
-    private NavlessChainDbContext CreateNavlessContext(string name, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+    private NavlessChainDbContext CreateNavlessContext(string name, MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -560,7 +560,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
     private NavlessChainDbContext CreateNavlessContext(
-        string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+        string name, MongoQueryProvider mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var roots = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "ZR" + suffix;
@@ -626,7 +626,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
 #if !EF8 && !EF9
     // Optional (nullable-FK) navigations, lowered to Queryable.LeftJoin.
     private OptionalAmbiguousChainDbContext CreateOptionalAmbiguousContext(
-        string name, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+        string name, MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -634,7 +634,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
     private OptionalAmbiguousChainDbContext CreateOptionalAmbiguousContext(
-        string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+        string name, MongoQueryProvider mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var roots = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "OAR" + suffix;
@@ -716,7 +716,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         public DeepChainDbContext(
             TemporaryDatabaseFixture database, string roots, string mids, string leaves, string tips, string nubs,
-            MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            MongoQueryProvider mode, ILoggerFactory? loggerFactory)
             : base(Configure(database, mode, loggerFactory))
         {
             _roots = roots;
@@ -727,11 +727,11 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         }
 
         private static DbContextOptions<DeepChainDbContext> Configure(
-            TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var builder = new DbContextOptionsBuilder<DeepChainDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
@@ -880,7 +880,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         public AmbiguousChainDbContext(
             TemporaryDatabaseFixture database, string roots, string mids, string leaves,
-            MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            MongoQueryProvider mode, ILoggerFactory? loggerFactory)
             : base(Configure(database, mode, loggerFactory))
         {
             _roots = roots;
@@ -889,11 +889,11 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         }
 
         private static DbContextOptions<AmbiguousChainDbContext> Configure(
-            TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var builder = new DbContextOptionsBuilder<AmbiguousChainDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
@@ -959,7 +959,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         private readonly string _leaves;
 
         public OptionalAmbiguousChainDbContext(
-            TemporaryDatabaseFixture database, string roots, string mids, string leaves, MongoQueryMode mode,
+            TemporaryDatabaseFixture database, string roots, string mids, string leaves, MongoQueryProvider mode,
             ILoggerFactory? loggerFactory)
             : base(Configure(database, mode, loggerFactory))
         {
@@ -969,11 +969,11 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         }
 
         private static DbContextOptions<OptionalAmbiguousChainDbContext> Configure(
-            TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var builder = new DbContextOptionsBuilder<OptionalAmbiguousChainDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 
@@ -1119,7 +1119,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         private readonly string _leaves;
 
         public NavlessChainDbContext(
-            TemporaryDatabaseFixture database, string roots, string mids, string leaves, MongoQueryMode mode,
+            TemporaryDatabaseFixture database, string roots, string mids, string leaves, MongoQueryProvider mode,
             ILoggerFactory? loggerFactory)
             : base(Configure(database, mode, loggerFactory))
         {
@@ -1129,11 +1129,11 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         }
 
         private static DbContextOptions<NavlessChainDbContext> Configure(
-            TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            TemporaryDatabaseFixture database, MongoQueryProvider mode, ILoggerFactory? loggerFactory)
         {
             var builder = new DbContextOptionsBuilder<NavlessChainDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
 

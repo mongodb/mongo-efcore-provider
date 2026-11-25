@@ -37,7 +37,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -45,12 +45,12 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // MQL is captured via SpyLoggerProvider (TestMqlLoggerFactory/AssertMql exist only in SpecificationTests).
     private SingleEntityDbContext<T> CreateContextWithLogging<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
         where T : class
     {
@@ -65,7 +65,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -223,7 +223,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         => Seed(name, AllPassRow(), OneFailsRow(), MissingFieldRow(), NullFieldRow(), EmptyPostsRow());
 
     private List<string> RunTitles(
-        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryMode mode)
+        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryProvider mode)
     {
         using var db = CreateContext(collection, mode, BlogModel);
         return query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
@@ -243,7 +243,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     // $allElementsTrue translation.
     private List<string> AssertNativeOnlyMatches(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
-        => RunTitles(collection, query, MongoQueryMode.NativeOnly);
+        => RunTitles(collection, query, MongoQueryProvider.NativeOnly);
 
     [Fact]
     public void Owned_collection_All_goes_native()
@@ -315,7 +315,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     public void Owned_collection_All_emits_a_negated_elem_match()
     {
         var collection = SeedWellFormed(nameof(Owned_collection_All_emits_a_negated_elem_match));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spyLogger);
 
         _ = db.Entities.AsNoTracking().Where(b => b.Posts.All(p => p.Rank > 5)).ToList();
 
@@ -327,7 +327,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     public void Owned_collection_All_with_a_conjunction_emits_a_de_morgan_or()
     {
         var collection = SeedWellFormed(nameof(Owned_collection_All_with_a_conjunction_emits_a_de_morgan_or));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spyLogger);
 
         _ = db.Entities.AsNoTracking()
             .Where(b => b.Posts.All(p => p.Rank > 5 && p.Heading == "yes")).ToList();
@@ -392,7 +392,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     public void Owned_collection_All_is_correct_for_a_tracking_query()
     {
         var collection = SeedWellFormed(nameof(Owned_collection_All_is_correct_for_a_tracking_query));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var titles = db.Entities.Where(b => b.Posts.All(p => p.Rank > 5))
             .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
@@ -454,14 +454,14 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             RowWithTags("emptyTags", new BsonArray()));
 
         List<string> native;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             native = db.Entities.AsNoTracking().Where(b => b.Tags.All(t => t != "x"))
                 .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
         }
 
         List<string> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             driver = db.Entities.AsNoTracking().Where(b => b.Tags.All(t => t != "x"))
                 .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
@@ -470,7 +470,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         Assert.Equal(driver, native);
         Assert.Equal(new[] { "emptyTags", "noX" }, native);
 
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             var nativeOnly = db.Entities.AsNoTracking().Where(b => b.Tags.All(t => t != "x"))
                 .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
@@ -529,14 +529,14 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         var collection = Seed($"diff_{name}", DifferentialRows());
 
         List<string> expected;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             expected = db.Entities.AsNoTracking().ToList()
                 .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t).ToList();
         }
 
         List<string> actual;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             actual = db.Entities.AsNoTracking().Where(predicate).ToList()
                 .Select(b => b.Title).OrderBy(t => t).ToList();
@@ -624,14 +624,14 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         mb.Entity<NestedRefBlog>().OwnsMany(b => b.Posts, p => p.OwnsOne(x => x.Author));
 
     private SingleEntityDbContext<NestedRefBlog> CreateNestedRefContext(
-        IMongoCollection<NestedRefBlog> collection, MongoQueryMode mode)
+        IMongoCollection<NestedRefBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: NestedRefBlogModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -644,7 +644,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             UniqueCollectionName(nameof(Quantifier_element_predicate_through_nested_owned_reference_hop_goes_native)));
         var collection = database.MongoDatabase.GetCollection<NestedRefBlog>(raw.CollectionNamespace.CollectionName);
 
-        using (var seedDb = CreateNestedRefContext(collection, MongoQueryMode.DriverLinq))
+        using (var seedDb = CreateNestedRefContext(collection, MongoQueryProvider.DriverLinq))
         {
             seedDb.Entities.Add(new NestedRefBlog
             {
@@ -659,7 +659,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             seedDb.SaveChanges();
         }
 
-        using var db = CreateNestedRefContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateNestedRefContext(collection, MongoQueryProvider.NativeOnly);
 
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => p.Author!.City == "Springfield"))
@@ -694,14 +694,14 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             p.OwnsOne(x => x.Author, a => a.HasKey(x => new { x.City, x.Country })));
 
     private SingleEntityDbContext<NestedRefKeyedBlog> CreateNestedRefKeyedContext(
-        IMongoCollection<NestedRefKeyedBlog> collection, MongoQueryMode mode)
+        IMongoCollection<NestedRefKeyedBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: NestedRefKeyedBlogModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     [Fact]
@@ -714,7 +714,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             UniqueCollectionName(nameof(Quantifier_element_predicate_through_nested_owned_reference_composite_key_leaf_goes_native)));
         var collection = database.MongoDatabase.GetCollection<NestedRefKeyedBlog>(raw.CollectionNamespace.CollectionName);
 
-        using (var seedDb = CreateNestedRefKeyedContext(collection, MongoQueryMode.DriverLinq))
+        using (var seedDb = CreateNestedRefKeyedContext(collection, MongoQueryProvider.DriverLinq))
         {
             seedDb.Entities.Add(new NestedRefKeyedBlog
             {
@@ -735,7 +735,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
             seedDb.SaveChanges();
         }
 
-        using var db = CreateNestedRefKeyedContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateNestedRefKeyedContext(collection, MongoQueryProvider.NativeOnly);
 
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => p.Author!.City == "Springfield"))

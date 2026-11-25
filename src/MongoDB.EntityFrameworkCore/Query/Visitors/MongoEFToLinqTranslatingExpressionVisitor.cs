@@ -151,7 +151,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             throw new NativeTranslation.NativeTranslationNotSupportedException(
                 $"The join onto '{filteredJoinLookup.TargetEntityType.DisplayName()}' filters its inner side, which the "
                 + "driver-LINQ translation would silently drop, returning unfiltered rows. Only the native translator "
-                + "honors it; use MongoQueryMode.Native or NativeOnly, or filter after the join.");
+                + "honors it; use MongoQueryProvider.Native or NativeOnly, or filter after the join.");
         }
 
         // The sort, skip or limit of an element stage belongs to a projected list or first element (`c.Orders.OrderBy(..).ToList()`), which
@@ -162,7 +162,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             throw new NativeTranslation.NativeTranslationNotSupportedException(
                 $"The projected collection of '{nativeOnlyArray.TargetEntityType.DisplayName()}' entities is only supported by the "
                 + "native translator; the driver-LINQ translation would return an empty or unfiltered list. "
-                + "Use MongoQueryMode.Native or NativeOnly.");
+                + "Use MongoQueryProvider.Native or NativeOnly.");
         }
 
         // An element leaf's array is copied to the member's projection alias in the whole document the shaper reads; an alias that is also a
@@ -183,7 +183,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     {
                         throw new NativeTranslation.NativeTranslationNotSupportedException(
                             $"The projected collection '{alias}' has the same name as a stored field of '{rootEntityType.DisplayName()}', "
-                            + "which the driver-LINQ translation would overwrite. Rename the projection member, or use MongoQueryMode.Native or NativeOnly.");
+                            + "which the driver-LINQ translation would overwrite. Rename the projection member, or use MongoQueryProvider.Native or NativeOnly.");
                     }
                 }
             }

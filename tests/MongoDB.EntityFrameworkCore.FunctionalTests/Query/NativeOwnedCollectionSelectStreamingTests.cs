@@ -70,10 +70,10 @@ public class NativeOwnedCollectionSelectStreamingTests(TemporaryDatabaseFixture 
             });
     }
 
-    private SelectContext Db(MongoQueryMode mode, string suffix)
+    private SelectContext Db(MongoQueryProvider mode, string suffix)
         => new(
             new DbContextOptionsBuilder<SelectContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options,
@@ -84,7 +84,7 @@ public class NativeOwnedCollectionSelectStreamingTests(TemporaryDatabaseFixture 
     private string Seed()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
-        using (var seed = Db(MongoQueryMode.Native, suffix))
+        using (var seed = Db(MongoQueryProvider.Native, suffix))
         {
             seed.Orders.AddRange(
                 new Order
@@ -121,7 +121,7 @@ public class NativeOwnedCollectionSelectStreamingTests(TemporaryDatabaseFixture 
     public void A_scalar_member_select_constructs_no_element()
     {
         var suffix = Seed();
-        using var db = Db(MongoQueryMode.NativeOnly, suffix);
+        using var db = Db(MongoQueryProvider.NativeOnly, suffix);
 
         Line.Constructed = 0;
         var skus = db.Orders.AsNoTracking().OrderBy(o => o.Id).Select(o => new { o.Code, Skus = o.Lines.Select(l => l.Sku).ToList() })
@@ -135,7 +135,7 @@ public class NativeOwnedCollectionSelectStreamingTests(TemporaryDatabaseFixture 
     public void A_select_that_calls_a_method_of_the_users_type_still_constructs_the_element()
     {
         var suffix = Seed();
-        using var db = Db(MongoQueryMode.NativeOnly, suffix);
+        using var db = Db(MongoQueryProvider.NativeOnly, suffix);
 
         Line.Constructed = 0;
         var tags = db.Orders.AsNoTracking().OrderBy(o => o.Id)
@@ -189,7 +189,7 @@ public class NativeOwnedCollectionSelectStreamingTests(TemporaryDatabaseFixture 
                 { "Lines", new BsonArray { new BsonDocument { { "Qty", 1 } } } }
             });
 
-        using var db = Db(MongoQueryMode.NativeOnly, suffix);
+        using var db = Db(MongoQueryProvider.NativeOnly, suffix);
         var query = db.Orders.AsNoTracking().Where(o => o.Id == 6).Select(o => new { o.Code, Skus = o.Lines.Select(l => l.Sku).ToList() });
 
         Assert.ThrowsAny<Exception>(() => query.ToList());

@@ -69,14 +69,14 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
         mb.Entity<SetBlog>().OwnsMany(b => b.Posts, p => p.OwnsMany(x => x.Comments));
 
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder> model) where T : class
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder> model) where T : class
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: model,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -121,7 +121,7 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
         // for the `missing` and `null` rows.
         var collection = Seed(nameof(Array_projection_normalizes_a_missing_or_null_array_to_an_empty_collection));
 
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel);
 
         var rows = db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts).ToList();
 
@@ -134,7 +134,7 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
     {
         var collection = Seed(nameof(Bare_count_projection_returns_zero_for_a_missing_or_null_array));
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
 
@@ -152,7 +152,7 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
         // empty either way.
         var collection = Seed(nameof(Whole_entity_materialization_is_unchanged));
 
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel);
 
         var blogs = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
 
@@ -167,7 +167,7 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
         // an array. Neither should move.
         var collection = Seed(nameof(Collection_include_is_unchanged));
 
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel);
 
         var blogs = db.Entities.AsNoTracking().OrderBy(b => b.Title).Include(b => b.Posts).ToList();
 
@@ -184,7 +184,7 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
         // Collection_include_is_unchanged cover the rest.
         var collection = Seed(nameof(Array_projection_for_a_tracking_query_is_blocked_by_EF_Cores_owned_entity_tracking_rule));
 
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel);
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => db.Entities.OrderBy(b => b.Title).Select(b => b.Posts).ToList());
@@ -207,7 +207,7 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
         var collection = database.MongoDatabase
             .GetCollection<SetBlog>(raw.CollectionNamespace.CollectionName);
 
-        using var db = CreateContext(collection, MongoQueryMode.Native, SetBlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, SetBlogModel);
 
         var rows = db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts).ToList();
 
@@ -236,7 +236,7 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
         raw.InsertOne(Row("row", posts));
         var collection = database.MongoDatabase.GetCollection<Blog>(raw.CollectionNamespace.CollectionName);
 
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel);
 
         var projected = db.Entities.AsNoTracking().Select(b => b.Posts).ToList().Single();
         var byHeading = projected.OrderBy(p => p.Heading).ToList();
@@ -258,13 +258,13 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
 
         // Both legs order by Title, so comparing Count lists positionally is equivalent to comparing pairs.
         List<int> expected;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             expected = db.Entities.AsNoTracking().ToList()
                 .OrderBy(b => b.Title).Select(b => b.Posts.Count).ToList();
         }
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             List<int> actual;
             using (var db = CreateContext(collection, mode, BlogModel))

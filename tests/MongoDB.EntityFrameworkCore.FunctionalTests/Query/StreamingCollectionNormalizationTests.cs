@@ -58,14 +58,14 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
     private static readonly Action<ModelBuilder> FlatBlogModel = mb => mb.Entity<FlatBlog>().OwnsMany(b => b.Posts);
 
     private static SingleEntityDbContext<FlatBlog> CreateContext(
-        IMongoCollection<FlatBlog> collection, MongoQueryMode mode)
+        IMongoCollection<FlatBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: FlatBlogModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -114,7 +114,7 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
         // throws rather than silently using the DOM shaper.
         var collection = Seed(nameof(Streamed_whole_entity_normalizes_a_missing_or_null_array_to_an_empty_collection));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         AssertStreamingEligible(db);
 
         var blogs = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
@@ -129,10 +129,10 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
     {
         var collection = Seed(nameof(Streamed_whole_entity_agrees_with_driver_linq_for_every_array_state));
 
-        int?[] Counts(MongoQueryMode mode)
+        int?[] Counts(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, mode);
-            if (mode != MongoQueryMode.DriverLinq)
+            if (mode != MongoQueryProvider.DriverLinq)
             {
                 AssertStreamingEligible(db);
             }
@@ -141,11 +141,11 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
                 .Select(b => b.Posts?.Count).ToArray();
         }
 
-        var driverLinq = Counts(MongoQueryMode.DriverLinq);
+        var driverLinq = Counts(MongoQueryProvider.DriverLinq);
 
         Assert.Equal(new int?[] { 0, 0, 0, 2 }, driverLinq);
-        Assert.Equal(driverLinq, Counts(MongoQueryMode.Native));
-        Assert.Equal(driverLinq, Counts(MongoQueryMode.NativeOnly));
+        Assert.Equal(driverLinq, Counts(MongoQueryProvider.Native));
+        Assert.Equal(driverLinq, Counts(MongoQueryProvider.NativeOnly));
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public class StreamingCollectionNormalizationTests(TemporaryDatabaseFixture data
         // materialization paths agree on the same document.
         var collection = Seed(nameof(Streamed_and_reduced_paths_agree_for_a_missing_or_null_array));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
         AssertStreamingEligible(db);
 
         foreach (var title in new[] { "missing", "null", "empty", "two" })

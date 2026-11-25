@@ -37,7 +37,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -45,11 +45,11 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static SingleEntityDbContext<T> CreateContextWithLogging<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
         where T : class
     {
@@ -64,7 +64,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -108,7 +108,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     public void Owned_single_reference_whole_entity_goes_native()
     {
         var collection = SeedBlogs(nameof(Owned_single_reference_whole_entity_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var results = db.Entities.AsNoTracking().ToList();
 
@@ -121,7 +121,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     public void Owned_single_reference_whole_entity_with_root_where_goes_native()
     {
         var collection = SeedBlogs(nameof(Owned_single_reference_whole_entity_with_root_where_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var results = db.Entities.AsNoTracking().Where(b => b.Title == "Alpha").ToList();
 
@@ -133,7 +133,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     public void Owned_single_reference_whole_entity_with_root_orderby_goes_native()
     {
         var collection = SeedBlogs(nameof(Owned_single_reference_whole_entity_with_root_orderby_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var results = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
 
@@ -168,7 +168,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         });
         var collection = database.MongoDatabase.GetCollection<BlogWithTags>(coll.CollectionNamespace.CollectionName);
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogWithTagsModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogWithTagsModel);
 
         var blog = Assert.Single(db.Entities.AsNoTracking().ToList());
         Assert.Equal("Alpha", blog.Title);
@@ -223,7 +223,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         ]);
         var collection = database.MongoDatabase.GetCollection<Order>(coll.CollectionNamespace.CollectionName);
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly,
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly,
             mb =>
             {
                 OrderCustomerModel(mb);
@@ -242,7 +242,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     public void Owned_single_reference_whole_entity_Single_returns_correct_entity()
     {
         var collection = SeedBlogs(nameof(Owned_single_reference_whole_entity_Single_returns_correct_entity));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var blog = db.Entities.AsNoTracking().Single(b => b.Title == "Alpha");
 
@@ -254,7 +254,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     public void Owned_single_reference_whole_entity_First_returns_correct_entity()
     {
         var collection = SeedBlogs(nameof(Owned_single_reference_whole_entity_First_returns_correct_entity));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var blog = db.Entities.AsNoTracking().OrderBy(b => b.Title).First();
 
@@ -268,13 +268,13 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = SeedBlogs(nameof(Present_owned_reference_matches_driver_linq));
 
         List<Blog> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             driver = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
         List<Blog> native;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             native = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
@@ -317,13 +317,13 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = database.MongoDatabase.GetCollection<BlogOptionalAddress>(coll.CollectionNamespace.CollectionName);
 
         List<BlogOptionalAddress> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogOptionalAddressModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogOptionalAddressModel))
         {
             driver = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
         List<BlogOptionalAddress> native;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogOptionalAddressModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogOptionalAddressModel))
         {
             native = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
@@ -362,13 +362,13 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = database.MongoDatabase.GetCollection<BlogOptionalAddress>(coll.CollectionNamespace.CollectionName);
 
         List<BlogOptionalAddress> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogOptionalAddressModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogOptionalAddressModel))
         {
             driver = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
         List<BlogOptionalAddress> native;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogOptionalAddressModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogOptionalAddressModel))
         {
             native = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
@@ -414,13 +414,13 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = database.MongoDatabase.GetCollection<BlogRequiredAddress>(coll.CollectionNamespace.CollectionName);
 
         InvalidOperationException driverEx;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogRequiredAddressModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogRequiredAddressModel))
         {
             driverEx = Assert.Throws<InvalidOperationException>(() => db.Entities.AsNoTracking().ToList());
         }
 
         InvalidOperationException nativeEx;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogRequiredAddressModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogRequiredAddressModel))
         {
             nativeEx = Assert.Throws<InvalidOperationException>(() => db.Entities.AsNoTracking().ToList());
         }
@@ -428,7 +428,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal(driverEx.GetType(), nativeEx.GetType());
         Assert.Equal(driverEx.Message, nativeEx.Message);
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogRequiredAddressModel);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogRequiredAddressModel);
         Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.AsNoTracking().ToList());
     }
 
@@ -486,13 +486,13 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = database.MongoDatabase.GetCollection<BlogNested>(coll.CollectionNamespace.CollectionName);
 
         List<BlogNested> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogNestedModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogNestedModel))
         {
             driver = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
         List<BlogNested> native;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogNestedModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogNestedModel))
         {
             native = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
@@ -535,13 +535,13 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = database.MongoDatabase.GetCollection<BlogTwoAddresses>(coll.CollectionNamespace.CollectionName);
 
         BlogTwoAddresses driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogTwoAddressesModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogTwoAddressesModel))
         {
             driver = db.Entities.AsNoTracking().Single();
         }
 
         BlogTwoAddresses native;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogTwoAddressesModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogTwoAddressesModel))
         {
             native = db.Entities.AsNoTracking().Single();
         }
@@ -559,7 +559,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     {
         var collection = SeedBlogs(nameof(Tracked_owned_reference_query_tracks_entities_and_round_trips_mutation));
 
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             var results = db.Entities.OrderBy(b => b.Title).ToList();
 
@@ -571,7 +571,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             db.SaveChanges();
         }
 
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             var alpha = db.Entities.AsNoTracking().Single(b => b.Title == "Alpha");
             Assert.Equal("Brooklyn", alpha.Address.City);
@@ -586,13 +586,13 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = SeedBlogs(nameof(Owned_single_reference_flat_shape_streams_and_returns_identical_entities_to_driver_linq));
 
         List<Blog> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             driver = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
         List<Blog> native;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             native = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
@@ -633,7 +633,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         });
         var collection = database.MongoDatabase.GetCollection<BlogMixed>(coll.CollectionNamespace.CollectionName);
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogMixedModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogMixedModel);
 
         // The admit predicate accepts every embedded navigation in the auto-include chain, reference and collection.
         var blog = Assert.Single(db.Entities.AsNoTracking().ToList());
@@ -647,7 +647,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     public void Owned_reference_entity_leaf_beside_field_leaf_goes_native_and_reads_correct_values()
     {
         var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_beside_field_leaf_goes_native_and_reads_correct_values));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var results = db.Entities.AsNoTracking()
             .Select(b => new { b.Address, b.Title })
@@ -666,7 +666,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     public void Owned_reference_entity_leaf_beside_field_leaf_emits_expected_project_stage_with_retained_id()
     {
         var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_beside_field_leaf_emits_expected_project_stage_with_retained_id));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, BlogModel, out var spyLogger);
 
         _ = db.Entities.AsNoTracking().Select(b => new { b.Address, b.Title }).ToList();
 
@@ -681,7 +681,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_parity_between_native_and_driver_linq));
 
         List<(string Title, string City, string Zip)> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             driver = db.Entities.AsNoTracking().Select(b => new { b.Address, b.Title })
                 .OrderBy(r => r.Title)
@@ -690,7 +690,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         }
 
         List<(string Title, string City, string Zip)> native;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             native = db.Entities.AsNoTracking().Select(b => new { b.Address, b.Title })
                 .OrderBy(r => r.Title)
@@ -710,7 +710,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = SeedBlogs(nameof(Field_sibling_projection_behind_a_parameterized_where_reads_correct_values));
         var titlePrefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             var nativeOnlyResults = nativeOnly.Entities.AsNoTracking()
                 .Where(b => b.Title.StartsWith(titlePrefix))
@@ -723,7 +723,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             Assert.Equal("10001", nativeOnlyRow.Address.Zip);
         }
 
-        using (var native = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var native = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             var results = native.Entities.AsNoTracking()
                 .Where(b => b.Title.StartsWith(titlePrefix))
@@ -738,7 +738,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
         // Explicit DriverLinq must read the same shape: the mixed shaper's ReadsUnprojectedDocuments handles the alias
         // without null-out, since it names a real element on a whole document.
-        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var driver = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             var results = driver.Entities.AsNoTracking()
                 .Where(b => b.Title.StartsWith(titlePrefix))
@@ -760,7 +760,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     {
         var collection = SeedBlogs(nameof(Renamed_owned_reference_entity_leaf_goes_native_and_reads_correct_values));
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             var results = db.Entities.AsNoTracking().Select(b => new { Addr = b.Address, b.Title })
@@ -779,11 +779,11 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     {
         var collection = SeedBlogs(nameof(Renamed_owned_reference_entity_leaf_colliding_with_another_alias_declines));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().Select(b => new { Address = b.Title, Addr = b.Address }).ToList());
 
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel);
         var results = db.Entities.AsNoTracking().Select(b => new { Address = b.Title, Addr = b.Address })
             .OrderBy(r => r.Address).ToList();
 
@@ -821,14 +821,14 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = SeedBlogsWithRank(
             nameof(Owned_reference_entity_leaf_beside_computed_leaf_declines_but_still_reads_correct_values));
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogWithRankModel))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogWithRankModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => nativeOnly.Entities.AsNoTracking()
                     .Select(b => new { b.Address, Total = b.Rank * b.Rank }).ToList());
         }
 
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogWithRankModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogWithRankModel);
         var result = Assert.Single(
             db.Entities.AsNoTracking().Select(b => new { b.Address, Total = b.Rank * b.Rank }).ToList());
         Assert.Equal("NYC", result.Address.City);
@@ -840,12 +840,12 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     // Distinct/set op; on the driver-LINQ path it can't be stripped, so the driver returns documents without the owner
     // _id and, under NoTracking, the owned shadow key reads as a placeholder.
 
-    public static TheoryData<MongoQueryMode> FallbackModes()
-        => new() { MongoQueryMode.Native, MongoQueryMode.DriverLinq };
+    public static TheoryData<MongoQueryProvider> FallbackModes()
+        => new() { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq };
 
     [Theory]
     [MemberData(nameof(FallbackModes))]
-    public void Owned_reference_entity_leaf_in_anonymous_type_with_Distinct(MongoQueryMode mode)
+    public void Owned_reference_entity_leaf_in_anonymous_type_with_Distinct(MongoQueryProvider mode)
     {
         var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_in_anonymous_type_with_Distinct) + mode);
         using var db = CreateContext(collection, mode, BlogModel);
@@ -857,7 +857,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
     [Theory]
     [MemberData(nameof(FallbackModes))]
-    public void Owned_reference_entity_leaf_in_anonymous_type_with_Union(MongoQueryMode mode)
+    public void Owned_reference_entity_leaf_in_anonymous_type_with_Union(MongoQueryProvider mode)
     {
         var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_in_anonymous_type_with_Union) + mode);
         using var db = CreateContext(collection, mode, BlogModel);
@@ -873,7 +873,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
     [Theory]
     [MemberData(nameof(FallbackModes))]
-    public void Owned_reference_entity_leaf_in_anonymous_type_with_Concat(MongoQueryMode mode)
+    public void Owned_reference_entity_leaf_in_anonymous_type_with_Concat(MongoQueryProvider mode)
     {
         var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_in_anonymous_type_with_Concat) + mode);
         using var db = CreateContext(collection, mode, BlogModel);
@@ -891,7 +891,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     public void Owned_reference_entity_leaf_in_anonymous_type_with_Union_declines_under_NativeOnly()
     {
         var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_in_anonymous_type_with_Union_declines_under_NativeOnly));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
             db.Entities.AsNoTracking().Select(b => new { b.Title, b.Address })
@@ -904,7 +904,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     public void Owned_reference_entity_leaf_in_anonymous_type_with_Distinct_declines_under_NativeOnly()
     {
         var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_in_anonymous_type_with_Distinct_declines_under_NativeOnly));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
             db.Entities.AsNoTracking().Select(b => new { b.Address }).Distinct().ToList());
@@ -913,7 +913,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     // Two distinct blogs with equal Title and Address: dedup compares projected values, so they collapse to one row.
     [Theory]
     [MemberData(nameof(FallbackModes))]
-    public void Owned_reference_entity_leaf_Distinct_dedups_by_value_not_owner_identity(MongoQueryMode mode)
+    public void Owned_reference_entity_leaf_Distinct_dedups_by_value_not_owner_identity(MongoQueryProvider mode)
     {
         var collection = SeedDuplicateBlogs(nameof(Owned_reference_entity_leaf_Distinct_dedups_by_value_not_owner_identity) + mode);
         using var db = CreateContext(collection, mode, BlogModel);
@@ -926,7 +926,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
     [Theory]
     [MemberData(nameof(FallbackModes))]
-    public void Owned_reference_entity_leaf_Union_dedups_by_value_not_owner_identity(MongoQueryMode mode)
+    public void Owned_reference_entity_leaf_Union_dedups_by_value_not_owner_identity(MongoQueryProvider mode)
     {
         var collection = SeedDuplicateBlogs(nameof(Owned_reference_entity_leaf_Union_dedups_by_value_not_owner_identity) + mode);
         using var db = CreateContext(collection, mode, BlogModel);
@@ -950,7 +950,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = SeedDuplicateBlogs(
             nameof(Owned_reference_entity_leaf_Concat_with_tracking_or_identity_resolution_does_not_return_merged_rows)
             + trackingBehavior);
-        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel);
         db.ChangeTracker.QueryTrackingBehavior = trackingBehavior;
 
         Assert.Throws<InvalidOperationException>(() =>
@@ -980,7 +980,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     // The same identity re-projection follows an owned-collection leaf; its elements also key off the owner _id.
     [Theory]
     [MemberData(nameof(FallbackModes))]
-    public void Owned_collection_leaf_in_anonymous_type_with_Concat(MongoQueryMode mode)
+    public void Owned_collection_leaf_in_anonymous_type_with_Concat(MongoQueryProvider mode)
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(
             nameof(Owned_collection_leaf_in_anonymous_type_with_Concat) + mode));
@@ -1018,7 +1018,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
     [Theory]
     [MemberData(nameof(FallbackModes))]
-    public void Owned_reference_entity_leaf_with_string_owner_key_in_anonymous_type_with_Union(MongoQueryMode mode)
+    public void Owned_reference_entity_leaf_with_string_owner_key_in_anonymous_type_with_Union(MongoQueryProvider mode)
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(
             nameof(Owned_reference_entity_leaf_with_string_owner_key_in_anonymous_type_with_Union) + mode));

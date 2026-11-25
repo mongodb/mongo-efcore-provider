@@ -55,7 +55,7 @@ public class NativeStringJoinNullSeparatorTests(TemporaryDatabaseFixture databas
         var expectedOneJoined = string.Join(separator!, "foo", "bar");
         var expectedTwoJoined = string.Join(separator!, "baz", "qux");
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var oneMatches = nativeOnly.Entities.AsNoTracking()
             .Where(x => string.Join(separator!, new[] { x.A, x.B }) == expectedOneJoined)
             .Select(x => x.Label)
@@ -79,12 +79,12 @@ public class NativeStringJoinNullSeparatorTests(TemporaryDatabaseFixture databas
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }

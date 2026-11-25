@@ -42,7 +42,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <para>
 /// The parameterized-<c>Where</c> legs are mandatory: a captured local in <c>string.StartsWith</c> makes the
 /// native renderer decline late, after the alias-addressed shaper is committed, which is the fallback path where
-/// these failures live. The explicit-<c>DriverLinq</c> legs are mandatory because <c>UseQueryMode(DriverLinq)</c>
+/// these failures live. The explicit-<c>DriverLinq</c> legs are mandatory because <c>UseQueryProvider(DriverLinq)</c>
 /// must keep restoring the previous path.
 /// </para>
 /// </remarks>
@@ -101,43 +101,43 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
     private static readonly Action<ModelBuilder> InterfaceBlogModel =
         mb => mb.Entity<InterfaceBlog>().OwnsMany(b => b.Posts);
 
-    private static SingleEntityDbContext<Blog> CreateContext(IMongoCollection<Blog> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Blog> CreateContext(IMongoCollection<Blog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: BlogModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static SingleEntityDbContext<InterfaceBlog> CreateInterfaceContext(
-        IMongoCollection<InterfaceBlog> collection, MongoQueryMode mode)
+        IMongoCollection<InterfaceBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: InterfaceBlogModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static readonly Action<ModelBuilder> SetBlogModel = mb => mb.Entity<SetBlog>().OwnsMany(b => b.Posts);
 
     private static SingleEntityDbContext<SetBlog> CreateSetContext(
-        IMongoCollection<SetBlog> collection, MongoQueryMode mode)
+        IMongoCollection<SetBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: SetBlogModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     // FunctionalTests has no AssertMql (that's in SpecificationTests), so MQL is captured via SpyLoggerProvider.
     private static SingleEntityDbContext<Blog> CreateContextWithLogging(
-        IMongoCollection<Blog> collection, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+        IMongoCollection<Blog> collection, MongoQueryProvider mode, out SpyLoggerProvider spyLogger)
     {
         var (loggerFactory, provider) = SpyLoggerProvider.Create();
         spyLogger = provider;
@@ -150,7 +150,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -251,13 +251,13 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
     }
 
     private static SingleEntityDbContext<TaggedBlog> CreateTaggedContext(
-        IMongoCollection<TaggedBlog> collection, MongoQueryMode mode)
+        IMongoCollection<TaggedBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     //
@@ -286,14 +286,14 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         mb => mb.Entity<HopBlog>().OwnsOne(b => b.Home, h => h.OwnsMany(x => x.Notes));
 
     private static SingleEntityDbContext<HopBlog> CreateHopContext(
-        IMongoCollection<HopBlog> collection, MongoQueryMode mode)
+        IMongoCollection<HopBlog> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: HopBlogModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static BsonDocument HopRow(string title, BsonValue? notes)
@@ -362,7 +362,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         // DriverLinq must give the same values.
         var (collection, _) = Seed(nameof(Bare_count_projection_goes_native_for_every_array_state));
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedCounts,
@@ -379,7 +379,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var (collection, _) = Seed(nameof(Bare_count_projection_answers_correctly_on_the_LATE_decline_route));
         var prefix = "p";
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedCounts,
@@ -397,7 +397,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
             Seed(nameof(Bare_arithmetic_and_cast_projections_answer_correctly_on_the_LATE_decline_route));
         var prefix = "p";
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
 
@@ -420,7 +420,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         // reserved alias the Synthetic tier uses, so the shaper's read hits either way.
         var (collection, _) = Seed(nameof(Bare_arithmetic_projection_leaf_goes_native_for_every_array_state));
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedDoubledRanks,
@@ -438,7 +438,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var factor = 3;
         var prefix = "p";
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedTripledRanks,
@@ -447,7 +447,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
 
         // Late-decline leg with the captured local in the leaf as well as the predicate: proves a parameter
         // placeholder inside a Synthetic-tier projection survives being rendered by the driver. A miss is silent.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedTripledRanks,
@@ -462,7 +462,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         // $toInt touches no array. Weight is Rank + 0.5, so truncation gives 1 and 4 for 1.5 and 4.5, not 2 and 5.
         var (collection, _) = Seed(nameof(Bare_cast_projection_leaf_goes_native_for_every_array_state));
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedNarrowedWeights,
@@ -478,14 +478,14 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         // one the driver would write.
         var (collection, _) = Seed(nameof(Bare_computed_leaves_emit_the_reserved_underscore_v_alias));
 
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, out var arithmeticSpy))
+        using (var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, out var arithmeticSpy))
         {
             _ = db.Entities.AsNoTracking().Select(b => b.Rank * 2).ToList();
             var mql = arithmeticSpy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
             Assert.Contains("\"_v\" : { \"$multiply\"", mql);
         }
 
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, out var castSpy))
+        using (var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, out var castSpy))
         {
             _ = db.Entities.AsNoTracking().Select(b => (int)b.Weight).ToList();
             var mql = castSpy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
@@ -505,7 +505,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var (collection, _) = Seed(nameof(Bare_arithmetic_over_a_collection_count_is_declined_and_answers_correctly));
         var prefix = "p";
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
 
@@ -517,7 +517,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                     .Select(b => b.Posts.Count * 2).ToList());
         }
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -535,7 +535,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var (collection, _) = Seed(nameof(Bare_constant_leaf_now_goes_native_via_the_project_literal_wrap));
 
         // (1) Native, with the `$literal`-wrapped shape, asserted in both directions.
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.Native, out var spy))
+        using (var db = CreateContextWithLogging(collection, MongoQueryProvider.Native, out var spy))
         {
             Assert.Equal([0, 0, 0, 0, 0],
                 db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => 0).ToList());
@@ -545,13 +545,13 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
             Assert.DoesNotContain("\"_v\" : 0", mql);
         }
 
-        using (var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             Assert.Equal([0, 0, 0, 0, 0],
                 driverLinq.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => 0).ToList());
         }
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Equal([0, 0, 0, 0, 0],
                 nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => 0).ToList());
@@ -567,7 +567,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var collection = SeedInterface(nameof(Interface_typed_collection_navigation_count_answers_correctly_on_every_route));
         var prefix = "p";
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateInterfaceContext(collection, mode);
 
@@ -575,7 +575,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                 db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts.Count).ToList());
         }
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateInterfaceContext(collection, mode);
 
@@ -599,7 +599,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var expected = "[" + string.Join(",", ExpectedCounts) + "]";
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateSetContext(collection, mode);
 
@@ -611,7 +611,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                     .Select(b => b.Posts.Count).ToList())));
         }
 
-        using (var nativeOnly = CreateSetContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateSetContext(collection, MongoQueryProvider.NativeOnly))
         {
             legs.Add(("NativeOnly", LegOutcome(
                 () => nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -642,7 +642,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var expected = "[" + string.Join(",", ExpectedFilteredCounts) + "]";
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateSetContext(collection, mode);
             legs.Add(($"{mode} direct", LegOutcome(
@@ -650,7 +650,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                     .Select(b => b.Posts.Count(p => p.Heading == "h0")).ToList())));
         }
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateSetContext(collection, mode);
             legs.Add(($"{mode} late-decline", LegOutcome(
@@ -678,7 +678,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var (collection, _) = Seed(nameof(Bare_count_projection_under_a_cardinality_terminator_answers_correctly));
         var missingRowPrefix = "p3";
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
 
@@ -696,7 +696,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var (collection, _) = Seed(nameof(Bare_filtered_count_leaf_goes_native_for_every_array_state));
         var prefix = "p";
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedFilteredCounts,
@@ -707,7 +707,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         // Late-decline leg: the count rewrite doesn't cover a filtered count, so the driver renders it with a bare
         // `$Posts` input — but as {$sum: {$map: …}}, and $map over a missing/null array yields missing rather than
         // aborting. That is why the filtered kind is safe without a rewrite of its own.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedFilteredCounts,
@@ -723,7 +723,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         // Asserting on both native and explicit DriverLinq proves the count rewrite reaches the fallback.
         var (collection, _) = Seed(nameof(Bare_count_leaves_render_size_over_ifNull_natively_and_on_the_fallback));
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContextWithLogging(collection, mode, out var spy);
             _ = db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts.Count).ToList();
@@ -735,7 +735,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
 
         // Filtered kind: native wraps `$filter`'s input in `$ifNull`; the driver renders
         // `{$sum: {$map: {input: "$Posts", …}}}` with no `$ifNull`. Safe only because $map tolerates a missing array.
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, out var nativeSpy))
+        using (var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, out var nativeSpy))
         {
             _ = db.Entities.AsNoTracking().OrderBy(b => b.Title)
                 .Select(b => b.Posts.Count(p => p.Heading == "h0")).ToList();
@@ -743,7 +743,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
             Assert.Contains("\"$filter\" : { \"input\" : { \"$ifNull\" : [\"$Posts\", []] }", mql);
         }
 
-        using (var db = CreateContextWithLogging(collection, MongoQueryMode.DriverLinq, out var driverSpy))
+        using (var db = CreateContextWithLogging(collection, MongoQueryProvider.DriverLinq, out var driverSpy))
         {
             _ = db.Entities.AsNoTracking().OrderBy(b => b.Title)
                 .Select(b => b.Posts.Count(p => p.Heading == "h0")).ToList();
@@ -762,7 +762,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
             Seed(nameof(Bare_count_leaf_under_a_COMPOSED_slot_operator_answers_correctly));
         var prefix = "p";
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedCounts.Skip(1),
@@ -771,7 +771,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                 db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts.Count).Take(3).ToList());
         }
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContextWithLogging(collection, mode, out var spy);
             Assert.Equal(ExpectedCounts.Skip(1),
@@ -792,7 +792,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var (collection, _) = Seed(nameof(Bare_count_leaf_spelled_as_the_Enumerable_extension_method_goes_native));
         var prefix = "p";
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedCounts,
@@ -801,7 +801,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                 db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts.LongCount()).ToList());
         }
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedCounts,
@@ -824,13 +824,13 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         // widening should update this test.
         var collection = SeedTagged(nameof(Primitive_collection_bare_count_is_NOT_admitted_and_still_aborts_on_a_ragged_array));
 
-        using (var nativeOnly = CreateTaggedContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateTaggedContext(collection, MongoQueryProvider.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Tags.Count).ToList());
         }
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateTaggedContext(collection, mode);
             var ex = Assert.Throws<MongoCommandException>(
@@ -840,7 +840,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
 
         // The same leaf over non-ragged rows succeeds, so the abort is about array state, not primitive collections.
         var wellFormed = SeedTaggedWellFormed(nameof(Primitive_collection_bare_count_is_NOT_admitted_and_still_aborts_on_a_ragged_array));
-        using (var db = CreateTaggedContext(wellFormed, MongoQueryMode.Native))
+        using (var db = CreateTaggedContext(wellFormed, MongoQueryProvider.Native))
         {
             Assert.Equal([2, 0, 1],
                 db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Tags.Count).ToList());
@@ -857,7 +857,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var (collection, _) = Seed(nameof(Bare_count_leaf_under_a_REDUCING_operator_no_longer_aborts_on_a_ragged_array));
         var prefix = "p";
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
 
@@ -908,7 +908,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var expected = "[" + string.Join(",", ExpectedCounts) + "]";
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateHopContext(collection, mode);
 
@@ -920,7 +920,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                     .Select(b => b.Home.Notes.Count).ToList())));
         }
 
-        using (var nativeOnly = CreateHopContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateHopContext(collection, MongoQueryProvider.NativeOnly))
         {
             legs.Add(("NativeOnly", LegOutcome(
                 () => nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -950,7 +950,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var expected = "[" + string.Join(",", ExpectedFilteredCounts) + "]";
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateHopContext(collection, mode);
 
@@ -963,7 +963,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                     .Select(b => b.Home.Notes.Count(n => n.Text == "n0")).ToList())));
         }
 
-        using (var nativeOnly = CreateHopContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateHopContext(collection, MongoQueryProvider.NativeOnly))
         {
             legs.Add(("NativeOnly", LegOutcome(
                 () => nativeOnly.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -993,7 +993,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var expected = "[" + string.Join(",", ExpectedFilteredCounts) + "]";
         var legs = new List<(string Leg, string Outcome)>();
 
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             legs.Add(($"{mode} direct", LegOutcome(
@@ -1001,7 +1001,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                     .Select(b => b.Posts.Count(p => p.Heading == heading)).ToList())));
         }
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             legs.Add(($"{mode} late-decline", LegOutcome(
@@ -1050,7 +1050,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         // projection in the query (a projection-vs-projection comparison would test this code against itself).
         var (collection, _) = Seed(nameof(Whole_entity_materialization_is_the_oracle_for_every_array_state));
 
-        using var db = CreateContext(collection, MongoQueryMode.Native);
+        using var db = CreateContext(collection, MongoQueryProvider.Native);
 
         var oracle = db.Entities.AsNoTracking().ToList()
             .OrderBy(b => b.Title).Select(b => b.Posts.Count).ToList();
@@ -1152,16 +1152,16 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         // rather than return a value.
         var (collection, _) = Seed(nameof(Narrowing_cast_over_arithmetic_stays_declined));
 
-        List<short> Run(MongoQueryMode mode)
+        List<short> Run(MongoQueryProvider mode)
         {
             using var db = CreateContext(collection, mode);
             return db.Entities.AsNoTracking().OrderBy(b => b.Title)
                 .Select(b => (short)(b.Rank + (long)b.Rank)).ToList();
         }
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
-        Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => Run(MongoQueryMode.Native));
-        Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => Run(MongoQueryMode.DriverLinq));
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryProvider.NativeOnly));
+        Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => Run(MongoQueryProvider.Native));
+        Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => Run(MongoQueryProvider.DriverLinq));
     }
 
     [Fact]
@@ -1207,7 +1207,7 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
 
         // Late decline: the captured local in StartsWith declines after the shaper is committed, so the driver renders
         // the projection and the shaper must still read it once.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryProvider.Native, MongoQueryProvider.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(ExpectedNegatedRanks,

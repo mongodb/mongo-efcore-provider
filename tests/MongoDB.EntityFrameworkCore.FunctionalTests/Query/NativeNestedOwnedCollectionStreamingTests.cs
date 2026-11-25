@@ -82,14 +82,14 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
             });
         });
 
-    private static SingleEntityDbContext<Order> CreateContext(IMongoCollection<Order> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Order> CreateContext(IMongoCollection<Order> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             modelBuilderAction: OrderModel,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -172,15 +172,15 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
     ];
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Nested_owned_collection_elements_read_every_level(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Nested_owned_collection_elements_read_every_level(MongoQueryProvider mode)
     {
         var collection = Seed(nameof(Nested_owned_collection_elements_read_every_level) + mode);
 
         using var db = CreateContext(collection, mode);
-        if (mode != MongoQueryMode.DriverLinq)
+        if (mode != MongoQueryProvider.DriverLinq)
         {
             AssertStreamingEligible(db);
         }
@@ -189,9 +189,9 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Nested_owned_collection_elements_read_when_tracked(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void Nested_owned_collection_elements_read_when_tracked(MongoQueryProvider mode)
     {
         var collection = Seed(nameof(Nested_owned_collection_elements_read_when_tracked) + mode);
 
@@ -205,7 +205,7 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
     {
         var collection = Seed(nameof(Nested_owned_collection_elements_read_with_identity_resolution));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         Assert.Equal(
             Expected,
@@ -227,14 +227,14 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
         var collection = Seed(nameof(Nested_owned_entities_get_the_synthesized_ordinal_keys_of_every_enclosing_collection));
 
         string[] native;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             _ = db.Entities.Where(o => o.Name == "a-full").ToList();
             native = TrackedKeys(db);
         }
 
         string[] oracle;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             _ = db.Entities.Where(o => o.Name == "a-full").ToList();
             oracle = TrackedKeys(db);
@@ -254,7 +254,7 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
     {
         var collection = Seed(nameof(Nested_owned_collection_elements_read_with_a_filter_and_ordering));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var rows = db.Entities.AsNoTracking().Where(o => o.Name.CompareTo("e") >= 0).OrderByDescending(o => o.Name).ToList();
 
@@ -262,9 +262,9 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void A_required_owned_reference_missing_from_a_collection_element_throws(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void A_required_owned_reference_missing_from_a_collection_element_throws(MongoQueryProvider mode)
     {
         // Pins the existing behavior of the default model (Meta required): the same InvalidOperationException from both paths.
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(nameof(A_required_owned_reference_missing_from_a_collection_element_throws) + mode));
@@ -280,7 +280,7 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.AsNoTracking().ToList());
@@ -288,9 +288,9 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void An_element_does_not_inherit_the_previous_elements_owned_reference_or_scalar(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    public void An_element_does_not_inherit_the_previous_elements_owned_reference_or_scalar(MongoQueryProvider mode)
     {
         // Element state is reused across iterations: a later element without Meta/Sku must not read the earlier element's values.
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(nameof(An_element_does_not_inherit_the_previous_elements_owned_reference_or_scalar) + mode));

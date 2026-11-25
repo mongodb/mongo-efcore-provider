@@ -36,7 +36,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -44,11 +44,11 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private static SingleEntityDbContext<T> CreateContextWithLogging<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
         where T : class
     {
@@ -63,7 +63,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 b.EnableSensitiveDataLogging();
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
     }
 
@@ -107,7 +107,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
     public void Document_construction_leaf_goes_native_and_reads_correct_values()
     {
         var collection = SeedBooks(nameof(Document_construction_leaf_goes_native_and_reads_correct_values));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.AsNoTracking()
             .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Author }, b.Rank })
@@ -127,7 +127,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
     public void Document_construction_leaf_emits_expected_nested_project_stage()
     {
         var collection = SeedBooks(nameof(Document_construction_leaf_emits_expected_nested_project_stage));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, null, out var spyLogger);
 
         _ = db.Entities.AsNoTracking()
             .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Author }, b.Rank })
@@ -144,7 +144,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
     public void Document_construction_leaf_mixed_with_computed_sibling_goes_native()
     {
         var collection = SeedBooks(nameof(Document_construction_leaf_mixed_with_computed_sibling_goes_native));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly);
 
         var results = db.Entities.AsNoTracking()
             .Select(b => new
@@ -168,7 +168,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         var collection = SeedBooks(nameof(Document_construction_leaf_parity_between_native_and_driver_linq));
 
         List<(string Title, string Author, int Rank)> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             driver = db.Entities.AsNoTracking()
                 .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Author }, b.Rank })
@@ -178,7 +178,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         }
 
         List<(string Title, string Author, int Rank)> native;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             native = db.Entities.AsNoTracking()
                 .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Author }, b.Rank })
@@ -199,7 +199,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         var collection = SeedBooks(nameof(Document_construction_leaf_behind_a_parameterized_where_reads_correct_values));
         var titlePrefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        using (var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly))
         {
             var nativeOnlyResults = nativeOnly.Entities.AsNoTracking()
                 .Where(b => b.Title.StartsWith(titlePrefix))
@@ -212,7 +212,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
             Assert.Equal(3, nativeOnlyRow.Rank);
         }
 
-        using (var native = CreateContext(collection, MongoQueryMode.Native))
+        using (var native = CreateContext(collection, MongoQueryProvider.Native))
         {
             var results = native.Entities.AsNoTracking()
                 .Where(b => b.Title.StartsWith(titlePrefix))
@@ -225,7 +225,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
             Assert.Equal(3, row.Rank);
         }
 
-        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq))
+        using (var driver = CreateContext(collection, MongoQueryProvider.DriverLinq))
         {
             var results = driver.Entities.AsNoTracking()
                 .Where(b => b.Title.StartsWith(titlePrefix))
@@ -248,7 +248,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
     {
         var collection = SeedBooks(nameof(Document_construction_leaf_with_computed_member_is_flattened_and_reads_correct_values));
 
-        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.NativeOnly, MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode);
             var results = db.Entities.AsNoTracking()
@@ -336,7 +336,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
     public void Bare_ternary_over_constant_constructions_projects_only_the_test()
     {
         var collection = SeedPlaces(nameof(Bare_ternary_over_constant_constructions_projects_only_the_test));
-        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
+        using var db = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, null, out var spyLogger);
 
         _ = db.Entities.AsNoTracking()
             .Select(p => p.City == "Seattle"
@@ -424,7 +424,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         });
         Assert.Equal(["Alpha|Alpha", "REC|Rec", "REC|Rec", "REC|Rec"], withinBranch);
 
-        using var logged = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
+        using var logged = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, null, out var spyLogger);
         _ = logged.Entities.AsNoTracking()
             .Select(p => p.City == "Seattle"
                 ? new IdName { Id = p.Name, Name = p.Name }
@@ -617,7 +617,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
 
         Assert.Equal(["USA:Alpha", "UK:UK", "DE:DE", "FR:FR"], results);
 
-        using var logged = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
+        using var logged = CreateContextWithLogging(collection, MongoQueryProvider.NativeOnly, null, out var spyLogger);
         _ = logged.Entities.AsNoTracking()
             .Select(p => new
             {

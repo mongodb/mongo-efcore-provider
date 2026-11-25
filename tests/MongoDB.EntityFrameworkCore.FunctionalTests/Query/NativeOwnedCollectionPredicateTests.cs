@@ -35,7 +35,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? modelBuilderAction = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -43,7 +43,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private string UniqueCollectionName(string name)
@@ -194,7 +194,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         => Seed(name, MatchRow(), NoMatchRow(), EmptyPostsRow());
 
     private List<string> RunTitles(
-        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryMode mode)
+        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryProvider mode)
     {
         using var db = CreateContext(collection, mode, BlogModel);
         return query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
@@ -213,20 +213,20 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     // by NativeOnly succeeding plus hand-verified titles.
     private List<string> AssertNativeOnlyMatches(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
-        => RunTitles(collection, query, MongoQueryMode.NativeOnly);
+        => RunTitles(collection, query, MongoQueryProvider.NativeOnly);
 
     // For a declining shape over the full matrix: NativeOnly declines cleanly, and the fallback hits the same
     // driver MongoCommandException described above (asserted by concrete type).
     private void AssertDeclinesCleanlyNoFallbackOracle(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
     {
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => query(db.Entities.AsNoTracking()).ToList());
         }
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        foreach (var mode in new[] { MongoQueryProvider.Native, MongoQueryProvider.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
             Assert.ThrowsAny<MongoCommandException>(() => query(db.Entities.AsNoTracking()).ToList());
@@ -400,7 +400,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     {
         var collection = SeedBlogs(nameof(Owned_collection_Any_is_correct_when_tracked));
 
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
         var blogs = db.Entities.Where(b => b.Posts.Any(p => p.Heading == "x")).ToList();
 
         Assert.Equal(["match"], blogs.Select(b => b.Title));
@@ -444,14 +444,14 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         var collection = SeedBlogs(nameof(Primitive_collection_Any_now_goes_native_via_the_Contains_path));
 
         List<string> native;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.Native, BlogModel))
         {
             native = db.Entities.AsNoTracking().Where(b => b.Tags.Any(t => t == "x"))
                 .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
         }
 
         List<string> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.DriverLinq, BlogModel))
         {
             driver = db.Entities.AsNoTracking().Where(b => b.Tags.Any(t => t == "x"))
                 .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
@@ -460,7 +460,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         Assert.Equal(driver, native);
         Assert.Equal(["match"], native);
 
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        using (var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel))
         {
             var nativeOnly = db.Entities.AsNoTracking().Where(b => b.Tags.Any(t => t == "x"))
                 .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
@@ -475,7 +475,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         // MongoFieldPrefixRewriter composes "Posts.Comments". No driver-LINQ oracle (fails in every mode); anonymous
         // projection because TryReadProjection rejects a bare scalar SelectMany leaf. Expected value is hand-computed.
         var collection = SeedBlogs(nameof(Owned_SelectMany_with_an_inner_Any_filter_now_works));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, BlogModel);
 
         var headings = db.Entities.AsNoTracking()
             .SelectMany(b => b.Posts.Where(p => p.Comments.Any(c => c.Text == "t")), (b, p) => new { p.Heading })

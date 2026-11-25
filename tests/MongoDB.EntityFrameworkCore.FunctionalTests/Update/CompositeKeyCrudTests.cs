@@ -161,8 +161,8 @@ public class CompositeKeyCrudTests(TemporaryDatabaseFixture database)
             using var db = SingleEntityDbContext.Create(collection, builder =>
                 builder.Entity<Entity>().HasKey(nameof(Entity.Id1), nameof(Entity.Id2)));
 
-            // MongoQueryMode.DriverLinq still leaves the property at its default.
-            if (TestQueryMode.Current == MongoQueryMode.DriverLinq)
+            // MongoQueryProvider.DriverLinq still leaves the property at its default.
+            if (TestQueryProvider.Current == MongoQueryProvider.DriverLinq)
             {
                 Assert.Null(db.Entities.Single().Data);
             }

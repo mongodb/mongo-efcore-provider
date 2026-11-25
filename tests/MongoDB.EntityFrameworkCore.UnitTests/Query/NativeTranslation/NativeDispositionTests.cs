@@ -26,7 +26,7 @@ public class NativeDispositionTests
         NativeRoute route,
         bool isFallbackWrongData = false,
         bool hasUnboundVectorSearch = false,
-        MongoQueryMode mode = MongoQueryMode.Native)
+        MongoQueryProvider mode = MongoQueryProvider.Native)
         => MongoShapedQueryCompilingExpressionVisitor.ClassifyNativeDisposition(
             route, isFallbackWrongData, hasUnboundVectorSearch, mode);
 
@@ -60,7 +60,7 @@ public class NativeDispositionTests
         => Assert.Equal(NativeDisposition.Fallback, Classify(NativeRoute.WholeEntity, hasUnboundVectorSearch: true));
 
     // Degenerate at this level (same as WholeEntity_is_native); the real check that bound vector search goes
-    // native is NativeVectorSearchTests under MongoQueryMode.NativeOnly.
+    // native is NativeVectorSearchTests under MongoQueryProvider.NativeOnly.
     [Fact]
     public void Bound_vector_search_is_native()
         => Assert.Equal(NativeDisposition.Native, Classify(NativeRoute.WholeEntity, hasUnboundVectorSearch: false));
@@ -69,24 +69,24 @@ public class NativeDispositionTests
     public void Fallback_wrong_data_is_hard_decline_under_native()
         => Assert.Equal(
             NativeDisposition.HardDecline,
-            Classify(NativeRoute.Fallback, isFallbackWrongData: true, mode: MongoQueryMode.Native));
+            Classify(NativeRoute.Fallback, isFallbackWrongData: true, mode: MongoQueryProvider.Native));
 
     [Fact]
     public void Fallback_wrong_data_is_hard_decline_under_native_only()
         => Assert.Equal(
             NativeDisposition.HardDecline,
-            Classify(NativeRoute.Fallback, isFallbackWrongData: true, mode: MongoQueryMode.NativeOnly));
+            Classify(NativeRoute.Fallback, isFallbackWrongData: true, mode: MongoQueryProvider.NativeOnly));
 
     [Fact]
     public void Fallback_wrong_data_is_fallback_under_driver_linq()
         => Assert.Equal(
             NativeDisposition.Fallback,
-            Classify(NativeRoute.Fallback, isFallbackWrongData: true, mode: MongoQueryMode.DriverLinq));
+            Classify(NativeRoute.Fallback, isFallbackWrongData: true, mode: MongoQueryProvider.DriverLinq));
 
     [Fact]
     public void Hard_decline_takes_precedence_over_unbound_vector_search()
         => Assert.Equal(
             NativeDisposition.HardDecline,
             Classify(NativeRoute.Fallback, isFallbackWrongData: true, hasUnboundVectorSearch: true,
-                mode: MongoQueryMode.Native));
+                mode: MongoQueryProvider.Native));
 }

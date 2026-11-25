@@ -281,7 +281,7 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor
     /// the lowerer, DOM shaper and driver-LINQ <c>StripJoinForLookup</c> agree on the <c>_lookup_&lt;Nav&gt;</c> field.
     /// </summary>
     /// <remarks>
-    /// Registration also changes the fallback's pipeline at translation time, before <c>MongoQueryMode</c> is read, so a
+    /// Registration also changes the fallback's pipeline at translation time, before <c>MongoQueryProvider</c> is read, so a
     /// wrong admission is wrong in every mode; every conjunct below must hold on its own merits. <c>TryWalkIncludeChain</c>
     /// alone decides which <c>ThenInclude</c> nesting is admissible; don't re-check <c>HasNonEmbeddedThenInclude</c> per level
     /// (it would wrongly decline an admitted further level).

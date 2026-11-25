@@ -50,7 +50,7 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
     {
         // Control for an over-broad guard: outer paging is emitted at top level, before the $lookup, and is
         // correct.
-        using var db = CreateContext(MongoQueryMode.Native, nameof(Join_with_paged_outer_still_runs_and_is_correct));
+        using var db = CreateContext(MongoQueryProvider.Native, nameof(Join_with_paged_outer_still_runs_and_is_correct));
 
         var rows = db.Orders.OrderBy(o => o.Amount).Take(2)
             .Join(db.Regions, o => o.Country, r => r.Country, (o, r) => new { o.Country, r.Continent })
@@ -67,7 +67,7 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
     {
         // Over-decline net: a projection-only inner still translates on driver 3.11, so no provider guard may
         // decline it. The ordered sibling below is the rejected case.
-        using var db = CreateContext(MongoQueryMode.Native,
+        using var db = CreateContext(MongoQueryProvider.Native,
             nameof(Join_with_reshaped_unpaged_inner_still_runs_and_is_correct));
 
         var rows = db.Orders
@@ -86,7 +86,7 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
     {
         // Boundary pin: adding OrderBy to the inner makes 3.11 reject the expression rather than mis-fold it
         // into the correlated $lookup (EF-X022 in the spec suite).
-        using var db = CreateContext(MongoQueryMode.Native, nameof(Join_with_ordered_inner_is_rejected_by_the_driver));
+        using var db = CreateContext(MongoQueryProvider.Native, nameof(Join_with_ordered_inner_is_rejected_by_the_driver));
 
         Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => db.Orders
             .Join(db.Regions.OrderBy(r => r.Country).Select(r => new { r.Country, r.Continent }),
@@ -99,7 +99,7 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
     {
         // The native path can't represent GroupBy+Join, and its driver-LINQ fallback returns an empty joined
         // entity per grouped row, so the gate must throw (IsGroupByFallbackUnsafe) and name the GroupBy cause.
-        using var db = CreateContext(MongoQueryMode.Native,
+        using var db = CreateContext(MongoQueryProvider.Native,
             nameof(Join_with_grouped_outer_and_paged_inner_reports_the_GroupBy_cause));
 
         var ex = Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -118,7 +118,7 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
         // could not be translated" crash in every mode). The grouped join is in a subquery, so
         // MarkGroupByFallbackUnsafe lands on the intermediate MongoQueryExpression; only
         // PropagateFallbackWrongDataFrom makes this decline instead of returning wrong rows.
-        using var db = CreateContext(MongoQueryMode.Native,
+        using var db = CreateContext(MongoQueryProvider.Native,
             nameof(Join_whose_inner_subquery_is_grouped_and_joined_declines_under_native));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -139,7 +139,7 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
         // this returned silently wrong data via the fallback (CSHARP-6017); the pinned driver (a minimum
         // version, so 3.10 can't resolve) rejects it, so it fails cleanly under Native. If a future driver
         // accepts it again, it must return correct data or this fails.
-        using var db = CreateContext(MongoQueryMode.Native,
+        using var db = CreateContext(MongoQueryProvider.Native,
             nameof(GroupBy_over_Join_with_uncorrelated_ordered_paged_inner_never_returns_wrong_data));
 
         Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => db.Orders
@@ -164,7 +164,7 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
     {
         // Over-decline net: a bare inner has no CSHARP-6017 hazard and must keep returning correct results; a
         // guard keyed merely on "GroupBy over a Join" would fail this.
-        using var db = CreateContext(MongoQueryMode.Native,
+        using var db = CreateContext(MongoQueryProvider.Native,
             nameof(GroupBy_over_Join_with_bare_inner_still_returns_correct_data));
 
         var rows = db.Orders
@@ -179,7 +179,7 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
         Assert.Equal(["EU:3", "NA:2"], rows);
     }
 
-    private JoinDeclineDbContext CreateContext(MongoQueryMode mode, string name)
+    private JoinDeclineDbContext CreateContext(MongoQueryProvider mode, string name)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "O" + suffix;
@@ -224,10 +224,10 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
         private readonly string _regionsCollection;
 
         public JoinDeclineDbContext(
-            TemporaryDatabaseFixture database, string ordersCollection, string regionsCollection, MongoQueryMode mode)
+            TemporaryDatabaseFixture database, string ordersCollection, string regionsCollection, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<JoinDeclineDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)

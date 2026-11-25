@@ -61,10 +61,10 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_nav_null_check_ternary_over_a_reference_join_matches_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_nav_null_check_ternary_over_a_reference_join_matches_oracle(MongoQueryProvider mode)
     {
         var (ordersName, customersName, regionsName) =
             CreateCollectionNames(nameof(Bare_nav_null_check_ternary_over_a_reference_join_matches_oracle));
@@ -76,7 +76,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         // CustomerId).
         var danglingCustomerId = ObjectId.GenerateNewId();
 
-        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
+        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryProvider.DriverLinq))
         {
             seed.Set<Customer>().Add(new Customer { Id = matchedCustomerId, Name = "Alfreds" });
             seed.Set<Order>().AddRange(
@@ -115,10 +115,10 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
     // DriverLinq included: the flattened left-outer $unwind leaves the joined field MISSING, which the driver's
     // `$ne: [field, null]` treats as non-null; the bridge normalizes missing -> null after a preserved forced $unwind.
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_nav_null_check_ternary_over_a_two_level_chain_matches_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void Bare_nav_null_check_ternary_over_a_two_level_chain_matches_oracle(MongoQueryProvider mode)
     {
         var (ordersName, customersName, regionsName) =
             CreateCollectionNames(nameof(Bare_nav_null_check_ternary_over_a_two_level_chain_matches_oracle));
@@ -131,7 +131,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         var orderWithRegionId = ObjectId.GenerateNewId();
         var orderWithoutRegionId = ObjectId.GenerateNewId();
 
-        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
+        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryProvider.DriverLinq))
         {
             seed.Set<Region>().Add(new Region { Id = matchedRegionId, Name = "Western Europe" });
             seed.Set<Customer>().AddRange(
@@ -187,9 +187,9 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
     }
 
     [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.NativeOnly)]
-    public void OrderBy_bare_nav_null_check_ternary_matches_oracle(MongoQueryMode mode)
+    [InlineData(MongoQueryProvider.Native)]
+    [InlineData(MongoQueryProvider.NativeOnly)]
+    public void OrderBy_bare_nav_null_check_ternary_matches_oracle(MongoQueryProvider mode)
     {
         var (ordersName, customersName, regionsName) =
             CreateCollectionNames(nameof(OrderBy_bare_nav_null_check_ternary_matches_oracle));
@@ -201,7 +201,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         // A dangling FK: generated but never inserted into Customers, so the $lookup finds no match.
         var danglingCustomerId = ObjectId.GenerateNewId();
 
-        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
+        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryProvider.DriverLinq))
         {
             seed.Set<Customer>().Add(new Customer { Id = matchedCustomerId, Name = "Bravo" });
             seed.Set<Order>().AddRange(
@@ -381,7 +381,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         var regionId = ObjectId.GenerateNewId();
         var customerId = ObjectId.GenerateNewId();
 
-        using var seed = new JoinScopeDbContext(database, names.Orders, names.Customers, names.Regions, MongoQueryMode.DriverLinq);
+        using var seed = new JoinScopeDbContext(database, names.Orders, names.Customers, names.Regions, MongoQueryProvider.DriverLinq);
         seed.Set<Region>().Add(new Region { Id = regionId, Name = "Western Europe" });
         seed.Set<Customer>().Add(new Customer { Id = customerId, Name = "Alfreds", RegionId = regionId });
         seed.Set<Order>().AddRange(
@@ -401,23 +401,23 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
     // (MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs): with it disabled, every explicit-LeftJoin DriverLinq
     // row returns null for the unmatched rows.
     [Theory]
-    [InlineData(MongoQueryMode.Native, "JoinThenLeftJoinBareTernary")]
-    [InlineData(MongoQueryMode.DriverLinq, "JoinThenLeftJoinBareTernary")]
-    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinBareTernary")]
-    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinBareTernary")]
-    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinFirstLevelTernary")]
-    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinFirstLevelTernary")]
-    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinWrappedTernary")]
-    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinWrappedTernary")]
-    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinResultSelectorTernary")]
-    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinResultSelectorTernary")]
-    [InlineData(MongoQueryMode.Native, "JoinThenLeftJoinResultSelectorTernary")]
-    [InlineData(MongoQueryMode.DriverLinq, "JoinThenLeftJoinResultSelectorTernary")]
-    [InlineData(MongoQueryMode.Native, "TwoHopNavigationTernary")]
-    [InlineData(MongoQueryMode.DriverLinq, "TwoHopNavigationTernary")]
-    [InlineData(MongoQueryMode.Native, "TwoHopNavigationWrappedTernary")]
-    [InlineData(MongoQueryMode.DriverLinq, "TwoHopNavigationWrappedTernary")]
-    public void Nav_null_check_ternary_over_a_two_level_LeftJoin_chain_matches_oracle(MongoQueryMode mode, string shape)
+    [InlineData(MongoQueryProvider.Native, "JoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryProvider.DriverLinq, "JoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryProvider.Native, "LeftJoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryProvider.DriverLinq, "LeftJoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryProvider.Native, "LeftJoinThenLeftJoinFirstLevelTernary")]
+    [InlineData(MongoQueryProvider.DriverLinq, "LeftJoinThenLeftJoinFirstLevelTernary")]
+    [InlineData(MongoQueryProvider.Native, "LeftJoinThenLeftJoinWrappedTernary")]
+    [InlineData(MongoQueryProvider.DriverLinq, "LeftJoinThenLeftJoinWrappedTernary")]
+    [InlineData(MongoQueryProvider.Native, "LeftJoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryProvider.DriverLinq, "LeftJoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryProvider.Native, "JoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryProvider.DriverLinq, "JoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryProvider.Native, "TwoHopNavigationTernary")]
+    [InlineData(MongoQueryProvider.DriverLinq, "TwoHopNavigationTernary")]
+    [InlineData(MongoQueryProvider.Native, "TwoHopNavigationWrappedTernary")]
+    [InlineData(MongoQueryProvider.DriverLinq, "TwoHopNavigationWrappedTernary")]
+    public void Nav_null_check_ternary_over_a_two_level_LeftJoin_chain_matches_oracle(MongoQueryProvider mode, string shape)
     {
         var (ordersName, customersName, regionsName) =
             CreateCollectionNames(nameof(Nav_null_check_ternary_over_a_two_level_LeftJoin_chain_matches_oracle) + shape);
@@ -429,7 +429,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         var danglingRegionCustomerId = ObjectId.GenerateNewId();
         var nullRegionCustomerId = ObjectId.GenerateNewId();
 
-        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
+        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryProvider.DriverLinq))
         {
             seed.Set<Region>().Add(new Region { Id = matchedRegionId, Name = "Western Europe" });
             seed.Set<Customer>().AddRange(
@@ -447,7 +447,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
         var actual = RunTwoLevelLeftJoinTernary(db.Set<Order>(), db.Set<Customer>(), db.Set<Region>(), shape);
 
-        using var oracleDb = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq);
+        using var oracleDb = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryProvider.DriverLinq);
         var expected = RunTwoLevelLeftJoinTernaryOracle(
             oracleDb.Set<Order>().AsNoTracking().ToList(),
             oracleDb.Set<Customer>().AsNoTracking().ToList(),
@@ -558,10 +558,10 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
 
         public JoinScopeDbContext(
             TemporaryDatabaseFixture database, string ordersCollection, string customersCollection,
-            string regionsCollection, MongoQueryMode mode)
+            string regionsCollection, MongoQueryProvider mode)
             : base(new DbContextOptionsBuilder<JoinScopeDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
+                    b => b.UseQueryProvider(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)

@@ -34,7 +34,7 @@ public class NativeStreamingOwnedCollectionProjectionTests(TemporaryDatabaseFixt
     : IClassFixture<TemporaryDatabaseFixture>
 {
     private static SingleEntityDbContext<T> CreateContext<T>(
-        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? model = null)
+        IMongoCollection<T> collection, MongoQueryProvider mode, Action<ModelBuilder>? model = null)
         where T : class
         => SingleEntityDbContext.Create(
             collection,
@@ -42,7 +42,7 @@ public class NativeStreamingOwnedCollectionProjectionTests(TemporaryDatabaseFixt
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private class Order
@@ -138,7 +138,7 @@ public class NativeStreamingOwnedCollectionProjectionTests(TemporaryDatabaseFixt
     public void Owned_collection_in_a_projection_streams()
     {
         var collection = SeedOrders();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, OrderModel);
 
         AssertStreams(db.Entities.AsNoTracking().Select(o => new { o.Code, o.Lines }));
     }
@@ -234,7 +234,7 @@ public class NativeStreamingOwnedCollectionProjectionTests(TemporaryDatabaseFixt
     public void Tracked_query_still_refuses_an_owned_collection_without_its_owner()
     {
         var collection = SeedOrders();
-        using var db = CreateContext(collection, MongoQueryMode.Native, OrderModel);
+        using var db = CreateContext(collection, MongoQueryProvider.Native, OrderModel);
 
         // EF's own rule, hit before any shaper is chosen: the streamed form is untracked-only, so it never changes it.
         Assert.Throws<InvalidOperationException>(() => db.Entities.Select(o => new { o.Code, o.Lines }).ToList());
@@ -244,7 +244,7 @@ public class NativeStreamingOwnedCollectionProjectionTests(TemporaryDatabaseFixt
     public void Elements_are_independent_instances_per_row()
     {
         var collection = SeedOrders();
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, OrderModel);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, OrderModel);
 
         var rows = db.Entities.AsNoTracking().OrderBy(o => o.Id).Select(o => new { o.Code, o.Lines }).ToList();
 

@@ -86,21 +86,21 @@ public class NativeOwnedArraySelectLeafTests(TemporaryDatabaseFixture database) 
             ["x:a=10.5,b=20.25", "y:"]);
 
 
-    private static SingleEntityDbContext<Owner> Create(IMongoCollection<Owner> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Owner> Create(IMongoCollection<Owner> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             mb => mb.Entity<Owner>().OwnsMany(e => e.Kids, o => { o.HasElementName("Kids"); }),
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 
     private IMongoCollection<Owner> Seed()
     {
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName("kids") + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Owner>(name);
-        using var db = Create(collection, MongoQueryMode.DriverLinq);
+        using var db = Create(collection, MongoQueryProvider.DriverLinq);
         db.Entities.AddRange(
             new Owner { Id = 1, Name = "x", Kids = [new Kid { Label = "a", Weight = 10.5m }, new Kid { Label = "b", Weight = 20.25m }] },
             new Owner { Id = 2, Name = "y", Kids = [] });

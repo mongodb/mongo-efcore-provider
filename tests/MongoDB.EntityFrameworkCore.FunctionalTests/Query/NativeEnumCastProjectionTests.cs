@@ -58,20 +58,20 @@ public class NativeEnumCastProjectionTests(TemporaryDatabaseFixture database) : 
     {
         var collection = Seed(nameof(Wrapped_enum_to_enum_cast_projection_leaf_goes_native));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, Status = (TargetStatusDto)x.Status }).ToList();
         Assert.Equal(
             [("a", TargetStatusDto.Active), ("b", TargetStatusDto.Inactive)],
             nativeOnlyResult.Select(r => (r.Label, r.Status)));
 
-        using var native = CreateContext(collection, MongoQueryMode.Native);
+        using var native = CreateContext(collection, MongoQueryProvider.Native);
         var nativeResult = native.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, Status = (TargetStatusDto)x.Status }).ToList();
         Assert.Equal(
             nativeOnlyResult.Select(r => (r.Label, r.Status)), nativeResult.Select(r => (r.Label, r.Status)));
 
-        using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
+        using var driverLinq = CreateContext(collection, MongoQueryProvider.DriverLinq);
         var driverLinqResult = driverLinq.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, Status = (TargetStatusDto)x.Status }).ToList();
         Assert.Equal(
@@ -83,7 +83,7 @@ public class NativeEnumCastProjectionTests(TemporaryDatabaseFixture database) : 
     {
         var collection = Seed(nameof(Bare_enum_to_enum_cast_projection_leaf_goes_native));
 
-        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => (TargetStatusDto)x.Status).ToList();
         Assert.Equal([TargetStatusDto.Active, TargetStatusDto.Inactive], nativeOnlyResult);
@@ -96,12 +96,12 @@ public class NativeEnumCastProjectionTests(TemporaryDatabaseFixture database) : 
         return collection;
     }
 
-    private static SingleEntityDbContext<Row> CreateContext(MongoDB.Driver.IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<Row> CreateContext(MongoDB.Driver.IMongoCollection<Row> collection, MongoQueryProvider mode)
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>
             {
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                new MongoDbContextOptionsBuilder(b).UseQueryProvider(mode);
             });
 }
