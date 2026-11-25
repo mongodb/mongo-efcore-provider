@@ -157,6 +157,7 @@ functions:
       params:
         file: mo-expansion.yml
 
+  # Runs the tests for one EF version; the task passes BUILD_CONFIGURATION (e.g. "Debug EF10") via vars
   run-tests:
     - command: shell.exec
       type: test
@@ -170,35 +171,7 @@ functions:
           ATLAS_URI="${ATLAS_URI}" \
           MONGODB_VERSION="${VERSION}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
-          BUILD_CONFIGURATION="Debug EF8" \
-            ./evergreen/run-tests.sh
-    - command: shell.exec
-      type: test
-      params:
-        working_dir: mongo-efcore-provider
-        script: |
-          ${PREPARE_SHELL}
-          DRIVER_VERSION=${DRIVER_VERSION} \
-          OS=${OS} \
-          MONGODB_URI="${MONGODB_URI}" \
-          ATLAS_URI="${ATLAS_URI}" \
-          MONGODB_VERSION="${VERSION}" \
-          CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
-          BUILD_CONFIGURATION="Debug EF9" \
-            ./evergreen/run-tests.sh
-    - command: shell.exec
-      type: test
-      params:
-        working_dir: mongo-efcore-provider
-        script: |
-          ${PREPARE_SHELL}
-          DRIVER_VERSION=${DRIVER_VERSION} \
-          OS=${OS} \
-          MONGODB_URI="${MONGODB_URI}" \
-          ATLAS_URI="${ATLAS_URI}" \
-          MONGODB_VERSION="${VERSION}" \
-          CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
-          BUILD_CONFIGURATION="Debug EF10" \
+          BUILD_CONFIGURATION="${BUILD_CONFIGURATION}" \
             ./evergreen/run-tests.sh
 
   run-tests-macos:
@@ -467,10 +440,28 @@ post:
   - func: cleanup
 
 tasks:
-  - name: main-tests
+  # One task per EF version so that each gets its own host and replica set, rather than the three
+  # versions running one after another on a single host (EF-488).
+  - name: main-tests-ef8
     commands:
       - func: bootstrap-mongo-orchestration
       - func: run-tests
+        vars:
+          BUILD_CONFIGURATION: "Debug EF8"
+
+  - name: main-tests-ef9
+    commands:
+      - func: bootstrap-mongo-orchestration
+      - func: run-tests
+        vars:
+          BUILD_CONFIGURATION: "Debug EF9"
+
+  - name: main-tests-ef10
+    commands:
+      - func: bootstrap-mongo-orchestration
+      - func: run-tests
+        vars:
+          BUILD_CONFIGURATION: "Debug EF10"
 
   - name: main-tests-macos
     commands:
@@ -619,7 +610,9 @@ buildvariants:
   display_name: "${version} ${topology} Server on ${os}"
   tags: ["tests-variant"]
   tasks:
-    - name: main-tests
+    - name: main-tests-ef8
+    - name: main-tests-ef9
+    - name: main-tests-ef10
 
 # 8.0 server builds are not published for Ubuntu 20.04
 - matrix_name: main-tests-8
@@ -630,7 +623,9 @@ buildvariants:
   display_name: "${version} ${topology} Server on ${os}"
   tags: ["tests-variant"]
   tasks:
-    - name: main-tests
+    - name: main-tests-ef8
+    - name: main-tests-ef9
+    - name: main-tests-ef10
 
 # "latest" server builds are not published for Ubuntu 20.04
 - matrix_name: main-tests-latest
@@ -641,7 +636,9 @@ buildvariants:
   display_name: "${version} ${topology} Server on ${os}"
   tags: ["tests-variant"]
   tasks:
-    - name: main-tests
+    - name: main-tests-ef8
+    - name: main-tests-ef9
+    - name: main-tests-ef10
 
 # MongoDB 5.0 has no macOS arm64 server build, so it runs on amd64; 6.0 and newer run on arm64.
 - matrix_name: main-tests-macos-amd64
