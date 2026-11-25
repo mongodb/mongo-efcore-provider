@@ -599,6 +599,11 @@ axes:
         variables:
           OS: "ubuntu-2204"
         run_on: ubuntu2204-small
+      - id: "macos-15-amd64"
+        display_name: "macOS 15 amd64"
+        variables:
+          OS: "macos-15-amd64"
+        run_on: macos-15-amd64
       - id: "macos-15-arm64"
         display_name: "macOS 15 arm64"
         variables:
@@ -638,9 +643,20 @@ buildvariants:
   tasks:
     - name: main-tests
 
+# MongoDB 5.0 has no macOS arm64 server build, so it runs on amd64; 6.0 and newer run on arm64.
+- matrix_name: main-tests-macos-amd64
+  matrix_spec:
+    version: ["5.0"]
+    os: "macos-15-amd64"
+    topology: "replicaset"
+  display_name: "${version} ${topology} Server on ${os}"
+  tags: ["tests-variant"]
+  tasks:
+    - name: main-tests-macos
+
 - matrix_name: main-tests-macos
   matrix_spec:
-    version: ["5.0", "6.0", "7.0", "8.0", "latest"]
+    version: ["6.0", "7.0", "8.0", "latest"]
     os: "macos-15-arm64"
     topology: "replicaset"
   display_name: "${version} ${topology} Server on ${os}"
