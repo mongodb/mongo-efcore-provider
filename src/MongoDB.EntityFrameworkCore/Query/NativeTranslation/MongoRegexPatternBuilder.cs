@@ -38,17 +38,25 @@ internal static class MongoRegexPatternBuilder
         if (kind == MongoRegexKind.Pattern)
             return term;
 
-        var escaped = Regex.Escape(term);
+        var escaped = Escape(term);
         return kind switch
         {
             MongoRegexKind.StartsWith => "^" + escaped,
-            MongoRegexKind.EndsWith => escaped + "$",
+            // "\z", not "$": "$" also matches before a trailing "\n", so "a\n" would end with "a".
+            MongoRegexKind.EndsWith => escaped + "\\z",
             MongoRegexKind.Contains => escaped,
-            // "\z", not "$": "$" also matches before a trailing "\n", so "a\n" would equal "a".
             MongoRegexKind.Exact => "^" + escaped + "\\z",
             _ => throw new NativeTranslationNotSupportedException($"Unsupported regex kind '{kind}'.")
         };
     }
+
+    /// <summary>
+    /// <see cref="Regex.Escape"/> plus NUL: a BSON regex pattern is a C string, so a raw NUL would end the pattern
+    /// early, silently dropping the rest of the term (and any anchor). Everything else <see cref="Regex.Escape"/>
+    /// leaves alone (<c>]</c>, <c>}</c>, control characters, non-ASCII) is literal to PCRE outside a character class.
+    /// </summary>
+    private static string Escape(string text)
+        => Regex.Escape(text).Replace("\0", "\\x00");
 
     /// <summary>
     /// Converts a SQL LIKE pattern (<c>%</c>, <c>_</c>) to a whole-string-anchored regex. No escape character
@@ -63,11 +71,12 @@ internal static class MongoRegexPatternBuilder
             {
                 '%' => ".*",
                 '_' => ".",
-                _ => Regex.Escape(ch.ToString())
+                _ => Escape(ch.ToString())
             });
         }
 
-        pattern.Append('$');
+        // "\z", not "$": "$" also matches before a trailing "\n", so "ABC\n" would match "AB_".
+        pattern.Append("\\z");
         return pattern.ToString();
     }
 }

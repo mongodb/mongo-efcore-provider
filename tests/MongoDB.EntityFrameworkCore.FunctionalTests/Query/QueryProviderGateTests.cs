@@ -476,7 +476,7 @@ public class QueryProviderGateTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Alice", "Dave"], results.Select(c => c.Name).OrderBy(n => n).ToArray());
         var mql = Mql(logs);
         Assert.Contains("$regularExpression", mql);
-        Assert.Contains("\"pattern\" : \"e$\"", mql);
+        Assert.Contains("\"pattern\" : \"e\\\\z\"", mql);
     }
 
     [Fact]

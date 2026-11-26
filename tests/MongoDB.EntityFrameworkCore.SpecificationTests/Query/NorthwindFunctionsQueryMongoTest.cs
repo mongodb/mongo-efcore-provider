@@ -239,7 +239,7 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "b$", "options" : "s" } } } }
+            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "b\\z", "options" : "s" } } } }
             """);
     }
 
@@ -249,7 +249,7 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "b$", "options" : "s" } } } }
+            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "b\\z", "options" : "s" } } } }
             """);
     }
 
@@ -279,7 +279,7 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "m$", "options" : "s" } } } }
+            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "m\\z", "options" : "s" } } } }
             """);
     }
 
@@ -290,7 +290,7 @@ Customers.
 
         AssertMql(
             """
-Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "DY$", "options" : "s" } } } }
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "DY\\z", "options" : "s" } } } }
 """);
     }
 
@@ -300,7 +300,7 @@ Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "DY$", "options" : "is" } } } }
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "DY\\z", "options" : "is" } } } }
 """);
     }
 
@@ -323,22 +323,22 @@ Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : 
         {
             AssertMql(
                 """
-Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "e$", "options" : "s" } } } }
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "e\\z", "options" : "s" } } } }
 """,
                 //
                 """
-Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "m$", "options" : "is" } } } }
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "m\\z", "options" : "is" } } } }
 """);
             return;
         }
 
         AssertMql(
             """
-Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "e$", "options" : "s" } } } }
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "e\\z", "options" : "s" } } } }
 """,
             //
             """
-Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "m$", "options" : "is" } } } }
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "m\\z", "options" : "is" } } } }
 """,
             //
             """

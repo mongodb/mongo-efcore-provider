@@ -1005,7 +1005,7 @@ Products.{ "$match" : { "$and" : [{ "Discontinued" : { "$ne" : true }, "_id" : {
         await base.Where_comparison_to_nullable_bool(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "KI$", "options" : "s" } } } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "KI\\z", "options" : "s" } } } }
 """);
     }
 
@@ -2270,7 +2270,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
 #else
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : { "$regularExpression" : { "pattern" : "^.{6}$", "options" : "s" } } } }
+            Customers.{ "$match" : { "City" : { "$regularExpression" : { "pattern" : "^.{6}\\z", "options" : "s" } } } }
             """);
 #endif
     }
@@ -2594,7 +2594,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F.*$", "options" : "is" } }, "City" : { "$eq" : "Seattle" } } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F.*\\z", "options" : "is" } }, "City" : { "$eq" : "Seattle" } } }
             """);
     }
 
@@ -2604,7 +2604,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$or" : [{ "_id" : { "$regularExpression" : { "pattern" : "^F.*$", "options" : "is" } } }, { "City" : { "$eq" : "Seattle" } }] } }
+            Customers.{ "$match" : { "$or" : [{ "_id" : { "$regularExpression" : { "pattern" : "^F.*\\z", "options" : "is" } } }, { "City" : { "$eq" : "Seattle" } }] } }
             """);
     }
 

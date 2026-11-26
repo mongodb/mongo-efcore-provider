@@ -454,7 +454,7 @@ public class MongoQueryLanguageRendererTests
             MongoRegexKind.EndsWith, new MongoConstantExpression("A.b", name), negated: false);
         var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
         Assert.Equal(
-            BsonDocument.Parse("{ Name: { $regularExpression: { pattern: 'A\\\\.b$', options: 's' } } }"),
+            BsonDocument.Parse("{ Name: { $regularExpression: { pattern: 'A\\\\.b\\\\z', options: 's' } } }"),
             rendered);
     }
 

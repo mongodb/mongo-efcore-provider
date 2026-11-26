@@ -821,7 +821,7 @@ public class MongoPipelineFactoryTests
         var result = factory.Build(new Dictionary<string, object?> { ["term"] = "A.b" });
 
         Assert.Equal(
-            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: 'A\\\\.b$', options: 's' } } } }"),
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: 'A\\\\.b\\\\z', options: 's' } } } }"),
             result[0]);
     }
 

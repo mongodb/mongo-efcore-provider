@@ -710,7 +710,7 @@ public class MongoAggregationExpressionRendererTests
 
         Assert.True(MongoAggregationExpressionRenderer.CanRender(expr));
         Assert.Equal(
-            """{ "$regexMatch" : { "input" : "$Status", "regex" : { "$regularExpression" : { "pattern" : "^S.*$", "options" : "is" } } } }""",
+            """{ "$regexMatch" : { "input" : "$Status", "regex" : { "$regularExpression" : { "pattern" : "^S.*\\z", "options" : "is" } } } }""",
             MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable()).ToJson());
     }
 

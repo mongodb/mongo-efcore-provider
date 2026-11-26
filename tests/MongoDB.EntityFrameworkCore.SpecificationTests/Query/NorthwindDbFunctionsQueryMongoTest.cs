@@ -42,7 +42,7 @@ public class NorthwindDbFunctionsQueryMongoTest
 
         AssertMql(
             """
-Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^.*M.*$", "options" : "is" } } } }, { "$count" : "v" }
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^.*M.*\\z", "options" : "is" } } } }, { "$count" : "v" }
 """);
     }
 
