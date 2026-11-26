@@ -270,7 +270,7 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$regexMatch" : { "input" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$literal" : "" }, { "$ifNull" : [{ "$toString" : "$_id" }, ""] }, { "$literal" : "" }] }, "else" : { "$literal" : null } } }, "regex" : { "$regularExpression" : { "pattern" : "1$", "options" : "s" } } } } } }, { "$limit" : 1 }, { "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$literal" : "" }, { "$ifNull" : [{ "$toString" : "$_id" }, ""] }, { "$literal" : "" }] }, "else" : { "$literal" : null } } }, "_id" : 0 } }
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$regexMatch" : { "input" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$literal" : "" }, { "$ifNull" : [{ "$toString" : "$_id" }, ""] }, { "$literal" : "" }] }, "else" : { "$literal" : null } } }, "regex" : { "$regularExpression" : { "pattern" : "1\\z", "options" : "s" } } } } } }, { "$limit" : 1 }, { "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$literal" : "" }, { "$ifNull" : [{ "$toString" : "$_id" }, ""] }, { "$literal" : "" }] }, "else" : { "$literal" : null } } }, "_id" : 0 } }
             """);
     }
 

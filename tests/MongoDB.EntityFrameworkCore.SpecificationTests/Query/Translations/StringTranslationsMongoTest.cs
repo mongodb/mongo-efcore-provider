@@ -491,7 +491,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "le$", "options" : "s" } } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "le\\z", "options" : "s" } } } }
 """);
     }
 
@@ -501,7 +501,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "e$", "options" : "s" } } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "e\\z", "options" : "s" } } } }
 """);
     }
 
@@ -511,7 +511,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "le$", "options" : "s" } } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "le\\z", "options" : "s" } } } }
 """);
     }
 
@@ -521,7 +521,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "e$", "options" : "s" } } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "e\\z", "options" : "s" } } } }
 """);
     }
 
@@ -541,7 +541,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$let" : { "vars" : { "start" : { 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "le$", "options" : "s" } } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "le\\z", "options" : "s" } } } }
 """);
     }
 
@@ -551,7 +551,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "LE$", "options" : "is" } } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "LE\\z", "options" : "is" } } } }
 """);
     }
 
