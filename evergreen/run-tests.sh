@@ -18,11 +18,15 @@ run_ef11_spec_tests() {
   local results_dir="./artifacts/test-results/${BUILD_CONFIGURATION// /}"
   mkdir -p "${results_dir}"
   MONGODB_URI="${MONGODB_URI}" dotnet "./${spec_dir}/bin/${BUILD_CONFIGURATION}/net11.0/MongoDB.EntityFrameworkCore.SpecificationTests.dll" \
-    -junit "${results_dir}/TEST_MongoDB.EntityFrameworkCore.SpecificationTests.xml" -noColor || return $?
+    -result-junit "${results_dir}/TEST_MongoDB.EntityFrameworkCore.SpecificationTests.xml" -noColor || return $?
 
   # A misconfigured host can exit 0 having run nothing, so require the results to contain test cases.
-  local test_count
-  test_count=$(grep -c "<testcase " "${results_dir}/TEST_MongoDB.EntityFrameworkCore.SpecificationTests.xml" || true)
+  local results_file="${results_dir}/TEST_MongoDB.EntityFrameworkCore.SpecificationTests.xml"
+  local test_count=0
+  if [ -f "${results_file}" ]; then
+    # The report is a single line, so count occurrences rather than lines.
+    test_count=$(grep -o "<testcase " "${results_file}" | wc -l | tr -d ' ')
+  fi
   echo "EF11 SpecificationTests reported ${test_count} test cases"
   if [ "${test_count}" -eq 0 ]; then
     echo "ERROR: the EF11 SpecificationTests ran no tests" >&2

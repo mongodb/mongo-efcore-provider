@@ -138,19 +138,6 @@ public class MongoModelValidator : ModelValidator
 #endif
     {
         var entityType = index.DeclaringEntityType;
-#if EF11
-        // EF11 types index properties as IReadOnlyPropertyBase (they may be complex properties); the provider only supports
-        // indexes over scalar properties.
-        foreach (var property in index.Properties)
-        {
-            if (property is not IProperty)
-            {
-                throw new InvalidOperationException(
-                    $"An index on '{entityType.DisplayName()}' includes the complex property '{property.Name}'. Indexes can only target scalar properties.");
-            }
-        }
-
-#endif
         var indexOptions = index.GetVectorIndexOptions();
         if (indexOptions != null)
         {
