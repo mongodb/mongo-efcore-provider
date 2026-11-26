@@ -374,7 +374,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 "An 'ExecuteUpdate' call must specify at least one 'SetProperty' invocation, "
                 + "to indicate the properties to be updated.");
             throw NonQueryTranslationFailed(
-            mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails);
+                mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails);
         }
 
         return new MongoNonQueryExpression(mongoQueryExpression, parsed, strategy);
@@ -565,7 +565,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             + "and the 'OrderBy', 'OrderByDescending', 'ThenBy', 'ThenByDescending', 'Skip', 'Take', and 'Distinct' "
             + "operators can scope a bulk operation.");
         throw NonQueryTranslationFailed(
-                mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails);
+            mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails);
     }
 #endif
 

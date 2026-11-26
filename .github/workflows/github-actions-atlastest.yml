@@ -61,8 +61,8 @@ jobs:
 
       - name: Specification tests
         run: |
-          dotnet "tests/MongoDB.EntityFrameworkCore.SpecificationTests/bin/Debug EF11/net11.0/MongoDB.EntityFrameworkCore.SpecificationTests.dll" -noColor -junit ef11-spec-results.xml
+          dotnet "tests/MongoDB.EntityFrameworkCore.SpecificationTests/bin/Debug EF11/net11.0/MongoDB.EntityFrameworkCore.SpecificationTests.dll" -noColor -result-junit ef11-spec-results.xml
           # A misconfigured host can exit 0 having run nothing, so require the results to contain test cases.
-          test_count=$(grep -c "<testcase " ef11-spec-results.xml || true)
+          test_count=$(grep -o "<testcase " ef11-spec-results.xml | wc -l)
           echo "EF11 SpecificationTests reported ${test_count} test cases"
           test "${test_count}" -gt 0
