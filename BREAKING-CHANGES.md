@@ -4,6 +4,24 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
+### Models that use complex types now fail validation
+
+#### Old behavior
+
+Complex properties and complex types (`ComplexProperty`, `[ComplexType]`, and complex collections in EF Core 10 and later) were not rejected when the model was built. The provider did not support them, so the complex-typed members were ignored and were not stored in or read from documents.
+
+#### New behavior
+
+Building a model that contains a complex property now throws a `NotSupportedException` from model validation, naming the entity type and property.
+
+#### Why
+
+Complex types are not yet supported. Silently ignoring them hid the fact that data was not being persisted. The check will be removed when complex type support is added.
+
+#### Mitigations
+
+Because the members were ignored before, ignore them explicitly to keep the previous behavior: call `Ignore` on the property in `OnModelCreating` (for example `modelBuilder.Entity<Order>().Ignore(o => o.Address)`), or apply `[NotMapped]` to the property or its type.
+
 ### Range, sort and aggregate queries over a numeric property stored as a string now fail on non-numeric stored values
 
 #### Old behavior
