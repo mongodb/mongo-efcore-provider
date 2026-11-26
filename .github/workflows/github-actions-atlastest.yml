@@ -48,11 +48,10 @@ jobs:
             10.0.x
             11.0.x
 
-      - name: Restore
-        run: dotnet restore
-
+      # Restore with the configuration: the restore assets are per configuration (obj/Debug EF11), so a plain
+      # "dotnet restore" would restore only the default one.
       - name: Build
-        run: dotnet build --no-restore -c "Debug EF11"
+        run: dotnet build -c "Debug EF11"
 
       - name: Unit tests
         run: dotnet test tests/MongoDB.EntityFrameworkCore.UnitTests -c "Debug EF11" --no-build
