@@ -329,7 +329,7 @@ Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "index" : "FloatsInd
         Assert.Contains(
             "The option 'Exact' is set to 'true' on a call to 'VectorQuery', indicating an exact nearest neighbour (ENN) search, and the number of candidates has also been set.",
             (await Assert.ThrowsAsync<InvalidOperationException>(
-                async () => _ = async ? await queryable.ToListAsync() : queryable.ToList())).Message);
+                async () => _ = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList())).Message);
     }
 
     public class VectorSearchExactFixture : VectorSearchFixtureBase

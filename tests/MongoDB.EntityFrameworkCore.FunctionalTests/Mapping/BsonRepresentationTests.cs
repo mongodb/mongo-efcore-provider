@@ -63,7 +63,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             -1,
             int.MaxValue,
             int.MinValue,
-            null
+            null!
         };
 
     [Theory]
@@ -98,7 +98,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             -1.2d,
             double.MaxValue,
             double.MinValue,
-            null
+            null!
         };
 
     [Theory]
@@ -133,7 +133,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             -1.1f,
             float.MaxValue,
             float.MinValue,
-            null
+            null!
         };
 
     [Theory]
@@ -168,7 +168,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             -1.1m,
             decimal.MaxValue,
             decimal.MinValue,
-            null
+            null!
         };
 
     [Theory]
@@ -203,7 +203,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             Guid.Parse("27701bfc-78d0-4e2b-92ca-193cea53fa30"),
             Guid.Parse("1c8b3375-a836-5722-9e30-570df2fe82e5"),
             Guid.Parse("9c115909-ac69-48ee-9583-b972a69fbc51"),
-            null
+            null!
         };
 
     [Theory]
@@ -234,7 +234,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             TimeSpan.MinValue,
             TimeSpan.FromDays(2),
             TimeSpan.FromHours(-1),
-            null
+            null!
         };
 
     [Theory]
@@ -256,7 +256,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
                 .HasBsonRepresentation(BsonType.String));
 
     public static readonly TheoryData<DateTime?> NullableDateTimeData
-        = new() {DateTime.Now, DateTime.Now.AddYears(500), DateTime.Now.AddYears(-500), null};
+        = new() {DateTime.Now, DateTime.Now.AddYears(500), DateTime.Now.AddYears(-500), null!};
 
     [Theory]
     [MemberData(nameof(NullableDateTimeData))]
@@ -283,7 +283,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             d => d.ToBsonPrecision());
 
     public static readonly TheoryData<DateTime?> NullableUtcDateTimeData
-        = new() {DateTime.UtcNow, DateTime.UtcNow.AddYears(500), DateTime.UtcNow.AddYears(-500), null};
+        = new() {DateTime.UtcNow, DateTime.UtcNow.AddYears(500), DateTime.UtcNow.AddYears(-500), null!};
 
     [Theory]
     [MemberData(nameof(NullableUtcDateTimeData))]
@@ -308,7 +308,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             mb => mb.Entity<EntityWithValue<DateOnly>>().Property(e => e.value).HasBsonRepresentation(BsonType.String));
 
     public static readonly TheoryData<DateOnly?> NullableDateOnlyData
-        = new() {DateOnly.MaxValue, DateOnly.MinValue, new DateOnly(2024, 10, 05), null};
+        = new() {DateOnly.MaxValue, DateOnly.MinValue, new DateOnly(2024, 10, 05), null!};
 
     [Theory]
     [MemberData(nameof(NullableDateOnlyData))]
@@ -331,7 +331,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             mb => mb.Entity<EntityWithValue<TimeOnly>>().Property(e => e.value).HasBsonRepresentation(BsonType.String));
 
     public static readonly TheoryData<TimeOnly?> NullableTimeOnlyData
-        = new() {TimeOnly.MaxValue, TimeOnly.MinValue, new TimeOnly(13, 10, 05), null};
+        = new() {TimeOnly.MaxValue, TimeOnly.MinValue, new TimeOnly(13, 10, 05), null!};
 
     [Theory]
     [MemberData(nameof(NullableTimeOnlyData))]
@@ -368,7 +368,7 @@ public class BsonTypeTests(TemporaryDatabaseFixture database)
             -1m,
             1.1m,
             -1.1m,
-            null
+            null!
         };
 
     [Theory]

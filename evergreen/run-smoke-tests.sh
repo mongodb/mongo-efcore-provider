@@ -16,6 +16,9 @@ fi
 if [[ "${PACKAGE_VERSION}" == "10."* ]]; then
     BUILD_CONFIGURATION="Debug EF10"
 fi
+if [[ "${PACKAGE_VERSION}" == "11."* ]]; then
+    BUILD_CONFIGURATION="Debug EF11"
+fi
 
 # Check if BUILD_CONFIGURATION is set
 if [ -z "$BUILD_CONFIGURATION" ]; then

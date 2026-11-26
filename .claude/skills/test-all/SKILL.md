@@ -1,6 +1,6 @@
 ---
 name: test-all
-description: Build and run tests against all three EF version targets (EF8, EF9, EF10)
+description: Build and run tests against all four EF version targets (EF8, EF9, EF10, EF11)
 argument-hint: "[optional: test filter or project name] [--model haiku|sonnet|opus]"
 allowed-tools: Bash(dotnet *), Bash(docker info), Bash(printenv:*), Bash(*/tests/tools/fetch-crypt-shared.sh*), Bash(CRYPT_SHARED_LIB_PATH=* MONGODB_BINARIES=* dotnet *), Read, Glob, Grep, Agent
 ---
@@ -15,14 +15,14 @@ Parse `$ARGUMENTS` for:
 1. --model <model> — If present, extract and remove it.
    Use as the `model` parameter when spawning agents. If absent, use `haiku`.
 2. Remaining text — Optional filter:
-    - If empty, run all tests across all three versions.
+    - If empty, run all tests across all four versions.
     - If it looks like a project name (e.g. "UnitTests"), run only that project.
     - If it looks like a test filter, pass it via `--filter` to `dotnet test`.
 
 ## Phase 1: Pre-flight Checks (MUST pass before anything else)
 
-1. net10.0 SDK — Run `dotnet --list-sdks` and verify a 10.x SDK is installed.
-   If missing, stop with: "net10.0 SDK is not installed."
+1. net10.0 and net11.0 SDKs — Run `dotnet --list-sdks` and verify a 10.x and an 11.x SDK are installed.
+   If missing, stop with: "net10.0 / net11.0 SDK is not installed."
 
 A variable counts as a **real external database** only when it matches what
 `TestServer.GetOrInitialize` treats as a usable connection: it is set, **not
@@ -62,17 +62,17 @@ checks below.
 
 ## Phase 2: Build & Test via Sub-agents
 
-Run one build + test pass per EF version (EF8, EF9, EF10), each via the Agent
+Run one build + test pass per EF version (EF8, EF9, EF10, EF11), each via the Agent
 tool with the `model` parameter set. **How they are scheduled depends on
 `SHARED_DB` from Phase 1:**
 
-- **`SHARED_DB = false`** (testcontainers) — spawn all three sub-agents **in
-  parallel** (one assistant message with three `Agent` blocks). Each EF version
+- **`SHARED_DB = false`** (testcontainers) — spawn all four sub-agents **in
+  parallel** (one assistant message with four `Agent` blocks). Each EF version
   builds into a separate output dir and gets its own testcontainer, so there is
   no contention.
-- **`SHARED_DB = true`** (`MONGODB_URI` / `ATLAS_URI` set) — run the three
+- **`SHARED_DB = true`** (`MONGODB_URI` / `ATLAS_URI` set) — run the four
   sub-agents **serially**: dispatch one, wait for it to finish, then dispatch the
-  next. The three versions would otherwise all hit the same database
+  next. The four versions would otherwise all hit the same database
   concurrently and race on shared global state (the test suite disables
   intra-assembly parallelization for exactly this reason — see
   `tests/.../FunctionalTests/Usings.cs`). Never run them in parallel when a
@@ -89,6 +89,12 @@ project unless the user passed an explicit filter (see Arguments).
    --logger "console;verbosity=normal" -v quiet
    (`$ENCRYPTION_ENV` is the literal prefix from Phase 1 step 4, written inline before `dotnet` so it applies to that
    process; omit it only when both variables were already set in the environment. Pass it to every sub-agent verbatim.)
+
+**EF11 exception:** the EF11 `SpecificationTests` project cannot run under `dotnet test` (xUnit v3 4.x is Microsoft.Testing.Platform only;
+see AGENTS.md). For EF11 run `dotnet test` on `UnitTests` and `FunctionalTests`, then run the spec executable directly:
+`tests/MongoDB.EntityFrameworkCore.SpecificationTests/bin/Debug EF11/net11.0/MongoDB.EntityFrameworkCore.SpecificationTests.exe -noColor > <logfile> 2>&1`,
+and take the totals from its `=== TEST EXECUTION SUMMARY ===` line. A whole-solution `dotnet test` on EF11 prints an error for the spec
+project; that is expected.
 
 (If the user passed a filter/project arg, append it — e.g. `--filter "<expr>"`
 or the project path — to the test command; otherwise run the full solution so
@@ -141,6 +147,7 @@ Use this format for the console summary:
 | EF8     | <actual> | <actual> | <actual> | <actual> |
 | EF9     | <actual> | <actual> | <actual> | <actual> |
 | EF10    | <actual> | <actual> | <actual> | <actual> |
+| EF11    | <actual> | <actual> | <actual> | <actual> |
 
 Add one line under the table stating whether encryption tests ran: "Encryption: ran (crypt_shared + mongocryptd)" or
 "Encryption: SKIPPED — <reason>" (the test output also contains a `WARNING: CRYPT_SHARED_LIB_PATH is not set` line when

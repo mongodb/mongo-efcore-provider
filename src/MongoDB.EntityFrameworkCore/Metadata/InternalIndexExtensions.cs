@@ -25,6 +25,11 @@ namespace MongoDB.EntityFrameworkCore.Metadata;
 
 internal static class InternalIndexExtensions
 {
+    // EF11 types an index's properties as IReadOnlyPropertyBase (they may be complex properties); the provider only
+    // supports indexes over scalar properties, which model validation enforces.
+    private static string ElementNameOf(IReadOnlyPropertyBase property)
+        => ((IReadOnlyProperty)property).GetElementName();
+
     public static string MakeIndexName(this IReadOnlyIndex index)
     {
         // There is no server naming convention for vector indexes, and they cannot be composite, so use a simple name:
@@ -40,7 +45,7 @@ internal static class InternalIndexExtensions
         var partsIndex = 0;
         foreach (var property in index.Properties)
         {
-            parts[partsIndex++] = property.GetElementName();
+            parts[partsIndex++] = ElementNameOf(property);
             parts[partsIndex++] = GetDescending(index, propertyIndex++) ? "-1" : "1";
         }
 
@@ -82,7 +87,7 @@ internal static class InternalIndexExtensions
         var vectorField = new BsonDocument
         {
             { "type", BsonString.Create("vector") },
-            { "path", BsonString.Create(string.Join('.', path.Append(index.Properties.Single().GetElementName()))) },
+            { "path", BsonString.Create(string.Join('.', path.Append(ElementNameOf(index.Properties.Single())))) },
             { "numDimensions", BsonInt32.Create(vectorIndexOptions.Dimensions) },
             { "similarity", BsonString.Create(similarityValue) },
         };
@@ -182,7 +187,7 @@ internal static class InternalIndexExtensions
 
         foreach (var property in index.Properties)
         {
-            doc.Add(string.Join('.', path.Append(property.GetElementName())), index.GetDescending(propertyIndex++) ? -1 : 1);
+            doc.Add(string.Join('.', path.Append(ElementNameOf(property))), index.GetDescending(propertyIndex++) ? -1 : 1);
         }
 
         var options = index.GetCreateIndexOptions() ?? new CreateIndexOptions<BsonDocument>();

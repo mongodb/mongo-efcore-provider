@@ -16,7 +16,9 @@
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver.Linq;
+#if !EF11
 using Xunit.Abstractions;
+#endif
 using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
@@ -2369,4 +2371,140 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
     // Fails: GroupBy issue EF-149
     private static async Task AssertGroupByUnsupported(Func<Task> query)
         => await AssertTranslationFailed(query);
+
+#if EF11
+
+    public override async Task GroupBy_Property_Select_MaxBy(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Property_Select_MaxBy(async));
+    }
+
+    public override async Task GroupBy_Property_Select_MinBy(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Property_Select_MinBy(async));
+    }
+
+    public override async Task GroupBy_multiple_aggregates_sharing_same_navigation(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_multiple_aggregates_sharing_same_navigation(async));
+    }
+
+    public override async Task GroupBy_aggregate_through_two_level_navigation(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_aggregate_through_two_level_navigation(async));
+    }
+
+    public override async Task GroupBy_Count_with_predicate_through_navigation_property(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Count_with_predicate_through_navigation_property(async));
+    }
+
+    public override async Task GroupBy_key_and_aggregate_through_same_navigation(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_key_and_aggregate_through_same_navigation(async));
+    }
+
+    public override async Task GroupBy_aggregate_through_navigation_in_intermediate_projection(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_aggregate_through_navigation_in_intermediate_projection(async));
+    }
+
+    public override async Task GroupBy_ValueTuple_projection_joined_on_tuple_member(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_ValueTuple_projection_joined_on_tuple_member(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_Where(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_Where(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_Where_Select(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_Where_Select(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_Select(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_Select(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_Order(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_Order(async));
+    }
+
+    public override async Task GroupBy_Select_Anonymous_Type_With_Entire_Entity(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Anonymous_Type_With_Entire_Entity(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_FirstOrDefault_Where(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_FirstOrDefault_Where(async));
+    }
+
+    public override async Task GroupBy_ResultSelector_Entire_Entity_Where(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_ResultSelector_Entire_Entity_Where(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_GroupBy(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_GroupBy(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_composite_key_Select(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_composite_key_Select(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_OrderBy_navigation(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_OrderBy_navigation(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_Select_navigation_member(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_Select_navigation_member(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_Where_navigation(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_Where_navigation(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_Select_referenced_twice(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_Select_referenced_twice(async));
+    }
+
+    public override async Task GroupBy_Select_Entire_Entity_Join(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_Select_Entire_Entity_Join(async));
+    }
+
+#endif
 }

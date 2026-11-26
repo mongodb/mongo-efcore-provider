@@ -15,7 +15,9 @@
 
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
+#if !EF11
 using Xunit.Abstractions;
+#endif
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
@@ -737,7 +739,12 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task Join_local_string_closure_is_cached_correctly(bool async)
     {
+#if EF11
+        // Fails: Join against a parameter collection with a uint key conversion is not translated
+        await AssertTranslationFailed(() => base.Join_local_string_closure_is_cached_correctly(async));
+#else
         await base.Join_local_string_closure_is_cached_correctly(async);
+#endif
 
         AssertMql();
     }
@@ -822,4 +829,33 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+#if EF11
+
+    public override async Task RightJoin_with_filtered_outer(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.RightJoin_with_filtered_outer(async));
+    }
+
+    public override async Task FullJoin(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.FullJoin(async));
+    }
+
+    public override async Task FullJoin_with_unmatched_rows_on_both_sides(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.FullJoin_with_unmatched_rows_on_both_sides(async));
+    }
+
+    public override async Task FullJoin_with_custom_comparer_does_not_translate(bool async)
+    {
+        await base.FullJoin_with_custom_comparer_does_not_translate(async);
+
+        AssertMql();
+    }
+
+#endif
 }

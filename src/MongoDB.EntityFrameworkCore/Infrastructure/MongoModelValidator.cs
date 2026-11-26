@@ -76,7 +76,9 @@ public class MongoModelValidator : ModelValidator
         ValidateNoUnsupportedAttributesOrAnnotations(model);
         ValidateElementNames(model);
         ValidateOwnedTypeMappingConsistency(model);
+#if !EF11
         ValidateNoMutableKeys(model, logger);
+#endif
         ValidatePrimaryKeys(model);
         ValidateQueryableEncryption(model, logger);
         ValidateIndexes(model, logger);
@@ -127,7 +129,13 @@ public class MongoModelValidator : ModelValidator
     /// <param name="index">The <see cref="IIndex"/>.</param>
     /// <param name="logger">A logger to receive validation diagnostic information.</param>
     /// <exception cref="InvalidOperationException">if the index is not valid for MongoDB.</exception>
+#if EF11
+    // EF11's ModelValidator has its own ValidateIndex, which base.Validate still runs. This one is the provider's separate
+    // MongoDB check, called from Validate below, so it deliberately hides rather than overrides.
+    protected new virtual void ValidateIndex(IIndex index, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+#else
     protected virtual void ValidateIndex(IIndex index, IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+#endif
     {
         var entityType = index.DeclaringEntityType;
         var indexOptions = index.GetVectorIndexOptions();
@@ -658,6 +666,24 @@ public class MongoModelValidator : ModelValidator
         }
     }
 
+#if EF11
+    /// <summary>
+    /// Validates that the only keys that can actually be changed are shadow keys used by owned entities.
+    /// </summary>
+    /// <param name="key">The key to validate.</param>
+    /// <param name="logger">The logger to use.</param>
+    /// <exception cref="InvalidOperationException">Thrown if the key is mutable and isn't part of the shadow indexer on owned entities.</exception>
+    protected override void ValidateMutableKey(
+        IKey key,
+        IDiagnosticsLogger<DbLoggerCategory.Model.Validation> logger)
+    {
+        var mutableProperty = key.Properties.FirstOrDefault(p => p.ValueGenerated.HasFlag(ValueGenerated.OnUpdate));
+        if (mutableProperty != null && !mutableProperty.IsOwnedTypeOrdinalKey())
+        {
+            throw new InvalidOperationException(CoreStrings.MutableKeyProperty(mutableProperty.Name));
+        }
+    }
+#else
     /// <summary>
     /// Validates that the only keys that can actually be changed are shadow keys used by owned entities.
     /// </summary>
@@ -680,6 +706,7 @@ public class MongoModelValidator : ModelValidator
             }
         }
     }
+#endif
 
     /// <summary>
     /// Validate that no entities are mapped with anything except table-per-hierarchy (TPH).

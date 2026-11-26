@@ -16,6 +16,9 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
+#if EF11
+using Microsoft.EntityFrameworkCore.Query.Inheritance;
+#endif
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests;
 
@@ -90,9 +93,15 @@ public class MongoComplianceTest : ComplianceTestBase
         typeof(IncludeOneToOneTestBase<>),
         typeof(InheritanceQueryTestBase<>),
         typeof(InheritanceRelationshipsQueryTestBase<>),
+#if EF11
+        // Complex type inheritance is not supported; tracked in https://github.com/ajcvickers/mongo-efcore-provider/issues/22
+        typeof(InheritanceComplexTypesQueryTestBase<>),
+#endif
         typeof(ManyToManyNoTrackingQueryTestBase<>),
         typeof(ManyToManyQueryTestBase<>),
+#if !EF11
         typeof(NonSharedPrimitiveCollectionsQueryTestBase),
+#endif
         typeof(NullKeysTestBase<>),
         typeof(OwnedQueryTestBase<>),
         typeof(PrimitiveCollectionsQueryTestBase<>),
@@ -100,7 +109,9 @@ public class MongoComplianceTest : ComplianceTestBase
         typeof(QueryTestBase<>),
         typeof(SpatialQueryTestBase<>),
         typeof(AdHocAdvancedMappingsQueryTestBase),
+#if !EF11
         typeof(AdHocComplexTypeQueryTestBase),
+#endif
 
 #if EF8
         // EF8-only test bases.
@@ -111,7 +122,9 @@ public class MongoComplianceTest : ComplianceTestBase
 
 #if !EF8
         // Test bases added in EF9+.
+#if !EF11
         typeof(AdHocManyToManyQueryTestBase),
+#endif
         typeof(AdHocMiscellaneousQueryTestBase),
         typeof(AdHocNavigationsQueryTestBase),
         typeof(AdHocQueryFiltersQueryTestBase),
@@ -121,8 +134,16 @@ public class MongoComplianceTest : ComplianceTestBase
         // so they remain ignored here; behavioral coverage lives in
         // FunctionalTests/Query/ExecuteDeleteTests.cs and ExecuteUpdateTests.cs.
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.BulkUpdatesTestBase<>),
+#if EF11
+        typeof(Microsoft.EntityFrameworkCore.BulkUpdates.Inheritance.FiltersInheritanceBulkUpdatesTestBase<>),
+#else
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.FiltersInheritanceBulkUpdatesTestBase<>),
+#endif
+#if EF11
+        typeof(Microsoft.EntityFrameworkCore.BulkUpdates.Inheritance.InheritanceBulkUpdatesTestBase<>),
+#else
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.InheritanceBulkUpdatesTestBase<>),
+#endif
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.NonSharedModelBulkUpdatesTestBase),
         // NorthwindBulkUpdatesTestBase is now implemented by NorthwindBulkUpdatesMongoTest: the supported
         // single-collection Where-scoped scalar cases, as well as OrderBy/Skip/Take/Distinct-scoped cases
@@ -155,7 +176,9 @@ public class MongoComplianceTest : ComplianceTestBase
 
 #if !EF8 && !EF9
         // Test bases added in EF10+.
+#if !EF11
         typeof(AdHocJsonQueryTestBase),
+#endif
         // NorthwindFunctionsQueryMongoTest exists only for EF8 and EF9 — the EF10 build deliberately omits it.
         typeof(NorthwindFunctionsQueryTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.ModelBuilding.ModelBuilderTest.ComplexCollectionTestBase),

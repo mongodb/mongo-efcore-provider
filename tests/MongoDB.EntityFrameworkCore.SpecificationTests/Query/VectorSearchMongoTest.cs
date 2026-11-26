@@ -327,7 +327,7 @@ Books.{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "numCandidates" : 40
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.Floats, inputVector, limit: 20, new("FloatsIndex", NumberOfCandidates: 20));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(

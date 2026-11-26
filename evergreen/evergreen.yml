@@ -200,6 +200,20 @@ functions:
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug EF10" \
             ./evergreen/run-tests.sh
+    - command: shell.exec
+      type: test
+      params:
+        working_dir: mongo-efcore-provider
+        script: |
+          ${PREPARE_SHELL}
+          DRIVER_VERSION=${DRIVER_VERSION} \
+          OS=${OS} \
+          MONGODB_URI="${MONGODB_URI}" \
+          ATLAS_URI="${ATLAS_URI}" \
+          MONGODB_VERSION="${VERSION}" \
+          CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
+          BUILD_CONFIGURATION="Debug EF11" \
+            ./evergreen/run-tests.sh
 
   run-tests-macos:
     - command: shell.exec
@@ -215,6 +229,20 @@ functions:
           MONGODB_VERSION="${VERSION}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug EF10" \
+            ./evergreen/run-tests.sh
+    - command: shell.exec
+      type: test
+      params:
+        working_dir: mongo-efcore-provider
+        script: |
+          ${PREPARE_SHELL}
+          DRIVER_VERSION=${DRIVER_VERSION} \
+          OS=${OS} \
+          MONGODB_URI="${MONGODB_URI}" \
+          ATLAS_URI="${ATLAS_URI}" \
+          MONGODB_VERSION="${VERSION}" \
+          CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
+          BUILD_CONFIGURATION="Debug EF11" \
             ./evergreen/run-tests.sh
 
   cleanup:

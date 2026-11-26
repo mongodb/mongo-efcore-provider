@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
+#if !EF11
 using Xunit.Abstractions;
+#endif
 using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
@@ -43,8 +45,16 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task KeylessEntity_by_database_view(bool async)
     {
+#if EF11
+        // Fails: Views are not supported EF-X007. On EF11 the query now fails materializing the mapped collection
+        // instead of returning wrong data.
+        Assert.Contains(
+            "Document element is missing for required non-nullable property 'CategoryName'",
+            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.KeylessEntity_by_database_view(async))).Message);
+#else
         // Fails: Views are not supported, so this returns all entities from mapped collection. EF-X007
         await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_by_database_view(async));
+#endif
 
         AssertMql(
             """
