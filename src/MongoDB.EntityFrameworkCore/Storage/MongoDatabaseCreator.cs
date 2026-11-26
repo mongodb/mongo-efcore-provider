@@ -216,7 +216,7 @@ public class MongoDatabaseCreator(
                 var runtimeEntityType = updateAdapter.Model.FindEntityType(entityType.Name)!;
 #if EF11
                 // The string-keyed overload is obsolete in EF11 (the IProperty-keyed one exists so several complex properties of
-                // the same type can get distinct values). Seed data here is keyed by name, so keep using it. See issue #12.
+                // the same type can get distinct values). Seed data here is keyed by name, so keep using it. See EF-311.
 #pragma warning disable CS0618
 #endif
                 var entry = updateAdapter.CreateEntry(targetSeed, runtimeEntityType);

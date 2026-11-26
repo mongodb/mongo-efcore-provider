@@ -31,6 +31,12 @@ public sealed class MongoConditionAttribute(MongoCondition conditions) : BeforeA
 {
     public override void Before(MethodInfo methodUnderTest, IXunitTest test)
     {
+        var unhandled = conditions & ~MongoCondition.IsAtlas;
+        if (unhandled != MongoCondition.None)
+        {
+            throw new NotSupportedException($"MongoCondition '{unhandled}' is not handled by MongoConditionAttribute.");
+        }
+
         if (conditions.HasFlag(MongoCondition.IsAtlas))
         {
             Assert.SkipUnless(TestServer.SupportsAtlas, "Mongo tests skipped because: 'IsAtlas'");

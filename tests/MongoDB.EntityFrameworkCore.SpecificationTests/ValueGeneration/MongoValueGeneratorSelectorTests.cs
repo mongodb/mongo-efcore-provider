@@ -47,7 +47,9 @@ public class MongoValueGeneratorSelectorTests
     // EF11 replaced IValueGeneratorSelector.Select with TrySelect.
     private ValueGenerator Select(IProperty property, IEntityType entityType)
     {
-        _valueGeneratorSelector.TrySelect(property, entityType, out var valueGenerator);
+        Assert.True(
+            _valueGeneratorSelector.TrySelect(property, entityType, out var valueGenerator),
+            $"No value generator was selected for property '{property.Name}'.");
         return valueGenerator!;
     }
 #else
@@ -70,7 +72,11 @@ public class MongoValueGeneratorSelectorTests
     }
 
     [Fact]
+#if EF11
+    public void Create_returns_no_generator_for_mapped_int()
+#else
     public void Create_throws_NotSupportedException_for_mapped_int()
+#endif
     {
 #if EF11
         // EF11's TrySelect reports "no generator" by returning false; the caller raises the error.
