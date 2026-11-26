@@ -71,6 +71,7 @@ public class MongoModelValidator : ModelValidator
         base.Validate(model, logger);
 
         ValidateNoTablePerType(model);
+        ValidateNoComplexTypes(model);
         ValidateMaximumOneRowVersionPerEntity(model);
         ValidateNoConcurrencyTokensOnOwnedEntities(model);
         ValidateNoUnsupportedAttributesOrAnnotations(model);
@@ -165,6 +166,25 @@ public class MongoModelValidator : ModelValidator
             {
                 throw new InvalidOperationException(
                     $"Vector similarity is set to '{similarity}' which is not a valid value from the 'VectorSimilarity' enum.'");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Validate that no complex properties are used, since complex types are not yet supported by the MongoDB provider.
+    /// </summary>
+    /// <param name="model">The <see cref="IModel"/> to validate for correctness.</param>
+    /// <exception cref="NotSupportedException">When an entity type has a complex property.</exception>
+    private static void ValidateNoComplexTypes(IModel model)
+    {
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            var complexProperty = entityType.GetDeclaredComplexProperties().FirstOrDefault();
+            if (complexProperty != null)
+            {
+                throw new NotSupportedException(
+                    $"Property '{complexProperty.Name}' on entity type '{entityType.DisplayName()}' is a complex property of type '{
+                        complexProperty.ComplexType.DisplayName()}'. Complex types are not currently supported by the MongoDB provider.");
             }
         }
     }
