@@ -92,6 +92,57 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     }
 
     [AtlasTheory]
+    [InlineData(MongoQueryProvider.Native, MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.Native, MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.NativeOnly, MongoQueryProvider.DriverLinq)]
+    [InlineData(MongoQueryProvider.DriverLinq, MongoQueryProvider.NativeOnly)]
+    public void Per_query_provider_can_be_set_before_vector_search(MongoQueryProvider contextMode, MongoQueryProvider queryProvider)
+    {
+        using var db = CreateContext(contextMode);
+
+        var labels = db.Docs
+            .WithQueryProvider(queryProvider)
+            .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
+            .ToList()
+            .Select(e => e.Label)
+            .ToList();
+
+        Assert.Equal(ScoreOrder.Take(4), labels);
+    }
+
+    [AtlasTheory]
+    [InlineData(MongoQueryProvider.Native, MongoQueryProvider.NativeOnly)]
+    [InlineData(MongoQueryProvider.NativeOnly, MongoQueryProvider.DriverLinq)]
+    public void Per_query_provider_can_be_set_before_vector_search_with_pre_filter(
+        MongoQueryProvider contextMode, MongoQueryProvider queryProvider)
+    {
+        using var db = CreateContext(contextMode);
+
+        var labels = db.Docs
+            .WithQueryProvider(queryProvider)
+            .VectorSearch(e => e.Embedding, e => e.Flag, QueryVector, limit: 4)
+            .ToList()
+            .Select(e => e.Label);
+
+        Assert.Equal(["B", "C", "E"], labels);
+    }
+
+    [AtlasFact]
+    public void Per_query_provider_can_be_chained_before_vector_search()
+    {
+        using var db = CreateContext(MongoQueryProvider.Native);
+
+        var labels = db.Docs
+            .WithQueryProvider(MongoQueryProvider.NativeOnly)
+            .WithQueryProvider(MongoQueryProvider.NativeOnly)
+            .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
+            .ToList()
+            .Select(e => e.Label);
+
+        Assert.Equal(ScoreOrder.Take(4), labels);
+    }
+
+    [AtlasTheory]
     [InlineData(MongoQueryProvider.Native)]
     [InlineData(MongoQueryProvider.NativeOnly)]
     public void Exact_search_returns_score_order(MongoQueryProvider mode)

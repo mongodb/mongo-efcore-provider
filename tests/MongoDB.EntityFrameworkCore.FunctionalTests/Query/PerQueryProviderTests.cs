@@ -159,4 +159,42 @@ public class PerQueryProviderTests(TemporaryDatabaseFixture database) : IClassFi
                 .ToList());
         Assert.Contains("conflicting", ex.Message);
     }
+
+    [Fact]
+    public void WithQueryProvider_can_be_chained_on_the_root()
+    {
+        using var db = CreateContext(nameof(WithQueryProvider_can_be_chained_on_the_root), MongoQueryProvider.Native);
+
+        IRootQueryable<Row> root = db.Entities.WithQueryProvider(MongoQueryProvider.NativeOnly).WithQueryProvider(MongoQueryProvider.NativeOnly);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => root.Where(e => e.Ratings.Contains(Tier.Gold)).ToList());
+    }
+
+    [Fact]
+    public void Conflicting_WithQueryProvider_calls_on_the_same_root_throw()
+    {
+        using var db = CreateContext(nameof(Conflicting_WithQueryProvider_calls_on_the_same_root_throw), MongoQueryProvider.Native);
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => db.Entities.WithQueryProvider(MongoQueryProvider.Native).WithQueryProvider(MongoQueryProvider.NativeOnly).ToList());
+        Assert.Contains("conflicting", ex.Message);
+    }
+
+    [Fact]
+    public async Task Root_queryable_supports_sync_and_async_enumeration()
+    {
+        var collection = database.MongoDatabase.GetCollection<Row>(
+            TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(Root_queryable_supports_sync_and_async_enumeration)) + Guid.NewGuid().ToString("N")[..8]);
+        collection.InsertMany([new Row { Label = "A" }, new Row { Label = "B" }]);
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            mb => mb.Entity<Row>().Ignore(e => e.Ratings),
+            optionsBuilderAction: b => b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)));
+
+        var root = db.Entities.WithQueryProvider(MongoQueryProvider.NativeOnly);
+
+        Assert.Equal(2, root.ToList().Count);
+        Assert.Equal(2, (await root.ToListAsync()).Count);
+        Assert.Equal(2, await root.CountAsync());
+    }
 }
