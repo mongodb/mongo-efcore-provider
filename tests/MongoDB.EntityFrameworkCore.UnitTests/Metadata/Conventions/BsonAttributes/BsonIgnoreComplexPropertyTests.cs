@@ -15,6 +15,10 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Metadata.Conventions.BsonAttributes;
@@ -26,7 +30,14 @@ public static class BsonIgnoreComplexPropertyTests
     {
         using var db = new DbContextWithComplexType();
 
-        var entityType = db.Model.FindEntityType(typeof(Order));
+        // Complex types are blocked by the model validator until supported, so build the model with conventions only.
+        var conventionSet = ((IInfrastructure<IServiceProvider>)db).Instance
+            .GetRequiredService<IConventionSetBuilder>().CreateConventionSet();
+        var modelBuilder = new ModelBuilder(conventionSet);
+        modelBuilder.Entity<Order>().ComplexProperty(o => o.Address);
+        var model = modelBuilder.FinalizeModel();
+
+        var entityType = model.FindEntityType(typeof(Order));
         Assert.NotNull(entityType);
 
         var complexProperty = entityType.FindComplexProperty(nameof(Order.Address));
@@ -62,10 +73,5 @@ public static class BsonIgnoreComplexPropertyTests
             => optionsBuilder
                 .UseMongoDB("mongodb://localhost:27017", "UnitTests")
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
-
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
-        {
-            modelBuilder.Entity<Order>().ComplexProperty(o => o.Address);
-        }
     }
 }

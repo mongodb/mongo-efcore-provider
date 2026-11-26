@@ -764,4 +764,26 @@ public static class MongoModelValidatorTests
             Assert.Throws<InvalidOperationException>(() => context.Model).Message);
     }
 
+    class EntityWithComplexProperty
+    {
+        public int _id { get; set; }
+        public ComplexAddress Address { get; set; }
+    }
+
+    class ComplexAddress
+    {
+        public string Street { get; set; }
+    }
+
+    [Fact]
+    public static void Validate_throws_when_entity_has_complex_property()
+    {
+        using var context = SingleEntityDbContext.Create<EntityWithComplexProperty>(mb =>
+            mb.Entity<EntityWithComplexProperty>().ComplexProperty(e => e.Address));
+
+        var ex = Assert.Throws<NotSupportedException>(() => context.Model);
+        Assert.Contains($"'{nameof(EntityWithComplexProperty.Address)}'", ex.Message);
+        Assert.Contains($"'{nameof(EntityWithComplexProperty)}'", ex.Message);
+        Assert.Contains("Complex types are not currently supported", ex.Message);
+    }
 }
