@@ -13,11 +13,31 @@
  * limitations under the License.
  */
 
+#if EF11
+using System.Reflection;
+using Xunit.v3;
+#else
 using Microsoft.EntityFrameworkCore.TestUtilities.Xunit;
+#endif
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
+#if EF11
+// EF11 dropped ITestCondition, so a condition that is not met skips each test dynamically as it starts. Unlike the
+// EF8-EF10 behaviour, class fixtures have already been created by then.
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
+public sealed class MongoConditionAttribute(MongoCondition conditions) : BeforeAfterTestAttribute
+{
+    public override void Before(MethodInfo methodUnderTest, IXunitTest test)
+    {
+        if (conditions.HasFlag(MongoCondition.IsAtlas))
+        {
+            Assert.SkipUnless(TestServer.SupportsAtlas, "Mongo tests skipped because: 'IsAtlas'");
+        }
+    }
+}
+#else
 public sealed class MongoConditionAttribute(MongoCondition conditions) : Attribute, ITestCondition
 {
     public ValueTask<bool> IsMetAsync()
@@ -39,3 +59,4 @@ public sealed class MongoConditionAttribute(MongoCondition conditions) : Attribu
                 .Where(conditions.HasFlag)
                 .Select(f => Enum.GetName(typeof(MongoCondition), f)))}'";
 }
+#endif

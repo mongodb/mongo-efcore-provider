@@ -15,7 +15,9 @@
 
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
+#if !EF11
 using Xunit.Abstractions;
+#endif
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
@@ -477,4 +479,22 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$lookup" : { "from" : "Orders",
     private static void AssertNoMultiCollectionQuerySupport(Action query)
         => Assert.Contains("Unsupported cross-DbSet query between",
             Assert.Throws<InvalidOperationException>(query).Message);
+
+#if EF11
+
+    public override void Compiled_query_with_EF_Constant_throws()
+    {
+        base.Compiled_query_with_EF_Constant_throws();
+
+        AssertMql();
+    }
+
+    public override void Compiled_query_with_EF_Parameter_throws()
+    {
+        base.Compiled_query_with_EF_Parameter_throws();
+
+        AssertMql();
+    }
+
+#endif
 }

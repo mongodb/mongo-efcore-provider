@@ -217,7 +217,9 @@ public partial class CompiledModelTests(TemporaryDatabaseFixture database)
         var callerDirectory = Path.GetDirectoryName(callerFilePath);
         Assert.NotNull(callerDirectory);
 
-#if EF10
+#if EF11
+        const string efVersion = "EF11";
+#elif EF10
         const string efVersion = "EF10";
 #elif EF9
         const string efVersion  = "EF9";

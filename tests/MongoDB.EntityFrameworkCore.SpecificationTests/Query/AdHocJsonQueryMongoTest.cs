@@ -722,7 +722,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
     protected override string StoreName { get; } = TestDatabaseNamer.GetUniqueDatabaseName("AdHocJsonQuery");
 
-    public override async Task InitializeAsync()
+    public override async LifetimeTask InitializeAsync()
     {
         var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
         _testStoreFactory = new MongoTestStoreFactory(server);

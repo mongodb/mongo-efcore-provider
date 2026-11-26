@@ -74,6 +74,10 @@ public class MongoTestStore : TestStore
     }
 #endif
 
+#if EF11
+    public override Task CleanAsync(DbContext context, bool createTables = true)
+#else
     public override Task CleanAsync(DbContext context)
+#endif
         => Task.CompletedTask;
 }

@@ -396,11 +396,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
         catch (Exception exception) when (exception is not InvalidOperationException)
         {
-            throw new InvalidOperationException(
-                CoreStrings.NonQueryTranslationFailedWithDetails(
-                    nonQuery.SourceQuery.CapturedExpression?.Print(),
-                    exception.Message),
-                exception);
+            throw MongoQueryableMethodTranslatingExpressionVisitor.NonQueryTranslationFailed(
+                nonQuery.SourceQuery.CapturedExpression?.Print(), exception.Message, exception);
         }
     }
 
@@ -410,10 +407,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     {
         if (entityType.FindPrimaryKey() == null)
         {
-            throw new InvalidOperationException(
-                CoreStrings.NonQueryTranslationFailedWithDetails(
-                    nonQuery.SourceQuery.CapturedExpression?.Print(),
-                    "the entity must have a primary key to use ordering, paging, or Distinct in a bulk delete or update."));
+            throw MongoQueryableMethodTranslatingExpressionVisitor.NonQueryTranslationFailed(
+                nonQuery.SourceQuery.CapturedExpression?.Print(),
+                "the entity must have a primary key to use ordering, paging, or Distinct in a bulk delete or update.");
         }
     }
 

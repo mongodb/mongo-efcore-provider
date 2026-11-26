@@ -21,7 +21,9 @@ using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+#if !EF11
 using Xunit.Abstractions;
+#endif
 using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
@@ -85,10 +87,17 @@ public class NorthwindMiscellaneousQueryMongoTest
     {
         await base.Coalesce_Correct_Multiple_Same_TypeMapping(async);
 
+#if EF11
+        AssertMql(
+            """
+            Employees.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$ne" : [{ "$ifNull" : [{ "$add" : [{ "$toLong" : "$ReportsTo" }, 1] }, { "$ifNull" : [{ "$add" : [{ "$toLong" : "$ReportsTo" }, 2] }, { "$add" : [{ "$toLong" : "$ReportsTo" }, 3] }] }] }, null] } } }, { "$project" : { "_v" : { "$ifNull" : [{ "$add" : [{ "$toLong" : "$ReportsTo" }, 1] }, { "$ifNull" : [{ "$add" : [{ "$toLong" : "$ReportsTo" }, 2] }, { "$add" : [{ "$toLong" : "$ReportsTo" }, 3] }] }] }, "_id" : 0 } }
+            """);
+#else
         AssertMql(
             """
             Employees.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : [{ "$add" : [{ "$toLong" : "$ReportsTo" }, 1] }, { "$ifNull" : [{ "$add" : [{ "$toLong" : "$ReportsTo" }, 2] }, { "$add" : [{ "$toLong" : "$ReportsTo" }, 3] }] }] }, "_id" : 0 } }
             """);
+#endif
     }
 
     public override async Task DefaultIfEmpty_top_level_followed_by_constant_Select(bool async)

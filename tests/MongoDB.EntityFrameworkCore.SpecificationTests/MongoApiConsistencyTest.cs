@@ -49,6 +49,7 @@ public class MongoApiConsistencyTest(MongoApiConsistencyTest.MongoApiConsistency
             typeof(MongoServiceCollectionExtensions)
         ];
 
+#pragma warning disable CS8609 // EF11 changed the nullability annotations of this base property.
         public override
             Dictionary<Type,
                 (Type? ReadonlyExtensions,
@@ -113,6 +114,7 @@ public class MongoApiConsistencyTest(MongoApiConsistencyTest.MongoApiConsistency
                     )
                 }
             };
+#pragma warning restore CS8609
 
         // The search-index Remove methods return bool rather than the removed element or a string, because the
         // removed SearchIndexDefinition is not an EF metadata interface type and so cannot satisfy the convention's

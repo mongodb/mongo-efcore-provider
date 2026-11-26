@@ -31,3 +31,34 @@ jobs:
 
       - name: Test
         run: dotnet test
+
+  # EF11 builds for net11.0. Its SpecificationTests use xUnit v3 4.x (Microsoft.Testing.Platform only), which "dotnet test"
+  # cannot run, so they are run through their own test host. See AGENTS.md.
+  build-ef11:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c "Debug EF11"
+
+      - name: Unit tests
+        run: dotnet test tests/MongoDB.EntityFrameworkCore.UnitTests -c "Debug EF11" --no-build
+
+      - name: Functional tests
+        run: dotnet test tests/MongoDB.EntityFrameworkCore.FunctionalTests -c "Debug EF11" --no-build
+
+      - name: Specification tests
+        run: dotnet "tests/MongoDB.EntityFrameworkCore.SpecificationTests/bin/Debug EF11/net11.0/MongoDB.EntityFrameworkCore.SpecificationTests.dll" -noColor

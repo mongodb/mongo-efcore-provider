@@ -18,7 +18,9 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver.Linq;
+#if !EF11
 using Xunit.Abstractions;
+#endif
 using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
@@ -2570,4 +2572,84 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         => Assert.Contains("Unsupported cross-DbSet query between",
             (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+
+#if EF11
+
+    public override async Task Where_Queryable_conditional_not_null_check_with_Contains(bool async, bool withNull)
+    {
+        if (withNull)
+        {
+            await base.Where_Queryable_conditional_not_null_check_with_Contains(async, withNull);
+
+            AssertMql(
+                """
+                Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
+                """);
+        }
+        else
+        {
+            // Fails: Queryable Contains with a conditional null check fails driver translation when withNull is false
+            await MongoAssert.AssertTranslationFailed(() => base.Where_Queryable_conditional_not_null_check_with_Contains(async, withNull));
+        }
+    }
+
+    public override async Task Where_Queryable_conditional_null_check_with_Contains(bool async, bool withNull)
+    {
+        if (withNull)
+        {
+            await base.Where_Queryable_conditional_null_check_with_Contains(async, withNull);
+
+            AssertMql(
+                """
+                Customers.
+                """);
+        }
+        else
+        {
+            // Fails: Queryable Contains with a conditional null check fails driver translation when withNull is false
+            await MongoAssert.AssertTranslationFailed(() => base.Where_Queryable_conditional_null_check_with_Contains(async, withNull));
+        }
+    }
+
+    public override async Task Where_Enumerable_conditional_not_null_check_with_Contains(bool async, bool withNull)
+    {
+        await base.Where_Enumerable_conditional_not_null_check_with_Contains(async, withNull);
+
+        if (!withNull)
+        {
+            AssertMql(
+                """
+                Customers.{ "$match" : { "_id" : { "$in" : ["ALFKI", "ANATR"] } } }
+                """);
+        }
+        else
+        {
+            AssertMql(
+                """
+                Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
+                """);
+        }
+    }
+
+    public override async Task Where_Enumerable_conditional_null_check_with_Contains(bool async, bool withNull)
+    {
+        await base.Where_Enumerable_conditional_null_check_with_Contains(async, withNull);
+
+        if (!withNull)
+        {
+            AssertMql(
+                """
+                Customers.{ "$match" : { "_id" : { "$nin" : ["ALFKI", "ANATR"] } } }
+                """);
+        }
+        else
+        {
+            AssertMql(
+                """
+                Customers.
+                """);
+        }
+    }
+
+#endif
 }

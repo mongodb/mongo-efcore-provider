@@ -24,6 +24,8 @@ public static class TestDatabaseNamer
     public const string TestDatabasePrefix = "EF9-FunctionalTest-";
 #elif EF10
     public const string TestDatabasePrefix = "EF10-FunctionalTest-";
+#elif EF11
+    public const string TestDatabasePrefix = "EF11-FunctionalTest-";
 #else
     public const string TestDatabasePrefix = "EF-FunctionalTest-";
 #endif

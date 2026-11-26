@@ -315,15 +315,23 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
 #if !EF8
+#if EF11
+    protected override Expression TranslateExecuteDelete(ShapedQueryExpression source)
+#else
     protected override Expression? TranslateExecuteDelete(ShapedQueryExpression source)
+#endif
     {
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
         var strategy = ClassifyBulkSource(mongoQueryExpression);
         return new MongoNonQueryExpression(mongoQueryExpression, strategy);
     }
 
-#if EF10
+#if EF10 || EF11
+#if EF11
+    protected override Expression TranslateExecuteUpdate(
+#else
     protected override Expression? TranslateExecuteUpdate(
+#endif
         ShapedQueryExpression source,
         IReadOnlyList<ExecuteUpdateSetter> setters)
     {
@@ -365,9 +373,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             AddTranslationErrorDetails(
                 "An 'ExecuteUpdate' call must specify at least one 'SetProperty' invocation, "
                 + "to indicate the properties to be updated.");
-            throw new InvalidOperationException(
-                CoreStrings.NonQueryTranslationFailedWithDetails(
-                    mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails));
+            throw NonQueryTranslationFailed(
+                mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails);
         }
 
         return new MongoNonQueryExpression(mongoQueryExpression, parsed, strategy);
@@ -417,9 +424,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             AddTranslationErrorDetails(
                 "Only mapped root scalar properties can be updated by a bulk update. The setter target "
                 + $"'{propertySelector.Body}' is not a mapped scalar property of '{entityType.DisplayName()}'.");
-            throw new InvalidOperationException(
-                CoreStrings.NonQueryTranslationFailedWithDetails(
-                    mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails));
+            throw NonQueryTranslationFailed(
+                mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails);
         }
 
         // Classify and normalize the value expression.
@@ -444,9 +450,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         {
             AddTranslationErrorDetails(
                 $"Self-referencing ExecuteUpdate on property '{property.Name}' is not supported because it uses a value converter.");
-            throw new InvalidOperationException(
-                CoreStrings.NonQueryTranslationFailedWithDetails(
-                    mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails));
+            throw NonQueryTranslationFailed(
+                mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails);
         }
 
         return new MongoNonQueryExpression.Setter(property, value, isSelfReferencing);
@@ -543,6 +548,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return strategy;
     }
 
+    // EF11 dropped the "with details" message: the details travel as the inner exception instead.
+    internal static InvalidOperationException NonQueryTranslationFailed(
+        object? expression, string? details, Exception? innerException = null)
+#if EF11
+        => new(CoreStrings.NonQueryTranslationFailed(expression), innerException ?? new InvalidOperationException(details));
+#else
+        => new(CoreStrings.NonQueryTranslationFailedWithDetails(expression, details), innerException);
+#endif
+
     [DoesNotReturn]
     private void ThrowBulkSourceNotSupported(MongoQueryExpression mongoQueryExpression, string operatorName)
     {
@@ -550,9 +564,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             $"The '{operatorName}' operator is not supported in a bulk delete or update. Only 'Where' predicates "
             + "and the 'OrderBy', 'OrderByDescending', 'ThenBy', 'ThenByDescending', 'Skip', 'Take', and 'Distinct' "
             + "operators can scope a bulk operation.");
-        throw new InvalidOperationException(
-            CoreStrings.NonQueryTranslationFailedWithDetails(
-                mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails));
+        throw NonQueryTranslationFailed(
+                mongoQueryExpression.CapturedExpression?.Print(), TranslationErrorDetails);
     }
 #endif
 
@@ -723,6 +736,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
 #if !EF8 && !EF9
     protected override ShapedQueryExpression? TranslateRightJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
+        LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector) =>
+        null;
+#endif
+
+#if EF11
+    protected override ShapedQueryExpression? TranslateFullJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector) =>
         null;
 #endif

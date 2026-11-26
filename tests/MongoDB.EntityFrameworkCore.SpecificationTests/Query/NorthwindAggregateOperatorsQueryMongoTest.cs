@@ -17,7 +17,9 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver.Linq;
+#if !EF11
 using Xunit.Abstractions;
+#endif
 using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
@@ -2291,12 +2293,16 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
     public override async Task Type_casting_inside_sum(bool async)
     {
+#if EF11
+        await base.Type_casting_inside_sum(async);
+#else
         // Fails: Truncation data loss issue EF-228
         // Returns 121.04000180587159838 instead of 121.040 because of conversion errors.
         Assert.Contains(
             "Actual:   121.04000180587159838",
             (await Assert.ThrowsAsync<EqualException>(() =>
                 base.Type_casting_inside_sum(async))).Message);
+#endif
 
         AssertMql(
             """
@@ -2316,4 +2322,208 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         => Assert.Contains("Unsupported cross-DbSet query between",
             (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+
+#if EF11
+
+    public override async Task MinBy(bool async)
+    {
+        await base.MinBy(async);
+
+        AssertMql(
+            """
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MinBy_no_data_value_type(bool async)
+    {
+        await base.MinBy_no_data_value_type(async);
+
+        AssertMql(
+            """
+            Orders.{ "$match" : { "_id" : -1 } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MinBy_no_data_nullable_source(bool async)
+    {
+        await base.MinBy_no_data_nullable_source(async);
+
+        AssertMql(
+            """
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$SupplierID", 0] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "_v" : "$SupplierID", "_id" : 0 } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MinBy_no_data_reference_type_source(bool async)
+    {
+        await base.MinBy_no_data_reference_type_source(async);
+
+        AssertMql(
+            """
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MinBy_no_data_nullable_selector(bool async)
+    {
+        await base.MinBy_no_data_nullable_selector(async);
+
+        AssertMql(
+            """
+            Orders.{ "$match" : { "_id" : -1 } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MinBy_no_data_subquery_reference_type(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await AssertTranslationFailed(() => base.MinBy_no_data_subquery_reference_type(async));
+
+        AssertMql();
+    }
+
+    public override async Task MinBy_no_data_subquery_value_type(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await AssertTranslationFailed(() => base.MinBy_no_data_subquery_value_type(async));
+
+        AssertMql();
+    }
+
+    public override async Task MaxBy_no_data_value_type(bool async)
+    {
+        await base.MaxBy_no_data_value_type(async);
+
+        AssertMql(
+            """
+            Orders.{ "$match" : { "_id" : -1 } }, { "$sort" : { "_id" : -1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MaxBy_no_data_nullable_source(bool async)
+    {
+        await base.MaxBy_no_data_nullable_source(async);
+
+        AssertMql(
+            """
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$SupplierID", 0] } } }, { "$sort" : { "_key1" : -1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "_v" : "$SupplierID", "_id" : 0 } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MaxBy_no_data_reference_type_source(bool async)
+    {
+        await base.MaxBy_no_data_reference_type_source(async);
+
+        AssertMql(
+            """
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$sort" : { "_id" : -1 } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MaxBy_no_data_nullable_selector(bool async)
+    {
+        await base.MaxBy_no_data_nullable_selector(async);
+
+        AssertMql(
+            """
+            Orders.{ "$match" : { "_id" : -1 } }, { "$sort" : { "_id" : -1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MaxBy_no_data_subquery_reference_type(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await AssertTranslationFailed(() => base.MaxBy_no_data_subquery_reference_type(async));
+
+        AssertMql();
+    }
+
+    public override async Task MaxBy_no_data_subquery_value_type(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await AssertTranslationFailed(() => base.MaxBy_no_data_subquery_value_type(async));
+
+        AssertMql();
+    }
+
+    public override async Task MinBy_with_coalesce(bool async)
+    {
+        await base.MinBy_with_coalesce(async);
+
+        AssertMql(
+            """
+            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MinBy_over_subquery(bool async)
+    {
+        // Fails: Cross-document navigation access issue EF-216
+        await AssertNoMultiCollectionQuerySupport(() => base.MinBy_over_subquery(async));
+    }
+
+    public override async Task MinBy_over_nested_subquery(bool async)
+    {
+        // Fails: Cross-document navigation access issue EF-216
+        await AssertNoMultiCollectionQuerySupport(() => base.MinBy_over_nested_subquery(async));
+    }
+
+    public override async Task MinBy_over_max_subquery(bool async)
+    {
+        // Fails: Cross-document navigation access issue EF-216
+        await AssertNoMultiCollectionQuerySupport(() => base.MinBy_over_max_subquery(async));
+    }
+
+    public override async Task MaxBy(bool async)
+    {
+        await base.MaxBy(async);
+
+        AssertMql(
+            """
+            Orders.{ "$sort" : { "_id" : -1 } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MaxBy_with_coalesce(bool async)
+    {
+        await base.MaxBy_with_coalesce(async);
+
+        AssertMql(
+            """
+            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "_key1" : -1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 1 }
+            """);
+    }
+
+    public override async Task MaxBy_over_subquery(bool async)
+    {
+        // Fails: Cross-document navigation access issue EF-216
+        await AssertNoMultiCollectionQuerySupport(() => base.MaxBy_over_subquery(async));
+    }
+
+    public override async Task MaxBy_over_nested_subquery(bool async)
+    {
+        // Fails: Cross-document navigation access issue EF-216
+        await AssertNoMultiCollectionQuerySupport(() => base.MaxBy_over_nested_subquery(async));
+    }
+
+    public override async Task MaxBy_over_sum_subquery(bool async)
+    {
+        // Fails: Cross-document navigation access issue EF-216
+        await AssertNoMultiCollectionQuerySupport(() => base.MaxBy_over_sum_subquery(async));
+    }
+
+    public override async Task MaxBy_after_DefaultIfEmpty_does_not_throw(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.MaxBy_after_DefaultIfEmpty_does_not_throw(async));
+    }
+
+    public override async Task MinBy_after_DefaultIfEmpty_does_not_throw(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.MinBy_after_DefaultIfEmpty_does_not_throw(async));
+    }
+
+#endif
 }

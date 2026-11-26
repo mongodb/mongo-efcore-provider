@@ -4,7 +4,7 @@
     <Description>Official MongoDB supported provider for Entity Framework Core. See https://www.mongodb.com/docs/entity-framework/ for more details.</Description>
     <IsPackable>true</IsPackable>
     <PackageId>MongoDB.EntityFrameworkCore</PackageId>
-    <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
+    <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10;Debug EF11;Release EF11</Configurations>
     <Platforms>AnyCPU</Platforms>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
@@ -54,6 +54,20 @@
     <Optimize>true</Optimize>
   </PropertyGroup>
 
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF11' ">
+    <TargetFramework>net11.0</TargetFramework>
+    <DefineConstants>TRACE;DEBUG;EF11</DefineConstants>
+    <DocumentationFile>bin\Debug EF11\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF11' ">
+    <TargetFramework>net11.0</TargetFramework>
+    <DefineConstants>TRACE;RELEASE;EF11</DefineConstants>
+    <DocumentationFile>bin\Release EF11\MongoDB.EntityFrameworkCore.xml</DocumentationFile>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.UnitTests" />
     <InternalsVisibleTo Include="MongoDB.EntityFrameworkCore.SpecificationTests" />
@@ -72,5 +86,9 @@
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF10' Or '$(Configuration)' == 'Debug EF10' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="$(EF10Version)" />
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(Configuration)' == 'Release EF11' Or '$(Configuration)' == 'Debug EF11' ">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="$(EF11Version)" />
   </ItemGroup>
 </Project>

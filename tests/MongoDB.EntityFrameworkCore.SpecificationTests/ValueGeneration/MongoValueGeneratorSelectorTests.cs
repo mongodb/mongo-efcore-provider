@@ -43,31 +43,49 @@ public class MongoValueGeneratorSelectorTests
         _entityType = foundEntityType;
     }
 
+#if EF11
+    // EF11 replaced IValueGeneratorSelector.Select with TrySelect.
+    private ValueGenerator Select(IProperty property, IEntityType entityType)
+    {
+        _valueGeneratorSelector.TrySelect(property, entityType, out var valueGenerator);
+        return valueGenerator!;
+    }
+#else
+    private ValueGenerator Select(IProperty property, IEntityType entityType)
+        => _valueGeneratorSelector.Select(property, entityType)!;
+#endif
+
     [Fact]
     public void Create_returns_OwnedEntityIndexValueGenerator_for_mapped_int()
     {
-        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("Id")!, _entityType);
+        var generator = Select(_entityType.FindProperty("Id")!, _entityType);
         Assert.IsType<TemporaryIntValueGenerator>(generator);
     }
 
     [Fact]
     public void Create_returns_ObjectIdValueGenerator_for_mapped_ObjectId()
     {
-        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("_id")!, _entityType);
+        var generator = Select(_entityType.FindProperty("_id")!, _entityType);
         Assert.IsType<ObjectIdValueGenerator>(generator);
     }
 
     [Fact]
     public void Create_throws_NotSupportedException_for_mapped_int()
     {
+#if EF11
+        // EF11's TrySelect reports "no generator" by returning false; the caller raises the error.
+        Assert.False(_valueGeneratorSelector.TrySelect(_entityType.FindProperty("someInt")!, _entityType, out var generator));
+        Assert.Null(generator);
+#else
         Assert.Throws<NotSupportedException>(() =>
-            _valueGeneratorSelector.Select(_entityType.FindProperty("someInt")!, _entityType));
+            Select(_entityType.FindProperty("someInt")!, _entityType));
+#endif
     }
 
     [Fact]
     public void Create_returns_GuidValueGenerator_for_guid()
     {
-        var generator = _valueGeneratorSelector.Select(_entityType.FindProperty("someGuid")!, _entityType);
+        var generator = Select(_entityType.FindProperty("someGuid")!, _entityType);
         Assert.IsType<GuidValueGenerator>(generator);
     }
 

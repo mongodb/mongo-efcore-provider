@@ -5,10 +5,10 @@ The MongoDB database provider for [Entity Framework Core](https://github.com/dot
 
 ## Tech Stack
 - Single project (`src/MongoDB.EntityFrameworkCore/`) packaged as `MongoDB.EntityFrameworkCore` on NuGet.
-- Multi-EF-version targeting via build *configurations* (not target frameworks): `Debug|Release EF8`, `Debug|Release EF9`, `Debug|Release EF10`. EF8/EF9 build for `net8.0`; EF10 builds for `net10.0`. The active EF version is selected by the `EF8` / `EF9` / `EF10` define constant — see the version-conditional `<PropertyGroup>`s in `src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj`.
+- Multi-EF-version targeting via build *configurations* (not target frameworks): `Debug|Release EF8`, `Debug|Release EF9`, `Debug|Release EF10`, `Debug|Release EF11`. EF8/EF9 build for `net8.0`; EF10 builds for `net10.0`; EF11 builds for `net11.0`. The active EF version is selected by the `EF8` / `EF9` / `EF10` / `EF11` define constant — see the version-conditional `<PropertyGroup>`s in `src/MongoDB.EntityFrameworkCore/MongoDB.EntityFrameworkCore.csproj`.
 - EF and driver versions are pinned in `Versions.props`. The C# driver version can be overridden by setting the `DRIVER_VERSION` env var (CI uses this to test forward-compat).
 - `<Nullable>enable</Nullable>` on `src/`. `<NoWarn>EF1001</NoWarn>` — the provider intentionally consumes EF Core's internal APIs.
-- xUnit + FluentAssertions for tests. `UnitTests` and `FunctionalTests` use xUnit v3 (`xunit.v3`); `SpecificationTests` stays on xUnit v2. `SpecificationTests` disables test parallelization at the assembly level (`Usings.cs`); `FunctionalTests` does not and relies on a unique database per fixture. CI runs the projects, and on MongoDB 5.0/6.0 the test collections, one at a time — see Testing.
+- xUnit + FluentAssertions for tests. `UnitTests` and `FunctionalTests` use xUnit v3 (`xunit.v3`); `SpecificationTests` uses xUnit v2 for EF8-EF10 and xUnit v3 for EF11 (`#if EF11`; EF11's Specification.Tests package is built on xUnit v3). `SpecificationTests` disables test parallelization at the assembly level (`Usings.cs`); `FunctionalTests` does not and relies on a unique database per fixture. CI runs the projects, and on MongoDB 5.0/6.0 the test collections, one at a time — see Testing.
 
 ## Project Structure
 - `src/MongoDB.EntityFrameworkCore/` — the provider.
@@ -19,7 +19,7 @@ The MongoDB database provider for [Entity Framework Core](https://github.com/dot
 ## Editing
 - Preserve file BOMs.
 - All `src/` code obeys `<Nullable>enable</Nullable>` — annotate new types accordingly.
-- Conditional code across EF versions uses the `EF8` / `EF9` / `EF10` symbols. Common guards: `#if EF8 || EF9` (legacy-EF behavior) and `#if !EF8` (EF9+ features) — see `Storage/MongoTypeMappingSource.cs` and `Query/QueryingEnumerable.cs` for representative examples.
+- Conditional code across EF versions uses the `EF8` / `EF9` / `EF10` / `EF11` symbols. Common guards: `#if EF8 || EF9` (legacy-EF behavior), `#if !EF8` (EF9+ features) and `#if EF10 || EF11` (EF10+ features) — see `Storage/MongoTypeMappingSource.cs` and `Query/QueryingEnumerable.cs` for representative examples.
 
 ## Versioning conventions
 
@@ -50,10 +50,11 @@ What does **not** count as a break:
 The provider follows EF Core's pattern, not the C# driver's. There is **no enforced sync/async pairing** of public methods — async surfaces exist where EF Core defines them (`*Async` variants) and where the underlying driver call is async. Library code uses `ConfigureAwait(false)` consistently. `CancellationToken` flows from EF Core through to driver calls without substitution; new async methods must take a `CancellationToken` and pass it on.
 
 ## Commands
-- Build a single EF version: `dotnet build MongoDB.EFCoreProvider.sln -c "Debug EF10"` (replace `EF10` with `EF8` or `EF9`).
+- Build a single EF version: `dotnet build MongoDB.EFCoreProvider.sln -c "Debug EF10"` (replace `EF10` with `EF8`, `EF9` or `EF11`).
 - Run all tests for one EF version: `dotnet test MongoDB.EFCoreProvider.sln -c "Debug EF10" --no-build`.
 - Run one test class: `dotnet test ... --filter "FullyQualifiedName~ClassName"`.
-- Build + test all three EF versions in parallel: invoke the `/test-all` skill (under `.claude/skills/test-all/`).
+- Build + test all four EF versions in parallel: invoke the `/test-all` skill (under `.claude/skills/test-all/`). EF11 needs the .NET 11 SDK.
+- **EF11 `SpecificationTests` run through their own executable, not `dotnet test`.** They use xUnit v3 4.x (EF11's Specification.Tests package requires it), which only supports Microsoft.Testing.Platform, and `dotnet test` on SDK 10+ rejects that unless the repo opts in via `global.json` (which would break the xUnit v2 projects on EF8-EF10). Build with `dotnet build MongoDB.EFCoreProvider.sln -c "Debug EF11"`, then run `tests/MongoDB.EntityFrameworkCore.SpecificationTests/bin/Debug EF11/net11.0/MongoDB.EntityFrameworkCore.SpecificationTests.exe` (accepts `-class`, `-method`, `-noColor`). A whole-solution `dotnet test -c "Debug EF11"` therefore reports an error for that one project.
 
 ## Testing
 - **Recommended: run with both `MONGODB_URI` and `ATLAS_URI` unset.** `TestServer` then has TestContainers boot a `mongodb/mongodb-atlas-local` container, which (a) runs the **Atlas-gated tests (e.g. vector search) for real** against Atlas Search, and (b) gives each `dotnet test` process its **own isolated container** (random host port) plus uniquely-named databases — so multiple test runs, **even parallel agents, don't collide**. Trade-off: Docker is required and each run pays a one-time container boot (image ≈2 GB, pulled once).

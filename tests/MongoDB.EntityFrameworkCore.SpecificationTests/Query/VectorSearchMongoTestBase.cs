@@ -45,7 +45,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "FloatsIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -68,7 +68,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.Doubles, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "DoublesIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -91,7 +91,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.MemoryFloats, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "MemoryFloatsIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -114,7 +114,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.MemoryDoubles, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "MemoryDoublesIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -137,7 +137,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.ReadOnlyMemoryFloats, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "ReadOnlyMemoryFloatsIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -160,7 +160,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.ReadOnlyMemoryDoubles, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "ReadOnlyMemoryDoublesIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -183,7 +183,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.BinaryFloats, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "BinaryFloatsIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -206,7 +206,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.BinaryBytes, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "BinaryBytesIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -229,7 +229,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.BinarySBytes, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "BinarySBytesIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -252,7 +252,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.BinaryMemoryFloats, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "BinaryMemoryFloatsIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -275,7 +275,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.BinaryMemoryBytes, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "BinaryMemoryBytesIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -298,7 +298,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.BinaryMemorySBytes, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "BinaryMemorySBytesIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -321,7 +321,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.BinaryReadOnlyMemoryFloats, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "BinaryReadOnlyMemoryFloatsIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -344,7 +344,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.BinaryReadOnlyMemoryBytes, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "BinaryReadOnlyMemoryBytesIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -367,7 +367,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.BinaryReadOnlyMemorySBytes, inputVector, limit: 4, CreateQueryOptions(specifyIndex ? "BinaryReadOnlyMemorySBytesIndex" : null));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -391,7 +391,7 @@ public abstract class VectorSearchMongoTestBase
             .VectorSearch(e => e.Floats, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"))
             .Where(e => e.IsPublished);
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(2, booksFromStore.Count);
         Assert.Equal(
@@ -414,7 +414,7 @@ public abstract class VectorSearchMongoTestBase
             .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
             .Select(e => e.Author);
 
-        var authors = async ? await queryable.ToListAsync() : queryable.ToList();
+        var authors = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(2, authors.Count);
         Assert.Equal(
@@ -437,7 +437,7 @@ public abstract class VectorSearchMongoTestBase
             .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
             .Select(e => new { e.Author, Score = Mql.Field(e, "__score", DoubleSerializer.Instance) });
 
-        var results = async ? await queryable.ToListAsync() : queryable.ToList();
+        var results = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(2, results.Count);
         Assert.Equal("Jon P Smith", results[0].Author);
@@ -459,7 +459,7 @@ public abstract class VectorSearchMongoTestBase
             .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
             .Select(e => new { e.Author, Score = EF.Property<double>(e, "__score") });
 
-        var results = async ? await queryable.ToListAsync() : queryable.ToList();
+        var results = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(2, results.Count);
         Assert.Equal("Jon P Smith", results[0].Author);
@@ -481,7 +481,7 @@ public abstract class VectorSearchMongoTestBase
             .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
             .Select(e => new { Book = e, Score = Mql.Field(e, "__score", DoubleSerializer.Instance) });
 
-        var results = async ? await queryable.ToListAsync() : queryable.ToList();
+        var results = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
         Assert.Equal(2, results.Count);
 
         Assert.Equal("Entity Framework Core in Action", results[0].Book.Title);
@@ -506,7 +506,7 @@ public abstract class VectorSearchMongoTestBase
             .Where(e => e.Title.Contains("Action") || e.Title.Contains("DbContext"))
             .Select(e => new { Book = e, Score = EF.Property<double>(e, "__score") });
 
-        var results = async ? await queryable.ToListAsync() : queryable.ToList();
+        var results = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
         Assert.Equal(2, results.Count);
 
         Assert.Equal("Entity Framework Core in Action", results[0].Book.Title);
@@ -544,7 +544,7 @@ public abstract class VectorSearchMongoTestBase
                 Score = Mql.Field(e, "__score", DoubleSerializer.Instance)
             });
 
-        var results = async ? await queryable.ToListAsync() : queryable.ToList();
+        var results = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
         Assert.Equal(2, results.Count);
 
         Assert.Equal("Entity Framework Core in Action", results[0].Book.Title);
@@ -572,7 +572,7 @@ public abstract class VectorSearchMongoTestBase
         var queryable = context.Set<Book>()
             .VectorSearch(e => e.Floats, e => e.IsPublished, inputVector, limit: 4, CreateQueryOptions("FloatsIndex"));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(2, booksFromStore.Count);
         Assert.Equal(
@@ -598,7 +598,7 @@ public abstract class VectorSearchMongoTestBase
                 limit: 4,
                 CreateQueryOptions("DoublesIndex"));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(2, booksFromStore.Count);
         Assert.Equal(
@@ -623,7 +623,7 @@ public abstract class VectorSearchMongoTestBase
                 new() { IndexName = "FloatsVectorIndex" })
             : context.Set<Book>().VectorSearch(e => e.Preface.Floats, inputVector, limit: 4);
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(4, booksFromStore.Count);
         Assert.Equal(
@@ -647,7 +647,7 @@ public abstract class VectorSearchMongoTestBase
             .VectorSearch(e => e.Preface.Floats, e => e.Preface.IsPublished, inputVector, limit: 4,
                 CreateQueryOptions("FloatsVectorIndex"));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(2, booksFromStore.Count);
         Assert.Equal(
@@ -672,7 +672,7 @@ public abstract class VectorSearchMongoTestBase
                 inputVector, limit: 4,
                 CreateQueryOptions("FloatsVectorIndex"));
 
-        var booksFromStore = async ? await queryable.ToListAsync() : queryable.ToList();
+        var booksFromStore = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
 
         Assert.Equal(2, booksFromStore.Count);
         Assert.Equal(
@@ -707,7 +707,7 @@ public abstract class VectorSearchMongoTestBase
             "'ConfigureWarnings' method in 'DbContext.OnConfiguring' or 'AddDbContext'.",
             (await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             {
-                _ = async ? await queryable.ToListAsync() : queryable.ToList();
+                _ = async ? await queryable.ToListAsync(TestCancellation.Token) : queryable.ToList();
             })).Message);
     }
 
@@ -999,7 +999,7 @@ public abstract class VectorSearchMongoTestBase
         protected override ITestStoreFactory TestStoreFactory
             => _testStoreFactory!;
 
-        public override async Task InitializeAsync()
+        public override async LifetimeTask InitializeAsync()
         {
             var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.IsAtlas);
             _testStoreFactory = new MongoTestStoreFactory(server);

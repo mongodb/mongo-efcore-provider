@@ -19,7 +19,9 @@ using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Misc;
 using MongoDB.Driver.Linq;
+#if !EF11
 using Xunit.Abstractions;
+#endif
 using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
@@ -1081,7 +1083,7 @@ Customers.
         // Default ordering on Mongo is different from .NET, so just compare the first three items.
         await AssertQuery(
             async,
-            ss => ss.Set<Customer>().Select(c => new CustomerListItem(c.CustomerID, c.City)).OrderBy(c => c.City).Take(3),
+            ss => ss.Set<Customer>().Select(c => new CustomerListItem(c.CustomerID, c.City!)).OrderBy(c => c.City).Take(3),
             assertOrder: true);
 
         AssertMql(
@@ -2005,4 +2007,20 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         => Assert.Contains("Unsupported cross-DbSet query between",
             (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+
+#if EF11
+
+    public override async Task SelectMany_over_inline_array_projecting_range_variable_and_outer(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.SelectMany_over_inline_array_projecting_range_variable_and_outer(async));
+    }
+
+    public override async Task Multiple_members_of_correlated_single_result_subquery_lift_to_single_join(bool async, string method)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.Multiple_members_of_correlated_single_result_subquery_lift_to_single_join(async, method));
+    }
+
+#endif
 }

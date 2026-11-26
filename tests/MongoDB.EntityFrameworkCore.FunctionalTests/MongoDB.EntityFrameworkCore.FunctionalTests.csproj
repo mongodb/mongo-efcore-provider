@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
+    <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10;Debug EF11;Release EF11</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
   <PropertyGroup>
@@ -23,6 +23,14 @@
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Release EF10' ">
     <DefineConstants>TRACE;RELEASE;EF10</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF11' ">
+    <TargetFramework>net11.0</TargetFramework>
+    <DefineConstants>TRACE;DEBUG;EF11</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release EF11' ">
+    <TargetFramework>net11.0</TargetFramework>
+    <DefineConstants>TRACE;RELEASE;EF11</DefineConstants>
   </PropertyGroup>
 
   <Import Project="..\..\Versions.props" />
@@ -53,5 +61,11 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF10Version)" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF10Version)" />
     <Compile Include="Design\Generated\EF10\**" />
+  </ItemGroup>
+
+  <ItemGroup Condition=" '$(Configuration)' == 'Release EF11' Or '$(Configuration)' == 'Debug EF11' ">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF11Version)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF11Version)" />
+    <Compile Include="Design\Generated\EF11\**" />
   </ItemGroup>
 </Project>

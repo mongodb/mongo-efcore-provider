@@ -15,7 +15,9 @@
 
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
+#if !EF11
 using Xunit.Abstractions;
+#endif
 using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
@@ -251,4 +253,26 @@ Orders.
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
+
+#if EF11
+
+    public override async Task GroupBy_aggregate_through_filtered_navigation(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_aggregate_through_filtered_navigation(async));
+    }
+
+    public override async Task GroupBy_aggregate_through_filtered_navigation_with_total(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_aggregate_through_filtered_navigation_with_total(async));
+    }
+
+    public override async Task GroupBy_aggregate_through_filtered_navigation_ignore_query_filters(bool async)
+    {
+        // Fails: not translated on EF11 (new EF11 test)
+        await MongoAssert.AssertTranslationFailed(() => base.GroupBy_aggregate_through_filtered_navigation_ignore_query_filters(async));
+    }
+
+#endif
 }
