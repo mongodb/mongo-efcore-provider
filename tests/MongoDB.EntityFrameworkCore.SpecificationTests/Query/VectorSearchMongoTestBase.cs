@@ -29,7 +29,13 @@ public abstract class VectorSearchMongoTestBase
     protected VectorSearchMongoTestBase(VectorSearchFixtureBase fixture)
     {
         Fixture = fixture;
-        fixture.TestMqlLoggerFactory.Clear();
+#if EF11
+        // Without Atlas the fixture is left uninitialized (see VectorSearchFixtureBase) and the tests are skipped.
+        if (TestServer.SupportsAtlas)
+#endif
+        {
+            fixture.TestMqlLoggerFactory.Clear();
+        }
     }
 
     protected VectorSearchFixtureBase Fixture { get; }
@@ -1001,12 +1007,28 @@ public abstract class VectorSearchMongoTestBase
 
         public override async LifetimeTask InitializeAsync()
         {
+#if EF11
+            // xUnit v3 creates the class fixture before [MongoCondition] skips the tests, so without Atlas leave the
+            // fixture uninitialized rather than fail trying to create search indexes.
+            if (!TestServer.SupportsAtlas)
+            {
+                _skipped = true;
+                return;
+            }
+#endif
             var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.IsAtlas);
             _testStoreFactory = new MongoTestStoreFactory(server);
 
             await base.InitializeAsync();
         }
 
+#if EF11
+        private bool _skipped;
+
+        public override LifetimeTask DisposeAsync()
+            => _skipped ? LifetimeTask.CompletedTask : base.DisposeAsync();
+
+#endif
         public TestMqlLoggerFactory TestMqlLoggerFactory
             => (TestMqlLoggerFactory)ListLoggerFactory;
     }
