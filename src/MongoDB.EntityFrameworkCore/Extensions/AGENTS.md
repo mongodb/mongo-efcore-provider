@@ -19,7 +19,7 @@ with an optional trailing `Action<MongoDbContextOptionsBuilder>`; `AddMongoDB<TC
 shapes. `AddEntityFrameworkMongoDB()` is the single binding point to EF's `EntityFrameworkServicesBuilder`.
 `MongoQueryableExtensions.VectorSearch<,>` must be at the queryable root (optionally after a `Where`); a new
 query-time extension needs matching Query visitor support.
-`MongoQueryableExtensions.WithQueryProvider` (on `DbSet<T>` only, not `IQueryable<T>`) sets `MongoQueryProvider` for one query: one marker
+`MongoQueryableExtensions.WithQueryProvider` (on `DbSet<T>` and `IRootQueryable<T>` only, not `IQueryable<T>`; it returns `IRootQueryable<T>`, a thin wrapper, so `VectorSearch` can follow it via its `IRootQueryable<T>` overloads; `VectorSearch` itself still returns `IQueryable<T>`, which keeps the shipped signature) sets `MongoQueryProvider` for one query: one marker
 method per mode, because EF parameterizes a mode argument and that would hide it from the compiled-query cache key. The marker is
 stripped in `MongoQueryCompilationContext.CreateQueryExecutor` (before `OriginalExpression` is captured for the driver-LINQ fallback).
 

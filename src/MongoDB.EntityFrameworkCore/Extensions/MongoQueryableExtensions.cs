@@ -20,6 +20,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Metadata;
 
@@ -141,6 +142,56 @@ public static class MongoQueryableExtensions
         where TSource : class
         => VectorSearch((IQueryable<TSource>)source, property, preFilter, queryVector, limit, options);
 
+    /// <summary>
+    /// Adds a MongoDB Atlas Vector Search to this root query, for example after
+    /// <see cref="WithQueryProvider{TEntity}(DbSet{TEntity}, MongoQueryProvider)"/>.
+    /// </summary>
+    /// <remarks>
+    /// Note that MongoDB Atlas Vector Search can only be used with MongoDB Atlas, not with other MongoDB configurations.
+    /// </remarks>
+    /// <typeparam name="TSource">The type of the elements of <paramref name="source" />.</typeparam>
+    /// <typeparam name="TProperty">The type of the vector property to search.</typeparam>
+    /// <param name="source">The <see cref="IRootQueryable{T}"/> from <see cref="WithQueryProvider{TEntity}(DbSet{TEntity}, MongoQueryProvider)"/>.</param>
+    /// <param name="property">The model property mapped to the BSON property containing vectors in the database.</param>
+    /// <param name="queryVector">The vector to search with.</param>
+    /// <param name="limit">The number of items to limit the vector search to.</param>
+    /// <param name="options">An optional <see cref="VectorQueryOptions"/> with options for the search, including the specific index name to use.</param>
+    /// <returns>An  <see cref="IQueryable{TSource}"/> that will perform a vector search when executed.</returns>
+    public static IQueryable<TSource> VectorSearch<TSource, TProperty>(
+        this IRootQueryable<TSource> source,
+        Expression<Func<TSource, TProperty>> property,
+        QueryVector queryVector,
+        int limit,
+        VectorQueryOptions? options = null)
+        where TSource : class
+        => VectorSearch((IQueryable<TSource>)source, property, null, queryVector, limit, options);
+
+    /// <summary>
+    /// Adds a MongoDB Atlas Vector Search with a pre-query filter to this root query, for example after
+    /// <see cref="WithQueryProvider{TEntity}(DbSet{TEntity}, MongoQueryProvider)"/>.
+    /// </summary>
+    /// <remarks>
+    /// Note that MongoDB Atlas Vector Search can only be used with MongoDB Atlas, not with other MongoDB configurations.
+    /// </remarks>
+    /// <typeparam name="TSource">The type of the elements of <paramref name="source" />.</typeparam>
+    /// <typeparam name="TProperty">The type of the vector property to search.</typeparam>
+    /// <param name="source">The <see cref="IRootQueryable{T}"/> from <see cref="WithQueryProvider{TEntity}(DbSet{TEntity}, MongoQueryProvider)"/>.</param>
+    /// <param name="property">The model property mapped to the BSON property containing vectors in the database.</param>
+    /// <param name="preFilter">A predicate used to filter out documents before starting vector search.</param>
+    /// <param name="queryVector">The vector to search with.</param>
+    /// <param name="limit">The number of items to limit the vector search to.</param>
+    /// <param name="options">An optional <see cref="VectorQueryOptions"/> with options for the search, including the specific index name to use.</param>
+    /// <returns>An  <see cref="IQueryable{TSource}"/> that will perform a vector search when executed.</returns>
+    public static IQueryable<TSource> VectorSearch<TSource, TProperty>(
+        this IRootQueryable<TSource> source,
+        Expression<Func<TSource, TProperty>> property,
+        Expression<Func<TSource, bool>>? preFilter,
+        QueryVector queryVector,
+        int limit,
+        VectorQueryOptions? options = null)
+        where TSource : class
+        => VectorSearch((IQueryable<TSource>)source, property, preFilter, queryVector, limit, options);
+
     private static IQueryable<TSource> VectorSearch<TSource, TProperty>(
         this IQueryable<TSource> source,
         Expression<Func<TSource, TProperty>> property,
@@ -177,17 +228,30 @@ public static class MongoQueryableExtensions
     /// with <see cref="MongoQueryProvider.NativeOnly"/> while the rest of the context allows fallback.
     /// </summary>
     /// <remarks>
-    /// This method is only available on a <see cref="DbSet{TEntity}"/>, so it is applied at the root of the query. If a query
-    /// has several roots, such as a join, <c>WithQueryProvider</c> can be used on more than one of them only if
+    /// This method is only available on a <see cref="DbSet{TEntity}"/> or <see cref="IRootQueryable{TEntity}"/>, so it is applied
+    /// at the root of the query. It returns an <see cref="IRootQueryable{TEntity}"/> so that <c>VectorSearch</c> can follow it.
+    /// If a query has several roots, such as a join, <c>WithQueryProvider</c> can be used on more than one of them only if
     /// they specify the same mode.
     /// </remarks>
     /// <typeparam name="TEntity">The type of the entity.</typeparam>
     /// <param name="source">The <see cref="DbSet{TEntity}"/> at the root of the query.</param>
     /// <param name="queryProvider">The <see cref="MongoQueryProvider"/> to use for this query.</param>
-    /// <returns>An <see cref="IQueryable{TEntity}"/> that will be translated using <paramref name="queryProvider"/>.</returns>
-    public static IQueryable<TEntity> WithQueryProvider<TEntity>(this DbSet<TEntity> source, MongoQueryProvider queryProvider)
+    /// <returns>An <see cref="IRootQueryable{TEntity}"/> that will be translated using <paramref name="queryProvider"/>.</returns>
+    public static IRootQueryable<TEntity> WithQueryProvider<TEntity>(this DbSet<TEntity> source, MongoQueryProvider queryProvider)
         where TEntity : class
-        => WithQueryProvider((IQueryable<TEntity>)source, queryProvider);
+        => new RootQueryable<TEntity>(WithQueryProvider((IQueryable<TEntity>)source, queryProvider));
+
+    /// <summary>
+    /// Sets the <see cref="MongoQueryProvider"/> used to translate this query. See
+    /// <see cref="WithQueryProvider{TEntity}(DbSet{TEntity}, MongoQueryProvider)"/>.
+    /// </summary>
+    /// <typeparam name="TEntity">The type of the entity.</typeparam>
+    /// <param name="source">The <see cref="IRootQueryable{TEntity}"/> at the root of the query.</param>
+    /// <param name="queryProvider">The <see cref="MongoQueryProvider"/> to use for this query.</param>
+    /// <returns>An <see cref="IRootQueryable{TEntity}"/> that will be translated using <paramref name="queryProvider"/>.</returns>
+    public static IRootQueryable<TEntity> WithQueryProvider<TEntity>(this IRootQueryable<TEntity> source, MongoQueryProvider queryProvider)
+        where TEntity : class
+        => new RootQueryable<TEntity>(WithQueryProvider((IQueryable<TEntity>)source, queryProvider));
 
     private static IQueryable<TEntity> WithQueryProvider<TEntity>(this IQueryable<TEntity> source, MongoQueryProvider queryProvider)
         where TEntity : class
