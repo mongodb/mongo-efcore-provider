@@ -26,7 +26,7 @@ namespace MongoDB.EntityFrameworkCore.Metadata;
 internal static class InternalIndexExtensions
 {
     // EF11 types an index's properties as IReadOnlyPropertyBase (they may be complex properties); the provider only
-    // supports indexes over scalar properties, which model validation enforces.
+    // supports indexes over scalar properties, which MongoModelValidator.ValidateIndex enforces.
     private static string ElementNameOf(IReadOnlyPropertyBase property)
         => ((IReadOnlyProperty)property).GetElementName();
 

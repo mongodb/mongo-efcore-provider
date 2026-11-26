@@ -71,7 +71,10 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Specification.Tests" Version="$(EF11Version)" />
   </ItemGroup>
 
-  <!-- xUnit v3's TestFrameworkAttribute takes a Type, not names. -->
+  <!-- xUnit v3's TestFrameworkAttribute takes a Type, not names, so this is EF8-EF10 only. The named type
+       XUnit.Startup.Dispose.Hooks.TestFramework is not defined in this repo or any referenced assembly, so xUnit falls back
+       to its default framework and nothing is lost on EF11. Nothing disposes TestServer's static containers on any version;
+       Testcontainers' Ryuk reaper removes them when the test process exits. -->
   <ItemGroup Condition=" '$(Configuration)' != 'Release EF11' And '$(Configuration)' != 'Debug EF11' ">
     <AssemblyAttribute Include="Xunit.TestFramework">
       <_Parameter1>XUnit.Startup.Dispose.Hooks.TestFramework</_Parameter1>
