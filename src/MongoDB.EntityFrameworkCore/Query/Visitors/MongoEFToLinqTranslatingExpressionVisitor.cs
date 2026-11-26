@@ -19,6 +19,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -971,6 +972,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             }
         }
 
+        var endsWithRewrite = TryRewriteEndsWith(node);
+        if (endsWithRewrite != null)
+        {
+            return endsWithRewrite;
+        }
+
         var nullSafeStringRewrite = TryRewriteNullPropagatingStringCall(node);
         if (nullSafeStringRewrite != null)
         {
@@ -1019,6 +1026,60 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             isNullOrMissing,
             Expression.Constant(null, typeof(string)),
             call);
+    }
+
+    private static readonly MethodInfo RegexIsMatchWithOptionsMethod =
+        typeof(Regex).GetMethod(nameof(Regex.IsMatch), [typeof(string), typeof(string), typeof(RegexOptions)])!;
+
+    /// <summary>
+    /// Rewrites <c>s.EndsWith(term)</c> (and the <c>char</c> and Ordinal/OrdinalIgnoreCase overloads) with a constant
+    /// or parameterized term into <c>Regex.IsMatch(s, "&lt;escaped term&gt;\z")</c>. The driver renders
+    /// <c>EndsWith</c> as a regex anchored with <c>$</c>, which also matches just before a trailing <c>\n</c> (so
+    /// <c>"a.pdf\n"</c> ends with <c>".pdf"</c>) and rejects a NUL in the term, and it has no
+    /// <c>OrdinalIgnoreCase</c> form in a bulk filter. The pattern is built by
+    /// <see cref="MongoRegexPatternBuilder"/>, as for the native translation, so both paths agree. A term that is
+    /// another field, or null, is left to the driver.
+    /// </summary>
+    private Expression? TryRewriteEndsWith(MethodCallExpression node)
+    {
+        if (node.Object is null
+            || node.Method.DeclaringType != typeof(string)
+            || node.Method.Name != nameof(string.EndsWith)
+            || node.Arguments.Count is < 1 or > 2)
+        {
+            return null;
+        }
+
+        var ignoreCase = false;
+        if (node.Arguments.Count == 2)
+        {
+            if (node.Arguments[1].Type != typeof(StringComparison)
+                || TryEvaluateToConstant(node.Arguments[1]) is not StringComparison comparison
+                || comparison is not (StringComparison.Ordinal or StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            ignoreCase = comparison == StringComparison.OrdinalIgnoreCase;
+        }
+
+        var term = TryEvaluateToConstant(node.Arguments[0]) switch
+        {
+            string text => text,
+            char character => character.ToString(),
+            _ => null
+        };
+
+        if (term is null)
+        {
+            return null;
+        }
+
+        return Expression.Call(
+            RegexIsMatchWithOptionsMethod,
+            Visit(node.Object)!,
+            Expression.Constant(NativeTranslation.MongoRegexPatternBuilder.BuildPattern(term, MongoRegexKind.EndsWith)),
+            Expression.Constant(ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None));
     }
 
     private Expression BuildUnguardedChain(MethodCallExpression node, out Expression root)
