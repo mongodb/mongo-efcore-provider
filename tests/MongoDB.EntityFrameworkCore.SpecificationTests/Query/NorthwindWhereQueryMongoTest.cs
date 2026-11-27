@@ -1392,7 +1392,7 @@ Products.{ "$match" : { "$expr" : { "$cond" : { "if" : true, "then" : { "$litera
 
         AssertMql(
             """
-Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$toString" : 10 }, ""] }, { "$ifNull" : ["$_id", ""] }, { "$ifNull" : [{ "$toString" : 10 }, ""] }] }, { "$literal" : "10ALFKI10" }] } } }, { "$project" : { "_id" : "$_id" } }
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$toString" : { "$literal" : 10 } }, ""] }, { "$ifNull" : ["$_id", ""] }, { "$ifNull" : [{ "$toString" : { "$literal" : 10 } }, ""] }] }, { "$literal" : "10ALFKI10" }] } } }, { "$project" : { "_id" : "$_id" } }
 """);
     }
 
@@ -2478,30 +2478,54 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
     {
         await base.Where_concat_string_int_comparison1(async);
 
+#if EF8 || EF9
+        // EF8/EF9 pass the captured ints as parameters (always $literal-wrapped); EF10 inlines them as constants.
+        AssertMql(
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$_id", ""] }, { "$ifNull" : [{ "$toString" : { "$literal" : 10 } }, ""] }] }, "$CompanyName"] } } }, { "$project" : { "_id" : "$_id" } }
+""");
+#else
         AssertMql(
 """
 Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$_id", ""] }, { "$ifNull" : [{ "$toString" : 10 }, ""] }] }, "$CompanyName"] } } }, { "$project" : { "_id" : "$_id" } }
 """);
+#endif
     }
 
     public override async Task Where_concat_string_int_comparison2(bool async)
     {
         await base.Where_concat_string_int_comparison2(async);
 
+#if EF8 || EF9
+        // EF8/EF9 pass the captured ints as parameters (always $literal-wrapped); EF10 inlines them as constants.
+        AssertMql(
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$toString" : { "$literal" : 10 } }, ""] }, { "$ifNull" : ["$_id", ""] }] }, "$CompanyName"] } } }, { "$project" : { "_id" : "$_id" } }
+""");
+#else
         AssertMql(
 """
 Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$toString" : 10 }, ""] }, { "$ifNull" : ["$_id", ""] }] }, "$CompanyName"] } } }, { "$project" : { "_id" : "$_id" } }
 """);
+#endif
     }
 
     public override async Task Where_concat_string_int_comparison3(bool async)
     {
         await base.Where_concat_string_int_comparison3(async);
 
+#if EF8 || EF9
+        // EF8/EF9 pass the captured ints as parameters (always $literal-wrapped); EF10 inlines them as constants.
+        AssertMql(
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$toString" : { "$literal" : 30 } }, ""] }, { "$ifNull" : ["$_id", ""] }, { "$ifNull" : [{ "$toString" : { "$literal" : 21 } }, ""] }, { "$toString" : 42 }] }, "$CompanyName"] } } }, { "$project" : { "_id" : "$_id" } }
+""");
+#else
         AssertMql(
 """
 Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$toString" : 30 }, ""] }, { "$ifNull" : ["$_id", ""] }, { "$ifNull" : [{ "$toString" : 21 }, ""] }, { "$toString" : 42 }] }, "$CompanyName"] } } }, { "$project" : { "_id" : "$_id" } }
 """);
+#endif
     }
 
     public override async Task Where_concat_string_int_comparison4(bool async)

@@ -1091,7 +1091,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$String", ""] }, { "$ifNull" : [{ "$toString" : 10 }, ""] }] }, { "$literal" : "Seattle10" }] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$String", ""] }, { "$ifNull" : [{ "$toString" : { "$literal" : 10 } }, ""] }] }, { "$literal" : "Seattle10" }] } } }
 """);
     }
 
@@ -1101,7 +1101,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$toString" : 10 }, ""] }, { "$ifNull" : ["$String", ""] }] }, { "$literal" : "10Seattle" }] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$toString" : { "$literal" : 10 } }, ""] }, { "$ifNull" : ["$String", ""] }] }, { "$literal" : "10Seattle" }] } } }
 """);
     }
 
@@ -1111,7 +1111,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$toString" : 30 }, ""] }, { "$ifNull" : ["$String", ""] }, { "$ifNull" : [{ "$toString" : 21 }, ""] }, { "$toString" : 42 }] }, { "$literal" : "30Seattle2142" }] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$toString" : { "$literal" : 30 } }, ""] }, { "$ifNull" : ["$String", ""] }, { "$ifNull" : [{ "$toString" : { "$literal" : 21 } }, ""] }, { "$toString" : 42 }] }, { "$literal" : "30Seattle2142" }] } } }
 """);
     }
 

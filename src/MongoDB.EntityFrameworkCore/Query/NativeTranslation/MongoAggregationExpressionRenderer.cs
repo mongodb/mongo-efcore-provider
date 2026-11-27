@@ -78,13 +78,15 @@ internal static class MongoAggregationExpressionRenderer
             MongoInExpression inExpr => RenderIn(inExpr, placeholders, elementVariable),
             MongoComputedInExpression computedIn => RenderComputedIn(computedIn, placeholders, elementVariable),
             MongoUnaryExpression unary => RenderUnary(unary, placeholders, elementVariable),
+            // RenderOperand: the operand's CLR type is unconstrained (an object-typed concat operand gets $toString),
+            // so a bare "$"-prefixed string would be read as a field path and a document as an expression.
             MongoConvertExpression convert
                 => new BsonDocument(
                     MongoConvertExpression.ToOperatorFor(convert.Type)
                         ?? throw new NativeTranslationNotSupportedException(
                             $"MQL has no conversion operator for '{convert.Type.Name}'. A convert to an "
                             + "unrenderable target should have been declined at translate time."),
-                    Render(convert.Operand, placeholders, elementVariable)),
+                    RenderOperand(convert.Operand, placeholders, elementVariable)),
             MongoConditionalExpression conditional
                 => new BsonDocument("$cond", new BsonDocument
                 {
