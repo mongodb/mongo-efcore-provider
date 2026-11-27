@@ -99,6 +99,20 @@ public class NativeStringDollarLiteralTests(TemporaryDatabaseFixture database) :
     }
 
     [Fact]
+    public void Concat_with_dollar_prefixed_object_typed_parameter_is_literal()
+    {
+        using var context = CreateContext(nameof(Concat_with_dollar_prefixed_object_typed_parameter_is_literal));
+
+        // A non-string concat operand is wrapped in $toString; an unwrapped "$Label" inside it would read the Label
+        // field instead of the captured value.
+        object suffix = "$Label";
+        Assert.Equal(Rows.Select(r => r.Text + suffix),
+            context.Entities.OrderBy(x => x.Order).Select(x => x.Text + suffix).ToList());
+        Assert.Equal(["plain"],
+            context.Entities.Where(x => x.Text + suffix == "abc$Label").Select(x => x.Label).ToList());
+    }
+
+    [Fact]
     public void IndexOf_over_dollar_prefixed_constant_haystack_is_literal()
     {
         using var context = CreateContext(nameof(IndexOf_over_dollar_prefixed_constant_haystack_is_literal));

@@ -432,6 +432,41 @@ public class MongoAggregationExpressionRendererTests
         Assert.Equal(BsonDocument.Parse($$"""{ "{{op}}" : "$D" }"""), rendered.AsBsonDocument);
     }
 
+    [Fact]
+    public void Convert_node_wraps_a_parameter_operand_in_literal()
+    {
+        // An object-typed parameter may hold a "$"-prefixed string or a document; bare, $toString would evaluate it
+        // as a field path or an expression.
+        var node = new MongoConvertExpression(
+            new MongoParameterExpression("__p_0", forSerialization: null), typeof(string));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable());
+
+        Assert.Equal(
+            BsonDocument.Parse("""{ "$toString" : { "$literal" : { "__mongoef_param__" : 0 } } }"""),
+            rendered.AsBsonDocument);
+    }
+
+    [Fact]
+    public void Convert_node_wraps_a_string_constant_operand_in_literal()
+    {
+        var node = new MongoConvertExpression(new MongoConstantExpression("$Label", forSerialization: null), typeof(int));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("""{ "$toInt" : { "$literal" : "$Label" } }"""), rendered.AsBsonDocument);
+    }
+
+    [Fact]
+    public void Convert_node_leaves_a_numeric_constant_operand_bare()
+    {
+        var node = new MongoConvertExpression(new MongoConstantExpression(5, forSerialization: null), typeof(string));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable());
+
+        Assert.Equal(BsonDocument.Parse("""{ "$toString" : 5 }"""), rendered.AsBsonDocument);
+    }
+
     [Theory]
     [InlineData(typeof(short))]
     [InlineData(typeof(uint))]
