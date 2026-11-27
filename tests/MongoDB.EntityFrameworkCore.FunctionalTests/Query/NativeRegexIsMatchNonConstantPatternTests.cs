@@ -29,8 +29,9 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
 /// EF-247: native <c>Regex.IsMatch(input, pattern)</c> where the pattern is not a constant: a string field of the
-/// entity or a query parameter. Both render via <c>$expr</c>/<c>$regexMatch</c> (<c>$regularExpression</c> needs a
-/// literal). Explicit <c>DriverLinq</c> still throws for a non-constant pattern (the driver has no translation), which
+/// entity or a query parameter. A field pattern renders via <c>$expr</c>/<c>$regexMatch</c> (<c>$regularExpression</c>
+/// needs a literal); a parameter pattern is a literal by the time the query is sent, so it keeps the query dialect
+/// <c>{ path: /re/ }</c>, which can use an index. Explicit <c>DriverLinq</c> still throws for a non-constant pattern (the driver has no translation), which
 /// is pinned here so a driver change is noticed.
 /// </summary>
 public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture database)
@@ -80,14 +81,49 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     public void Parameter_pattern_matches_oracle()
     {
         var pattern = "^S";
-        AssertMatchesOracle(ValidRows, r => Regex.IsMatch(r.Foo!, pattern));
+        AssertMatchesOracle(ValidRows, r => Regex.IsMatch(r.Foo!, pattern), expectQueryDialect: true);
     }
 
     [Fact]
     public void Negated_parameter_pattern_matches_oracle()
     {
         var pattern = "land$";
-        AssertMatchesOracle(ValidRows, r => !Regex.IsMatch(r.Foo!, pattern));
+        AssertMatchesOracle(ValidRows, r => !Regex.IsMatch(r.Foo!, pattern), expectQueryDialect: true);
+    }
+
+    [Fact]
+    public void Parameter_pattern_with_constant_options_matches_oracle()
+    {
+        var pattern = "^s";
+        AssertMatchesOracle(
+            ValidRows, r => Regex.IsMatch(r.Foo!, pattern, RegexOptions.IgnoreCase), expectQueryDialect: true);
+    }
+
+    [Fact]
+    public void Parameter_pattern_with_Multiline_matches_oracle()
+    {
+        var pattern = "^b";
+        AssertMatchesOracle(
+            [new Row { Foo = "a\nb" }, new Row { Foo = "a\nc" }],
+            r => Regex.IsMatch(r.Foo!, pattern, RegexOptions.Multiline),
+            expectQueryDialect: true);
+    }
+
+    // The pattern is substituted into the cached query plan per execution, never baked in at compile time.
+    [Fact]
+    public void Parameter_pattern_is_read_per_execution()
+    {
+        var collection = Seed(ValidRows);
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out _);
+
+        var pattern = "^S";
+        Assert.Equal(2, db.Entities.AsNoTracking().Count(r => Regex.IsMatch(r.Foo!, pattern)));
+
+        pattern = "^Port";
+        Assert.Equal(2, db.Entities.AsNoTracking().Count(r => Regex.IsMatch(r.Foo!, pattern)));
+
+        pattern = "^Nowhere";
+        Assert.Equal(0, db.Entities.AsNoTracking().Count(r => Regex.IsMatch(r.Foo!, pattern)));
     }
 
     [Fact]
@@ -116,18 +152,20 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
         Assert.DoesNotContain("$regularExpression", mql);
     }
 
+    // { path: /re/ } can use an index on the path; $expr/$regexMatch always scans the collection.
     [Fact]
-    public void Parameter_pattern_renders_via_expr_regexMatch_not_regularExpression()
+    public void Parameter_pattern_uses_query_dialect_not_expr_regexMatch()
     {
         var collection = Seed(ValidRows);
         var pattern = "^S";
         using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out var spy);
-        db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, pattern)).Select(r => r.Id).ToList();
+        db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, pattern, RegexOptions.IgnoreCase))
+            .Select(r => r.Id).ToList();
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
-        Assert.Contains("$expr", mql);
-        Assert.Contains("$regexMatch", mql);
-        Assert.DoesNotContain("$regularExpression", mql);
+        Assert.Contains("""{ "$regularExpression" : { "pattern" : "^S", "options" : "i" } }""", mql);
+        Assert.DoesNotContain("$expr", mql);
+        Assert.DoesNotContain("$regexMatch", mql);
     }
 
     // Null/missing input or pattern: .NET throws ArgumentNullException, so there is no CLR oracle; native follows the
@@ -155,6 +193,17 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
         using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out _);
 
         Assert.Empty(db.Entities.AsNoTracking().Where(r => Regex.IsMatch(r.Foo!, pattern!)).ToList());
+    }
+
+    // The complement of the null-pattern case: every row, including rows whose input is null or missing.
+    [Fact]
+    public void Negated_null_parameter_pattern_matches_every_row()
+    {
+        var collection = SeedWithMissing();
+        string? pattern = null;
+        using var db = CreateContext(collection, MongoQueryProvider.NativeOnly, out _);
+
+        Assert.Equal(5, db.Entities.AsNoTracking().Count(r => !Regex.IsMatch(r.Foo!, pattern!)));
     }
 
     // An invalid regex stored in the data makes the server reject the aggregation (parity with .NET, which throws
@@ -227,7 +276,8 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
     }
 
     // `predicate` must be an Expression, or it binds to Enumerable.Where and never runs natively.
-    private void AssertMatchesOracle(Row[] rows, Expression<Func<Row, bool>> predicate)
+    // `expectQueryDialect`: a parameter pattern renders as { path: /re/ }; a field pattern needs $expr/$regexMatch.
+    private void AssertMatchesOracle(Row[] rows, Expression<Func<Row, bool>> predicate, bool expectQueryDialect = false)
     {
         var collection = Seed(rows);
 
@@ -239,7 +289,16 @@ public class NativeRegexIsMatchNonConstantPatternTests(TemporaryDatabaseFixture 
         using var nativeOnly = CreateContext(collection, MongoQueryProvider.NativeOnly, out var spy);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(r => r.Id).ToList();
         Assert.Equal(oracle.OrderBy(x => x), nativeOnlyResult.OrderBy(x => x));
-        Assert.Contains("$regexMatch", spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
+        var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        if (expectQueryDialect)
+        {
+            Assert.Contains("$regularExpression", mql);
+            Assert.DoesNotContain("$expr", mql);
+        }
+        else
+        {
+            Assert.Contains("$regexMatch", mql);
+        }
 
         using var native = CreateContext(collection, MongoQueryProvider.Native, out _);
         var nativeResult = native.Entities.AsNoTracking().Where(predicate).Select(r => r.Id).ToList();

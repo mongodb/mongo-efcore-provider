@@ -24,6 +24,20 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </summary>
 internal static class MongoRegexPatternBuilder
 {
+    /// <summary>A pattern that can never match (an empty negative lookahead), for a null <c>Regex.IsMatch</c> pattern.</summary>
+    public const string NeverMatchPattern = "(?!)";
+
+    /// <summary>
+    /// The regex options for <paramref name="regex"/>, shared by the constant and per-execution paths. A
+    /// <see cref="MongoRegexKind.Pattern"/> carries its own options (mapped from <c>RegexOptions</c>). Otherwise "s" matches
+    /// driver-LINQ and is inert (terms are escaped, so there is no bare "."); <c>Like</c> has no driver-LINQ precedent and
+    /// is case-insensitive to match SQL LIKE collation and EF's spec suite.
+    /// </summary>
+    public static string GetOptions(MongoRegexExpression regex)
+        => regex.Kind == MongoRegexKind.Pattern ? regex.PatternOptions
+            : regex.Kind == MongoRegexKind.Like || regex.CaseInsensitive ? "is"
+            : "s";
+
     /// <summary>
     /// Escapes <paramref name="term"/> and anchors it per <paramref name="kind"/>, matching driver-LINQ v3's
     /// <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c> patterns. <see cref="MongoRegexKind.Pattern"/> is returned

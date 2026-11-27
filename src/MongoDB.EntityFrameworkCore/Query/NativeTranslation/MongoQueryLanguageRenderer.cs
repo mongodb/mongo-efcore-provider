@@ -80,7 +80,10 @@ internal sealed class MongoQueryLanguageRenderer
     /// Whether a <see cref="MongoRegexExpression"/> has the query-dialect <c>{ path: /re/ }</c> form; shared by
     /// <see cref="RenderNode"/> and <see cref="IsQueryDialectRenderable"/> so they cannot drift. Requires:
     /// <list type="bullet">
-    /// <item>a literal term (constant string or parameter), since <c>$regularExpression</c> needs a literal pattern;</item>
+    /// <item>a literal term (constant string or parameter), since <c>$regularExpression</c> needs a literal pattern. A
+    /// parameter is one: it becomes a regex placeholder substituted per execution. This includes a
+    /// <see cref="MongoRegexKind.Pattern"/> parameter, which must not fall to <c>$expr</c>/<c>$regexMatch</c>: that
+    /// form can't use an index, while <c>{ path: /re/ }</c> can;</item>
     /// <item>a <see cref="MongoFieldExpression"/> or <see cref="MongoElementRefExpression"/> receiver: a computed
     /// receiver has no document path, and <c>{ path: /re/ }</c> over a bogus path silently matches nothing;</item>
     /// <item>not <see cref="MongoRegexKind.IsMatch"/>, whose Field is the pattern, not the tested value.</item>
@@ -91,10 +94,9 @@ internal sealed class MongoQueryLanguageRenderer
         {
             Kind: not MongoRegexKind.IsMatch,
             Field: MongoFieldExpression or MongoElementRefExpression,
+            // A field-valued Pattern (EF-247) is not a literal, so it falls to $expr/$regexMatch.
             Term: MongoConstantExpression { Value: string } or MongoParameterExpression
-        }
-        // A Pattern with a parameter/field pattern (EF-247) needs $regexMatch.
-        && (regex.Kind != MongoRegexKind.Pattern || regex.Term is MongoConstantExpression);
+        };
 
     // Bare field on the left, constant/parameter on the right; anything else goes to $expr. Shared with
     // MongoExpressionNegator, which must decline any comparison this rejects.
@@ -249,20 +251,13 @@ internal sealed class MongoQueryLanguageRenderer
         switch (regex.Term)
         {
             case MongoConstantExpression { Value: string literal }:
-                var pattern = MongoRegexPatternBuilder.BuildPattern(literal, regex.Kind);
-
-                // "s" matches driver-LINQ and is inert (patterns are escaped, so no bare "."). Like has no
-                // driver-LINQ precedent; it is case-insensitive to match SQL LIKE collation and EF's spec suite.
-                // Pattern carries its own options verbatim (mapped from RegexOptions).
                 body = new BsonRegularExpression(
-                    pattern,
-                    regex.Kind == MongoRegexKind.Pattern ? regex.PatternOptions
-                    : regex.Kind == MongoRegexKind.Like ? "is"
-                    : regex.CaseInsensitive ? "is" : "s");
+                    MongoRegexPatternBuilder.BuildPattern(literal, regex.Kind), MongoRegexPatternBuilder.GetOptions(regex));
                 break;
 
             case MongoParameterExpression parameter:
-                body = placeholders.CreateRegexPlaceholder(parameter.Name, regex.Kind, regex.CaseInsensitive);
+                body = placeholders.CreateRegexPlaceholder(
+                    parameter.Name, regex.Kind, MongoRegexPatternBuilder.GetOptions(regex));
                 break;
 
             default:

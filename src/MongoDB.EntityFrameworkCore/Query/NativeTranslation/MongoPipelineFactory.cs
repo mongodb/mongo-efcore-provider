@@ -910,7 +910,7 @@ internal sealed class MongoPipelineFactory
         int index,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex, regexCaseInsensitive, compositeKeys) =
+        var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex, regexOptions, compositeKeys) =
             _placeholders.Entries[index];
 
         // Coerces to the serializer's ValueType (which differs from the property ClrType the compile-time path
@@ -975,13 +975,18 @@ internal sealed class MongoPipelineFactory
             };
         }
 
-        // Parameterized StartsWith/EndsWith/Contains: escape and anchor per execution, matching
-        // MongoQueryLanguageRenderer.RenderRegex's constant branch.
+        // Parameterized StartsWith/EndsWith/Contains/Like: escape and anchor per execution; a Regex.IsMatch pattern
+        // passes through verbatim. Matches MongoQueryLanguageRenderer.RenderRegex's constant branch.
         if (regexKind is not null)
         {
+            // A null Regex.IsMatch pattern matches nothing (.NET would throw), as $regexMatch with a null regex does.
+            // "(?!)" can never match, so { $not: /(?!)/ } is the complement, matching every document.
+            if (rawValue is null && regexKind == MongoRegexKind.Pattern)
+                return new BsonRegularExpression(MongoRegexPatternBuilder.NeverMatchPattern);
+
             var term = rawValue is char ch ? ch.ToString() : (string)rawValue!;
             var pattern = MongoRegexPatternBuilder.BuildPattern(term, regexKind.Value);
-            return new BsonRegularExpression(pattern, regexCaseInsensitive ? "is" : "s");
+            return new BsonRegularExpression(pattern, regexOptions);
         }
 
         // Property-less primitive (e.g. Skip/Take count): serialize via BsonValue.Create. A char has no BSON form;

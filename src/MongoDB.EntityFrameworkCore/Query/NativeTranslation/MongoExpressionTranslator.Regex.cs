@@ -28,7 +28,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// (<see cref="MongoRegexKind.IsMatch"/>).
 /// </summary>
 /// <remarks>
-/// Forward: the pattern is a constant, a query parameter or a string field; the latter two render via
+/// Forward: the pattern is a constant, a query parameter or a string field; a field renders via
 /// <c>$expr</c>/<c>$regexMatch</c> only. The .NET pattern is passed to PCRE unchanged (dialect differences are the
 /// caller's); flags that <see cref="MapRegexOptions"/> can't map decline. Reversed: a field-valued pattern needs the
 /// aggregation <c>$regexMatch</c> (query-dialect <c>$regularExpression</c> requires a literal), hence the dedicated
@@ -95,9 +95,9 @@ internal sealed partial class MongoExpressionTranslator
         if (!TryResolveInnerStringField(Unwrap(call.Arguments[0]), out var fieldNode))
             return false;
 
-        // EF-247: only a constant pattern can use the query dialect ($regularExpression needs a literal); a parameter
-        // or field routes to $expr/$regexMatch. A parameter is never a regex placeholder here (that machinery builds
-        // patterns from StartsWith/Contains terms): the raw pattern is rendered as a string literal.
+        // EF-247: a constant or parameter pattern is a literal by the time the query is sent, so it keeps the query
+        // dialect { path: /re/ } (a parameter via a per-execution regex placeholder, see
+        // MongoQueryLanguageRenderer.IsQueryDialectRegex); a field pattern routes to $expr/$regexMatch.
         var patternArg = Unwrap(call.Arguments[1]);
         MongoExpression patternNode;
         if (patternArg is ConstantExpression { Value: string pattern })

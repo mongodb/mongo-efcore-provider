@@ -862,6 +862,52 @@ public class MongoPipelineFactoryTests
             result[0]);
     }
 
+    // Regex.IsMatch(field, parameter) keeps the query dialect ({ path: /re/ }, which can use an index) rather than
+    // $expr/$regexMatch (which can't): the live pattern is substituted per execution, unescaped, with its own options.
+    [Fact]
+    public void Parameterized_pattern_binds_verbatim_with_its_options_across_executions()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var regex = new MongoRegexExpression(
+            field, MongoRegexKind.Pattern, new MongoParameterExpression("pattern", forSerialization: null), negated: false,
+            patternOptions: "im");
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(regex) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var first = factory.Build(new Dictionary<string, object?> { ["pattern"] = "^a.b" });
+        var second = factory.Build(new Dictionary<string, object?> { ["pattern"] = "x$" });
+
+        Assert.Equal(
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: '^a.b', options: 'im' } } } }"),
+            first[0]);
+        Assert.Equal(
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: 'x$', options: 'im' } } } }"),
+            second[0]);
+    }
+
+    // A null pattern matches nothing (.NET would throw), as $regexMatch with a null regex does; "(?!)" can never match,
+    // so its $not-negation matches every document, again like $not of $regexMatch.
+    [Theory]
+    [InlineData(false, "{ $match: { Name: { $regularExpression: { pattern: '(?!)', options: '' } } } }")]
+    [InlineData(true, "{ $match: { Name: { $not: { $regularExpression: { pattern: '(?!)', options: '' } } } } }")]
+    public void Parameterized_null_pattern_binds_a_never_matching_regex(bool negated, string expected)
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var regex = new MongoRegexExpression(
+            field, MongoRegexKind.Pattern, new MongoParameterExpression("pattern", forSerialization: null), negated,
+            patternOptions: "i");
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(regex) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["pattern"] = null });
+
+        Assert.Equal(BsonDocument.Parse(expected), result[0]);
+    }
+
     [Fact]
     public void Sort_stage_still_rejects_a_key_that_is_neither_a_field_nor_an_element_ref()
     {
