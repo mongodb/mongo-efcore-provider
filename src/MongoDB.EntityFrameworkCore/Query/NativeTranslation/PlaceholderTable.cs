@@ -45,7 +45,7 @@ internal sealed class PlaceholderTable
         MongoRegexKind? RegexKind,
         IProperty? EntityMemberProperty,
         int? ArrayElementIndex,
-        bool RegexCaseInsensitive,
+        string? RegexOptions,
         IReadOnlyList<IProperty>? CompositeKeyProperties = null);
 
     private readonly List<Entry> _entries = [];
@@ -73,7 +73,7 @@ internal sealed class PlaceholderTable
     /// </summary>
     public BsonValue CreatePlaceholder(string parameterName, IBsonSerializer? serializer)
     {
-        return Add(new Entry(parameterName, serializer, false, null, null, null, false));
+        return Add(new Entry(parameterName, serializer, false, null, null, null, null));
     }
 
     /// <summary>
@@ -82,13 +82,13 @@ internal sealed class PlaceholderTable
     /// </summary>
     public BsonValue CreateEntityMemberPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer serializer)
     {
-        return Add(new Entry(parameterName, serializer, false, null, entityMemberProperty, null, false));
+        return Add(new Entry(parameterName, serializer, false, null, entityMemberProperty, null, null));
     }
 
     /// <summary>Appends a placeholder for a parameterized collection (<c>$in</c>/<c>$nin</c> values); <paramref name="elementSerializer"/> serializes each element.</summary>
     public BsonValue CreateArrayPlaceholder(string parameterName, IBsonSerializer elementSerializer)
     {
-        return Add(new Entry(parameterName, elementSerializer, true, null, null, null, false));
+        return Add(new Entry(parameterName, elementSerializer, true, null, null, null, null));
     }
 
     /// <summary>
@@ -97,7 +97,7 @@ internal sealed class PlaceholderTable
     /// </summary>
     public BsonValue CreateEntityKeyArrayPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer elementSerializer)
     {
-        return Add(new Entry(parameterName, elementSerializer, true, null, entityMemberProperty, null, false));
+        return Add(new Entry(parameterName, elementSerializer, true, null, entityMemberProperty, null, null));
     }
 
     /// <summary>
@@ -106,23 +106,24 @@ internal sealed class PlaceholderTable
     /// </summary>
     public BsonValue CreateCompositeKeyArrayPlaceholder(string parameterName, IReadOnlyList<IProperty> keyProperties)
     {
-        return Add(new Entry(parameterName, null, true, null, null, null, false, keyProperties));
+        return Add(new Entry(parameterName, null, true, null, null, null, null, keyProperties));
     }
 
     /// <summary>Appends a placeholder extracting one element, at a constant index, from an array parameter (<c>args[0]</c>) per execution.</summary>
     public BsonValue CreateArrayElementPlaceholder(string parameterName, int elementIndex, IBsonSerializer? serializer)
     {
-        return Add(new Entry(parameterName, serializer, false, null, null, elementIndex, false));
+        return Add(new Entry(parameterName, serializer, false, null, null, elementIndex, null));
     }
 
     /// <summary>
-    /// Appends a placeholder for a parameterized <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c> term; at Build time the string
-    /// is escaped and anchored via <see cref="MongoRegexPatternBuilder.BuildPattern"/> into a <see cref="BsonRegularExpression"/>,
-    /// as <see cref="MongoQueryLanguageRenderer.RenderRegex"/> does for a constant. <paramref name="caseInsensitive"/> emits options <c>"is"</c> instead of <c>"s"</c>.
+    /// Appends a placeholder for a parameterized regex term (<c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>/<c>Like</c>, or a
+    /// <c>Regex.IsMatch</c> pattern); at Build time the string goes through <see cref="MongoRegexPatternBuilder.BuildPattern"/>
+    /// (escaped and anchored, or verbatim for <see cref="MongoRegexKind.Pattern"/>) into a <see cref="BsonRegularExpression"/>
+    /// with <paramref name="options"/>, as <see cref="MongoQueryLanguageRenderer.RenderRegex"/> does for a constant.
     /// </summary>
-    public BsonValue CreateRegexPlaceholder(string parameterName, MongoRegexKind kind, bool caseInsensitive = false)
+    public BsonValue CreateRegexPlaceholder(string parameterName, MongoRegexKind kind, string options)
     {
-        return Add(new Entry(parameterName, null, false, kind, null, null, caseInsensitive));
+        return Add(new Entry(parameterName, null, false, kind, null, null, options));
     }
 
     private BsonValue Add(Entry entry)

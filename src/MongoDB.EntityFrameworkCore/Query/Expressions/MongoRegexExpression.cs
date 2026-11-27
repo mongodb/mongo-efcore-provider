@@ -43,8 +43,9 @@ internal enum MongoRegexKind
     /// <summary>
     /// <c>Regex.IsMatch(field, pattern)</c>: the term is a live .NET pattern passed to PCRE unchanged (dialect
     /// differences are the caller's); options come from <see cref="MongoRegexExpression.PatternOptions"/>.
-    /// A parameter or field term (EF-247) renders only as <c>$expr</c>/<c>$regexMatch</c> because
-    /// <c>$regularExpression</c> needs a literal. A null or missing pattern matches nothing (.NET would throw).
+    /// A field term (EF-247) renders only as <c>$expr</c>/<c>$regexMatch</c> because <c>$regularExpression</c> needs a
+    /// literal; a parameter term is substituted per execution, so it keeps the indexable query dialect. A null or missing
+    /// pattern matches nothing (.NET would throw).
     /// </summary>
     Pattern,
 }

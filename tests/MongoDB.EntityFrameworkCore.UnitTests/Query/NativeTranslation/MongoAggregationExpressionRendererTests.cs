@@ -697,7 +697,7 @@ public class MongoAggregationExpressionRendererTests
             result.ToJson());
         var entry = Assert.Single(placeholders.Entries);
         Assert.Equal(MongoRegexKind.EndsWith, entry.RegexKind);
-        Assert.True(entry.RegexCaseInsensitive);
+        Assert.Equal("is", entry.RegexOptions);
     }
 
     [Fact]

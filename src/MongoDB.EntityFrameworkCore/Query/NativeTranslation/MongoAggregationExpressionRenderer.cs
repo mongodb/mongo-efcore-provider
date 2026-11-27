@@ -664,13 +664,13 @@ internal static class MongoAggregationExpressionRenderer
     // silently folding through $toLower.
     private static BsonValue RenderLiteralRegexAsExpr(MongoRegexExpression regex, BsonValue field, PlaceholderTable placeholders)
     {
-        var caseInsensitive = regex.Kind == MongoRegexKind.Like || regex.CaseInsensitive;
+        var options = MongoRegexPatternBuilder.GetOptions(regex);
         BsonValue regexValue = regex.Term switch
         {
             MongoConstantExpression { Value: string literal } => new BsonRegularExpression(
-                MongoRegexPatternBuilder.BuildPattern(literal, regex.Kind), caseInsensitive ? "is" : "s"),
+                MongoRegexPatternBuilder.BuildPattern(literal, regex.Kind), options),
             MongoParameterExpression parameter =>
-                placeholders.CreateRegexPlaceholder(parameter.Name, regex.Kind, caseInsensitive),
+                placeholders.CreateRegexPlaceholder(parameter.Name, regex.Kind, options),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer cannot render a field-to-field {nameof(MongoRegexKind)}."
                 + $"{nameof(MongoRegexKind.Exact)} term.")

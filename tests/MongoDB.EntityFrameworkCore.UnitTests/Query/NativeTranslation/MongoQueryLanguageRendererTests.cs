@@ -558,20 +558,23 @@ public class MongoQueryLanguageRendererTests
             result.ToJson());
     }
 
+    // A parameter pattern is a literal by the time the query is sent: it renders as a regex placeholder in the query
+    // dialect ({ path: /re/ } can use an index; $expr/$regexMatch can't), substituted per execution with its options.
     [Fact]
-    public void Pattern_kind_with_parameter_pattern_falls_through_to_expr_regexMatch()
+    public void Pattern_kind_with_parameter_pattern_renders_query_dialect_placeholder()
     {
         var name = GetProperty<Customer>("Name");
         var placeholders = new PlaceholderTable();
         var expr = new MongoRegexExpression(
             new MongoFieldExpression(name, "Name"), MongoRegexKind.Pattern,
-            new MongoParameterExpression("p", forSerialization: null), negated: false);
+            new MongoParameterExpression("p", forSerialization: null), negated: false, patternOptions: "i");
 
         var result = new MongoQueryLanguageRenderer().Render(expr, placeholders);
 
-        Assert.Contains("\"$expr\"", result.ToJson());
-        Assert.DoesNotContain("$regularExpression", result.ToJson());
-        Assert.Contains("$regexMatch", result.ToJson());
+        Assert.Equal("""{ "Name" : { "__mongoef_param__" : 0 } }""", result.ToJson());
+        var entry = Assert.Single(placeholders.Entries);
+        Assert.Equal(MongoRegexKind.Pattern, entry.RegexKind);
+        Assert.Equal("i", entry.RegexOptions);
     }
 
     [Fact]
